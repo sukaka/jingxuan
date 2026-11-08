@@ -1,0 +1,16 @@
+spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/dev
+
+app:
+  exports:
+    worker:
+      enabled: false
+  files:
+    enabled: false
+  outbox:
+    relay:
+      enabled: false
+  wecom:
+    official:
+      callback-delay-ms: 600000

@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.material.infrastructure.mapper.MaterialMapper">
+  <sql id="materialColumns">
+    m.id,m.tenant_id AS tenantId,m.material_no AS materialNo,m.title,m.category_code AS categoryCode,
+    m.institution_id AS institutionId,m.project_id AS projectId,m.city_code AS cityCode,m.summary,m.tags_json AS tagsJson,
+    m.current_revision_id AS currentRevisionId,m.review_status AS reviewStatus,m.reviewer_id AS reviewerId,
+    m.offline_at AS offlineAt,m.offline_by AS offlineBy,m.offline_reason AS offlineReason,
+    m.created_by AS createdBy,m.created_at AS createdAt,m.updated_at AS updatedAt,m.version
+  </sql>
+  <sql id="revisionColumns">
+    r.id,r.tenant_id AS tenantId,r.material_id AS materialId,r.revision_no AS revisionNo,r.title,r.summary,
+    r.category_code AS categoryCode,r.institution_id AS institutionId,r.project_id AS projectId,r.city_code AS cityCode,
+    r.tags_json AS tagsJson,r.file_id AS fileId,r.change_note AS changeNote,r.status,r.reviewer_id AS reviewerId,
+    r.review_note AS reviewNote,r.reviewed_at AS reviewedAt,r.created_by AS createdBy,r.created_at AS createdAt,
+    r.updated_at AS updatedAt,r.version
+  </sql>
+  <sql id="revisionVisibility">
+    (r.status='APPROVED'
+    <if test="scope.canReview">OR r.status IN ('PENDING','REJECTED')</if>
+    <if test="scope.canWrite and scope.scopeType == 'ALL'">OR 1=1</if>
+    <if test="scope.canWrite">OR r.created_by=#{scope.selfId}</if>)
+  </sql>
+  <sql id="materialLifecycleVisibility">
+    (m.offline_at IS NULL<if test="scope.canWrite or scope.canReview"> OR 1=1</if>)
+  </sql>
+  <sql id="revisionScope">
+    <choose>
+      <when test="scope.scopeType == 'ALL'">
+        <include refid="revisionVisibility"/>
+      </when>
+      <when test="scope.scopeType == 'INSTITUTION' and scope.institutionIds != null and scope.institutionIds.size() > 0">
+        m.institution_id IN <foreach collection="scope.institutionIds" item="institutionId" open="(" separator="," close=")">#{institutionId}</foreach>
+        AND <include refid="revisionVisibility"/>
+      </when>
+      <otherwise>1=0</otherwise>
+    </choose>
+    AND <include refid="materialLifecycleVisibility"/>
+  </sql>
+  <sql id="visibleMaterialRows">
+    SELECT m.id,m.tenant_id,m.material_no,m.current_revision_id,m.created_by AS material_created_by,
+      m.created_at AS material_created_at,m.updated_at AS material_updated_at,m.version AS material_version,
+      m.offline_at AS material_offline_at,m.offline_by AS material_offline_by,
+      m.offline_reason AS material_offline_reason,
+      r.id AS revision_id,r.revision_no,r.title,r.summary,r.category_code,r.institution_id,r.project_id,r.city_code,
+      r.tags_json,r.file_id,r.change_note,r.status,r.reviewer_id,r.review_note,r.reviewed_at,r.created_by,
+      r.created_at,r.updated_at,r.version AS revision_version,
+      ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY r.revision_no DESC) AS rn
+    FROM crm_material m
+    JOIN crm_material_revision r ON r.tenant_id=m.tenant_id AND r.material_id=m.id
+    WHERE m.tenant_id=#{tenantId} AND <include refid="revisionScope"/>
+  </sql>
+  <sql id="listColumns">
+    v.id,v.tenant_id AS tenantId,v.material_no AS materialNo,v.current_revision_id AS currentRevisionId,
+    v.material_created_by AS materialCreatedBy,v.material_created_at AS materialCreatedAt,
+    v.material_updated_at AS materialUpdatedAt,v.material_version AS materialVersion,
+    v.material_offline_at AS materialOfflineAt,v.material_offline_by AS materialOfflineBy,
+    v.material_offline_reason AS materialOfflineReason,v.revision_id AS revisionId,
+    v.revision_no AS revisionNo,v.title,v.summary,v.category_code AS categoryCode,v.institution_id AS institutionId,
+    v.project_id AS projectId,v.city_code AS cityCode,v.tags_json AS tagsJson,v.file_id AS fileId,
+    v.change_note AS changeNote,v.status,v.reviewer_id AS reviewerId,v.review_note AS reviewNote,
+    v.reviewed_at AS reviewedAt,v.created_by AS createdBy,v.created_at AS createdAt,v.updated_at AS updatedAt,
+    v.revision_version AS revisionVersion
+  </sql>
+  <sql id="listFilters">
+    <if test="criteria.keyword != null and criteria.keyword != ''">
+      AND (v.material_no LIKE CONCAT('%',#{criteria.keyword},'%') OR v.title LIKE CONCAT('%',#{criteria.keyword},'%')
+        OR v.summary LIKE CONCAT('%',#{criteria.keyword},'%') OR v.city_code LIKE CONCAT('%',#{criteria.keyword},'%')
+        OR v.tags_json LIKE CONCAT('%',#{criteria.keyword},'%'))
+    </if>
+    <if test="criteria.categoryCode != null and criteria.categoryCode != ''">AND v.category_code=#{criteria.categoryCode}</if>
+    <if test="criteria.institutionId != null">AND v.institution_id=#{criteria.institutionId}</if>
+    <if test="criteria.projectId != null">AND v.project_id=#{criteria.projectId}</if>
+    <if test="criteria.cityCode != null and criteria.cityCode != ''">AND v.city_code=#{criteria.cityCode}</if>
+    <if test="criteria.status != null and criteria.status != ''">
+      <choose>
+        <when test="criteria.status == 'OFFLINE'">AND v.material_offline_at IS NOT NULL</when>
+        <otherwise>AND v.status=#{criteria.status} AND v.material_offline_at IS NULL</otherwise>
+      </choose>
+    </if>
+    <if test="criteria.globalOnly != null">
+      <choose>
+        <when test="criteria.globalOnly">AND v.institution_id IS NULL</when>
+        <otherwise>AND v.institution_id IS NOT NULL</otherwise>
+      </choose>
+    </if>
+  </sql>
+
+  <insert id="insertMaterial">
+    INSERT INTO crm_material (tenant_id,material_no,title,category_code,institution_id,project_id,city_code,summary,
+      tags_json,current_revision_id,review_status,reviewer_id,created_by)
+    VALUES (#{entity.tenantId},#{entity.materialNo},#{entity.title},#{entity.categoryCode},#{entity.institutionId},
+      #{entity.projectId},#{entity.cityCode},#{entity.summary},#{entity.tagsJson},NULL,'DRAFT',NULL,#{entity.createdBy})
+  </insert>
+  <insert id="insertRevision">
+    INSERT INTO crm_material_revision (tenant_id,material_id,revision_no,title,summary,category_code,institution_id,
+      project_id,city_code,tags_json,file_id,change_note,status,reviewer_id,review_note,reviewed_at,created_by)
+    VALUES (#{entity.tenantId},#{entity.materialId},#{entity.revisionNo},#{entity.title},#{entity.summary},
+      #{entity.categoryCode},#{entity.institutionId},#{entity.projectId},#{entity.cityCode},#{entity.tagsJson},
+      #{entity.fileId},#{entity.changeNote},'DRAFT',NULL,NULL,NULL,#{entity.createdBy})
+  </insert>
+
+  <select id="selectInsertedMaterial" resultType="com.whale.crm.material.domain.Material">
+    SELECT <include refid="materialColumns"/> FROM crm_material m
+    WHERE m.tenant_id=#{tenantId} AND m.material_no=#{materialNo} AND m.created_by=#{createdBy}
+  </select>
+  <select id="selectInsertedRevision" resultType="com.whale.crm.material.domain.MaterialRevision">
+    SELECT <include refid="revisionColumns"/> FROM crm_material_revision r
+    WHERE r.tenant_id=#{tenantId} AND r.material_id=#{materialId} AND r.revision_no=#{revisionNo}
+      AND r.created_by=#{createdBy}
+  </select>
+
+  <select id="search" resultType="com.whale.crm.material.domain.MaterialListRow">
+    SELECT <include refid="listColumns"/> FROM (<include refid="visibleMaterialRows"/>) v
+    WHERE v.rn=1 <include refid="listFilters"/>
+    ORDER BY v.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="count" resultType="long">
+    SELECT COUNT(*) FROM (<include refid="visibleMaterialRows"/>) v
+    WHERE v.rn=1 <include refid="listFilters"/>
+  </select>
+
+  <select id="selectScopedMaterial" resultType="com.whale.crm.material.domain.Material">
+    SELECT <include refid="materialColumns"/> FROM crm_material m
+    WHERE m.tenant_id=#{tenantId} AND m.id=#{materialId}
+      AND EXISTS (SELECT 1 FROM crm_material_revision r
+        WHERE r.tenant_id=m.tenant_id AND r.material_id=m.id AND <include refid="revisionScope"/>)
+  </select>
+  <select id="selectScopedMaterialForUpdate" resultType="com.whale.crm.material.domain.Material">
+    SELECT <include refid="materialColumns"/> FROM crm_material m
+    WHERE m.tenant_id=#{tenantId} AND m.id=#{materialId}
+      AND EXISTS (SELECT 1 FROM crm_material_revision r
+        WHERE r.tenant_id=m.tenant_id AND r.material_id=m.id AND <include refid="revisionScope"/>)
+    FOR UPDATE
+  </select>
+  <select id="selectScopedRevision" resultType="com.whale.crm.material.domain.MaterialRevision">
+    SELECT <include refid="revisionColumns"/> FROM crm_material_revision r
+    JOIN crm_material m ON m.tenant_id=r.tenant_id AND m.id=r.material_id
+    WHERE r.tenant_id=#{tenantId} AND r.material_id=#{materialId} AND r.id=#{revisionId}
+      AND <include refid="revisionScope"/>
+  </select>
+  <select id="selectScopedRevisionForUpdate" resultType="com.whale.crm.material.domain.MaterialRevision">
+    SELECT <include refid="revisionColumns"/> FROM crm_material_revision r
+    JOIN crm_material m ON m.tenant_id=r.tenant_id AND m.id=r.material_id
+    WHERE r.tenant_id=#{tenantId} AND r.material_id=#{materialId} AND r.id=#{revisionId}
+      AND <include refid="revisionScope"/>
+    FOR UPDATE
+  </select>
+  <select id="selectLatestScopedRevisionForUpdate" resultType="com.whale.crm.material.domain.MaterialRevision">
+    SELECT <include refid="revisionColumns"/> FROM crm_material_revision r
+    JOIN crm_material m ON m.tenant_id=r.tenant_id AND m.id=r.material_id
+    WHERE r.tenant_id=#{tenantId} AND r.material_id=#{materialId} AND <include refid="revisionScope"/>
+    ORDER BY r.revision_no DESC LIMIT 1 FOR UPDATE
+  </select>
+  <select id="selectScopedRevisions" resultType="com.whale.crm.material.domain.MaterialRevision">
+    SELECT <include refid="revisionColumns"/> FROM crm_material_revision r
+    JOIN crm_material m ON m.tenant_id=r.tenant_id AND m.id=r.material_id
+    WHERE r.tenant_id=#{tenantId} AND r.material_id=#{materialId} AND <include refid="revisionScope"/>
+    ORDER BY r.revision_no DESC
+  </select>
+
+  <update id="updateDraft">
+    UPDATE crm_material_revision r
+    SET r.title=#{entity.title},r.summary=#{entity.summary},r.category_code=#{entity.categoryCode},
+      r.institution_id=#{entity.institutionId},r.project_id=#{entity.projectId},r.city_code=#{entity.cityCode},
+      r.tags_json=#{entity.tagsJson},r.file_id=#{entity.fileId},r.change_note=#{entity.changeNote},
+      r.updated_at=UTC_TIMESTAMP(3),r.version=r.version+1
+    WHERE r.tenant_id=#{entity.tenantId} AND r.id=#{entity.id} AND r.material_id=#{entity.materialId}
+      AND r.version=#{entity.version} AND r.status='DRAFT'
+      AND EXISTS (SELECT 1 FROM crm_material m
+        WHERE m.tenant_id=r.tenant_id AND m.id=r.material_id AND m.offline_at IS NULL
+        AND <include refid="revisionScope"/>)
+  </update>
+  <update id="updateMaterialContent">
+    UPDATE crm_material m
+    SET m.title=#{entity.title},m.summary=#{entity.summary},m.category_code=#{entity.categoryCode},
+      m.institution_id=#{entity.institutionId},m.project_id=#{entity.projectId},m.city_code=#{entity.cityCode},
+      m.tags_json=#{entity.tagsJson},m.review_status='DRAFT',m.reviewer_id=NULL,
+      m.updated_at=UTC_TIMESTAMP(3),m.version=m.version+1
+    WHERE m.tenant_id=#{tenantId} AND m.id=#{materialId} AND m.version=#{expectedVersion}
+      AND m.offline_at IS NULL AND m.review_status IN ('DRAFT','APPROVED','REJECTED')
+      AND EXISTS (SELECT 1 FROM crm_material_revision r
+        WHERE r.tenant_id=m.tenant_id AND r.material_id=m.id AND <include refid="revisionScope"/>)
+  </update>
+  <update id="submitRevision">
+    UPDATE crm_material_revision r
+    SET r.status='PENDING',r.reviewer_id=NULL,r.review_note=NULL,r.reviewed_at=NULL,
+      r.updated_at=UTC_TIMESTAMP(3),r.version=r.version+1
+    WHERE r.tenant_id=#{tenantId} AND r.id=#{revisionId} AND r.material_id=#{materialId}
+      AND r.version=#{expectedVersion} AND r.status='DRAFT'
+      AND EXISTS (SELECT 1 FROM crm_material m
+        WHERE m.tenant_id=r.tenant_id AND m.id=r.material_id AND m.offline_at IS NULL
+        AND <include refid="revisionScope"/>)
+  </update>
+  <update id="submitMaterial">
+    UPDATE crm_material m
+    SET m.review_status='PENDING',m.reviewer_id=NULL,m.updated_at=UTC_TIMESTAMP(3),m.version=m.version+1
+    WHERE m.tenant_id=#{tenantId} AND m.id=#{materialId} AND m.version=#{expectedVersion} AND m.offline_at IS NULL AND m.review_status='DRAFT'
+      AND EXISTS (SELECT 1 FROM crm_material_revision r
+        WHERE r.tenant_id=m.tenant_id AND r.material_id=m.id AND <include refid="revisionScope"/>)
+  </update>
+  <update id="reviewRevision">
+    UPDATE crm_material_revision r
+    SET r.status=#{decision},r.reviewer_id=#{reviewerUserId},r.review_note=#{reviewNote},r.reviewed_at=#{reviewedAt},
+      r.updated_at=UTC_TIMESTAMP(3),r.version=r.version+1
+    WHERE r.tenant_id=#{tenantId} AND r.id=#{revisionId} AND r.material_id=#{materialId}
+      AND r.version=#{expectedVersion} AND r.status='PENDING' AND r.created_by&lt;&gt;#{reviewerUserId}
+      AND #{decision} IN ('APPROVED','REJECTED')
+      AND EXISTS (SELECT 1 FROM crm_material m
+        WHERE m.tenant_id=r.tenant_id AND m.id=r.material_id AND m.offline_at IS NULL
+        AND <include refid="revisionScope"/>)
+  </update>
+  <update id="reviewMaterial">
+    UPDATE crm_material m
+    SET m.review_status=#{decision},m.reviewer_id=#{reviewerUserId},
+      <if test="decision == 'APPROVED'">m.current_revision_id=#{approvedRevisionId},</if>
+      m.updated_at=UTC_TIMESTAMP(3),m.version=m.version+1
+    WHERE m.tenant_id=#{tenantId} AND m.id=#{materialId} AND m.version=#{expectedVersion} AND m.offline_at IS NULL AND m.review_status='PENDING'
+      AND #{decision} IN ('APPROVED','REJECTED')
+      AND EXISTS (SELECT 1 FROM crm_material_revision r
+        WHERE r.tenant_id=m.tenant_id AND r.material_id=m.id AND <include refid="revisionScope"/>)
+  </update>
+  <update id="offlineMaterial">
+    UPDATE crm_material m
+    SET m.offline_at=#{offlineAt},m.offline_by=#{offlineBy},m.offline_reason=#{offlineReason},
+      m.updated_at=UTC_TIMESTAMP(3),m.version=m.version+1
+    WHERE m.tenant_id=#{tenantId} AND m.id=#{materialId} AND m.version=#{expectedVersion}
+      AND m.offline_at IS NULL AND m.current_revision_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM crm_material_revision approved
+        WHERE approved.tenant_id=m.tenant_id AND approved.material_id=m.id
+          AND approved.id=m.current_revision_id AND approved.status='APPROVED')
+      AND EXISTS (SELECT 1 FROM crm_material_revision r
+        WHERE r.tenant_id=m.tenant_id AND r.material_id=m.id AND <include refid="revisionScope"/>)
+  </update>
+</mapper>

@@ -1,0 +1,32 @@
+.crm-ui .trading-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 20px; }
+.crm-ui .trading-page-head h2 { margin: 0 0 7px; font-size: 25px; letter-spacing: -.4px; }
+.crm-ui .trading-page-head p { margin: 0; color: #79909f; font-size: 12px; line-height: 1.7; }
+.crm-ui .trading-banner { margin-bottom: 18px; border: 1px solid #cceae3; background: linear-gradient(100deg,#e9f9f4,#f4fbf8); border-radius: 14px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.crm-ui .trading-banner strong { display: block; font-size: 13px; margin-bottom: 5px; }
+.crm-ui .trading-banner p { margin: 0; color: #668b84; font-size: 11px; line-height: 1.7; }
+.crm-ui .trading-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 12px; }
+.crm-ui .trading-form-full { grid-column: 1/-1; }
+.crm-ui .trading-order-no { color: #153d4b; font-weight: 700; font-variant-numeric: tabular-nums; }
+.crm-ui .trading-amount { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.crm-ui .trading-amount strong { color: #0c8078; font-size: 14px; }
+.crm-ui .trading-cell-sub { margin-top: 4px; color: #8ca0ad; font-size: 11px; line-height: 1.5; }
+.crm-ui .trading-section-title { margin: 22px 0 10px; font-size: 14px; }
+.crm-ui .trading-detail-empty { min-height: 140px; display: grid; place-items: center; }
+.crm-ui .trading-balance-card { padding: 18px 20px; margin-bottom: 18px; border: 1px solid #cee9e3; border-radius: 12px; background: linear-gradient(110deg,#eaf9f4,#f8fcfb); }
+.crm-ui .trading-balance-card small { display: block; color: #668b84; margin-bottom: 6px; }
+.crm-ui .trading-balance-card strong { color: #08766f; font-size: 28px; font-variant-numeric: tabular-nums; }
+.crm-ui .trading-ledger-key { display: block; max-width: 210px; overflow-wrap: anywhere; color: #6f8794; font-size: 11px; line-height: 1.5; }
+.crm-ui .trading-delta-positive { color: #168268; font-weight: 700; }
+.crm-ui .trading-delta-negative { color: #c95667; font-weight: 700; }
+.crm-ui .trading-pending-allocation { color: #ad752e; font-weight: 700; }
+.trading-descriptions .el-descriptions__cell { min-width: 0; }
+@media (max-width: 760px) {
+  .crm-ui .trading-page-head { flex-direction: column; }
+  .crm-ui .trading-page-head h2 { font-size: 22px; }
+  .crm-ui .trading-form-grid { grid-template-columns: 1fr; }
+  .crm-ui .trading-banner { align-items: flex-start; flex-direction: column; }
+  .trading-descriptions .el-descriptions__table,
+  .trading-descriptions .el-descriptions__table tbody { display: block; width: 100%; }
+  .trading-descriptions .el-descriptions__table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trading-descriptions .el-descriptions__cell { display: block; white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+}

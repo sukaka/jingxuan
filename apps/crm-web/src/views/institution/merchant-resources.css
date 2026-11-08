@@ -1,0 +1,28 @@
+.merchant-resources { margin-top: 20px; }
+.merchant-resource-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.merchant-resource-heading h3 { margin: 0 0 5px; color: #294456; font-size: 16px; }
+.merchant-resource-heading p { margin: 0; color: #8298a4; font-size: 12px; line-height: 1.7; }
+.merchant-resource-filters { display: flex; align-items: center; gap: 12px; margin: 16px 0 12px; flex-wrap: wrap; }
+.merchant-resource-status-filter { width: 128px; }
+.merchant-resource-list { min-height: 76px; border-top: 1px solid #e7eef0; }
+.merchant-resource-item { display: grid; grid-template-columns: 72px minmax(0,1fr) auto; gap: 14px; align-items: center; padding: 16px 4px; border-bottom: 1px solid #edf2f4; }
+.merchant-resource-item.is-offline .merchant-resource-copy { opacity: .62; }
+.merchant-resource-kind { display: flex; align-items: flex-start; flex-direction: column; gap: 6px; }
+.merchant-resource-type { display: inline-flex; padding: 4px 9px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+.merchant-resource-type.is-doctor { color: #117f73; background: #e6f6f1; }
+.merchant-resource-type.is-equipment { color: #316caa; background: #eaf2fc; }
+.merchant-resource-type.is-case { color: #7955a6; background: #f1ebf9; }
+.merchant-resource-offline { color: #82929e; font-size: 10px; }
+.merchant-resource-copy { min-width: 0; }
+.merchant-resource-copy strong { color: #304b5c; font-size: 14px; }
+.merchant-resource-subtitle { margin-left: 9px; color: #6e8795; font-size: 12px; }
+.merchant-resource-copy p { margin: 5px 0 0; color: #7b919e; font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.merchant-resource-actions { display: flex; align-items: center; gap: 2px; }
+.merchant-resource-empty { padding: 28px 0; color: #94a6b1; font-size: 12px; text-align: center; }
+.merchant-resource-pager { justify-content: flex-end; margin-top: 14px; }
+@media (max-width: 640px) {
+  .merchant-resource-heading { flex-direction: column; }
+  .merchant-resource-item { grid-template-columns: 58px minmax(0,1fr); gap: 10px; }
+  .merchant-resource-actions { grid-column: 2; justify-content: flex-start; }
+  .merchant-resource-subtitle { display: block; margin: 4px 0 0; }
+}

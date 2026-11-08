@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.CustomerLegacyMapper">
+
+  <resultMap id="CustomerLegacyMap" type="com.whale.crm.customer.domain.CustomerLegacy">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="customerId" column="customer_id"/>
+    <result property="legacyTable" column="legacy_table"/>
+    <result property="legacyRowId" column="legacy_row_id"/>
+    <result property="legacySubmittedAt" column="legacy_submitted_at"/>
+    <result property="legacyFirstImportAt" column="legacy_first_import_at"/>
+    <result property="legacyAccount" column="legacy_account"/>
+    <result property="legacyWriter" column="legacy_writer"/>
+    <result property="legacyNewOld" column="legacy_new_old"/>
+    <result property="legacyFullJson" column="legacy_full_json"/>
+  </resultMap>
+
+  <select id="selectByCustomerId" resultMap="CustomerLegacyMap">
+    SELECT id, tenant_id, customer_id, legacy_table, legacy_row_id, legacy_submitted_at,
+           legacy_first_import_at, legacy_account, legacy_writer, legacy_new_old, legacy_full_json
+    FROM crm_customer_legacy
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId}
+    ORDER BY id ASC
+    LIMIT 1
+  </select>
+
+</mapper>

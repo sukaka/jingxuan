@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "仅明确合成测试夹具，不豁免生产配置或真实凭据"
+paths = [
+  '''(?:^|/)apps/crm-api/src/test/java/com/whale/crm/ai/KnowledgeBrokerReliabilityIT\.java$''',
+  '''(?:^|/)apps/crm-api/src/test/java/com/whale/crm/platform/security/crypto/AesGcmCipherTest\.java$''',
+  '''(?:^|/)apps/crm-api/src/test/java/com/whale/crm/trading/OrderPaymentApiIT\.java$''',
+]

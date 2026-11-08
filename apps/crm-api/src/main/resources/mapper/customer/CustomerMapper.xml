@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.CustomerMapper">
+
+  <resultMap id="CustomerMap" type="com.whale.crm.customer.domain.Customer">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="ownerStaffId" column="owner_staff_id"/>
+    <result property="teamId" column="team_id"/>
+    <result property="customerNo" column="customer_no"/>
+    <result property="displayName" column="display_name"/>
+    <result property="nickname" column="nickname"/>
+    <result property="remarkName" column="remark_name"/>
+    <result property="mobileCipher" column="mobile_cipher"/>
+    <result property="mobileHash" column="mobile_hash"/>
+    <result property="cityCode" column="city_code"/>
+    <result property="sourceCode" column="source_code"/>
+    <result property="channelCode" column="channel_code"/>
+    <result property="customerStatus" column="customer_status"/>
+    <result property="tierCode" column="tier_code"/>
+    <result property="intentLevel" column="intent_level"/>
+    <result property="spendingLevel" column="spending_level"/>
+    <result property="birthday" column="birthday"/>
+    <result property="pointsCached" column="points_cached"/>
+    <result property="attentionProjects" column="attention_projects"/>
+    <result property="blockerNote" column="blocker_note"/>
+    <result property="remark" column="remark"/>
+    <result property="firstAddedAt" column="first_added_at"/>
+    <result property="firstOrderAt" column="first_order_at"/>
+    <result property="lastFollowupAt" column="last_followup_at"/>
+    <result property="deleted" column="deleted"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <resultMap id="CustomerListRowMap" type="com.whale.crm.customer.domain.CustomerListRow">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="ownerStaffId" column="owner_staff_id"/>
+    <result property="ownerName" column="owner_name"/>
+    <result property="teamId" column="team_id"/>
+    <result property="customerNo" column="customer_no"/>
+    <result property="displayName" column="display_name"/>
+    <result property="nickname" column="nickname"/>
+    <result property="mobileCipher" column="mobile_cipher"/>
+    <result property="cityCode" column="city_code"/>
+    <result property="customerStatus" column="customer_status"/>
+    <result property="tierCode" column="tier_code"/>
+    <result property="intentLevel" column="intent_level"/>
+    <result property="pointsCached" column="points_cached"/>
+    <result property="lastFollowupAt" column="last_followup_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="version" column="version"/>
+    <result property="sourceCode" column="source_code"/>
+    <result property="channelCode" column="channel_code"/>
+    <result property="spendingLevel" column="spending_level"/>
+    <result property="birthday" column="birthday"/>
+    <result property="tagCodes" column="tag_codes"/>
+    <result property="nextFollowupAt" column="next_followup_at"/>
+  </resultMap>
+
+  <sql id="customerColumns">
+    id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname, remark_name,
+    mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status, tier_code,
+    intent_level, spending_level, birthday, points_cached, attention_projects, blocker_note, remark,
+    first_added_at, first_order_at, last_followup_at, deleted, created_at, updated_at, version
+  </sql>
+
+  <!-- 数据范围（双保险：Service 已对 NONE/INSTITUTION 短路；此处仍兜底 1=0）。
+       TEAM = 本组及授权团队的客户 + 本人持有的客户；ownerId 仅在范围之上收窄。 -->
+  <sql id="scopedWhere">
+    WHERE c.tenant_id = #{tenantId} AND c.deleted = 0
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="teamIds" item="t" open="(" separator="," close=")">#{t}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">
+        AND c.owner_staff_id = #{selfId}
+      </when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+    <if test="ownerId != null">
+      AND c.owner_staff_id = #{ownerId}
+    </if>
+    <if test="keyword != null and keyword != ''">
+      AND (c.customer_no LIKE CONCAT('%', #{keyword}, '%')
+        OR c.display_name LIKE CONCAT('%', #{keyword}, '%')
+        OR c.nickname LIKE CONCAT('%', #{keyword}, '%')
+        OR c.remark_name LIKE CONCAT('%', #{keyword}, '%')
+        <if test="mobileHashKeyword != null and mobileHashKeyword != ''">
+          OR c.mobile_hash = #{mobileHashKeyword}
+        </if>)
+    </if>
+    <if test="status != null and status != ''">
+      AND c.customer_status = #{status}
+    </if>
+    <if test="cityCode != null and cityCode != ''">
+      AND c.city_code = #{cityCode}
+    </if>
+    <if test="sourceCode != null and sourceCode != ''">
+      AND c.source_code = #{sourceCode}
+    </if>
+    <if test="channelCode != null and channelCode != ''">
+      AND c.channel_code = #{channelCode}
+    </if>
+    <if test="tierCode != null and tierCode != ''">
+      AND c.tier_code = #{tierCode}
+    </if>
+    <if test="followupDueBefore != null">
+      AND EXISTS (SELECT 1 FROM crm_followup f
+                  WHERE f.tenant_id = c.tenant_id AND f.customer_id = c.id AND f.deleted = 0
+                    AND f.next_followup_at IS NOT NULL AND f.next_followup_at &lt;= #{followupDueBefore})
+    </if>
+  </sql>
+
+  <select id="search" resultMap="CustomerListRowMap">
+    SELECT c.id, c.tenant_id, c.owner_staff_id, o.display_name AS owner_name, c.team_id, c.customer_no,
+           c.display_name, c.nickname, c.mobile_cipher, c.city_code, c.customer_status, c.tier_code,
+           c.intent_level, c.points_cached, c.last_followup_at, c.created_at, c.version,
+           c.source_code, c.channel_code, c.spending_level, c.birthday,
+           (SELECT GROUP_CONCAT(ct.tag_code) FROM crm_customer_tag ct WHERE ct.tenant_id=c.tenant_id AND ct.customer_id=c.id) AS tag_codes,
+           (SELECT MAX(f.next_followup_at) FROM crm_followup f WHERE f.tenant_id=c.tenant_id AND f.customer_id=c.id AND f.deleted=0) AS next_followup_at
+    FROM crm_customer c
+    LEFT JOIN sys_user o ON o.tenant_id = c.tenant_id AND o.id = c.owner_staff_id
+    <include refid="scopedWhere"/>
+    ORDER BY c.id ASC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*)
+    FROM crm_customer c
+    <include refid="scopedWhere"/>
+  </select>
+
+  <select id="selectById" resultMap="CustomerMap">
+    SELECT <include refid="customerColumns"/>
+    FROM crm_customer
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <select id="selectByIdForUpdate" resultMap="CustomerMap">
+    SELECT <include refid="customerColumns"/>
+    FROM crm_customer
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+    FOR UPDATE
+  </select>
+
+  <!-- customer_no 先占位（唯一键要求），同事务 backfill 为 C+id 左补零 -->
+  <insert id="insertCustomer" parameterType="com.whale.crm.customer.domain.Customer"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_customer (tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
+                              remark_name, mobile_cipher, mobile_hash, city_code, source_code, channel_code,
+                              customer_status, tier_code, intent_level, spending_level, birthday,
+                              attention_projects, blocker_note, remark, first_added_at)
+    VALUES (#{tenantId}, #{ownerStaffId}, #{teamId}, #{customerNo}, #{displayName}, #{nickname},
+            #{remarkName}, #{mobileCipher}, #{mobileHash}, #{cityCode}, #{sourceCode}, #{channelCode},
+            #{customerStatus}, #{tierCode}, #{intentLevel}, #{spendingLevel}, #{birthday},
+            #{attentionProjects}, #{blockerNote}, #{remark}, #{firstAddedAt})
+  </insert>
+
+  <update id="backfillCustomerNo">
+    UPDATE crm_customer SET customer_no = #{customerNo}
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </update>
+
+  <update id="updateProfile" parameterType="com.whale.crm.customer.domain.Customer">
+    UPDATE crm_customer
+    SET display_name = #{displayName}, nickname = #{nickname}, remark_name = #{remarkName},
+        mobile_cipher = #{mobileCipher}, mobile_hash = #{mobileHash}, city_code = #{cityCode},
+        source_code = #{sourceCode}, channel_code = #{channelCode}, customer_status = #{customerStatus},
+        tier_code = #{tierCode}, intent_level = #{intentLevel}, spending_level = #{spendingLevel},
+        birthday = #{birthday}, attention_projects = #{attentionProjects}, blocker_note = #{blockerNote},
+        remark = #{remark}, first_added_at = #{firstAddedAt},
+        version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND deleted = 0
+  </update>
+
+  <update id="updateOwner">
+    UPDATE crm_customer
+    SET owner_staff_id = #{newOwnerId}, team_id = #{newTeamId}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND deleted = 0
+  </update>
+
+  <update id="updateLastFollowupAt">
+    UPDATE crm_customer
+    SET last_followup_at = #{lastFollowupAt}
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND deleted = 0
+      AND (last_followup_at IS NULL OR last_followup_at &lt; #{lastFollowupAt})
+  </update>
+
+  <update id="markFirstOrderIfNull">
+    UPDATE crm_customer SET first_order_at = #{paidAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND deleted = 0 AND first_order_at IS NULL
+  </update>
+
+  <!-- 积分缓存只能由账本流水同事务刷新（应用层先落 ledger 再调本语句），不接收绝对余额写 -->
+  <update id="refreshPointsCached">
+    UPDATE crm_customer SET points_cached = #{newBalance}
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND deleted = 0
+  </update>
+
+  <update id="softDelete">
+    UPDATE crm_customer SET deleted = 1, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND deleted = 0
+  </update>
+
+  <!-- 查重扫描：同盲索引（等价手机号）且未归档 -->
+  <select id="selectDuplicatedMobileHashes" resultType="string">
+    SELECT mobile_hash
+    FROM crm_customer
+    WHERE tenant_id = #{tenantId} AND mobile_hash IS NOT NULL AND deleted = 0
+    GROUP BY mobile_hash
+    HAVING COUNT(*) &gt; 1
+  </select>
+
+  <select id="selectCustomerIdsByMobileHash" resultType="long">
+    SELECT id FROM crm_customer
+    WHERE tenant_id = #{tenantId} AND mobile_hash = #{mobileHash} AND deleted = 0
+    ORDER BY id ASC
+  </select>
+
+  <!-- 电话-是否重复：同盲索引未归档客户计数（原 23 字段"电话-是否重复"的真实计算口径） -->
+  <select id="countByMobileHash" resultType="int">
+    SELECT COUNT(*) FROM crm_customer
+    WHERE tenant_id = #{tenantId} AND mobile_hash = #{mobileHash} AND deleted = 0
+  </select>
+
+  <!-- 查重扫描：同 external_id 身份映射到多个未归档客户 -->
+  <select id="selectDuplicatedExternalIds" resultType="string">
+    SELECT i.external_id
+    FROM crm_customer_identity i
+    INNER JOIN crm_customer c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id AND c.deleted = 0
+    WHERE i.tenant_id = #{tenantId}
+    GROUP BY i.external_id
+    HAVING COUNT(DISTINCT i.customer_id) &gt; 1
+  </select>
+
+  <select id="selectCustomerIdsByExternalId" resultType="long">
+    SELECT DISTINCT i.customer_id
+    FROM crm_customer_identity i
+    INNER JOIN crm_customer c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id AND c.deleted = 0
+    WHERE i.tenant_id = #{tenantId} AND i.external_id = #{externalId}
+    ORDER BY i.customer_id ASC
+  </select>
+
+</mapper>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.CustomerIdentityMapper">
+
+  <resultMap id="CustomerIdentityMap" type="com.whale.crm.customer.domain.CustomerIdentity">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="customerId" column="customer_id"/>
+    <result property="identityType" column="identity_type"/>
+    <result property="sourceApp" column="source_app"/>
+    <result property="externalId" column="external_id"/>
+    <result property="verifiedAt" column="verified_at"/>
+    <result property="status" column="status"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <select id="selectByCustomerId" resultMap="CustomerIdentityMap">
+    SELECT id, tenant_id, customer_id, identity_type, source_app, external_id, verified_at, status,
+           created_at, updated_at, version
+    FROM crm_customer_identity
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId}
+    ORDER BY id ASC
+  </select>
+
+  <insert id="insertIdentity" parameterType="com.whale.crm.customer.domain.CustomerIdentity"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_customer_identity (tenant_id, customer_id, identity_type, source_app, external_id,
+                                       verified_at, status)
+    VALUES (#{tenantId}, #{customerId}, #{identityType}, #{sourceApp}, #{externalId},
+            #{verifiedAt}, #{status})
+  </insert>
+
+  <delete id="deleteById">
+    DELETE FROM crm_customer_identity WHERE tenant_id = #{tenantId} AND id = #{id}
+  </delete>
+
+  <update id="reassignCustomer">
+    UPDATE crm_customer_identity SET customer_id = #{customerId}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </update>
+
+</mapper>

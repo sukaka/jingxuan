@@ -1,0 +1,15 @@
+{
+  "event_id": "entitlement.redeemed.v1:REDEMPTION-9200",
+  "event_type": "entitlement.redeemed.v1",
+  "event_version": 1,
+  "tenant_id": 1,
+  "aggregate_type": "entitlement",
+  "aggregate_id": "500100",
+  "occurred_at": "2026-10-24T10:00:00Z",
+  "correlation_id": "entitlement.redeemed.v1:REDEMPTION-9200",
+  "payload": {
+    "entitlementId": 500100,
+    "count": 1,
+    "sourceRef": "REDEMPTION-9200"
+  }
+}

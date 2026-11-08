@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.platform.user.infrastructure.mapper.RoleMapper">
+
+  <resultMap id="SysRoleMap" type="com.whale.crm.platform.user.domain.SysRole">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="roleCode" column="role_code"/>
+    <result property="roleName" column="role_name"/>
+    <result property="status" column="status"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <resultMap id="SysPermissionMap" type="com.whale.crm.platform.user.domain.SysPermission">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="permissionCode" column="permission_code"/>
+    <result property="description" column="description"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <resultMap id="UserRolePairMap" type="com.whale.crm.platform.user.domain.RoleRepository$UserRolePair">
+    <id property="userId" column="user_id"/>
+    <id property="roleCode" column="role_code"/>
+  </resultMap>
+
+  <select id="selectRoles" resultMap="SysRoleMap">
+    SELECT id, tenant_id, role_code, role_name, status, created_at, updated_at, version
+    FROM sys_role WHERE tenant_id = #{tenantId} ORDER BY id ASC
+  </select>
+
+  <select id="selectRoleById" resultMap="SysRoleMap">
+    SELECT id, tenant_id, role_code, role_name, status, created_at, updated_at, version
+    FROM sys_role WHERE tenant_id = #{tenantId} AND id = #{roleId}
+  </select>
+
+  <select id="countRoleByCode" resultType="int">
+    SELECT COUNT(*) FROM sys_role WHERE tenant_id = #{tenantId} AND role_code = #{roleCode}
+  </select>
+
+  <insert id="insertRole" parameterType="com.whale.crm.platform.user.domain.SysRole"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO sys_role (tenant_id, role_code, role_name, status)
+    VALUES (#{tenantId}, #{roleCode}, #{roleName}, #{status})
+  </insert>
+
+  <select id="selectPermissions" resultMap="SysPermissionMap">
+    SELECT id, tenant_id, permission_code, description, created_at, updated_at, version
+    FROM sys_permission WHERE tenant_id = #{tenantId} ORDER BY permission_code ASC
+  </select>
+
+  <select id="selectActiveRoleCodes" resultType="string">
+    SELECT r.role_code
+    FROM sys_user_role ur
+    INNER JOIN sys_role r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id AND r.status = 'ACTIVE'
+    WHERE ur.tenant_id = #{tenantId} AND ur.user_id = #{userId}
+    ORDER BY r.role_code ASC
+  </select>
+
+  <select id="selectActivePermissionCodes" resultType="string">
+    SELECT DISTINCT p.permission_code
+    FROM sys_user_role ur
+    INNER JOIN sys_role r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id AND r.status = 'ACTIVE'
+    INNER JOIN sys_role_permission rp ON rp.tenant_id = ur.tenant_id AND rp.role_id = ur.role_id
+    INNER JOIN sys_permission p ON p.tenant_id = rp.tenant_id AND p.id = rp.permission_id
+    WHERE ur.tenant_id = #{tenantId} AND ur.user_id = #{userId}
+    ORDER BY p.permission_code ASC
+  </select>
+
+  <select id="selectActiveRolePairs" resultMap="UserRolePairMap">
+    SELECT ur.user_id, r.role_code
+    FROM sys_user_role ur
+    INNER JOIN sys_role r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id AND r.status = 'ACTIVE'
+    WHERE ur.tenant_id = #{tenantId} AND ur.user_id IN
+    <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    ORDER BY ur.user_id ASC, r.role_code ASC
+  </select>
+
+  <select id="selectPermissionCodesByRoleId" resultType="string">
+    SELECT p.permission_code
+    FROM sys_role_permission rp
+    INNER JOIN sys_permission p ON p.tenant_id = rp.tenant_id AND p.id = rp.permission_id
+    WHERE rp.tenant_id = #{tenantId} AND rp.role_id = #{roleId}
+    ORDER BY p.permission_code ASC
+  </select>
+
+  <select id="selectExistingRoleIds" resultType="long">
+    SELECT id FROM sys_role
+    WHERE tenant_id = #{tenantId} AND id IN
+    <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">#{roleId}</foreach>
+  </select>
+
+  <select id="selectExistingPermissionCodes" resultType="string">
+    SELECT permission_code FROM sys_permission
+    WHERE tenant_id = #{tenantId} AND permission_code IN
+    <foreach collection="permissionCodes" item="code" open="(" separator="," close=")">#{code}</foreach>
+  </select>
+
+  <delete id="deleteUserRoles">
+    DELETE FROM sys_user_role WHERE tenant_id = #{tenantId} AND user_id = #{userId}
+  </delete>
+
+  <insert id="insertUserRole">
+    INSERT INTO sys_user_role (tenant_id, user_id, role_id) VALUES (#{tenantId}, #{userId}, #{roleId})
+  </insert>
+
+  <delete id="deleteRolePermissions">
+    DELETE FROM sys_role_permission WHERE tenant_id = #{tenantId} AND role_id = #{roleId}
+  </delete>
+
+  <insert id="insertRolePermissionByCode">
+    INSERT INTO sys_role_permission (tenant_id, role_id, permission_id)
+    SELECT #{tenantId}, #{roleId}, p.id FROM sys_permission p
+    WHERE p.tenant_id = #{tenantId} AND p.permission_code = #{permissionCode}
+  </insert>
+
+</mapper>

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.integration.youzan.infrastructure.mapper.YouzanConfigMapper">
+  <sql id="shopColumns">id,tenant_id AS tenantId,shop_id AS shopId,shop_name AS shopName,client_id AS clientId,client_secret_cipher AS clientSecretCipher,access_token_cipher AS accessTokenCipher,refresh_token_cipher AS refreshTokenCipher,token_expires_at AS tokenExpiresAt,connection_status AS connectionStatus,sync_enabled AS syncEnabled,last_error AS lastError,last_connected_at AS lastConnectedAt,created_at AS createdAt,version</sql>
+  <sql id="policyColumns">id,shop_id AS shopId,initial_start_time AS initialStartTime,interval_seconds AS intervalSeconds,overlap_seconds AS overlapSeconds,page_size AS pageSize,enabled,next_run_at AS nextRunAt,last_scheduled_at AS lastScheduledAt,version</sql>
+  <sql id="jobColumns">id,shop_id AS shopId,job_type AS jobType,status,cursor_value AS cursorValue,window_start AS windowStart,window_end AS windowEnd,received_count AS receivedCount,processed_count AS processedCount,duplicate_count AS duplicateCount,issue_count AS issueCount,last_error AS lastError,lease_owner AS leaseOwner,lease_expires_at AS leaseExpiresAt,created_at AS createdAt,started_at AS startedAt,finished_at AS finishedAt,version</sql>
+
+  <insert id="insertShopConfig">
+    INSERT INTO crm_youzan_shop_config (tenant_id,shop_id,shop_name,client_id,client_secret_cipher,access_token_cipher,refresh_token_cipher,token_expires_at,connection_status,sync_enabled,last_error,last_connected_at)
+    VALUES (#{tenantId},#{entity.shopId},#{entity.shopName},#{entity.clientId},#{entity.clientSecretCipher},#{entity.accessTokenCipher},#{entity.refreshTokenCipher},#{entity.tokenExpiresAt},#{entity.connectionStatus},#{entity.syncEnabled},#{entity.lastError},#{entity.lastConnectedAt})
+  </insert>
+  <select id="selectShopConfig" resultType="com.whale.crm.integration.youzan.domain.YouzanShopConfig">
+    SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+  </select>
+  <select id="selectShopConfigForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanShopConfig">
+    SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} FOR UPDATE
+  </select>
+  <select id="selectShopConfigByClientAndShop" resultType="com.whale.crm.integration.youzan.domain.YouzanShopConfig">
+    SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE client_id=#{clientId} AND shop_id=#{shopId}
+  </select>
+  <select id="selectShopConfigs" resultType="com.whale.crm.integration.youzan.domain.YouzanShopConfig">
+    SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE tenant_id=#{tenantId} ORDER BY id
+  </select>
+  <select id="selectSyncEnabledShopConfigs" resultType="com.whale.crm.integration.youzan.domain.YouzanShopConfig">
+    SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE sync_enabled=1 ORDER BY id
+  </select>
+  <update id="updateShopConfig">
+    UPDATE crm_youzan_shop_config SET shop_name=#{entity.shopName},client_id=#{entity.clientId},client_secret_cipher=#{entity.clientSecretCipher},access_token_cipher=NULL,refresh_token_cipher=NULL,token_expires_at=NULL,sync_enabled=#{entity.syncEnabled},connection_status='UNVERIFIED',last_error=NULL,last_connected_at=NULL,version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+  <update id="updateShopTokens">
+    UPDATE crm_youzan_shop_config SET access_token_cipher=#{entity.accessTokenCipher},refresh_token_cipher=#{entity.refreshTokenCipher},token_expires_at=#{entity.tokenExpiresAt},connection_status=#{entity.connectionStatus},last_error=#{entity.lastError},last_connected_at=#{entity.lastConnectedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+  <update id="updateShopConnectionStatus">
+    UPDATE crm_youzan_shop_config SET connection_status=#{status},last_error=#{error},last_connected_at=#{connectedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+  <update id="acquireShopLease">
+    UPDATE crm_youzan_shop_config SET lease_owner=#{owner},lease_expires_at=#{expiresAt}
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+      AND (lease_owner IS NULL OR lease_owner=#{owner} OR lease_expires_at &lt; CURRENT_TIMESTAMP(3))
+  </update>
+  <update id="releaseShopLease">
+    UPDATE crm_youzan_shop_config SET lease_owner=NULL,lease_expires_at=NULL
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND lease_owner=#{owner}
+  </update>
+  <update id="releaseExpiredShopLeases">
+    UPDATE crm_youzan_shop_config SET lease_owner=NULL,lease_expires_at=NULL
+    WHERE lease_expires_at IS NOT NULL AND lease_expires_at &lt; #{now}
+  </update>
+  <update id="expireRunningJobs">
+    UPDATE crm_youzan_sync_job SET status='FAILED',last_error='同步执行实例中断，任务已按过期租约关闭',finished_at=#{now},lease_owner=NULL,lease_expires_at=NULL,version=version+1
+    WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at &lt; #{now}
+  </update>
+
+  <insert id="insertSyncPolicy">
+    INSERT INTO crm_youzan_sync_policy (tenant_id,shop_id,initial_start_time,interval_seconds,overlap_seconds,page_size,enabled,next_run_at,last_scheduled_at)
+    VALUES (#{tenantId},#{entity.shopId},#{entity.initialStartTime},#{entity.intervalSeconds},#{entity.overlapSeconds},#{entity.pageSize},#{entity.enabled},#{entity.nextRunAt},#{entity.lastScheduledAt})
+  </insert>
+  <select id="selectSyncPolicy" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncPolicy">
+    SELECT <include refid="policyColumns"/> FROM crm_youzan_sync_policy WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+  </select>
+  <update id="updateSyncPolicy">
+    UPDATE crm_youzan_sync_policy SET initial_start_time=#{entity.initialStartTime},interval_seconds=#{entity.intervalSeconds},overlap_seconds=#{entity.overlapSeconds},page_size=#{entity.pageSize},enabled=#{entity.enabled},next_run_at=#{entity.nextRunAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+  <update id="markPolicyScheduled">
+    UPDATE crm_youzan_sync_policy SET last_scheduled_at=#{scheduledAt},next_run_at=#{nextRunAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+
+  <insert id="insertSyncJob">
+    INSERT INTO crm_youzan_sync_job (tenant_id,shop_id,job_type,status,cursor_value,window_start,window_end,received_count,processed_count,duplicate_count,issue_count,last_error,lease_owner,lease_expires_at,started_at,finished_at)
+    VALUES (#{tenantId},#{entity.shopId},#{entity.jobType},#{entity.status},#{entity.cursorValue},#{entity.windowStart},#{entity.windowEnd},#{entity.receivedCount},#{entity.processedCount},#{entity.duplicateCount},#{entity.issueCount},#{entity.lastError},#{entity.leaseOwner},#{entity.leaseExpiresAt},#{entity.startedAt},#{entity.finishedAt})
+  </insert>
+  <select id="selectSyncJob" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncJob">
+    SELECT <include refid="jobColumns"/> FROM crm_youzan_sync_job WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectSyncJobByLeaseOwner" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncJob">
+    SELECT <include refid="jobColumns"/> FROM crm_youzan_sync_job WHERE tenant_id=#{tenantId} AND lease_owner=#{leaseOwner}
+  </select>
+  <select id="selectSyncJobForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncJob">
+    SELECT <include refid="jobColumns"/> FROM crm_youzan_sync_job WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectSyncJobs" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncJob">
+    SELECT <include refid="jobColumns"/> FROM crm_youzan_sync_job WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countSyncJobs" resultType="long">SELECT COUNT(*) FROM crm_youzan_sync_job WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}</select>
+  <update id="updateSyncJob">
+    UPDATE crm_youzan_sync_job SET status=#{entity.status},cursor_value=#{entity.cursorValue},window_start=#{entity.windowStart},window_end=#{entity.windowEnd},received_count=#{entity.receivedCount},processed_count=#{entity.processedCount},duplicate_count=#{entity.duplicateCount},issue_count=#{entity.issueCount},last_error=#{entity.lastError},lease_owner=#{entity.leaseOwner},lease_expires_at=#{entity.leaseExpiresAt},started_at=#{entity.startedAt},finished_at=#{entity.finishedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+</mapper>

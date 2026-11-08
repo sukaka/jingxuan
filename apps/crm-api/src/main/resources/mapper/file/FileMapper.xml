@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.file.infrastructure.mapper.FileMapper">
+  <sql id="fileColumns">id,tenant_id AS tenantId,object_key AS objectKey,original_name AS originalName,mime_type AS mimeType,size_bytes AS sizeBytes,sha256,classification,institution_id AS institutionId,scan_status AS scanStatus,uploaded_by AS uploadedBy,etag,last_error AS lastError,expires_at AS expiresAt,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+
+  <insert id="insertFile">
+    INSERT INTO crm_file_object (tenant_id,object_key,original_name,mime_type,size_bytes,sha256,classification,institution_id,scan_status,uploaded_by,etag,last_error,expires_at)
+    VALUES (#{tenantId},#{entity.objectKey},#{entity.originalName},#{entity.mimeType},#{entity.sizeBytes},#{entity.sha256},#{entity.classification},#{entity.institutionId},#{entity.scanStatus},#{entity.uploadedBy},#{entity.etag},#{entity.lastError},#{entity.expiresAt})
+  </insert>
+
+  <select id="selectFileById" resultType="com.whale.crm.file.domain.FileMetadata">
+    SELECT <include refid="fileColumns"/> FROM crm_file_object WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+
+  <select id="selectFileByObjectKey" resultType="com.whale.crm.file.domain.FileMetadata">
+    SELECT <include refid="fileColumns"/> FROM crm_file_object WHERE tenant_id=#{tenantId} AND object_key=#{objectKey}
+  </select>
+
+  <update id="startCompletion">
+    UPDATE crm_file_object SET scan_status='SCANNING',last_error=NULL,version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND scan_status='PENDING'
+  </update>
+
+  <update id="updateUploadMetadata">
+    UPDATE crm_file_object SET etag=#{etag},sha256=#{sha256},size_bytes=#{sizeBytes},mime_type=#{mimeType},
+      last_error=NULL,version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND scan_status='SCANNING'
+  </update>
+
+  <update id="publishSealed">
+    UPDATE crm_file_object SET object_key=#{objectKey},scan_status='CLEAN',last_error=NULL,version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND scan_status=#{expectedStatus}
+  </update>
+
+  <update id="updateScanStatus">
+    UPDATE crm_file_object SET scan_status=#{scanStatus},last_error=#{lastError},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND scan_status='SCANNING'
+  </update>
+</mapper>

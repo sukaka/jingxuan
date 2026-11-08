@@ -1,0 +1,13 @@
+**/.git
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/logs
+**/*.log
+tmp
+release
+infra/production/.env
+infra/production/runtime
+infra/production/initial-admin.txt
+infra/production/backups

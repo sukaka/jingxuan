@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.CustomerTransferMapper">
+
+  <resultMap id="TransferMap" type="com.whale.crm.customer.domain.CustomerTransfer">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="customerId" column="customer_id"/>
+    <result property="fromOwnerId" column="from_owner_id"/>
+    <result property="toOwnerId" column="to_owner_id"/>
+    <result property="fromTeamId" column="from_team_id"/>
+    <result property="toTeamId" column="to_team_id"/>
+    <result property="status" column="status"/>
+    <result property="requestedBy" column="requested_by"/>
+    <result property="reason" column="reason"/>
+    <result property="reviewedBy" column="reviewed_by"/>
+    <result property="reviewedAt" column="reviewed_at"/>
+    <result property="reviewReason" column="review_reason"/>
+    <result property="baseVersion" column="base_version"/>
+    <result property="effectiveAt" column="effective_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <sql id="transferColumns">
+    id, tenant_id, customer_id, from_owner_id, to_owner_id, from_team_id, to_team_id, status,
+    requested_by, reason, reviewed_by, reviewed_at, review_reason, base_version, effective_at,
+    created_at, updated_at, version
+  </sql>
+
+  <select id="selectById" resultMap="TransferMap">
+    SELECT <include refid="transferColumns"/>
+    FROM crm_customer_transfer
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <select id="selectByCustomerId" resultMap="TransferMap">
+    SELECT <include refid="transferColumns"/>
+    FROM crm_customer_transfer
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId}
+    ORDER BY id DESC
+  </select>
+
+  <select id="countPendingForCustomer" resultType="int">
+    SELECT COUNT(*) FROM crm_customer_transfer
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} AND status = 'PENDING'
+  </select>
+
+  <insert id="insertTransfer" parameterType="com.whale.crm.customer.domain.CustomerTransfer"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_customer_transfer (tenant_id, customer_id, from_owner_id, to_owner_id, from_team_id,
+                                       to_team_id, status, requested_by, reason, base_version)
+    VALUES (#{tenantId}, #{customerId}, #{fromOwnerId}, #{toOwnerId}, #{fromTeamId},
+            #{toTeamId}, #{status}, #{requestedBy}, #{reason}, #{baseVersion})
+  </insert>
+
+  <update id="updateStatus">
+    UPDATE crm_customer_transfer
+    SET status = #{toStatus}, reviewed_by = #{reviewedBy}, reviewed_at = #{reviewedAt},
+        review_reason = #{reviewReason}, effective_at = #{effectiveAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND status = #{fromStatus}
+  </update>
+
+  <select id="selectRowsByCustomerId"
+          resultType="com.whale.crm.customer.domain.CustomerTransferRepository$TransferRow">
+    SELECT t.id, t.customer_id, t.from_owner_id, fu.display_name AS from_owner_name,
+           t.to_owner_id, tu.display_name AS to_owner_name, t.from_team_id, t.to_team_id, t.status,
+           t.requested_by, ru.display_name AS requested_by_name, t.reason,
+           t.reviewed_by, vu.display_name AS reviewed_by_name, t.reviewed_at, t.review_reason,
+           t.base_version, t.effective_at, t.created_at, t.version
+    FROM crm_customer_transfer t
+    LEFT JOIN sys_user fu ON fu.tenant_id = t.tenant_id AND fu.id = t.from_owner_id
+    LEFT JOIN sys_user tu ON tu.tenant_id = t.tenant_id AND tu.id = t.to_owner_id
+    LEFT JOIN sys_user ru ON ru.tenant_id = t.tenant_id AND ru.id = t.requested_by
+    LEFT JOIN sys_user vu ON vu.tenant_id = t.tenant_id AND vu.id = t.reviewed_by
+    WHERE t.tenant_id = #{tenantId} AND t.customer_id = #{customerId}
+    ORDER BY t.id DESC
+  </select>
+
+</mapper>

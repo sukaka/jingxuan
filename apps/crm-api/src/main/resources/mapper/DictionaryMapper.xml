@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.platform.dictionary.infrastructure.mapper.DictionaryMapper">
+
+  <resultMap id="DictionaryTypeMap" type="com.whale.crm.platform.dictionary.domain.DictionaryType">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="dictCode" column="dict_code"/>
+    <result property="dictName" column="dict_name"/>
+    <result property="status" column="status"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <resultMap id="DictionaryItemMap" type="com.whale.crm.platform.dictionary.domain.DictionaryItem">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="dictTypeId" column="dict_type_id"/>
+    <result property="optionCode" column="option_code"/>
+    <result property="optionLabel" column="option_label"/>
+    <result property="sortNo" column="sort_no"/>
+    <result property="status" column="status"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <select id="selectActiveOptions" resultMap="DictionaryItemMap">
+    SELECT i.id, i.tenant_id, i.dict_type_id, i.option_code, i.option_label, i.sort_no, i.status,
+           i.created_at, i.updated_at, i.version
+    FROM sys_dictionary_item i
+    INNER JOIN sys_dictionary_type t
+            ON t.id = i.dict_type_id AND t.tenant_id = i.tenant_id
+    WHERE i.tenant_id = #{tenantId}
+      AND t.dict_code = #{dictCode}
+      AND t.status = 'ACTIVE'
+      AND i.status = 'ACTIVE'
+    ORDER BY i.sort_no ASC, i.id ASC
+  </select>
+
+  <select id="selectActiveOption" resultMap="DictionaryItemMap">
+    SELECT i.id, i.tenant_id, i.dict_type_id, i.option_code, i.option_label, i.sort_no, i.status,
+           i.created_at, i.updated_at, i.version
+    FROM sys_dictionary_item i
+    INNER JOIN sys_dictionary_type t
+            ON t.id = i.dict_type_id AND t.tenant_id = i.tenant_id
+    WHERE i.tenant_id = #{tenantId}
+      AND t.dict_code = #{dictCode}
+      AND i.option_code = #{optionCode}
+      AND t.status = 'ACTIVE'
+      AND i.status = 'ACTIVE'
+  </select>
+
+  <select id="selectTypes" resultMap="DictionaryTypeMap">
+    SELECT id, tenant_id, dict_code, dict_name, status, created_at, updated_at, version
+    FROM sys_dictionary_type
+    WHERE tenant_id = #{tenantId}
+    ORDER BY id ASC
+  </select>
+
+  <select id="selectAllItems" resultMap="DictionaryItemMap">
+    SELECT id, tenant_id, dict_type_id, option_code, option_label, sort_no, status,
+           created_at, updated_at, version
+    FROM sys_dictionary_item
+    WHERE tenant_id = #{tenantId}
+    ORDER BY dict_type_id ASC, sort_no ASC, id ASC
+  </select>
+
+  <select id="selectTypeByCode" resultMap="DictionaryTypeMap">
+    SELECT id, tenant_id, dict_code, dict_name, status, created_at, updated_at, version
+    FROM sys_dictionary_type
+    WHERE tenant_id = #{tenantId} AND dict_code = #{dictCode}
+  </select>
+
+  <select id="selectItemById" resultMap="DictionaryItemMap">
+    SELECT id, tenant_id, dict_type_id, option_code, option_label, sort_no, status,
+           created_at, updated_at, version
+    FROM sys_dictionary_item
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <select id="countItemByCode" resultType="int">
+    SELECT COUNT(*) FROM sys_dictionary_item
+    WHERE tenant_id = #{tenantId} AND dict_type_id = #{dictTypeId} AND option_code = #{optionCode}
+  </select>
+
+  <insert id="insertItem" parameterType="com.whale.crm.platform.dictionary.domain.DictionaryItem"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO sys_dictionary_item (tenant_id, dict_type_id, option_code, option_label, sort_no, status)
+    VALUES (#{tenantId}, #{dictTypeId}, #{optionCode}, #{optionLabel}, #{sortNo}, #{status})
+  </insert>
+
+  <update id="updateItem">
+    UPDATE sys_dictionary_item
+    SET option_label = #{optionLabel}, sort_no = #{sortNo}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version}
+  </update>
+
+  <update id="updateItemStatus">
+    UPDATE sys_dictionary_item
+    SET status = #{toStatus}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND status = #{fromStatus}
+  </update>
+
+</mapper>

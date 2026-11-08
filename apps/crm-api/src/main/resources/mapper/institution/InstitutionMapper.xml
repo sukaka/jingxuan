@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.institution.infrastructure.mapper.InstitutionMapper">
+  <sql id="profileColumns">id,institution_no AS institutionNo,full_name AS fullName,short_name AS shortName,city_code AS cityCode,business_type_code AS businessTypeCode,ownership_code AS ownershipCode,grade_code AS gradeCode,address,contact_name AS contactName,contact_phone_cipher AS contactPhoneCipher,status,settlement_type AS settlementType,online_rate AS onlineRate,offline_rate AS offlineRate,platform_rate AS platformRate,other_rate_rule AS otherRateRule,charges_fee AS chargesFee,deposit_fen AS depositFen,guarantee_roi AS guaranteeRoi,roi_terms AS roiTerms,settlement_name AS settlementName,bank_name_cipher AS bankNameCipher,bank_account_cipher AS bankAccountCipher,tax_id_cipher AS taxIdCipher,introduction,created_at AS createdAt,version</sql>
+  <sql id="contractColumns">id,institution_id AS institutionId,contract_no AS contractNo,version_no AS versionNo,title,contract_type AS contractType,start_date AS startDate,end_date AS endDate,file_id AS fileId,amount_fen AS amountFen,notes,status,previous_contract_id AS previousContractId,created_by AS createdBy,created_at AS createdAt,version</sql>
+  <sql id="qualificationColumns">id,institution_id AS institutionId,qualification_type AS qualificationType,title,license_no_cipher AS licenseNoCipher,file_id AS fileId,valid_from AS validFrom,valid_to AS validTo,status,created_by AS createdBy,reviewed_by AS reviewedBy,reviewed_at AS reviewedAt,created_at AS createdAt,version</sql>
+  <sql id="changeColumns">id,institution_id AS institutionId,change_type AS changeType,field_code AS fieldCode,target_id AS targetId,base_version AS baseVersion,target_version AS targetVersion,before_cipher AS beforeCipher,after_cipher AS afterCipher,before_masked AS beforeMasked,after_masked AS afterMasked,reason,evidence_file_id AS evidenceFileId,status,current_step AS currentStep,requested_by AS requestedBy,requested_at AS requestedAt,completed_at AS completedAt,active_target AS activeTarget,created_at AS createdAt,version</sql>
+  <sql id="stepColumns">id,change_request_id AS changeRequestId,sequence_no AS sequenceNo,step_code AS stepCode,status,reviewer_user_id AS reviewerUserId,reviewed_at AS reviewedAt,comment,created_at AS createdAt</sql>
+  <sql id="profileScope">
+    <if test="scope.scopeType == 'NONE'">AND 1=0</if>
+    <if test="scope.scopeType == 'INSTITUTION'">
+      <choose><when test="scope.institutionIds != null and scope.institutionIds.size() > 0">AND id IN <foreach collection="scope.institutionIds" item="id" open="(" separator="," close=")">#{id}</foreach></when><otherwise>AND 1=0</otherwise></choose>
+    </if>
+  </sql>
+  <sql id="documentScope">
+    <if test="scope.scopeType == 'NONE'">AND 1=0</if>
+    <if test="scope.scopeType == 'INSTITUTION'">
+      <choose><when test="scope.institutionIds != null and scope.institutionIds.size() > 0">AND institution_id IN <foreach collection="scope.institutionIds" item="id" open="(" separator="," close=")">#{id}</foreach></when><otherwise>AND 1=0</otherwise></choose>
+    </if>
+  </sql>
+
+  <insert id="insertProfile">
+    INSERT INTO crm_institution (tenant_id,institution_no,full_name,short_name,city_code,business_type_code,ownership_code,grade_code,address,contact_name,contact_phone_cipher,status,settlement_type,online_rate,offline_rate,platform_rate,other_rate_rule,charges_fee,deposit_fen,guarantee_roi,roi_terms,settlement_name,bank_name_cipher,bank_account_cipher,tax_id_cipher,introduction)
+    VALUES (#{tenantId},#{entity.institutionNo},#{entity.fullName},#{entity.shortName},#{entity.cityCode},#{entity.businessTypeCode},#{entity.ownershipCode},#{entity.gradeCode},#{entity.address},#{entity.contactName},#{entity.contactPhoneCipher},#{entity.status},#{entity.settlementType},#{entity.onlineRate},#{entity.offlineRate},#{entity.platformRate},#{entity.otherRateRule},#{entity.chargesFee},#{entity.depositFen},#{entity.guaranteeRoi},#{entity.roiTerms},#{entity.settlementName},#{entity.bankNameCipher},#{entity.bankAccountCipher},#{entity.taxIdCipher},#{entity.introduction})
+  </insert>
+  <select id="selectProfileByNo" resultType="com.whale.crm.institution.domain.InstitutionProfile">
+    SELECT <include refid="profileColumns"/> FROM crm_institution WHERE tenant_id=#{tenantId} AND institution_no=#{institutionNo} AND archived=0
+  </select>
+  <select id="selectProfile" resultType="com.whale.crm.institution.domain.InstitutionProfile">
+    SELECT <include refid="profileColumns"/> FROM crm_institution WHERE tenant_id=#{tenantId} AND id=#{id} AND archived=0
+  </select>
+  <select id="selectProfileForUpdate" resultType="com.whale.crm.institution.domain.InstitutionProfile">
+    SELECT <include refid="profileColumns"/> FROM crm_institution WHERE tenant_id=#{tenantId} AND id=#{id} AND archived=0 FOR UPDATE
+  </select>
+  <select id="searchProfiles" resultType="com.whale.crm.institution.domain.InstitutionProfile">
+    SELECT <include refid="profileColumns"/> FROM crm_institution WHERE tenant_id=#{tenantId} AND archived=0
+    <include refid="profileScope"/>
+    <if test="keyword != null and keyword != ''">AND (institution_no LIKE CONCAT('%',#{keyword},'%') OR full_name LIKE CONCAT('%',#{keyword},'%') OR short_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <include refid="merchantProfileFilter"/>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    <if test="cityCode != null and cityCode != ''">AND city_code=#{cityCode}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <sql id="merchantProfileFilter">
+    <if test="merchantKeyword != null and merchantKeyword != ''">
+      AND (institution_no LIKE CONCAT('%',#{merchantKeyword},'%')
+        OR full_name LIKE CONCAT('%',#{merchantKeyword},'%')
+        OR short_name LIKE CONCAT('%',#{merchantKeyword},'%')
+        OR city_code LIKE CONCAT('%',#{merchantKeyword},'%')
+        OR introduction LIKE CONCAT('%',#{merchantKeyword},'%')
+        OR EXISTS (SELECT 1 FROM crm_institution_merchant_resource mr
+          WHERE mr.tenant_id=crm_institution.tenant_id AND mr.institution_id=crm_institution.id
+            AND mr.status='PUBLISHED'
+            AND (mr.title LIKE CONCAT('%',#{merchantKeyword},'%')
+              OR mr.subtitle LIKE CONCAT('%',#{merchantKeyword},'%')
+              OR mr.description LIKE CONCAT('%',#{merchantKeyword},'%'))))
+    </if>
+  </sql>
+  <select id="countProfiles" resultType="long">
+    SELECT COUNT(*) FROM crm_institution WHERE tenant_id=#{tenantId} AND archived=0
+    <include refid="profileScope"/>
+    <if test="keyword != null and keyword != ''">AND (institution_no LIKE CONCAT('%',#{keyword},'%') OR full_name LIKE CONCAT('%',#{keyword},'%') OR short_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <include refid="merchantProfileFilter"/>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    <if test="cityCode != null and cityCode != ''">AND city_code=#{cityCode}</if>
+  </select>
+  <update id="updateProfileOrdinary">
+    UPDATE crm_institution SET short_name=#{values.shortName},city_code=#{values.cityCode},address=#{values.address},
+      contact_name=#{values.contactName},contact_phone_cipher=#{values.contactPhoneCipher},introduction=#{values.introduction},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND archived=0
+  </update>
+  <update id="updateProfileStatus">
+    UPDATE crm_institution SET status=#{toStatus},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status=#{fromStatus} AND archived=0
+  </update>
+  <update id="applyProfileField">
+    UPDATE crm_institution SET
+    <choose>
+      <when test="fieldCode == 'fullName'">full_name=#{value}</when>
+      <when test="fieldCode == 'businessTypeCode'">business_type_code=#{value}</when>
+      <when test="fieldCode == 'ownershipCode'">ownership_code=#{value}</when>
+      <when test="fieldCode == 'gradeCode'">grade_code=#{value}</when>
+      <when test="fieldCode == 'bankName'">bank_name_cipher=#{value}</when>
+      <when test="fieldCode == 'bankAccount'">bank_account_cipher=#{value}</when>
+      <when test="fieldCode == 'taxId'">tax_id_cipher=#{value}</when>
+      <when test="fieldCode == 'settlementName'">settlement_name=#{value}</when>
+      <when test="fieldCode == 'onlineRate'">online_rate=#{value}</when>
+      <when test="fieldCode == 'offlineRate'">offline_rate=#{value}</when>
+      <when test="fieldCode == 'platformRate'">platform_rate=#{value}</when>
+      <when test="fieldCode == 'otherRateRule'">other_rate_rule=#{value}</when>
+      <when test="fieldCode == 'chargesFee'">charges_fee=#{value}</when>
+      <when test="fieldCode == 'depositFen'">deposit_fen=#{value}</when>
+      <when test="fieldCode == 'guaranteeRoi'">guarantee_roi=#{value}</when>
+      <when test="fieldCode == 'roiTerms'">roi_terms=#{value}</when>
+      <when test="fieldCode == 'settlementType'">settlement_type=#{value}</when>
+      <otherwise>version=version</otherwise>
+    </choose>
+    ,version=version+1 WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND archived=0
+  </update>
+  <update id="touchInstitution">
+    UPDATE crm_institution SET version=version+1 WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND archived=0
+  </update>
+
+  <insert id="insertContract">
+    INSERT INTO crm_institution_contract (tenant_id,institution_id,contract_no,version_no,title,contract_type,start_date,end_date,file_id,amount_fen,notes,status,previous_contract_id,created_by)
+    VALUES (#{tenantId},#{entity.institutionId},#{entity.contractNo},#{entity.versionNo},#{entity.title},#{entity.contractType},#{entity.startDate},#{entity.endDate},#{entity.fileId},#{entity.amountFen},#{entity.notes},#{entity.status},#{entity.previousContractId},#{entity.createdBy})
+  </insert>
+  <select id="selectContractByKey" resultType="com.whale.crm.institution.domain.InstitutionContract">
+    SELECT <include refid="contractColumns"/> FROM crm_institution_contract WHERE tenant_id=#{tenantId} AND contract_no=#{contractNo} AND version_no=#{versionNo}
+  </select>
+  <select id="selectContract" resultType="com.whale.crm.institution.domain.InstitutionContract">
+    SELECT <include refid="contractColumns"/> FROM crm_institution_contract WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectContractForUpdate" resultType="com.whale.crm.institution.domain.InstitutionContract">
+    SELECT <include refid="contractColumns"/> FROM crm_institution_contract WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="searchContracts" resultType="com.whale.crm.institution.domain.InstitutionContract">
+    SELECT <include refid="contractColumns"/> FROM crm_institution_contract WHERE tenant_id=#{tenantId} AND institution_id=#{institutionId}
+    <include refid="documentScope"/>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY contract_no,id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countContracts" resultType="long">
+    SELECT COUNT(*) FROM crm_institution_contract WHERE tenant_id=#{tenantId} AND institution_id=#{institutionId}
+    <include refid="documentScope"/>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+  <update id="updateContractStatus">
+    UPDATE crm_institution_contract SET status=#{toStatus},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status=#{fromStatus}
+  </update>
+
+  <insert id="insertQualification">
+    INSERT INTO crm_institution_qualification (tenant_id,institution_id,qualification_type,title,license_no_cipher,file_id,valid_from,valid_to,status,created_by)
+    VALUES (#{tenantId},#{entity.institutionId},#{entity.qualificationType},#{entity.title},#{entity.licenseNoCipher},#{entity.fileId},#{entity.validFrom},#{entity.validTo},#{entity.status},#{entity.createdBy})
+  </insert>
+  <select id="selectQualification" resultType="com.whale.crm.institution.domain.InstitutionQualification">
+    SELECT <include refid="qualificationColumns"/> FROM crm_institution_qualification WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectQualificationForUpdate" resultType="com.whale.crm.institution.domain.InstitutionQualification">
+    SELECT <include refid="qualificationColumns"/> FROM crm_institution_qualification WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectLatestQualification" resultType="com.whale.crm.institution.domain.InstitutionQualification">
+    SELECT <include refid="qualificationColumns"/> FROM crm_institution_qualification
+    WHERE tenant_id=#{tenantId} AND institution_id=#{institutionId} AND file_id=#{fileId} AND title=#{title}
+    ORDER BY id DESC LIMIT 1
+  </select>
+  <select id="searchQualifications" resultType="com.whale.crm.institution.domain.InstitutionQualification">
+    SELECT <include refid="qualificationColumns"/> FROM crm_institution_qualification WHERE tenant_id=#{tenantId} AND institution_id=#{institutionId}
+    <include refid="documentScope"/>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countQualifications" resultType="long">
+    SELECT COUNT(*) FROM crm_institution_qualification WHERE tenant_id=#{tenantId} AND institution_id=#{institutionId}
+    <include refid="documentScope"/>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+  <update id="updateQualificationStatus">
+    UPDATE crm_institution_qualification SET status=#{toStatus},reviewed_by=#{reviewerId},reviewed_at=#{reviewedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status=#{fromStatus}
+  </update>
+
+  <insert id="insertChange">
+    INSERT INTO crm_profile_change_request (tenant_id,institution_id,change_type,field_code,target_id,base_version,target_version,before_cipher,after_cipher,before_masked,after_masked,reason,evidence_file_id,status,current_step,requested_by,requested_at,active_target)
+    VALUES (#{tenantId},#{entity.institutionId},#{entity.changeType},#{entity.fieldCode},#{entity.targetId},#{entity.baseVersion},#{entity.targetVersion},#{entity.beforeCipher},#{entity.afterCipher},#{entity.beforeMasked},#{entity.afterMasked},#{entity.reason},#{entity.evidenceFileId},#{entity.status},#{entity.currentStep},#{entity.requestedBy},#{entity.requestedAt},#{entity.activeTarget})
+  </insert>
+  <select id="selectChange" resultType="com.whale.crm.institution.domain.ProfileChangeRequest">
+    SELECT <include refid="changeColumns"/> FROM crm_profile_change_request WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectChangeForUpdate" resultType="com.whale.crm.institution.domain.ProfileChangeRequest">
+    SELECT <include refid="changeColumns"/> FROM crm_profile_change_request WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectActiveChange" resultType="com.whale.crm.institution.domain.ProfileChangeRequest">
+    SELECT <include refid="changeColumns"/> FROM crm_profile_change_request WHERE tenant_id=#{tenantId} AND active_target=#{activeTarget}
+  </select>
+  <select id="searchChanges" resultType="com.whale.crm.institution.domain.ProfileChangeRequest">
+    SELECT <include refid="changeColumns"/> FROM crm_profile_change_request WHERE tenant_id=#{tenantId}
+    <include refid="documentScope"/>
+    <if test="institutionId != null">AND institution_id=#{institutionId}</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countChanges" resultType="long">
+    SELECT COUNT(*) FROM crm_profile_change_request WHERE tenant_id=#{tenantId}
+    <include refid="documentScope"/>
+    <if test="institutionId != null">AND institution_id=#{institutionId}</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+  <update id="updateChangeStatus">
+    UPDATE crm_profile_change_request SET status=#{toStatus},current_step=#{currentStep},completed_at=#{completedAt},active_target=#{activeTarget},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status=#{fromStatus}
+  </update>
+  <update id="rebaseChange">
+    UPDATE crm_profile_change_request SET base_version=#{baseVersion},target_version=#{targetVersion},status='PENDING_REVIEW',current_step=#{currentStep},active_target=#{activeTarget},completed_at=NULL,version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status='CONFLICT_REVALIDATE'
+  </update>
+  <insert id="insertStep">
+    INSERT INTO crm_profile_change_step (tenant_id,change_request_id,sequence_no,step_code,status,reviewer_user_id,reviewed_at,comment)
+    VALUES (#{tenantId},#{entity.changeRequestId},#{entity.sequenceNo},#{entity.stepCode},#{entity.status},#{entity.reviewerUserId},#{entity.reviewedAt},#{entity.comment})
+  </insert>
+  <select id="selectSteps" resultType="com.whale.crm.institution.domain.ProfileChangeStep">
+    SELECT <include refid="stepColumns"/> FROM crm_profile_change_step WHERE tenant_id=#{tenantId} AND change_request_id=#{changeRequestId} ORDER BY sequence_no,id
+  </select>
+</mapper>

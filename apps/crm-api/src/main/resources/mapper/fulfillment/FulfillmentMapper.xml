@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.fulfillment.infrastructure.mapper.FulfillmentMapper">
+  <sql id="appointmentColumns">id,appointment_no AS appointmentNo,customer_id AS customerId,institution_id AS institutionId,owner_staff_id AS ownerStaffId,team_id AS teamId,scheduled_at AS scheduledAt,remark,status,created_by AS createdBy,created_at AS createdAt,version</sql>
+  <sql id="appointmentItemColumns">id,appointment_id AS appointmentId,entitlement_id AS entitlementId,project_id AS projectId,planned_count AS plannedCount,created_at AS createdAt,version</sql>
+  <sql id="appointmentHistoryColumns">id,appointment_id AS appointmentId,from_status AS fromStatus,to_status AS toStatus,actor_user_id AS actorUserId,reason,created_at AS createdAt</sql>
+  <sql id="redemptionColumns">id,appointment_id AS appointmentId,customer_id AS customerId,institution_id AS institutionId,owner_staff_id AS ownerStaffId,team_id AS teamId,service_at AS serviceAt,evidence_ref AS evidenceRef,voucher_file_id AS voucherFileId,status,settlement_status AS settlementStatus,idempotency_key AS idempotencyKey,posted_by AS postedBy,posted_at AS postedAt,created_at AS createdAt,version</sql>
+  <sql id="redemptionLineColumns">id,redemption_id AS redemptionId,appointment_item_id AS appointmentItemId,entitlement_id AS entitlementId,project_id AS projectId,count,created_at AS createdAt</sql>
+  <sql id="postedRedemptionLineColumns">l.id,l.redemption_id AS redemptionId,l.appointment_item_id AS appointmentItemId,l.entitlement_id AS entitlementId,l.project_id AS projectId,l.count,l.created_at AS createdAt</sql>
+  <sql id="redemptionHistoryColumns">id,redemption_id AS redemptionId,from_status AS fromStatus,to_status AS toStatus,actor_user_id AS actorUserId,reason,created_at AS createdAt</sql>
+  <sql id="reversalColumns">id,redemption_id AS redemptionId,customer_id AS customerId,institution_id AS institutionId,owner_staff_id AS ownerStaffId,team_id AS teamId,status,reason,requested_by AS requestedBy,requested_at AS requestedAt,reviewed_by AS reviewedBy,reviewed_at AS reviewedAt,review_reason AS reviewReason,request_idempotency_key AS requestIdempotencyKey,review_idempotency_key AS reviewIdempotencyKey,active_redemption_id AS activeRedemptionId,created_at AS createdAt,version</sql>
+  <sql id="reversalHistoryColumns">id,reversal_id AS reversalId,from_status AS fromStatus,to_status AS toStatus,actor_user_id AS actorUserId,reason,created_at AS createdAt</sql>
+  <sql id="scopeCondition">
+    <if test="scope.scopeType == 'NONE'">AND 1=0</if>
+    <if test="scope.scopeType == 'SELF'">AND owner_staff_id=#{scope.selfId}</if>
+    <if test="scope.scopeType == 'TEAM'">
+      <choose>
+        <when test="scope.teamIds != null and scope.teamIds.size() > 0">AND (owner_staff_id=#{scope.selfId} OR team_id IN <foreach collection="scope.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)</when>
+        <otherwise>AND owner_staff_id=#{scope.selfId}</otherwise>
+      </choose>
+    </if>
+    <if test="scope.scopeType == 'INSTITUTION'">
+      <choose>
+        <when test="scope.institutionIds != null and scope.institutionIds.size() > 0">AND institution_id IN <foreach collection="scope.institutionIds" item="institutionId" open="(" separator="," close=")">#{institutionId}</foreach></when>
+        <otherwise>AND 1=0</otherwise>
+      </choose>
+    </if>
+  </sql>
+
+  <insert id="insertAppointment">
+    INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,owner_staff_id,team_id,scheduled_at,remark,status,created_by)
+    VALUES (#{tenantId},#{entity.appointmentNo},#{entity.customerId},#{entity.institutionId},#{entity.ownerStaffId},#{entity.teamId},#{entity.scheduledAt},#{entity.remark},#{entity.status},#{entity.createdBy})
+  </insert>
+  <select id="selectAppointmentByNo" resultType="com.whale.crm.fulfillment.domain.Appointment">
+    SELECT <include refid="appointmentColumns"/> FROM crm_appointment WHERE tenant_id=#{tenantId} AND appointment_no=#{appointmentNo}
+  </select>
+  <update id="backfillAppointmentNo">
+    UPDATE crm_appointment SET appointment_no=#{appointmentNo} WHERE tenant_id=#{tenantId} AND id=#{id}
+  </update>
+  <select id="selectAppointment" resultType="com.whale.crm.fulfillment.domain.Appointment">
+    SELECT <include refid="appointmentColumns"/> FROM crm_appointment WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectAppointmentForUpdate" resultType="com.whale.crm.fulfillment.domain.Appointment">
+    SELECT <include refid="appointmentColumns"/> FROM crm_appointment WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="searchAppointments" resultType="com.whale.crm.fulfillment.domain.Appointment">
+    SELECT <include refid="appointmentColumns"/> FROM crm_appointment WHERE tenant_id=#{tenantId}
+    <include refid="scopeCondition"/>
+    <if test="customerId != null">AND customer_id=#{customerId}</if>
+    <if test="institutionId != null">AND institution_id=#{institutionId}</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countAppointments" resultType="long">
+    SELECT COUNT(*) FROM crm_appointment WHERE tenant_id=#{tenantId}
+    <include refid="scopeCondition"/>
+    <if test="customerId != null">AND customer_id=#{customerId}</if>
+    <if test="institutionId != null">AND institution_id=#{institutionId}</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+  <update id="updateAppointmentStatus">
+    UPDATE crm_appointment SET status=#{toStatus},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status=#{expectedStatus}
+  </update>
+  <insert id="insertAppointmentItem">
+    INSERT INTO crm_appointment_item (tenant_id,appointment_id,entitlement_id,project_id,planned_count)
+    VALUES (#{tenantId},#{entity.appointmentId},#{entity.entitlementId},#{entity.projectId},#{entity.plannedCount})
+  </insert>
+  <select id="selectAppointmentItems" resultType="com.whale.crm.fulfillment.domain.AppointmentItem">
+    SELECT <include refid="appointmentItemColumns"/> FROM crm_appointment_item WHERE tenant_id=#{tenantId} AND appointment_id=#{appointmentId} ORDER BY id
+  </select>
+  <insert id="insertAppointmentHistory">
+    INSERT INTO crm_appointment_history (tenant_id,appointment_id,from_status,to_status,actor_user_id,reason)
+    VALUES (#{tenantId},#{entity.appointmentId},#{entity.fromStatus},#{entity.toStatus},#{entity.actorUserId},#{entity.reason})
+  </insert>
+  <select id="selectAppointmentHistory" resultType="com.whale.crm.fulfillment.domain.AppointmentHistory">
+    SELECT <include refid="appointmentHistoryColumns"/> FROM crm_appointment_history WHERE tenant_id=#{tenantId} AND appointment_id=#{appointmentId} ORDER BY id
+  </select>
+
+  <insert id="insertRedemption">
+    INSERT INTO crm_redemption (tenant_id,appointment_id,customer_id,institution_id,owner_staff_id,team_id,service_at,evidence_ref,voucher_file_id,status,settlement_status,idempotency_key,posted_by,posted_at)
+    VALUES (#{tenantId},#{entity.appointmentId},#{entity.customerId},#{entity.institutionId},#{entity.ownerStaffId},#{entity.teamId},#{entity.serviceAt},#{entity.evidenceRef},#{entity.voucherFileId},#{entity.status},#{entity.settlementStatus},#{entity.idempotencyKey},#{entity.postedBy},#{entity.postedAt})
+  </insert>
+  <select id="selectRedemptionByKey" resultType="com.whale.crm.fulfillment.domain.Redemption">
+    SELECT <include refid="redemptionColumns"/> FROM crm_redemption WHERE tenant_id=#{tenantId} AND idempotency_key=#{idempotencyKey}
+  </select>
+  <select id="selectRedemption" resultType="com.whale.crm.fulfillment.domain.Redemption">
+    SELECT <include refid="redemptionColumns"/> FROM crm_redemption WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectRedemptionForUpdate" resultType="com.whale.crm.fulfillment.domain.Redemption">
+    SELECT <include refid="redemptionColumns"/> FROM crm_redemption WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectRedemptionsByAppointment" resultType="com.whale.crm.fulfillment.domain.Redemption">
+    SELECT <include refid="redemptionColumns"/> FROM crm_redemption WHERE tenant_id=#{tenantId} AND appointment_id=#{appointmentId} ORDER BY id
+  </select>
+  <select id="searchRedemptions" resultType="com.whale.crm.fulfillment.domain.Redemption">
+    SELECT DISTINCT crm_redemption.id,crm_redemption.appointment_id AS appointmentId,
+      crm_redemption.customer_id AS customerId,crm_redemption.institution_id AS institutionId,
+      crm_redemption.owner_staff_id AS ownerStaffId,crm_redemption.team_id AS teamId,
+      crm_redemption.service_at AS serviceAt,crm_redemption.evidence_ref AS evidenceRef,
+      crm_redemption.voucher_file_id AS voucherFileId,crm_redemption.status,
+      crm_redemption.settlement_status AS settlementStatus,crm_redemption.idempotency_key AS idempotencyKey,
+      crm_redemption.posted_by AS postedBy,crm_redemption.posted_at AS postedAt,
+      crm_redemption.created_at AS createdAt,crm_redemption.version
+    FROM crm_redemption
+    <if test="projectId != null">
+      INNER JOIN crm_redemption_line l ON l.tenant_id=crm_redemption.tenant_id
+        AND l.redemption_id=crm_redemption.id AND l.project_id=#{projectId}
+    </if>
+    WHERE crm_redemption.tenant_id=#{tenantId}
+    <include refid="scopeCondition"/>
+    <if test="customerId != null">AND crm_redemption.customer_id=#{customerId}</if>
+    <if test="institutionId != null">AND crm_redemption.institution_id=#{institutionId}</if>
+    <if test="status != null and status != ''">AND crm_redemption.status=#{status}</if>
+    ORDER BY crm_redemption.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countRedemptions" resultType="long">
+    SELECT COUNT(DISTINCT crm_redemption.id) FROM crm_redemption
+    <if test="projectId != null">
+      INNER JOIN crm_redemption_line l ON l.tenant_id=crm_redemption.tenant_id
+        AND l.redemption_id=crm_redemption.id AND l.project_id=#{projectId}
+    </if>
+    WHERE crm_redemption.tenant_id=#{tenantId}
+    <include refid="scopeCondition"/>
+    <if test="customerId != null">AND crm_redemption.customer_id=#{customerId}</if>
+    <if test="institutionId != null">AND crm_redemption.institution_id=#{institutionId}</if>
+    <if test="status != null and status != ''">AND crm_redemption.status=#{status}</if>
+  </select>
+  <insert id="insertRedemptionLine">
+    INSERT INTO crm_redemption_line (tenant_id,redemption_id,appointment_item_id,entitlement_id,project_id,count)
+    VALUES (#{tenantId},#{entity.redemptionId},#{entity.appointmentItemId},#{entity.entitlementId},#{entity.projectId},#{entity.count})
+  </insert>
+  <select id="selectRedemptionLines" resultType="com.whale.crm.fulfillment.domain.RedemptionLine">
+    SELECT <include refid="redemptionLineColumns"/> FROM crm_redemption_line WHERE tenant_id=#{tenantId} AND redemption_id=#{redemptionId} ORDER BY id
+  </select>
+  <select id="selectPostedLinesByAppointment" resultType="com.whale.crm.fulfillment.domain.RedemptionLine">
+    SELECT <include refid="postedRedemptionLineColumns"/> FROM crm_redemption_line l
+    INNER JOIN crm_redemption r ON r.tenant_id=l.tenant_id AND r.id=l.redemption_id
+    WHERE l.tenant_id=#{tenantId} AND r.appointment_id=#{appointmentId} AND r.status='POSTED' ORDER BY l.id
+  </select>
+  <insert id="insertRedemptionHistory">
+    INSERT INTO crm_redemption_status_history (tenant_id,redemption_id,from_status,to_status,actor_user_id,reason)
+    VALUES (#{tenantId},#{entity.redemptionId},#{entity.fromStatus},#{entity.toStatus},#{entity.actorUserId},#{entity.reason})
+  </insert>
+  <select id="selectRedemptionHistory" resultType="com.whale.crm.fulfillment.domain.RedemptionStatusHistory">
+    SELECT <include refid="redemptionHistoryColumns"/> FROM crm_redemption_status_history WHERE tenant_id=#{tenantId} AND redemption_id=#{redemptionId} ORDER BY id
+  </select>
+
+  <insert id="insertReversal">
+    INSERT INTO crm_redemption_reversal (tenant_id,redemption_id,customer_id,institution_id,owner_staff_id,team_id,status,reason,requested_by,requested_at,request_idempotency_key,active_redemption_id)
+    VALUES (#{tenantId},#{entity.redemptionId},#{entity.customerId},#{entity.institutionId},#{entity.ownerStaffId},#{entity.teamId},#{entity.status},#{entity.reason},#{entity.requestedBy},#{entity.requestedAt},#{entity.requestIdempotencyKey},#{entity.activeRedemptionId})
+  </insert>
+  <select id="selectReversalByRequestKey" resultType="com.whale.crm.fulfillment.domain.RedemptionReversal">
+    SELECT <include refid="reversalColumns"/> FROM crm_redemption_reversal WHERE tenant_id=#{tenantId} AND request_idempotency_key=#{requestKey}
+  </select>
+  <select id="selectReversal" resultType="com.whale.crm.fulfillment.domain.RedemptionReversal">
+    SELECT <include refid="reversalColumns"/> FROM crm_redemption_reversal WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectReversalForUpdate" resultType="com.whale.crm.fulfillment.domain.RedemptionReversal">
+    SELECT <include refid="reversalColumns"/> FROM crm_redemption_reversal WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectActiveReversalByRedemption" resultType="com.whale.crm.fulfillment.domain.RedemptionReversal">
+    SELECT <include refid="reversalColumns"/> FROM crm_redemption_reversal WHERE tenant_id=#{tenantId} AND active_redemption_id=#{redemptionId}
+  </select>
+  <select id="searchReversals" resultType="com.whale.crm.fulfillment.domain.RedemptionReversal">
+    SELECT <include refid="reversalColumns"/> FROM crm_redemption_reversal WHERE tenant_id=#{tenantId}
+    <include refid="scopeCondition"/>
+    <if test="customerId != null">AND customer_id=#{customerId}</if>
+    <if test="institutionId != null">AND institution_id=#{institutionId}</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countReversals" resultType="long">
+    SELECT COUNT(*) FROM crm_redemption_reversal WHERE tenant_id=#{tenantId}
+    <include refid="scopeCondition"/>
+    <if test="customerId != null">AND customer_id=#{customerId}</if>
+    <if test="institutionId != null">AND institution_id=#{institutionId}</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+  <update id="updateReversalStatus">
+    UPDATE crm_redemption_reversal
+    SET status=#{toStatus},reviewed_by=#{reviewedBy},reviewed_at=#{reviewedAt},review_reason=#{reviewReason},
+        review_idempotency_key=#{reviewKey},active_redemption_id=#{activeRedemptionId},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status=#{expectedStatus}
+  </update>
+  <insert id="insertReversalHistory">
+    INSERT INTO crm_redemption_reversal_history (tenant_id,reversal_id,from_status,to_status,actor_user_id,reason)
+    VALUES (#{tenantId},#{entity.reversalId},#{entity.fromStatus},#{entity.toStatus},#{entity.actorUserId},#{entity.reason})
+  </insert>
+  <select id="selectReversalHistory" resultType="com.whale.crm.fulfillment.domain.RedemptionReversalHistory">
+    SELECT <include refid="reversalHistoryColumns"/> FROM crm_redemption_reversal_history WHERE tenant_id=#{tenantId} AND reversal_id=#{reversalId} ORDER BY id
+  </select>
+</mapper>

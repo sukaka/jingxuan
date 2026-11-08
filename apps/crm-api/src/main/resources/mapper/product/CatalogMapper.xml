@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.product.infrastructure.mapper.CatalogMapper">
+
+  <sql id="projectColumns">id, project_code AS projectCode, project_name AS projectName, category_code AS categoryCode, list_price_fen AS listPriceFen, status, created_at AS createdAt, version</sql>
+  <sql id="packageColumns">id, package_code AS packageCode, package_name AS packageName, status, created_at AS createdAt, version</sql>
+  <sql id="versionColumns">id, package_id AS packageId, version_no AS versionNo, selection_mode AS selectionMode, choice_count AS choiceCount, selection_rules AS selectionRules, status, created_at AS createdAt, version</sql>
+  <sql id="projectItemColumns">pp.id, pp.package_version_id AS packageVersionId, pp.project_id AS projectId, p.project_code AS projectCode, p.project_name AS projectName, p.category_code AS categoryCode, p.list_price_fen AS listPriceFen, p.status AS projectStatus, pp.grant_count AS grantCount, pp.selection_weight AS selectionWeight, pp.allocation_price_fen AS allocationPriceFen, pp.option_group AS optionGroup, pp.version</sql>
+  <sql id="skuColumns">s.id, s.sku_code AS skuCode, s.package_version_id AS packageVersionId, p.id AS packageId, p.package_name AS packageName, pv.version_no AS versionNo, pv.selection_mode AS selectionMode, s.spec_name AS specName, s.sale_price_fen AS salePriceFen, s.status, s.on_sale_at AS onSaleAt, s.off_sale_at AS offSaleAt, s.created_at AS createdAt, s.version</sql>
+  <sql id="skuFrom">FROM crm_sku s INNER JOIN crm_package_version pv ON pv.tenant_id=s.tenant_id AND pv.id=s.package_version_id INNER JOIN crm_package p ON p.tenant_id=pv.tenant_id AND p.id=pv.package_id</sql>
+  <sql id="institutionColumns">id, institution_no AS institutionNo, full_name AS fullName, short_name AS shortName, city_code AS cityCode, status, version</sql>
+
+  <select id="searchProjects" resultType="com.whale.crm.product.domain.Project">
+    SELECT <include refid="projectColumns"/> FROM crm_project
+    WHERE tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (project_code LIKE CONCAT('%',#{keyword},'%') OR project_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countProjects" resultType="long">
+    SELECT COUNT(*) FROM crm_project WHERE tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (project_code LIKE CONCAT('%',#{keyword},'%') OR project_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+  <select id="selectProject" resultType="com.whale.crm.product.domain.Project">
+    SELECT <include refid="projectColumns"/> FROM crm_project WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectProjectByCode" resultType="com.whale.crm.product.domain.Project">
+    SELECT <include refid="projectColumns"/> FROM crm_project WHERE tenant_id=#{tenantId} AND project_code=#{code}
+  </select>
+  <insert id="insertProject">
+    INSERT INTO crm_project (tenant_id,project_code,project_name,category_code,list_price_fen,status)
+    VALUES (#{tenantId},#{entity.projectCode},#{entity.projectName},#{entity.categoryCode},#{entity.listPriceFen},#{entity.status})
+  </insert>
+  <update id="updateProject">
+    UPDATE crm_project SET project_name=#{entity.projectName},category_code=#{entity.categoryCode},list_price_fen=#{entity.listPriceFen},status=#{entity.status},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version}
+  </update>
+
+  <select id="searchPackages" resultType="com.whale.crm.product.domain.ProductPackage">
+    SELECT <include refid="packageColumns"/> FROM crm_package
+    WHERE tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (package_code LIKE CONCAT('%',#{keyword},'%') OR package_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countPackages" resultType="long">
+    SELECT COUNT(*) FROM crm_package WHERE tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (package_code LIKE CONCAT('%',#{keyword},'%') OR package_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+  <select id="selectPackage" resultType="com.whale.crm.product.domain.ProductPackage">
+    SELECT <include refid="packageColumns"/> FROM crm_package WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectPackageForUpdate" resultType="com.whale.crm.product.domain.ProductPackage">
+    SELECT <include refid="packageColumns"/> FROM crm_package WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectPackageByCode" resultType="com.whale.crm.product.domain.ProductPackage">
+    SELECT <include refid="packageColumns"/> FROM crm_package WHERE tenant_id=#{tenantId} AND package_code=#{code}
+  </select>
+  <insert id="insertPackage">
+    INSERT INTO crm_package (tenant_id,package_code,package_name,status) VALUES (#{tenantId},#{entity.packageCode},#{entity.packageName},#{entity.status})
+  </insert>
+  <update id="updatePackage">
+    UPDATE crm_package SET package_name=#{entity.packageName},status=#{entity.status},version=version+1 WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version}
+  </update>
+
+  <select id="selectVersions" resultType="com.whale.crm.product.domain.PackageVersion">
+    SELECT <include refid="versionColumns"/> FROM crm_package_version WHERE tenant_id=#{tenantId} AND package_id=#{packageId} ORDER BY version_no DESC
+  </select>
+  <select id="selectVersion" resultType="com.whale.crm.product.domain.PackageVersion">
+    SELECT <include refid="versionColumns"/> FROM crm_package_version WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectVersionForUpdate" resultType="com.whale.crm.product.domain.PackageVersion">
+    SELECT <include refid="versionColumns"/> FROM crm_package_version WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="nextVersionNo" resultType="int">
+    SELECT COALESCE(MAX(version_no),0)+1 FROM crm_package_version WHERE tenant_id=#{tenantId} AND package_id=#{packageId}
+  </select>
+  <insert id="insertVersion">
+    INSERT INTO crm_package_version (tenant_id,package_id,version_no,selection_mode,choice_count,selection_rules,status)
+    VALUES (#{tenantId},#{entity.packageId},#{entity.versionNo},#{entity.selectionMode},#{entity.choiceCount},#{entity.selectionRules},#{entity.status})
+  </insert>
+  <update id="updateVersionDraft">
+    UPDATE crm_package_version SET selection_mode=#{entity.selectionMode},choice_count=#{entity.choiceCount},selection_rules=#{entity.selectionRules},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version} AND status='DRAFT'
+  </update>
+  <update id="updateVersionStatus">
+    UPDATE crm_package_version SET status=#{toStatus},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status=#{fromStatus}
+  </update>
+
+  <select id="selectVersionProjects" resultType="com.whale.crm.product.domain.PackageProject">
+    SELECT <include refid="projectItemColumns"/> FROM crm_package_project pp
+    INNER JOIN crm_project p ON p.tenant_id=pp.tenant_id AND p.id=pp.project_id
+    WHERE pp.tenant_id=#{tenantId} AND pp.package_version_id=#{packageVersionId}
+    ORDER BY pp.option_group,pp.id
+  </select>
+  <delete id="deleteVersionProjects">
+    DELETE FROM crm_package_project WHERE tenant_id=#{tenantId} AND package_version_id=#{packageVersionId}
+  </delete>
+  <insert id="insertVersionProject">
+    INSERT INTO crm_package_project (tenant_id,package_version_id,project_id,grant_count,selection_weight,allocation_price_fen,option_group)
+    VALUES (#{tenantId},#{entity.packageVersionId},#{entity.projectId},#{entity.grantCount},#{entity.selectionWeight},#{entity.allocationPriceFen},#{entity.optionGroup})
+  </insert>
+
+  <sql id="skuWhere">
+    <include refid="skuFrom"/>
+    WHERE s.tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (s.sku_code LIKE CONCAT('%',#{keyword},'%') OR s.spec_name LIKE CONCAT('%',#{keyword},'%') OR p.package_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND s.status=#{status}</if>
+    <if test="packageId != null">AND p.id=#{packageId}</if>
+    <if test="institutionIds != null and institutionIds.size() == 0">AND 1=0</if>
+    <if test="institutionIds != null and institutionIds.size() > 0">
+      AND EXISTS (SELECT 1 FROM crm_sku_institution si WHERE si.tenant_id=s.tenant_id AND si.sku_id=s.id AND si.status='ACTIVE' AND si.institution_id IN
+      <foreach collection="institutionIds" item="iid" open="(" separator="," close=")">#{iid}</foreach>)
+    </if>
+  </sql>
+  <select id="searchSkus" resultType="com.whale.crm.product.domain.Sku">
+    SELECT <include refid="skuColumns"/> <include refid="skuWhere"/> ORDER BY s.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countSkus" resultType="long">
+    SELECT COUNT(*) <include refid="skuWhere"/>
+  </select>
+  <select id="selectSkusByVersion" resultType="com.whale.crm.product.domain.Sku">
+    SELECT <include refid="skuColumns"/> <include refid="skuFrom"/>
+    WHERE s.tenant_id=#{tenantId} AND s.package_version_id=#{packageVersionId} ORDER BY s.id
+  </select>
+  <select id="selectSku" resultType="com.whale.crm.product.domain.Sku">
+    SELECT <include refid="skuColumns"/> <include refid="skuFrom"/> WHERE s.tenant_id=#{tenantId} AND s.id=#{id}
+  </select>
+  <select id="selectSkuByCode" resultType="com.whale.crm.product.domain.Sku">
+    SELECT <include refid="skuColumns"/> <include refid="skuFrom"/> WHERE s.tenant_id=#{tenantId} AND s.sku_code=#{code}
+  </select>
+  <insert id="insertSku">
+    INSERT INTO crm_sku (tenant_id,sku_code,package_version_id,spec_name,sale_price_fen,status,on_sale_at,off_sale_at)
+    VALUES (#{tenantId},#{entity.skuCode},#{entity.packageVersionId},#{entity.specName},#{entity.salePriceFen},#{entity.status},#{entity.onSaleAt},#{entity.offSaleAt})
+  </insert>
+  <update id="updateSku">
+    UPDATE crm_sku SET spec_name=#{entity.specName},sale_price_fen=#{entity.salePriceFen},version=version+1 WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version}
+  </update>
+  <update id="updateSkuStatus">
+    UPDATE crm_sku SET status=#{status},
+    <if test="status == 'ACTIVE'">on_sale_at=#{at},off_sale_at=NULL,</if>
+    <if test="status == 'INACTIVE'">off_sale_at=#{at},</if>
+    version=version+1 WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+  </update>
+  <update id="disableSkusByVersion">
+    UPDATE crm_sku SET status='INACTIVE',off_sale_at=#{at},version=version+1 WHERE tenant_id=#{tenantId} AND package_version_id=#{packageVersionId} AND status='ACTIVE'
+  </update>
+  <update id="disableSkusByPackage">
+    UPDATE crm_sku s INNER JOIN crm_package_version pv ON pv.tenant_id=s.tenant_id AND pv.id=s.package_version_id
+    SET s.status='INACTIVE',s.off_sale_at=#{at},s.version=s.version+1
+    WHERE s.tenant_id=#{tenantId} AND pv.package_id=#{packageId} AND s.status='ACTIVE'
+  </update>
+
+  <select id="searchInstitutions" resultType="com.whale.crm.product.domain.Institution">
+    SELECT <include refid="institutionColumns"/> FROM crm_institution i
+    WHERE i.tenant_id=#{tenantId} AND i.archived=0
+    <if test="keyword != null and keyword != ''">AND (i.full_name LIKE CONCAT('%',#{keyword},'%') OR i.short_name LIKE CONCAT('%',#{keyword},'%') OR i.institution_no LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND i.status=#{status}</if>
+    <if test="institutionIds != null and institutionIds.size() == 0">AND 1=0</if>
+    <if test="institutionIds != null and institutionIds.size() > 0">AND i.id IN <foreach collection="institutionIds" item="iid" open="(" separator="," close=")">#{iid}</foreach></if>
+    ORDER BY i.id LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countInstitutions" resultType="long">
+    SELECT COUNT(*) FROM crm_institution i WHERE i.tenant_id=#{tenantId} AND i.archived=0
+    <if test="keyword != null and keyword != ''">AND (i.full_name LIKE CONCAT('%',#{keyword},'%') OR i.short_name LIKE CONCAT('%',#{keyword},'%') OR i.institution_no LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND i.status=#{status}</if>
+    <if test="institutionIds != null and institutionIds.size() == 0">AND 1=0</if>
+    <if test="institutionIds != null and institutionIds.size() > 0">AND i.id IN <foreach collection="institutionIds" item="iid" open="(" separator="," close=")">#{iid}</foreach></if>
+  </select>
+  <select id="selectInstitutionsByIds" resultType="com.whale.crm.product.domain.Institution">
+    SELECT <include refid="institutionColumns"/> FROM crm_institution i WHERE i.tenant_id=#{tenantId} AND i.archived=0
+    <if test="ids == null or ids.size() == 0">AND 1=0</if>
+    <if test="ids != null and ids.size() > 0">AND i.id IN <foreach collection="ids" item="iid" open="(" separator="," close=")">#{iid}</foreach></if>
+    ORDER BY i.id
+  </select>
+  <select id="countActiveInstitutionsByIds" resultType="long">
+    SELECT COUNT(*) FROM crm_institution i WHERE i.tenant_id=#{tenantId} AND i.archived=0 AND i.status='ACTIVE'
+    <if test="ids == null or ids.size() == 0">AND 1=0</if>
+    <if test="ids != null and ids.size() > 0">AND i.id IN <foreach collection="ids" item="iid" open="(" separator="," close=")">#{iid}</foreach></if>
+  </select>
+  <select id="selectInstitutionIdsBySku" resultType="long">
+    SELECT institution_id FROM crm_sku_institution WHERE tenant_id=#{tenantId} AND sku_id=#{skuId} AND status='ACTIVE' ORDER BY institution_id
+  </select>
+  <delete id="deleteSkuInstitutions">
+    DELETE FROM crm_sku_institution WHERE tenant_id=#{tenantId} AND sku_id=#{skuId}
+  </delete>
+  <insert id="insertSkuInstitution">
+    INSERT INTO crm_sku_institution (tenant_id,sku_id,institution_id,status) VALUES (#{tenantId},#{skuId},#{institutionId},'ACTIVE')
+  </insert>
+</mapper>

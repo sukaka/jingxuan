@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.TaskMapper">
+
+  <resultMap id="TaskMap" type="com.whale.crm.customer.domain.CrmTask">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="customerId" column="customer_id"/>
+    <result property="assigneeUserId" column="assignee_user_id"/>
+    <result property="originalAssigneeUserId" column="original_assignee_user_id"/>
+    <result property="taskTeamId" column="task_team_id"/>
+    <result property="taskType" column="task_type"/>
+    <result property="priority" column="priority"/>
+    <result property="status" column="status"/>
+    <result property="title" column="title"/>
+    <result property="description" column="description"/>
+    <result property="dueAt" column="due_at"/>
+    <result property="sourceType" column="source_type"/>
+    <result property="sourceRef" column="source_ref"/>
+    <result property="claimedAt" column="claimed_at"/>
+    <result property="completedAt" column="completed_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <resultMap id="TaskActionMap" type="com.whale.crm.customer.domain.TaskActionLog">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="taskId" column="task_id"/>
+    <result property="action" column="action"/>
+    <result property="fromStatus" column="from_status"/>
+    <result property="toStatus" column="to_status"/>
+    <result property="fromAssigneeUserId" column="from_assignee_user_id"/>
+    <result property="toAssigneeUserId" column="to_assignee_user_id"/>
+    <result property="actorUserId" column="actor_user_id"/>
+    <result property="reason" column="reason"/>
+    <result property="idempotencyKey" column="idempotency_key"/>
+    <result property="createdAt" column="created_at"/>
+  </resultMap>
+
+  <sql id="taskColumns">
+    t.id, t.tenant_id, t.customer_id, t.assignee_user_id, t.original_assignee_user_id, t.task_team_id,
+    t.task_type, t.priority, t.status, t.title, t.description, t.due_at, t.source_type, t.source_ref,
+    t.claimed_at, t.completed_at, t.created_at, t.updated_at, t.version
+  </sql>
+
+  <!-- TEAM与SELF均按任务字段收敛；assigneeId只收窄不放大。 -->
+  <sql id="scopeRestrictions">
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (t.assignee_user_id = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR t.task_team_id IN <foreach collection="teamIds" item="tm" open="(" separator="," close=")">#{tm}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">
+        AND (t.assignee_user_id = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR (t.assignee_user_id IS NULL
+          AND t.task_team_id IN <foreach collection="teamIds" item="tm" open="(" separator="," close=")">#{tm}</foreach>)
+        </if>)
+      </when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+  </sql>
+
+  <sql id="scopedWhere">
+    FROM crm_task t
+    WHERE t.tenant_id = #{tenantId}
+    <include refid="scopeRestrictions"/>
+    <if test="assigneeId != null">
+      AND t.assignee_user_id = #{assigneeId}
+    </if>
+    <if test="status != null and status != ''">
+      AND t.status = #{status}
+    </if>
+  </sql>
+
+  <select id="search" resultMap="TaskMap">
+    SELECT <include refid="taskColumns"/>
+    <include refid="scopedWhere"/>
+    ORDER BY t.id DESC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*)
+    <include refid="scopedWhere"/>
+  </select>
+
+  <select id="dutySummary" resultType="com.whale.crm.customer.domain.TaskDutySummary">
+    SELECT COUNT(*) AS pendingTaskCount,
+           COALESCE(SUM(CASE WHEN t.task_type = 'FOLLOWUP' AND t.due_at IS NOT NULL
+                             AND t.due_at &lt; #{dayEndExclusive} THEN 1 ELSE 0 END), 0) AS dueFollowupCount,
+           COALESCE(SUM(CASE WHEN t.due_at IS NOT NULL AND t.due_at &lt; #{now}
+                             THEN 1 ELSE 0 END), 0) AS overdueTaskCount
+    FROM crm_task t
+    WHERE t.tenant_id = #{tenantId} AND t.status IN ('OPEN', 'PROCESSING')
+    <include refid="scopeRestrictions"/>
+  </select>
+
+  <select id="selectById" resultMap="TaskMap">
+    SELECT <include refid="taskColumns"/>
+    FROM crm_task t
+    WHERE t.tenant_id = #{tenantId} AND t.id = #{id}
+  </select>
+
+  <select id="selectByIdForUpdate" resultMap="TaskMap">
+    SELECT <include refid="taskColumns"/>
+    FROM crm_task t
+    WHERE t.tenant_id = #{tenantId} AND t.id = #{id}
+    FOR UPDATE
+  </select>
+
+  <insert id="insertTask" parameterType="com.whale.crm.customer.domain.CrmTask"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_task (tenant_id, customer_id, assignee_user_id, original_assignee_user_id, task_team_id,
+                          task_type, priority, status, title, description, due_at, source_type, source_ref)
+    VALUES (#{tenantId}, #{customerId}, #{assigneeUserId}, #{originalAssigneeUserId}, #{taskTeamId},
+            #{taskType}, #{priority}, #{status}, #{title}, #{description}, #{dueAt}, #{sourceType}, #{sourceRef})
+  </insert>
+
+  <update id="updateTask" parameterType="com.whale.crm.customer.domain.CrmTask">
+    UPDATE crm_task
+    SET task_type = #{taskType}, priority = #{priority}, title = #{title},
+        description = #{description}, due_at = #{dueAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version}
+  </update>
+
+  <update id="applyAction">
+    UPDATE crm_task
+    SET assignee_user_id = #{task.assigneeUserId}, task_team_id = #{task.taskTeamId},
+        status = #{task.status}, claimed_at = #{task.claimedAt}, completed_at = #{task.completedAt},
+        version = version + 1
+    WHERE tenant_id = #{task.tenantId} AND id = #{task.id} AND version = #{task.version}
+      AND status = #{expectedStatus}
+  </update>
+
+  <insert id="insertAction" parameterType="com.whale.crm.customer.domain.TaskActionLog" useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_task_action_log (tenant_id, task_id, action, from_status, to_status,
+                                     from_assignee_user_id, to_assignee_user_id, actor_user_id, reason, idempotency_key)
+    VALUES (#{tenantId}, #{taskId}, #{action}, #{fromStatus}, #{toStatus},
+            #{fromAssigneeUserId}, #{toAssigneeUserId}, #{actorUserId}, #{reason}, #{idempotencyKey})
+  </insert>
+
+  <select id="selectActions" resultMap="TaskActionMap">
+    SELECT id, tenant_id, task_id, action, from_status, to_status, from_assignee_user_id,
+           to_assignee_user_id, actor_user_id, reason, idempotency_key, created_at
+    FROM crm_task_action_log
+    WHERE tenant_id = #{tenantId} AND task_id = #{taskId}
+    ORDER BY id ASC
+  </select>
+
+  <update id="reassignCustomer">
+    UPDATE crm_task SET customer_id = #{toCustomerId}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND customer_id = #{fromCustomerId}
+  </update>
+
+</mapper>

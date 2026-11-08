@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>今日运营值班 · 鲸选美学</title>
+  <style>
+    :root {
+      --canvas: oklch(95% 0.012 125);
+      --paper: oklch(98% 0.008 125);
+      --ink: oklch(28% 0.035 165);
+      --muted: oklch(51% 0.025 165);
+      --line: oklch(87% 0.018 145);
+      --forest: oklch(31% 0.065 169);
+      --forest-soft: oklch(38% 0.075 169);
+      --jade: oklch(48% 0.105 164);
+      --jade-soft: oklch(93% 0.032 157);
+      --amber: oklch(57% 0.12 73);
+      --amber-soft: oklch(94% 0.035 86);
+      --coral: oklch(55% 0.115 28);
+      --coral-soft: oklch(94% 0.023 28);
+      --blue: oklch(50% 0.07 237);
+      --blue-soft: oklch(94% 0.02 237);
+      --hero-text: oklch(96% 0.017 145);
+      --hero-muted: oklch(82% 0.035 161);
+      --display: 'Songti SC', 'Noto Serif CJK SC', serif;
+      --body: 'Avenir Next', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+      --number: 'Futura', 'Avenir Next', 'PingFang SC', sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: var(--canvas); font-family: var(--body); font-size: 14px; line-height: 1.5; }
+    button, select { font: inherit; }
+    button, a, select { -webkit-tap-highlight-color: transparent; }
+    button { cursor: pointer; }
+    button:focus-visible, a:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 3px solid oklch(61% 0.12 165); outline-offset: 3px; }
+    button:disabled { cursor: default; }
+    [hidden] { display: none !important; }
+    .svg-library { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .screen { width: min(100%, 2300px); min-height: 100vh; margin: 0 auto; padding: 26px 34px 18px; display: flex; flex-direction: column; gap: 18px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 28px; min-height: 70px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+    .identity { display: flex; align-items: center; gap: 16px; min-width: 0; }
+    .brand-mark { width: 44px; height: 44px; display: grid; place-items: center; color: var(--forest); border: 1px solid oklch(72% 0.05 163); border-radius: 50%; }
+    .brand-mark svg { width: 32px; height: 32px; }
+    .brand-name { margin: 0 0 2px; color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .2em; }
+    h1 { margin: 0; font-family: var(--display); font-size: clamp(28px, 2.2vw, 38px); font-weight: 600; line-height: 1.25; letter-spacing: .02em; }
+    .topnav { display: flex; align-items: center; gap: 30px; margin-left: auto; }
+    .topnav a { min-height: 44px; display: inline-flex; align-items: center; color: var(--muted); text-decoration: none; font-size: 13px; }
+    .topnav a:hover { color: var(--forest); }
+    .topnav a.active { color: var(--forest); font-weight: 650; border-bottom: 2px solid var(--jade); }
+    .header-side { display: flex; align-items: center; gap: 22px; }
+    .date-block { text-align: right; white-space: nowrap; }
+    .date-block strong { display: block; font-family: var(--number); font-size: 17px; font-weight: 600; letter-spacing: .03em; }
+    .date-block span { color: var(--muted); font-size: 11px; }
+    .fullscreen-button { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; padding: 0 15px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: transparent; }
+    .fullscreen-button:hover { background: var(--paper); border-color: var(--jade); }
+    .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .period-switch { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); }
+    .period-switch button { min-width: 72px; min-height: 36px; padding: 0 15px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; }
+    .period-switch button:hover { color: var(--forest); }
+    .period-switch button[aria-pressed="true"] { color: var(--hero-text); background: var(--forest); }
+    .filter-label { display: inline-flex; align-items: center; gap: 7px; margin-left: 8px; color: var(--muted); font-size: 12px; }
+    .toolbar select { min-height: 42px; min-width: 148px; padding: 0 32px 0 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--paper); }
+    .freshness { display: flex; align-items: center; gap: 7px; margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--jade); }
+    .overview { display: grid; grid-template-columns: minmax(420px, 1.03fr) minmax(0, 1.55fr); gap: 26px; align-items: stretch; }
+    .hero { position: relative; overflow: hidden; min-height: 174px; padding: 22px 27px; border-radius: 12px; color: var(--hero-text); background: var(--forest); }
+    .hero::after { content: ''; position: absolute; right: -38px; top: -92px; width: 240px; height: 240px; border: 1px solid oklch(70% 0.07 165 / .2); border-radius: 50%; box-shadow: 0 0 0 26px oklch(70% 0.07 165 / .055), 0 0 0 58px oklch(70% 0.07 165 / .04); pointer-events: none; }
+    .hero-top { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .hero-label { color: var(--hero-muted); font-size: 13px; }
+    .hero-tag { padding: 3px 8px; border: 1px solid oklch(83% 0.04 158 / .35); border-radius: 4px; color: var(--hero-muted); font-size: 10px; }
+    .hero-value { position: relative; z-index: 1; margin: 5px 0 14px; font-family: var(--number); font-size: clamp(42px, 3.6vw, 58px); font-weight: 600; line-height: 1.1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+    .hero-value small { margin-right: 7px; font-family: var(--body); font-size: 24px; font-weight: 400; }
+    .hero-bottom { position: relative; z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: 14px; color: var(--hero-muted); font-size: 11px; }
+    .hero-bottom strong { margin-left: 5px; color: var(--hero-text); font-family: var(--number); font-size: 15px; font-weight: 600; }
+    .hero-divider { width: 1px; height: 16px; background: oklch(82% 0.035 161 / .35); }
+    .hero-note { margin-left: auto; font-size: 10px; }
+    .stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .stat { min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 14px 22px; }
+    .stat:nth-child(odd) { border-right: 1px solid var(--line); }
+    .stat:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+    .stat-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+    .stat-label .icon { width: 16px; height: 16px; color: var(--jade); }
+    .stat-main { display: flex; align-items: baseline; gap: 6px; margin-top: 3px; }
+    .stat-main strong { font-family: var(--number); font-size: 35px; font-weight: 600; line-height: 1.2; letter-spacing: -.015em; font-variant-numeric: tabular-nums; }
+    .stat-main span { color: var(--muted); font-size: 11px; }
+    .stat-note { margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .main-grid { flex: 1; min-height: 560px; display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(385px, .84fr); gap: 22px; }
+    .analysis-column { min-width: 0; display: grid; grid-template-rows: minmax(290px, 1fr) auto; gap: 18px; }
+    .panel { min-width: 0; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .panel-title { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 600; line-height: 1.35; }
+    .panel-subtitle { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+    .trend-panel { display: flex; flex-direction: column; padding: 19px 22px 13px; }
+    .legend { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; padding-top: 4px; color: var(--muted); font-size: 11px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend-line { width: 16px; height: 3px; border-radius: 2px; background: var(--jade); }
+    .legend-line.refund { background: var(--coral); }
+    .chart-wrap { position: relative; flex: 1; min-height: 218px; margin-top: 8px; }
+    #trendChart { display: block; width: 100%; height: 100%; overflow: visible; }
+    .chart-tooltip { position: absolute; z-index: 5; min-width: 138px; padding: 9px 12px; border-radius: 7px; color: var(--hero-text); background: var(--forest); box-shadow: 0 6px 18px oklch(28% 0.035 165 / .12); pointer-events: none; font-size: 11px; transform: translate(-50%, -110%); }
+    .chart-tooltip strong { display: block; margin-bottom: 4px; font-size: 12px; }
+    .chart-tooltip span { display: flex; justify-content: space-between; gap: 14px; color: var(--hero-muted); }
+    .chart-tooltip b { color: var(--hero-text); font-family: var(--number); font-weight: 600; }
+    .chart-footer { display: flex; justify-content: space-between; gap: 16px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+    .chart-footer strong { color: var(--ink); font-weight: 500; }
+    .institution-panel { padding: 16px 22px 13px; }
+    .institution-panel .panel-title { font-size: 17px; }
+    .text-button { min-height: 36px; display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; color: var(--jade); background: transparent; font-size: 11px; }
+    .text-button:hover { color: var(--forest); }
+    .text-button .icon { width: 14px; height: 14px; transition: transform 180ms ease-out; }
+    .text-button:hover .icon { transform: translateX(3px); }
+    .ranking { display: grid; margin-top: 9px; }
+    .rank-row { min-height: 34px; display: grid; grid-template-columns: 25px minmax(108px, .75fr) minmax(120px, 1.5fr) 48px; align-items: center; gap: 12px; width: 100%; padding: 3px 4px; border: 0; border-radius: 4px; color: var(--ink); background: transparent; text-align: left; }
+    .rank-row:hover, .rank-row[aria-pressed="true"] { background: var(--jade-soft); }
+    .rank-number { color: var(--muted); font-family: var(--number); font-size: 12px; text-align: center; }
+    .rank-row:first-child .rank-number { color: var(--amber); font-weight: 700; }
+    .rank-name { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .rank-track { height: 6px; background: oklch(92% 0.016 145); }
+    .rank-fill { height: 100%; background: var(--jade); transform-origin: left; }
+    .rank-row:nth-child(2) .rank-fill { background: oklch(60% 0.075 168); }
+    .rank-row:nth-child(3) .rank-fill { background: oklch(69% 0.055 160); }
+    .rank-row:nth-child(4) .rank-fill { background: oklch(74% 0.06 140); }
+    .rank-row:nth-child(5) .rank-fill { background: oklch(77% 0.055 123); }
+    .rank-value { font-family: var(--number); font-size: 13px; font-weight: 600; text-align: right; }
+    .rank-value small { margin-left: 3px; color: var(--muted); font-family: var(--body); font-size: 9px; font-weight: 400; }
+    .queue-panel { display: flex; flex-direction: column; padding: 20px 20px 15px; }
+    .queue-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .queue-heading h2 { margin: 0; font-family: var(--display); font-size: 24px; font-weight: 600; }
+    .queue-heading p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+    .queue-total { flex: none; color: var(--forest); font-family: var(--number); font-size: 38px; font-weight: 600; line-height: 1; }
+    .queue-total small { margin-left: 3px; color: var(--muted); font-family: var(--body); font-size: 11px; font-weight: 400; }
+    .task-list { margin-top: 14px; }
+    .task-item { width: 100%; min-height: 81px; display: grid; grid-template-columns: 31px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 13px 4px; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); background: transparent; text-align: left; }
+    .task-item:hover, .task-item[aria-pressed="true"] { background: var(--jade-soft); }
+    .task-item[aria-pressed="true"] { box-shadow: inset 0 0 0 1px oklch(76% 0.07 160); }
+    .task-icon { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 7px; }
+    .task-icon .icon { width: 16px; height: 16px; }
+    .task-icon.amber { color: var(--amber); background: var(--amber-soft); }
+    .task-icon.blue { color: var(--blue); background: var(--blue-soft); }
+    .task-icon.jade { color: var(--jade); background: var(--jade-soft); }
+    .task-icon.coral { color: var(--coral); background: var(--coral-soft); }
+    .task-copy { min-width: 0; }
+    .task-title { display: block; font-size: 12px; font-weight: 600; line-height: 1.5; }
+    .task-title strong { margin-right: 3px; font-family: var(--number); font-size: 19px; font-weight: 650; }
+    .task-meta { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 10px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+    .task-action { display: flex; align-items: center; gap: 5px; }
+    .task-tag { padding: 3px 6px; border-radius: 4px; font-size: 9px; white-space: nowrap; }
+    .task-tag.amber { color: var(--amber); background: var(--amber-soft); }
+    .task-tag.blue { color: var(--blue); background: var(--blue-soft); }
+    .task-tag.jade { color: var(--jade); background: var(--jade-soft); }
+    .task-tag.coral { color: var(--coral); background: var(--coral-soft); }
+    .task-action .icon { width: 13px; height: 13px; color: var(--muted); }
+    .overdue-button { min-height: 43px; display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 11px; border: 0; border-radius: 5px; color: var(--amber); background: var(--amber-soft); font-size: 11px; }
+    .overdue-button:hover { background: oklch(91% 0.047 86); }
+    .overdue-button[aria-pressed="true"] { color: var(--hero-text); background: var(--amber); }
+    .overdue-button:disabled { color: var(--muted); background: var(--canvas); }
+    .queue-footer { margin-top: auto; padding-top: 11px; }
+    .queue-open { width: 100%; min-height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 13px; border: 1px solid var(--forest); border-radius: 6px; color: var(--hero-text); background: var(--forest); font-size: 11px; }
+    .queue-open:hover { background: var(--forest-soft); }
+    .queue-open .icon { width: 15px; height: 15px; }
+    .task-preview { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); }
+    .preview-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .preview-row:last-child { border-bottom: 0; }
+    .preview-row strong { display: block; font-size: 11px; font-weight: 550; }
+    .preview-row span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .page-footer { display: flex; justify-content: space-between; gap: 20px; padding-top: 2px; color: var(--muted); font-size: 10px; }
+    .page-footer span { display: inline-flex; align-items: center; gap: 6px; }
+    .page-footer .icon { width: 12px; height: 12px; }
+    .toast { position: fixed; z-index: 20; left: 50%; bottom: 24px; max-width: min(90vw, 480px); padding: 10px 17px; border-radius: 7px; color: var(--hero-text); background: var(--forest); box-shadow: 0 8px 30px oklch(28% 0.035 165 / .16); transform: translateX(-50%); font-size: 12px; }
+    .hero-value { color: oklch(88% 0.1 154); font-weight: 550; letter-spacing: .015em; font-feature-settings: 'tnum' 1, 'lnum' 1; }
+    .stat[data-tone] .stat-main strong { color: var(--tone); font-weight: 550; letter-spacing: .015em; font-feature-settings: 'tnum' 1, 'lnum' 1; }
+    .stat[data-tone] .stat-label .icon { color: var(--tone); }
+    .number-animated { display: inline-flex; align-items: baseline; white-space: nowrap; }
+    .digit-static { display: inline-block; min-width: .27em; text-align: center; }
+    .digit-reel { display: inline-block; height: 1.15em; overflow: hidden; vertical-align: -.15em; line-height: 1.15; contain: layout paint; }
+    .digit-track { display: flex; flex-direction: column; align-items: center; transform: translateY(0); will-change: transform; }
+    .digit-track > span { display: block; min-width: .62em; height: 1.15em; line-height: 1.15; text-align: center; }
+    .number-swap { animation: number-swap 360ms cubic-bezier(.16, 1, .3, 1); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .live-controls { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+    .live-controls .freshness { margin-left: 0; }
+    .live-toggle { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: var(--paper); font-size: 11px; }
+    .live-toggle .status-dot { background: var(--muted); }
+    .live-toggle[aria-pressed="true"] { color: var(--jade); border-color: oklch(79% 0.055 161); background: var(--jade-soft); }
+    .live-toggle[aria-pressed="true"] .status-dot { background: var(--jade); }
+    @keyframes number-swap { from { opacity: .3; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    .reveal { animation: enter 650ms cubic-bezier(.16, 1, .3, 1) both; }
+    .overview.reveal { animation-delay: 60ms; }
+    .main-grid.reveal { animation-delay: 130ms; }
+    @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @media (min-width: 2100px) {
+      .screen { padding-top: 32px; gap: 22px; }
+      .hero { min-height: 200px; }
+      .task-item { min-height: 94px; }
+      .task-title { font-size: 14px; }
+      .task-meta { font-size: 11px; }
+    }
+    @media (max-width: 1250px) {
+      .screen { padding: 22px; }
+      .topnav { gap: 18px; }
+      .overview { grid-template-columns: minmax(370px, 1fr) minmax(0, 1.25fr); gap: 18px; }
+      .main-grid { grid-template-columns: minmax(0, 1.35fr) minmax(350px, .9fr); gap: 16px; }
+      .hero-note { display: none; }
+      .task-tag { display: none; }
+    }
+    @media (max-width: 1000px) {
+      .topbar { flex-wrap: wrap; }
+      .topnav { order: 3; width: 100%; margin: 0; }
+      .header-side { margin-left: auto; }
+      .freshness { width: 100%; margin-left: 0; }
+      .overview, .main-grid { grid-template-columns: 1fr; }
+      .stat { min-height: 95px; }
+      .main-grid { min-height: 0; }
+      .trend-panel { min-height: 350px; }
+      .task-tag { display: inline-block; }
+    }
+    @media (max-width: 600px) {
+      .screen { padding: 16px; gap: 16px; }
+      .brand-name { letter-spacing: .1em; }
+      .date-block { display: none; }
+      .header-side { gap: 10px; }
+      .fullscreen-button { padding: 0 10px; }
+      .topnav { gap: 22px; }
+      .toolbar { gap: 9px; }
+      .period-switch { width: 100%; }
+      .period-switch button { flex: 1; min-width: 0; }
+      .filter-label { display: none; }
+      .toolbar select { flex: 1; min-width: 0; }
+      .overview { gap: 12px; }
+      .hero { padding: 21px; }
+      .hero-value { font-size: 43px; }
+      .hero-note { display: none; }
+      .stat { padding: 15px 12px; }
+      .stat-main strong { font-size: 30px; }
+      .stat-note { font-size: 9px; }
+      .trend-panel, .institution-panel, .queue-panel { padding: 16px; }
+      .panel-header { flex-wrap: wrap; }
+      .chart-footer { flex-direction: column; gap: 3px; }
+      .rank-row { grid-template-columns: 21px minmax(95px, .9fr) minmax(60px, 1fr) 38px; gap: 8px; }
+      .page-footer { flex-direction: column; gap: 6px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="svg-library" aria-hidden="true">
+    <symbol id="i-fullscreen" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10m-7 6h4"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87M16 2.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Zm3 5h6m-6 4h6"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18m-13 5h3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3v9Z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4m-4 5v2"/></symbol>
+  </svg>
+
+  <main class="screen" id="screen">
+    <header class="topbar reveal">
+      <div class="identity">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" fill="none"><path d="M7 13c6-5 11 4 16 4 4 0 7-3 10-7-1 8-3 12-8 14-7 3-14 0-18-11Z" stroke="currentColor" stroke-width="1.6"/><path d="M8 27c5-4 9 4 14 4s8-4 11-7M11 32c4-2 6 2 10 2 3 0 5-2 8-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="24" cy="17" r="1" fill="currentColor"/></svg>
+        </div>
+        <div>
+          <p class="brand-name">鲸选美学 · 运营中心</p>
+          <h1 id="pageTitle">今日运营值班</h1>
+        </div>
+      </div>
+      <nav class="topnav" aria-label="页面区域">
+        <a href="#screen" class="active">今日值班</a>
+        <a href="#trend">交易走势</a>
+        <a href="#institutions">机构履约</a>
+      </nav>
+      <div class="header-side">
+        <div class="date-block"><strong>11月5日</strong><span>星期四 · 2026</span></div>
+        <button class="fullscreen-button" id="fullscreenButton" type="button">
+          <svg class="icon" aria-hidden="true"><use href="#i-fullscreen"/></svg><span>全屏查看</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="toolbar reveal" aria-label="大屏筛选">
+      <div class="period-switch" role="group" aria-label="统计周期">
+        <button type="button" data-period="day" aria-pressed="true">今日</button>
+        <button type="button" data-period="week" aria-pressed="false">本周</button>
+        <button type="button" data-period="month" aria-pressed="false">本月</button>
+      </div>
+      <span class="filter-label"><svg class="icon" aria-hidden="true"><use href="#i-filter"/></svg>筛选</span>
+      <select id="institutionFilter" aria-label="机构筛选">
+        <option value="all">全部授权机构</option>
+        <option value="chunhe">春和医疗美容</option>
+        <option value="yunxi">云汐医疗美容</option>
+        <option value="zhiyan">知颜口腔</option>
+        <option value="yueji">悦己皮肤管理</option>
+        <option value="chuguang">初光医疗美容</option>
+      </select>
+      <select id="receiverFilter" aria-label="收款方筛选">
+        <option value="all">全部收款方</option>
+        <option value="platform">平台收款</option>
+        <option value="institution">机构收款</option>
+      </select>
+      <div class="live-controls">
+        <div class="freshness"><span class="status-dot" aria-hidden="true"></span><span id="freshnessText">合成实时演示 · 每 6 秒更新</span></div>
+        <button class="live-toggle" id="liveToggle" type="button" aria-pressed="true" title="使用合成数据演示数字滚动，不代表真实业务变动"><span class="status-dot" aria-hidden="true"></span><span>实时演示</span></button>
+      </div>
+    </section>
+
+    <section class="overview reveal" aria-label="核心经营指标">
+      <article class="hero">
+        <div class="hero-top"><span class="hero-label" id="heroLabel">今日净支付</span><span class="hero-tag">经营事实</span></div>
+        <div class="hero-value"><small>¥</small><span id="netMetric">128,680</span></div>
+        <div class="hero-bottom">
+          <span>支付金额<strong id="paidMetric">138,900</strong></span><span class="hero-divider"></span>
+          <span>成功退款<strong id="refundMetric">10,220</strong></span><span class="hero-note">净支付不等于净利润</span>
+        </div>
+      </article>
+      <div class="stat-grid">
+        <article class="stat" data-tone="customers" style="--tone: var(--coral)">
+          <div class="stat-label">新增客户<svg class="icon" aria-hidden="true"><use href="#i-users"/></svg></div>
+          <div class="stat-main"><strong id="customerMetric">26</strong><span>位</span></div><div class="stat-note">已建立客户档案</div>
+        </article>
+        <article class="stat" data-tone="orders" style="--tone: var(--jade)">
+          <div class="stat-label">支付订单<svg class="icon" aria-hidden="true"><use href="#i-receipt"/></svg></div>
+          <div class="stat-main"><strong id="orderMetric">86</strong><span>笔</span></div><div class="stat-note">仅统计已确认支付事实</div>
+        </article>
+        <article class="stat" data-tone="arrivals" style="--tone: var(--blue)">
+          <div class="stat-label">到院客户<svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg></div>
+          <div class="stat-main"><strong id="arrivalMetric">31</strong><span>人</span></div><div class="stat-note">按实际到院客户去重</div>
+        </article>
+        <article class="stat" data-tone="redemptions" style="--tone: var(--amber)">
+          <div class="stat-label">正式核销<svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></div>
+          <div class="stat-main"><strong id="redemptionMetric">58</strong><span>次</span></div><div class="stat-note">机构授权操作员已确认</div>
+        </article>
+      </div>
+    </section>
+
+    <div class="main-grid reveal">
+      <div class="analysis-column">
+        <section class="panel trend-panel" id="trend" aria-labelledby="trendTitle">
+          <header class="panel-header">
+            <div><h2 class="panel-title" id="trendTitle">交易与退款走势</h2><p class="panel-subtitle">按实际发生时间汇总 · 金额单位：元</p></div>
+            <div class="legend" aria-label="图例"><span><i class="legend-line"></i>支付金额</span><span><i class="legend-line refund"></i>成功退款</span></div>
+          </header>
+          <div class="chart-wrap" id="chartWrap">
+            <svg id="trendChart" role="group" aria-label="分时段支付金额与成功退款趋势图"></svg>
+            <div class="chart-tooltip" id="chartTooltip" hidden></div>
+          </div>
+          <footer class="chart-footer"><span>悬浮数据点可查看分项金额</span><strong>支付与退款按各自实际发生时间归集</strong></footer>
+        </section>
+
+        <section class="panel institution-panel" id="institutions" aria-labelledby="institutionTitle">
+          <header class="panel-header">
+            <div><h2 class="panel-title" id="institutionTitle">机构履约排行</h2><p class="panel-subtitle">按正式核销次数排序 · 点击机构可筛选</p></div>
+            <button class="text-button" id="resetInstitution" type="button">查看全部机构<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+          </header>
+          <div class="ranking" id="ranking"></div>
+        </section>
+      </div>
+
+      <aside class="panel queue-panel" aria-labelledby="queueTitle">
+        <div class="queue-heading">
+          <div><h2 id="queueTitle">现在需要处理</h2><p id="queueSubtitle">按处理时限排序，不让事项停在半路</p></div>
+          <div class="queue-total"><span id="taskTotal">19</span><small>项</small></div>
+        </div>
+        <div class="task-list" id="taskList"></div>
+        <button class="overdue-button" id="overdueFilter" type="button" aria-pressed="false"></button>
+        <footer class="queue-footer">
+          <button class="queue-open" id="previewTasks" type="button" aria-expanded="false" aria-controls="taskPreview"><span>查看待办明细</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+          <div class="task-preview" id="taskPreview" hidden></div>
+        </footer>
+      </aside>
+    </div>
+
+    <footer class="page-footer">
+      <span><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>只展示授权范围内的数据，客户隐私默认脱敏</span>
+      <span>界面方案预览 · 所有金额、机构和任务均为合成示例</span>
+    </footer>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script>
+    const periods = {
+      day: { label: '今日', title: '今日运营值班', paid: 138900, refund: 10220, orders: 86, customers: 26, arrivals: 31, redemptions: 58, tasks: 19, overdue: 2 },
+      week: { label: '本周', title: '本周经营概览', paid: 724600, refund: 32600, orders: 438, customers: 142, arrivals: 185, redemptions: 316, tasks: 73, overdue: 5 },
+      month: { label: '本月', title: '本月经营概览', paid: 2864300, refund: 145800, orders: 1736, customers: 528, arrivals: 692, redemptions: 1238, tasks: 286, overdue: 12 },
+    };
+    const institutions = [
+      { id: 'chunhe', name: '春和医疗美容', paid: 38600, refund: 2600, orders: 24, customers: 8, arrivals: 10, redemptions: 18, tasks: 6, overdue: 1 },
+      { id: 'yunxi', name: '云汐医疗美容', paid: 29800, refund: 2100, orders: 20, customers: 6, arrivals: 8, redemptions: 14, tasks: 4, overdue: 0 },
+      { id: 'zhiyan', name: '知颜口腔', paid: 25200, refund: 1900, orders: 18, customers: 5, arrivals: 6, redemptions: 11, tasks: 4, overdue: 1 },
+      { id: 'yueji', name: '悦己皮肤管理', paid: 23800, refund: 1820, orders: 14, customers: 4, arrivals: 4, redemptions: 8, tasks: 3, overdue: 0 },
+      { id: 'chuguang', name: '初光医疗美容', paid: 21500, refund: 1800, orders: 10, customers: 3, arrivals: 3, redemptions: 7, tasks: 2, overdue: 0 },
+    ];
+    const taskDefinitions = [
+      { id: 'appointment', icon: 'calendar', tone: 'amber', tag: '需催办', title: '个预约等待机构确认', meta: '最早等待 48 分钟 · 优先联系机构操作员', sample: '术后复诊预约 · 客户李**', sampleMeta: '春和医疗美容 · 计划明天 14:00 到院' },
+      { id: 'redemption', icon: 'check', tone: 'blue', tag: '待核销', title: '项服务完成后待核销', meta: '由机构确认服务事实后扣减权益次数', sample: '皮肤护理服务 · 客户王**', sampleMeta: '云汐医疗美容 · 服务已完成，等待机构确认' },
+      { id: 'followup', icon: 'chat', tone: 'jade', tag: '今日回访', title: '位客户今天需要回访', meta: '含术后第 3 天回访与到期未跟进客户', sample: '术后第 3 天回访 · 客户陈**', sampleMeta: '所属管家 · 今日 17:00 前完成' },
+      { id: 'refund', icon: 'receipt', tone: 'coral', tag: '需审批', title: '笔退款等待财务复核', meta: '核对申请、审批金额与退款凭证后处理', sample: '部分退款申请 · 订单尾号 2036', sampleMeta: '申请 ¥3,000 · 等待财务审批，不代表已退款' },
+    ];
+    const times = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
+    const paidTrend = [3600, 7800, 12600, 19400, 21800, 24600, 26300, 22800];
+    const refundTrend = [0, 800, 1200, 1600, 1200, 2400, 1700, 1320];
+    const state = { period: 'day', institution: 'all', receiver: 'all', task: null, overdue: false, preview: false };
+    const $ = (id) => document.getElementById(id);
+    const number = new Intl.NumberFormat('zh-CN');
+    let toastTimer;
+    let liveEnabled = true;
+    let liveStep = -1;
+    let liveTimer;
+    const liveSteps = [
+      { paid: 2800, refund: 0, orders: 1, customers: 0, arrivals: 0, redemptions: 0 },
+      { paid: 6800, refund: 0, orders: 2, customers: 1, arrivals: 1, redemptions: 0 },
+      { paid: 9600, refund: 200, orders: 3, customers: 2, arrivals: 2, redemptions: 2 },
+      { paid: 12800, refund: 200, orders: 4, customers: 3, arrivals: 3, redemptions: 4 },
+    ];
+    const renderedNumbers = new Map();
+    const numberAnimations = new Map();
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    function isLiveView() {
+      return liveEnabled && state.period === 'day' && state.institution === 'all' && state.receiver === 'all';
+    }
+
+    function updateNumber(id, value, animate = true) {
+      const formatted = number.format(value);
+      const previous = renderedNumbers.get(id);
+      if (previous === formatted) return;
+      renderedNumbers.set(id, formatted);
+      const element = $(id);
+      numberAnimations.get(id)?.cancel();
+      element.classList.remove('number-swap', 'number-animated');
+      if (!animate || previous === undefined || reducedMotion.matches) {
+        element.textContent = formatted;
+        return;
+      }
+      if (previous.length !== formatted.length) {
+        element.textContent = formatted;
+        void element.offsetWidth;
+        element.classList.add('number-swap');
+        return;
+      }
+      element.classList.add('number-animated');
+      element.replaceChildren();
+      const accessible = document.createElement('span');
+      accessible.className = 'sr-only';
+      accessible.textContent = formatted;
+      element.append(accessible);
+      [...formatted].forEach((digit, index) => {
+        const oldDigit = previous[index];
+        if (digit === oldDigit) {
+          const staticDigit = document.createElement('span');
+          staticDigit.className = 'digit-static';
+          staticDigit.setAttribute('aria-hidden', 'true');
+          staticDigit.textContent = digit;
+          element.append(staticDigit);
+          return;
+        }
+        const reel = document.createElement('span');
+        reel.className = 'digit-reel';
+        reel.setAttribute('aria-hidden', 'true');
+        const track = document.createElement('span');
+        track.className = 'digit-track';
+        const before = document.createElement('span');
+        before.textContent = oldDigit;
+        const after = document.createElement('span');
+        after.textContent = digit;
+        track.append(before, after);
+        reel.append(track);
+        element.append(reel);
+        const animation = track.animate([
+          { transform: 'translateY(0)' },
+          { transform: 'translateY(-50%)' },
+        ], { duration: 560, easing: 'cubic-bezier(.16, 1, .3, 1)', fill: 'forwards' });
+        numberAnimations.set(id, animation);
+      });
+      numberAnimations.get(id)?.finished.then(() => {
+        if (renderedNumbers.get(id) === formatted) {
+          element.classList.remove('number-animated');
+          element.textContent = formatted;
+        }
+      }).catch(() => {});
+    }
+
+    function distribute(values, total) {
+      const sum = values.reduce((result, value) => result + value, 0);
+      if (!total) return values.map(() => 0);
+      const result = values.map((value) => Math.round(value / sum * total));
+      result[result.length - 1] += total - result.reduce((sumValue, value) => sumValue + value, 0);
+      return result;
+    }
+
+    function currentData() {
+      const base = { ...periods[state.period] };
+      if (state.institution !== 'all') {
+        const institution = institutions.find((item) => item.id === state.institution);
+        const period = periods[state.period];
+        for (const field of ['paid', 'refund', 'orders', 'customers', 'arrivals', 'redemptions', 'tasks', 'overdue']) {
+          base[field] = Math.round(institution[field] / periods.day[field] * period[field]);
+        }
+      }
+      if (state.receiver !== 'all') {
+        const ratio = state.receiver === 'platform' ? .78 : .22;
+        base.paid = Math.round(base.paid * ratio);
+        base.refund = Math.round(base.refund * ratio);
+        base.orders = Math.round(base.orders * ratio);
+      }
+      if (isLiveView() && liveStep >= 0) {
+        const cycle = Math.floor(liveStep / liveSteps.length);
+        const phase = liveStep % liveSteps.length;
+        for (const field of ['paid', 'refund', 'orders', 'customers', 'arrivals', 'redemptions']) {
+          base[field] += liveSteps[phase][field] + liveSteps[liveSteps.length - 1][field] * cycle;
+        }
+      }
+      base.net = base.paid - base.refund;
+      return base;
+    }
+
+    function toast(message) {
+      clearTimeout(toastTimer);
+      $('toast').textContent = message;
+      $('toast').hidden = false;
+      toastTimer = setTimeout(() => { $('toast').hidden = true; }, 2600);
+    }
+
+    function taskRows(data) {
+      const counts = distribute([6, 3, 8, 2], data.tasks);
+      const overdueCounts = taskDefinitions.map((item, index) => {
+        if (!data.overdue) return 0;
+        if (state.institution !== 'all') return index === 0 ? data.overdue : 0;
+        return index === 0 ? Math.min(counts[0], Math.max(1, data.overdue - 1)) : index === 3 ? Math.min(counts[3], 1) : 0;
+      });
+      return taskDefinitions.map((item, index) => ({ ...item, count: counts[index], overdueCount: overdueCounts[index] }))
+        .filter((item) => !state.task || item.id === state.task)
+        .filter((item) => !state.overdue || item.overdueCount > 0)
+        .map((item) => state.overdue ? { ...item, count: item.overdueCount, meta: `已超过处理时限 · ${item.meta}` } : item);
+    }
+
+    function renderTasks(data) {
+      const rows = taskRows(data);
+      $('taskTotal').textContent = number.format(rows.reduce((total, item) => total + item.count, 0));
+      $('queueSubtitle').textContent = state.overdue ? '只显示已超过处理时限的事项' : state.task ? '已按事项类型筛选，再次点击可取消' : '按处理时限排序，不让事项停在半路';
+      $('taskList').replaceChildren();
+      rows.forEach((item) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'task-item';
+        button.setAttribute('aria-pressed', String(state.task === item.id));
+        button.setAttribute('aria-label', `${item.count}${item.title}，${item.meta}`);
+        button.innerHTML = `<span class="task-icon ${item.tone}"><svg class="icon" aria-hidden="true"><use href="#i-${item.icon}"/></svg></span>
+          <span class="task-copy"><span class="task-title"><strong>${item.count}</strong>${item.title}</span><span class="task-meta">${item.meta}</span></span>
+          <span class="task-action"><span class="task-tag ${item.tone}">${item.tag}</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span>`;
+        button.addEventListener('click', () => {
+          state.task = state.task === item.id ? null : item.id;
+          state.preview = false;
+          render();
+        });
+        $('taskList').append(button);
+      });
+      const availableOverdue = rows.reduce((total, item) => total + item.overdueCount, 0);
+      $('overdueFilter').disabled = availableOverdue === 0;
+      $('overdueFilter').setAttribute('aria-pressed', String(state.overdue));
+      $('overdueFilter').textContent = availableOverdue ? `${state.overdue ? '正在查看' : '有'} ${availableOverdue} 项超过处理时限${state.overdue ? ' · 显示全部' : ' · 只看这些'}` : '当前没有超过处理时限的待办';
+      renderPreview(rows);
+    }
+
+    function renderPreview(rows) {
+      $('previewTasks').setAttribute('aria-expanded', String(state.preview));
+      $('previewTasks').querySelector('span').textContent = state.preview ? '收起待办明细' : '查看待办明细';
+      $('taskPreview').hidden = !state.preview;
+      if (!state.preview) return;
+      const selected = rows.length ? rows : taskDefinitions.slice(0, 1);
+      $('taskPreview').replaceChildren();
+      selected.slice(0, 2).forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'preview-row';
+        const title = document.createElement('strong');
+        title.textContent = item.sample;
+        const meta = document.createElement('span');
+        meta.textContent = item.sampleMeta;
+        row.append(title, meta);
+        $('taskPreview').append(row);
+      });
+    }
+
+    function renderRanking(data) {
+      const values = distribute(institutions.map((item) => item.redemptions), data.redemptions);
+      const max = Math.max(...values, 1);
+      $('ranking').replaceChildren();
+      institutions.forEach((item, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'rank-row';
+        button.setAttribute('aria-pressed', String(state.institution === item.id));
+        button.setAttribute('aria-label', `${item.name}，正式核销 ${values[index]} 次，点击筛选`);
+        button.innerHTML = `<span class="rank-number">${String(index + 1).padStart(2, '0')}</span><span class="rank-name">${item.name}</span>
+          <span class="rank-track"><span class="rank-fill" style="display:block;width:${Math.max(2, values[index] / max * 100)}%"></span></span>
+          <span class="rank-value">${number.format(values[index])}<small>次</small></span>`;
+        button.addEventListener('click', () => {
+          state.institution = state.institution === item.id ? 'all' : item.id;
+          $('institutionFilter').value = state.institution;
+          state.task = null;
+          state.overdue = false;
+          state.preview = false;
+          render();
+          toast(state.institution === 'all' ? '已恢复全部授权机构' : `已筛选：${item.name}`);
+        });
+        $('ranking').append(button);
+      });
+    }
+
+    function smoothPath(points) {
+      return points.reduce((path, point, index) => {
+        if (index === 0) return `M ${point.x} ${point.y}`;
+        const previous = points[index - 1];
+        const middle = (previous.x + point.x) / 2;
+        return `${path} C ${middle} ${previous.y}, ${middle} ${point.y}, ${point.x} ${point.y}`;
+      }, '');
+    }
+
+    function axisLabel(value) {
+      if (value >= 10000) return `${Number((value / 10000).toFixed(1))}万`;
+      return number.format(value);
+    }
+
+    function renderChart(data) {
+      const wrap = $('chartWrap');
+      const width = Math.max(500, wrap.clientWidth);
+      const height = Math.max(220, wrap.clientHeight);
+      const margin = { left: 48, right: 18, top: 18, bottom: 30 };
+      const innerWidth = width - margin.left - margin.right;
+      const innerHeight = height - margin.top - margin.bottom;
+      const paid = distribute(paidTrend, data.paid);
+      const refund = distribute(refundTrend, data.refund);
+      const yMax = Math.max(10000, Math.ceil(Math.max(...paid) / 10000) * 10000);
+      const pointAt = (value, index) => ({ x: margin.left + index * innerWidth / (times.length - 1), y: margin.top + innerHeight - value / yMax * innerHeight });
+      const paidPoints = paid.map(pointAt);
+      const refundPoints = refund.map(pointAt);
+      const paidPath = smoothPath(paidPoints);
+      const refundPath = smoothPath(refundPoints);
+      const bottom = margin.top + innerHeight;
+      const grid = [0, 1, 2, 3].map((index) => {
+        const y = margin.top + innerHeight * index / 3;
+        const value = yMax * (3 - index) / 3;
+        return `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="oklch(88% 0.018 145)" stroke-width="1"/>
+          <text x="${margin.left - 11}" y="${y + 4}" text-anchor="end" fill="oklch(51% 0.025 165)" font-size="10" font-family="Avenir Next, PingFang SC, sans-serif">${axisLabel(value)}</text>`;
+      }).join('');
+      const labels = times.map((time, index) => `<text x="${pointAt(0, index).x}" y="${height - 7}" text-anchor="middle" fill="oklch(51% 0.025 165)" font-size="10" font-family="Avenir Next, PingFang SC, sans-serif">${time}</text>`).join('');
+      const circles = (points, values, color, kind) => points.map((point, index) => `<circle class="chart-point" cx="${point.x}" cy="${point.y}" r="4" fill="${color}" stroke="oklch(98% 0.008 125)" stroke-width="1.5" tabindex="0" role="button" aria-label="${times[index]}，${kind} ${number.format(values[index])} 元" data-kind="${kind}" data-index="${index}" data-value="${values[index]}" data-x="${point.x}" data-y="${point.y}"/>`).join('');
+      $('trendChart').setAttribute('viewBox', `0 0 ${width} ${height}`);
+      $('trendChart').innerHTML = `<defs><linearGradient id="paidArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="oklch(48% 0.105 164)" stop-opacity=".18"/><stop offset="100%" stop-color="oklch(48% 0.105 164)" stop-opacity=".015"/></linearGradient></defs>
+        ${grid}<path d="${paidPath} L ${paidPoints[paidPoints.length - 1].x} ${bottom} L ${paidPoints[0].x} ${bottom} Z" fill="url(#paidArea)"/>
+        <path d="${paidPath}" fill="none" stroke="oklch(48% 0.105 164)" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="${refundPath}" fill="none" stroke="oklch(55% 0.115 28)" stroke-width="1.8" stroke-linecap="round"/>
+        ${circles(paidPoints, paid, 'oklch(48% 0.105 164)', '支付金额')}${circles(refundPoints, refund, 'oklch(55% 0.115 28)', '成功退款')}${labels}`;
+      $('trendChart').querySelectorAll('.chart-point').forEach((point) => {
+        const show = () => {
+          const scaleX = wrap.clientWidth / width;
+          const scaleY = wrap.clientHeight / height;
+          $('chartTooltip').style.left = `${Number(point.dataset.x) * scaleX}px`;
+          $('chartTooltip').style.top = `${Math.max(70, Number(point.dataset.y) * scaleY)}px`;
+          $('chartTooltip').innerHTML = `<strong>${times[Number(point.dataset.index)]}</strong><span>${point.dataset.kind}<b>${number.format(Number(point.dataset.value))} 元</b></span>`;
+          $('chartTooltip').hidden = false;
+        };
+        point.addEventListener('mouseover', show);
+        point.addEventListener('focus', show);
+        point.addEventListener('mouseout', () => { $('chartTooltip').hidden = true; });
+        point.addEventListener('blur', () => { $('chartTooltip').hidden = true; });
+      });
+    }
+
+    function render() {
+      const data = currentData();
+      $('pageTitle').textContent = data.title;
+      $('heroLabel').textContent = `${data.label}净支付`;
+      updateNumber('netMetric', data.net);
+      updateNumber('paidMetric', data.paid, false);
+      updateNumber('refundMetric', data.refund, false);
+      updateNumber('customerMetric', data.customers);
+      updateNumber('orderMetric', data.orders);
+      updateNumber('arrivalMetric', data.arrivals);
+      updateNumber('redemptionMetric', data.redemptions);
+      $('freshnessText').textContent = isLiveView() ? '合成实时演示 · 每 6 秒更新' : `${data.label}数据 · 10:30 更新`;
+      $('liveToggle').setAttribute('aria-pressed', String(isLiveView()));
+      document.querySelectorAll('[data-period]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.period === state.period)));
+      $('chartTooltip').hidden = true;
+      renderTasks(data);
+      renderRanking(data);
+      renderChart(data);
+    }
+
+    document.querySelectorAll('[data-period]').forEach((button) => button.addEventListener('click', () => {
+      state.period = button.dataset.period;
+      state.task = null;
+      state.overdue = false;
+      state.preview = false;
+      render();
+    }));
+    $('institutionFilter').addEventListener('change', (event) => {
+      state.institution = event.target.value;
+      state.task = null;
+      state.overdue = false;
+      state.preview = false;
+      render();
+    });
+    $('receiverFilter').addEventListener('change', (event) => {
+      state.receiver = event.target.value;
+      render();
+    });
+    $('resetInstitution').addEventListener('click', () => {
+      state.institution = 'all';
+      $('institutionFilter').value = 'all';
+      state.task = null;
+      state.overdue = false;
+      state.preview = false;
+      render();
+    });
+    $('overdueFilter').addEventListener('click', () => {
+      state.overdue = !state.overdue;
+      state.preview = false;
+      render();
+    });
+    $('previewTasks').addEventListener('click', () => {
+      state.preview = !state.preview;
+      renderPreview(taskRows(currentData()));
+    });
+    $('fullscreenButton').addEventListener('click', async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await $('screen').requestFullscreen();
+      } catch {
+        toast('当前浏览器未允许全屏，可继续在本页查看');
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      $('fullscreenButton').querySelector('span').textContent = document.fullscreenElement ? '退出全屏' : '全屏查看';
+    });
+    $('liveToggle').addEventListener('click', () => {
+      if (state.period !== 'day' || state.institution !== 'all' || state.receiver !== 'all') {
+        toast('实时演示在今日、全部机构和全部收款方视图下运行');
+        return;
+      }
+      liveEnabled = !liveEnabled;
+      render();
+      toast(liveEnabled ? '已开启合成数据实时演示' : '已暂停实时演示，恢复当前周期数据');
+    });
+    liveTimer = window.setInterval(() => {
+      if (document.hidden || !isLiveView()) return;
+      liveStep += 1;
+      render();
+    }, 6000);
+    window.addEventListener('pagehide', () => window.clearInterval(liveTimer));
+    new ResizeObserver(() => renderChart(currentData())).observe($('chartWrap'));
+    render();
+  </script>
+</body>
+</html>

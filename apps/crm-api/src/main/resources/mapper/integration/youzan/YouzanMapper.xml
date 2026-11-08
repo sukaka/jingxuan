@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.integration.youzan.infrastructure.mapper.YouzanMapper">
+  <sql id="eventColumns">id,shop_id AS shopId,event_id AS eventId,event_type AS eventType,external_order_no AS externalOrderNo,payload_masked_json AS payloadMaskedJson,payload_cipher AS payloadCipher,signature_valid AS signatureValid,source_system AS sourceSystem,process_status AS processStatus,process_attempts AS processAttempts,last_error AS lastError,next_retry_at AS nextRetryAt,received_at AS receivedAt,processed_at AS processedAt,order_id AS orderId,provider_payload_masked_json AS providerPayloadMaskedJson,provider_payload_cipher AS providerPayloadCipher,version</sql>
+  <sql id="orderMapColumns">id,shop_id AS shopId,external_order_no AS externalOrderNo,crm_order_id AS crmOrderId,last_external_updated_at AS lastExternalUpdatedAt,created_at AS createdAt,version</sql>
+  <sql id="skuMapColumns">id,shop_id AS shopId,external_sku_id AS externalSkuId,crm_sku_id AS crmSkuId,status,created_at AS createdAt,version</sql>
+  <sql id="customerLinkColumns">id,shop_id AS shopId,external_customer_id AS externalCustomerId,customer_id AS customerId,link_type AS linkType,confidence,reason,created_by AS createdBy,created_at AS createdAt,version</sql>
+  <sql id="issueColumns">id,event_id AS eventId,issue_type AS issueType,status,detail_masked AS detailMasked,attempts,last_error AS lastError,next_retry_at AS nextRetryAt,created_at AS createdAt,resolved_at AS resolvedAt,resolved_by AS resolvedBy,version</sql>
+  <sql id="cursorColumns">id,shop_id AS shopId,cursor_value AS cursorValue,window_start AS windowStart,window_end AS windowEnd,last_sync_at AS lastSyncAt,last_external_updated_at AS lastExternalUpdatedAt,created_at AS createdAt,version</sql>
+
+  <insert id="insertEvent">
+    INSERT INTO crm_youzan_event (tenant_id,shop_id,event_id,event_type,external_order_no,payload_masked_json,payload_cipher,provider_payload_masked_json,provider_payload_cipher,signature_valid,source_system,process_status,process_attempts,last_error,next_retry_at,received_at,processed_at,order_id)
+    VALUES (#{tenantId},#{entity.shopId},#{entity.eventId},#{entity.eventType},#{entity.externalOrderNo},#{entity.payloadMaskedJson},#{entity.payloadCipher},#{entity.providerPayloadMaskedJson},#{entity.providerPayloadCipher},#{entity.signatureValid},#{entity.sourceSystem},#{entity.processStatus},#{entity.processAttempts},#{entity.lastError},#{entity.nextRetryAt},#{entity.receivedAt},#{entity.processedAt},#{entity.orderId})
+  </insert>
+  <update id="updateEventPayload">
+    UPDATE crm_youzan_event SET external_order_no=#{externalOrderNo},event_type=#{eventType},payload_masked_json=#{masked},payload_cipher=#{encrypted},provider_payload_masked_json=#{providerMasked},provider_payload_cipher=#{providerEncrypted},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+  <select id="selectEventByKey" resultType="com.whale.crm.integration.youzan.domain.YouzanEvent">
+    SELECT <include refid="eventColumns"/> FROM crm_youzan_event WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND event_id=#{eventId}
+  </select>
+  <select id="selectEvent" resultType="com.whale.crm.integration.youzan.domain.YouzanEvent">
+    SELECT <include refid="eventColumns"/> FROM crm_youzan_event WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectEventForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanEvent">
+    SELECT <include refid="eventColumns"/> FROM crm_youzan_event WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectPendingEvents" resultType="com.whale.crm.integration.youzan.domain.YouzanEvent">
+    SELECT <include refid="eventColumns"/> FROM crm_youzan_event
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND source_system='OFFICIAL_WEBHOOK'
+      AND ((process_status='RECEIVED' AND received_at &lt;= #{retryBefore})
+        OR (process_status='RETRY' AND (next_retry_at IS NULL OR next_retry_at &lt;= #{retryBefore})))
+    ORDER BY id LIMIT #{limit}
+  </select>
+  <select id="countEvents" resultType="long">
+    SELECT COUNT(*) FROM crm_youzan_event WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+  </select>
+  <select id="countTodayEvents" resultType="long">
+    SELECT COUNT(*) FROM crm_youzan_event WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND received_at &gt;= CURRENT_DATE
+  </select>
+  <select id="countCampaignOrders" resultType="long">
+    SELECT COUNT(DISTINCT external_order_no) FROM crm_youzan_event
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+      AND JSON_UNQUOTE(JSON_EXTRACT(payload_masked_json,'$.campaign_id')) IS NOT NULL
+      AND JSON_UNQUOTE(JSON_EXTRACT(payload_masked_json,'$.campaign_id')) &lt;&gt; 'null'
+  </select>
+  <sql id="linkedCustomerCondition">
+    AND EXISTS (
+      SELECT 1 FROM crm_youzan_customer_link customer_link
+      WHERE customer_link.tenant_id=crm_youzan_event.tenant_id
+        AND customer_link.shop_id=crm_youzan_event.shop_id
+        AND customer_link.external_customer_id=JSON_UNQUOTE(JSON_EXTRACT(crm_youzan_event.payload_masked_json,'$.external_customer_id'))
+    )
+  </sql>
+  <select id="selectLatestOrderEvents" resultType="com.whale.crm.integration.youzan.domain.YouzanEvent">
+    SELECT <include refid="eventColumns"/> FROM crm_youzan_event
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND id IN (
+      SELECT MAX(id) FROM crm_youzan_event
+      WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+      GROUP BY external_order_no
+    )
+    <if test="linkedOnly"><include refid="linkedCustomerCondition"/></if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countDistinctExternalOrders" resultType="long">
+    SELECT COUNT(DISTINCT external_order_no) FROM crm_youzan_event
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND id IN (
+      SELECT MAX(id) FROM crm_youzan_event
+      WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+      GROUP BY external_order_no
+    )
+    <if test="linkedOnly"><include refid="linkedCustomerCondition"/></if>
+  </select>
+  <update id="updateEventStatus">
+    UPDATE crm_youzan_event SET process_status=#{status},process_attempts=process_attempts+1,last_error=#{lastError},
+      next_retry_at=#{nextRetryAt},processed_at=#{processedAt},order_id=#{orderId},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+
+  <insert id="insertOrderMap">
+    INSERT INTO crm_youzan_order_map (tenant_id,shop_id,external_order_no,crm_order_id,last_external_updated_at)
+    VALUES (#{tenantId},#{entity.shopId},#{entity.externalOrderNo},#{entity.crmOrderId},#{entity.lastExternalUpdatedAt})
+  </insert>
+  <select id="selectOrderMap" resultType="com.whale.crm.integration.youzan.domain.YouzanOrderMap">
+    SELECT <include refid="orderMapColumns"/> FROM crm_youzan_order_map WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND external_order_no=#{externalOrderNo}
+  </select>
+  <select id="selectOrderMapForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanOrderMap">
+    SELECT <include refid="orderMapColumns"/> FROM crm_youzan_order_map WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND external_order_no=#{externalOrderNo} FOR UPDATE
+  </select>
+  <select id="selectOrderMaps" resultType="com.whale.crm.integration.youzan.domain.YouzanOrderMap">
+    SELECT <include refid="orderMapColumns"/> FROM crm_youzan_order_map WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countOrderMaps" resultType="long">
+    SELECT COUNT(*) FROM crm_youzan_order_map WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+  </select>
+  <update id="updateOrderMapTime">
+    UPDATE crm_youzan_order_map SET last_external_updated_at=#{externalUpdatedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+
+  <select id="selectSkuMapping" resultType="com.whale.crm.integration.youzan.domain.YouzanSkuMapping">
+    SELECT <include refid="skuMapColumns"/> FROM crm_youzan_sku_map WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND external_sku_id=#{externalSkuId}
+  </select>
+  <select id="selectSkuMappingForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanSkuMapping">
+    SELECT <include refid="skuMapColumns"/> FROM crm_youzan_sku_map WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectSkuMappings" resultType="com.whale.crm.integration.youzan.domain.YouzanSkuMapping">
+    SELECT <include refid="skuMapColumns"/> FROM crm_youzan_sku_map WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} ORDER BY external_sku_id
+  </select>
+  <insert id="insertSkuMapping">
+    INSERT INTO crm_youzan_sku_map (tenant_id,shop_id,external_sku_id,crm_sku_id,status)
+    VALUES (#{tenantId},#{entity.shopId},#{entity.externalSkuId},#{entity.crmSkuId},#{entity.status})
+  </insert>
+  <update id="updateSkuMapping">
+    UPDATE crm_youzan_sku_map SET crm_sku_id=#{crmSkuId},status=#{status},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+
+  <select id="selectCustomerLink" resultType="com.whale.crm.integration.youzan.domain.YouzanCustomerLink">
+    SELECT <include refid="customerLinkColumns"/> FROM crm_youzan_customer_link WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND external_customer_id=#{externalCustomerId}
+  </select>
+  <select id="selectCustomerLinkForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanCustomerLink">
+    SELECT <include refid="customerLinkColumns"/> FROM crm_youzan_customer_link WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectCustomerLinks" resultType="com.whale.crm.integration.youzan.domain.YouzanCustomerLink">
+    SELECT <include refid="customerLinkColumns"/> FROM crm_youzan_customer_link WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} ORDER BY external_customer_id
+  </select>
+  <insert id="insertCustomerLink">
+    INSERT INTO crm_youzan_customer_link (tenant_id,shop_id,external_customer_id,customer_id,link_type,confidence,reason,created_by)
+    VALUES (#{tenantId},#{entity.shopId},#{entity.externalCustomerId},#{entity.customerId},#{entity.linkType},#{entity.confidence},#{entity.reason},#{entity.createdBy})
+  </insert>
+  <update id="updateCustomerLink">
+    UPDATE crm_youzan_customer_link SET customer_id=#{customerId},reason=#{reason},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+
+  <select id="selectIssue" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncIssue">
+    SELECT <include refid="issueColumns"/> FROM crm_youzan_sync_issue WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectIssueForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncIssue">
+    SELECT <include refid="issueColumns"/> FROM crm_youzan_sync_issue WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectIssueByEventAndType" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncIssue">
+    SELECT <include refid="issueColumns"/> FROM crm_youzan_sync_issue WHERE tenant_id=#{tenantId} AND event_id=#{eventId} AND issue_type=#{issueType}
+  </select>
+  <select id="selectIssues" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncIssue">
+    SELECT <include refid="issueColumns"/> FROM crm_youzan_sync_issue WHERE tenant_id=#{tenantId}
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countIssues" resultType="long">
+    SELECT COUNT(*) FROM crm_youzan_sync_issue WHERE tenant_id=#{tenantId}
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+  <insert id="insertIssue">
+    INSERT INTO crm_youzan_sync_issue (tenant_id,event_id,issue_type,status,detail_masked,attempts,last_error,next_retry_at,resolved_at,resolved_by)
+    VALUES (#{tenantId},#{entity.eventId},#{entity.issueType},#{entity.status},#{entity.detailMasked},#{entity.attempts},#{entity.lastError},#{entity.nextRetryAt},#{entity.resolvedAt},#{entity.resolvedBy})
+  </insert>
+  <update id="updateIssueStatus">
+    UPDATE crm_youzan_sync_issue SET status=#{status},attempts=#{attempts},last_error=#{lastError},next_retry_at=#{nextRetryAt},
+      resolved_at=#{resolvedAt},resolved_by=#{resolvedBy},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+
+  <select id="selectCursor" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncCursor">
+    SELECT <include refid="cursorColumns"/> FROM crm_youzan_sync_cursor WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+  </select>
+  <select id="selectCursorForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncCursor">
+    SELECT <include refid="cursorColumns"/> FROM crm_youzan_sync_cursor WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} FOR UPDATE
+  </select>
+  <insert id="insertCursor">
+    INSERT INTO crm_youzan_sync_cursor (tenant_id,shop_id,cursor_value,window_start,window_end,last_sync_at,last_external_updated_at)
+    VALUES (#{tenantId},#{entity.shopId},#{entity.cursorValue},#{entity.windowStart},#{entity.windowEnd},#{entity.lastSyncAt},#{entity.lastExternalUpdatedAt})
+  </insert>
+  <update id="updateCursor">
+    UPDATE crm_youzan_sync_cursor SET cursor_value=#{cursorValue},last_sync_at=#{lastSyncAt},last_external_updated_at=#{lastExternalUpdatedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+</mapper>

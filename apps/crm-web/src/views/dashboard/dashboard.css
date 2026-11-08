@@ -1,0 +1,280 @@
+.dashboard-screen {
+  --dashboard-bg: oklch(18% 0.025 220);
+  --dashboard-surface: oklch(22% 0.025 220);
+  --dashboard-raised: oklch(26% 0.026 220);
+  --dashboard-border: oklch(34% 0.03 220);
+  --dashboard-text: oklch(93% 0.018 170);
+  --dashboard-muted: oklch(73% 0.025 195);
+  --dashboard-accent: oklch(72% 0.09 175);
+  --dashboard-amber: oklch(77% 0.105 80);
+  min-height: 100dvh;
+  padding: 24px 32px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: var(--dashboard-text);
+  background: var(--dashboard-bg);
+  font-family: 'Source Han Sans SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+
+.dashboard-screen *,
+.dashboard-screen *::before,
+.dashboard-screen *::after { box-sizing: border-box; }
+
+.dashboard-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--dashboard-border);
+}
+
+.dashboard-heading { min-width: 0; }
+.dashboard-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--dashboard-accent);
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+}
+.dashboard-heading h1 {
+  margin: 0;
+  font-family: 'Avenir Next', 'Source Han Sans SC', 'PingFang SC', sans-serif;
+  font-size: clamp(1.75rem, 2vw, 2.5rem);
+  font-weight: 620;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+}
+.dashboard-heading p { margin: 6px 0 0; color: var(--dashboard-muted); font-size: 0.875rem; }
+.dashboard-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+.dashboard-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dashboard-period { flex: none; }
+.dashboard-date { width: 250px !important; }
+.dashboard-select { width: 132px; }
+.dashboard-institution { width: 180px; }
+.dashboard-reset { margin-left: 0 !important; }
+.dashboard-freshness {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--dashboard-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-screen .el-button {
+  min-height: 36px;
+  margin-left: 0;
+  border-color: var(--dashboard-border);
+  color: var(--dashboard-text);
+  background: var(--dashboard-surface);
+}
+.dashboard-screen .el-button:hover,
+.dashboard-screen .el-button:focus-visible {
+  border-color: var(--dashboard-accent);
+  color: var(--dashboard-accent);
+  background: var(--dashboard-raised);
+}
+.dashboard-screen .el-button--primary,
+.dashboard-screen .el-button--primary:hover,
+.dashboard-screen .el-button--primary:focus-visible {
+  border-color: var(--dashboard-accent);
+  color: var(--dashboard-bg);
+  background: var(--dashboard-accent);
+}
+.dashboard-screen .el-button.is-text { border-color: transparent; background: transparent; color: var(--dashboard-accent); }
+.dashboard-screen .el-input__wrapper,
+.dashboard-screen .el-select__wrapper,
+.dashboard-screen .el-range-editor.el-input__wrapper {
+  min-height: 36px;
+  border: 1px solid var(--dashboard-border);
+  border-radius: 4px;
+  background: var(--dashboard-surface);
+  box-shadow: none;
+}
+.dashboard-screen .el-input__inner,
+.dashboard-screen .el-range-input,
+.dashboard-screen .el-select__selected-item,
+.dashboard-screen .el-select__placeholder { color: var(--dashboard-text); }
+.dashboard-screen .el-select__placeholder.is-transparent,
+.dashboard-screen .el-range-input::placeholder { color: var(--dashboard-muted); }
+
+.dashboard-messages { display: grid; gap: 8px; }
+.dashboard-messages:empty { display: none; }
+.dashboard-screen .el-alert { border: 1px solid var(--dashboard-border); border-radius: 4px; background: var(--dashboard-surface); }
+.dashboard-screen .el-alert__title { color: var(--dashboard-text); }
+.dashboard-screen .el-alert__close-btn { color: var(--dashboard-text); }
+
+.dashboard-metrics {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr repeat(4, 1fr);
+  min-height: 116px;
+  border-top: 1px solid var(--dashboard-border);
+  border-bottom: 1px solid var(--dashboard-border);
+}
+.dashboard-metric {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 20px;
+  border-left: 1px solid var(--dashboard-border);
+}
+.dashboard-metric:first-child { padding-left: 0; border-left: 0; }
+.dashboard-metric-label { color: var(--dashboard-muted); font-size: 0.8125rem; }
+.dashboard-metric-number { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.dashboard-metric-number strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'Avenir Next', 'DIN Alternate', 'Source Han Sans SC', sans-serif;
+  font-size: clamp(1.65rem, 2.15vw, 2.65rem);
+  font-weight: 580;
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+}
+.dashboard-metric-number > span { color: var(--dashboard-muted); font-size: 0.8125rem; }
+.dashboard-metric.is-teal .dashboard-metric-number { color: var(--dashboard-accent); }
+.dashboard-metric.is-amber .dashboard-metric-number { color: var(--dashboard-amber); }
+.dashboard-metric-note { overflow: hidden; color: var(--dashboard-muted); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-metrics.is-loading > * { padding: 16px; }
+
+.dashboard-loading { color: var(--dashboard-muted); text-align: center; }
+.dashboard-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 0.9fr) minmax(420px, 1.55fr) minmax(280px, 1fr);
+  grid-template-rows: minmax(0, 1.06fr) minmax(0, 0.94fr);
+  grid-template-areas: 'fulfillment trend institutions' 'campaigns campaigns institutions';
+  gap: 16px;
+}
+.dashboard-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--dashboard-border);
+  border-radius: 6px;
+  background: var(--dashboard-surface);
+  animation: dashboard-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.dashboard-panel-trend { grid-area: trend; animation-delay: 60ms; }
+.dashboard-panel-fulfillment { grid-area: fulfillment; }
+.dashboard-panel-institutions { grid-area: institutions; animation-delay: 120ms; }
+.dashboard-panel-campaigns { grid-area: campaigns; animation-delay: 180ms; }
+.dashboard-panel-header {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 8px;
+}
+.dashboard-panel-header span { color: var(--dashboard-accent); font-size: 0.75rem; letter-spacing: 0.08em; }
+.dashboard-panel-header h2 { margin: 2px 0 0; font-size: 1.0625rem; font-weight: 580; line-height: 1.35; }
+.dashboard-panel-header small { flex: none; padding-top: 4px; color: var(--dashboard-muted); font-size: 0.6875rem; }
+.dashboard-chart-frame { flex: 1; min-height: 0; padding: 0 8px; }
+.dashboard-chart { width: 100%; height: 100%; min-height: 180px; }
+.dashboard-panel-note { flex: none; padding: 8px 18px 12px; color: var(--dashboard-muted); font-size: 0.75rem; line-height: 1.5; }
+.dashboard-empty {
+  flex: 1;
+  min-height: 160px;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  color: var(--dashboard-muted);
+  text-align: center;
+  font-size: 0.875rem;
+}
+.dashboard-footer {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--dashboard-muted);
+  font-size: 0.75rem;
+}
+
+@keyframes dashboard-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (min-width: 1600px) and (min-height: 900px) {
+  .dashboard-screen { height: 100dvh; overflow: hidden; }
+}
+
+@media (max-width: 1599px), (max-height: 899px) {
+  .dashboard-grid { grid-template-columns: 1fr 1fr; grid-template-rows: auto; grid-template-areas: 'trend trend' 'fulfillment institutions' 'campaigns campaigns'; }
+  .dashboard-panel { min-height: 320px; }
+  .dashboard-panel-trend { min-height: 380px; }
+  .dashboard-chart-frame { min-height: 250px; }
+  .dashboard-metrics { grid-template-columns: repeat(3, 1fr); }
+  .dashboard-metric:nth-child(4) { padding-left: 0; border-left: 0; }
+  .dashboard-metric:nth-child(n + 4) { border-top: 1px solid var(--dashboard-border); }
+  .dashboard-freshness { width: 100%; flex-direction: row; justify-content: space-between; align-items: center; }
+}
+
+@media (max-width: 760px) {
+  .dashboard-screen { padding: 16px; gap: 12px; }
+  .dashboard-header { align-items: flex-start; flex-direction: column; }
+  .dashboard-header-actions { justify-content: flex-start; }
+  .dashboard-heading p { max-width: 34ch; }
+  .dashboard-controls { align-items: stretch; }
+  .dashboard-period { width: 100%; display: flex; }
+  .dashboard-period .el-button { flex: 1; }
+  .dashboard-date,
+  .dashboard-select,
+  .dashboard-institution { width: 100% !important; }
+  .dashboard-freshness { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .dashboard-metrics { grid-template-columns: repeat(2, 1fr); }
+  .dashboard-metric { padding: 12px; }
+  .dashboard-metric:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .dashboard-metric:nth-child(n + 3) { border-top: 1px solid var(--dashboard-border); }
+  .dashboard-metric-number strong { font-size: 1.75rem; }
+  .dashboard-metric-note { white-space: normal; }
+  .dashboard-grid { grid-template-columns: 1fr; grid-template-areas: 'trend' 'fulfillment' 'institutions' 'campaigns'; }
+  .dashboard-panel-header { flex-direction: column; gap: 4px; }
+  .dashboard-footer { flex-direction: column; gap: 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-panel { animation: none; }
+  .dashboard-screen * { scroll-behavior: auto !important; transition: none !important; }
+}
+
+.dashboard-screen { font-size: 1.125rem; }
+.dashboard-kicker { font-size: 0.875rem; }
+.dashboard-heading h1 { font-size: clamp(calc(1.75rem + 2px), calc(2vw + 2px), calc(2.5rem + 2px)); }
+.dashboard-heading p { font-size: 1rem; }
+.dashboard-freshness { font-size: 0.875rem; }
+.dashboard-metric-label { font-size: 0.9375rem; }
+.dashboard-metric-number strong { font-size: clamp(calc(1.65rem + 2px), calc(2.15vw + 2px), calc(2.65rem + 2px)); }
+.dashboard-metric-number > span { font-size: 0.9375rem; }
+.dashboard-metric-note { font-size: 0.875rem; }
+.dashboard-panel-header span { font-size: 0.875rem; }
+.dashboard-panel-header h2 { font-size: 1.1875rem; }
+.dashboard-panel-header small { font-size: 0.8125rem; }
+.dashboard-panel-note { font-size: 0.875rem; }
+.dashboard-empty { font-size: 1rem; }
+.dashboard-footer { font-size: 0.875rem; }
+@media (max-width: 760px) {
+  .dashboard-metric-number strong { font-size: 1.875rem; }
+}

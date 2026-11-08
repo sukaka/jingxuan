@@ -1,0 +1,19 @@
+{
+  "event_id": "c8f3acb7-22bf-4b6a-8b98-7c5fa91756d1",
+  "event_type": "entitlement.redeemed",
+  "event_version": 1,
+  "tenant_id": 1,
+  "aggregate_type": "entitlement",
+  "aggregate_id": "500100",
+  "occurred_at": "2026-10-23T10:00:00Z",
+  "correlation_id": "a1b2c3",
+  "causation_id": "demo-request-id",
+  "actor_id": "institution-staff-11",
+  "payload": {
+    "redemption_id": "9200",
+    "entitlement_id": "500100",
+    "institution_id": "88",
+    "count": 1,
+    "amount_fen": null
+  }
+}

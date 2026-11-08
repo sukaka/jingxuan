@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.CustomerOwnerHistoryMapper">
+
+  <resultMap id="OwnerHistoryMap" type="com.whale.crm.customer.domain.CustomerOwnerHistory">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="customerId" column="customer_id"/>
+    <result property="oldOwnerId" column="old_owner_id"/>
+    <result property="newOwnerId" column="new_owner_id"/>
+    <result property="changedBy" column="changed_by"/>
+    <result property="effectiveAt" column="effective_at"/>
+    <result property="reason" column="reason"/>
+    <result property="approvalRef" column="approval_ref"/>
+    <result property="createdAt" column="created_at"/>
+  </resultMap>
+
+  <select id="selectByCustomerId" resultMap="OwnerHistoryMap">
+    SELECT id, tenant_id, customer_id, old_owner_id, new_owner_id, changed_by, effective_at, reason,
+           approval_ref, created_at
+    FROM crm_customer_owner_history
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId}
+    ORDER BY id ASC
+  </select>
+
+  <select id="selectRowsByCustomerId"
+          resultType="com.whale.crm.customer.domain.CustomerOwnerHistoryRepository$OwnerHistoryRow">
+    SELECT h.id, h.customer_id, h.old_owner_id, ou.display_name AS old_owner_name,
+           h.new_owner_id, nu.display_name AS new_owner_name,
+           h.changed_by, cu.display_name AS changed_by_name,
+           h.reason, h.effective_at, h.created_at
+    FROM crm_customer_owner_history h
+    LEFT JOIN sys_user ou ON ou.tenant_id = h.tenant_id AND ou.id = h.old_owner_id
+    LEFT JOIN sys_user nu ON nu.tenant_id = h.tenant_id AND nu.id = h.new_owner_id
+    LEFT JOIN sys_user cu ON cu.tenant_id = h.tenant_id AND cu.id = h.changed_by
+    WHERE h.tenant_id = #{tenantId} AND h.customer_id = #{customerId}
+    ORDER BY h.id DESC
+  </select>
+
+  <insert id="insertHistory" parameterType="com.whale.crm.customer.domain.CustomerOwnerHistory"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_customer_owner_history (tenant_id, customer_id, old_owner_id, new_owner_id, changed_by,
+                                            effective_at, reason, approval_ref)
+    VALUES (#{tenantId}, #{customerId}, #{oldOwnerId}, #{newOwnerId}, #{changedBy},
+            #{effectiveAt}, #{reason}, #{approvalRef})
+  </insert>
+
+</mapper>

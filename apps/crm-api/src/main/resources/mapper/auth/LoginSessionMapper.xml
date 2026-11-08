@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.platform.auth.infrastructure.mapper.LoginSessionMapper">
+
+  <resultMap id="LoginSessionMap" type="com.whale.crm.platform.auth.domain.LoginSession">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="userId" column="user_id"/>
+    <result property="tokenHash" column="token_hash"/>
+    <result property="clientIp" column="client_ip"/>
+    <result property="userAgent" column="user_agent"/>
+    <result property="expiresAt" column="expires_at"/>
+    <result property="revokedAt" column="revoked_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <insert id="insertSession" parameterType="com.whale.crm.platform.auth.domain.LoginSession"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO sys_login_session (tenant_id, user_id, token_hash, client_ip, user_agent, expires_at)
+    VALUES (#{tenantId}, #{userId}, #{tokenHash}, #{clientIp}, #{userAgent}, #{expiresAt})
+  </insert>
+
+  <!-- 认证引导查询：token_hash 全局唯一，定位后以行内 tenant_id 为准 -->
+  <select id="selectByTokenHash" resultMap="LoginSessionMap">
+    SELECT id, tenant_id, user_id, token_hash, client_ip, user_agent, expires_at, revoked_at,
+           created_at, updated_at, version
+    FROM sys_login_session
+    WHERE token_hash = #{tokenHash}
+    LIMIT 1
+  </select>
+
+  <update id="revokeByTokenHash">
+    UPDATE sys_login_session
+    SET revoked_at = #{revokedAt}, version = version + 1
+    WHERE token_hash = #{tokenHash} AND revoked_at IS NULL
+  </update>
+
+  <update id="revokeAllByUserId">
+    UPDATE sys_login_session
+    SET revoked_at = #{revokedAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND user_id = #{userId} AND revoked_at IS NULL
+  </update>
+
+</mapper>

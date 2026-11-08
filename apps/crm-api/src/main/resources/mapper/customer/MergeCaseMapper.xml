@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.MergeCaseMapper">
+
+  <resultMap id="MergeCaseMap" type="com.whale.crm.customer.domain.MergeCase">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="primaryCustomerId" column="primary_customer_id"/>
+    <result property="secondaryCustomerId" column="secondary_customer_id"/>
+    <result property="status" column="status"/>
+    <result property="matchEvidence" column="match_evidence"/>
+    <result property="reviewerId" column="reviewer_id"/>
+    <result property="reviewedAt" column="reviewed_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <sql id="caseColumns">
+    id, tenant_id, primary_customer_id, secondary_customer_id, status, match_evidence,
+    reviewer_id, reviewed_at, created_at, updated_at, version
+  </sql>
+
+  <select id="selectById" resultMap="MergeCaseMap">
+    SELECT <include refid="caseColumns"/>
+    FROM crm_merge_case
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <select id="countPair" resultType="int">
+    SELECT COUNT(*) FROM crm_merge_case
+    WHERE tenant_id = #{tenantId} AND primary_customer_id = #{primaryCustomerId}
+      AND secondary_customer_id = #{secondaryCustomerId}
+  </select>
+
+  <select id="countOpenBetween" resultType="int">
+    SELECT COUNT(*) FROM crm_merge_case
+    WHERE tenant_id = #{tenantId} AND status IN ('SUGGESTED','REVIEWING')
+      AND ((primary_customer_id = #{customerA} AND secondary_customer_id = #{customerB})
+        OR (primary_customer_id = #{customerB} AND secondary_customer_id = #{customerA}))
+  </select>
+
+  <insert id="insertCase" parameterType="com.whale.crm.customer.domain.MergeCase"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_merge_case (tenant_id, primary_customer_id, secondary_customer_id, status, match_evidence)
+    VALUES (#{tenantId}, #{primaryCustomerId}, #{secondaryCustomerId}, #{status}, #{matchEvidence})
+  </insert>
+
+  <update id="updateStatus">
+    UPDATE crm_merge_case
+    SET status = #{toStatus}, reviewer_id = #{reviewerId}, reviewed_at = #{reviewedAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version}
+      AND ((status IN ('SUGGESTED','REVIEWING') AND #{toStatus} IN ('REVIEWING','CONFIRMED','REJECTED'))
+        OR (status = 'CONFIRMED' AND #{toStatus} = 'REVERSED'))
+  </update>
+
+  <!-- 合并列表范围：主从客户都须在可见范围内（已归档客户保留 team/owner 快照仍可判）；NONE/机构 1=0 兜底 -->
+  <sql id="scopedCaseWhere">
+    FROM crm_merge_case m
+    INNER JOIN crm_customer p ON p.tenant_id = m.tenant_id AND p.id = m.primary_customer_id
+    INNER JOIN crm_customer s ON s.tenant_id = m.tenant_id AND s.id = m.secondary_customer_id
+    WHERE m.tenant_id = #{tenantId}
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (p.owner_staff_id = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR p.team_id IN <foreach collection="teamIds" item="t" open="(" separator="," close=")">#{t}</foreach>
+        </if>)
+        AND (s.owner_staff_id = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR s.team_id IN <foreach collection="teamIds" item="t" open="(" separator="," close=")">#{t}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">
+        AND p.owner_staff_id = #{selfId} AND s.owner_staff_id = #{selfId}
+      </when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+    <if test="status != null and status != ''">
+      AND m.status = #{status}
+    </if>
+  </sql>
+
+  <select id="search" resultMap="MergeCaseMap">
+    SELECT m.id, m.tenant_id, m.primary_customer_id, m.secondary_customer_id, m.status, m.match_evidence,
+           m.reviewer_id, m.reviewed_at, m.created_at, m.updated_at, m.version
+    <include refid="scopedCaseWhere"/>
+    ORDER BY m.id DESC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*)
+    <include refid="scopedCaseWhere"/>
+  </select>
+
+</mapper>

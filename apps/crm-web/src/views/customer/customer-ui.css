@@ -1,0 +1,140 @@
+/* 客户域页面共享视觉令牌,对齐 docs/08_原型与来源/V2.0_交互原型.html。
+   仅挂在 .crm-ui 作用域内,不影响外壳与其他模块页面。 */
+.crm-ui {
+  --el-color-primary: #0f948b;
+  --el-color-primary-light-3: #3aaaa2;
+  --el-color-primary-light-5: #6fc4bd;
+  --el-color-primary-light-7: #a5deda;
+  --el-color-primary-light-8: #c2e9e6;
+  --el-color-primary-light-9: #e7f7f4;
+  --el-color-primary-dark-2: #08766f;
+  --crm-ink: #183047;
+  --crm-muted: #79909f;
+  --crm-subtle: #9aabba;
+  --crm-line: #e8eef2;
+  --crm-page: #f6f9fb;
+  --crm-soft: #e7f7f4;
+  --crm-radius: 14px;
+  --crm-shadow: 0 6px 28px rgba(30, 62, 84, 0.045);
+  color: var(--crm-ink);
+}
+
+/* 外壳(AppShell)已全局提供浅灰页底 #f6f9fb 与内容内边距,页面容器不再重复铺设 */
+.crm-page-bg {
+  min-width: 0;
+}
+
+.crm-ui .el-card {
+  border: 1px solid #e9eff3;
+  border-radius: var(--crm-radius);
+  box-shadow: var(--crm-shadow);
+}
+
+.crm-ui .el-drawer {
+  background: #f8fafb;
+}
+
+/* 状态 pill(对齐原型 .pill 色系) */
+.crm-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: #edf2f5;
+  color: #657d8a;
+}
+
+.crm-pill.is-success {
+  background: #e6f7ef;
+  color: #218361;
+}
+
+.crm-pill.is-warning {
+  background: #fff4df;
+  color: #ad752e;
+}
+
+.crm-pill.is-danger {
+  background: #ffedf0;
+  color: #c95667;
+}
+
+.crm-pill.is-info {
+  background: #e7f2fc;
+  color: #397ab2;
+}
+
+.crm-pill.is-purple {
+  color: #7051a3;
+  background: #f1eafb;
+}
+
+.crm-pill.is-teal {
+  color: #0f6f66;
+  background: #e3f5f1;
+}
+
+.crm-pill.is-orange {
+  color: #8f4e1f;
+  background: #fff0e2;
+}
+
+.crm-pill.is-pink {
+  color: #9a426d;
+  background: #fdeef5;
+}
+
+/* 客户头像(原型渐变圆头像) */
+.crm-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #d2f6ef, #b6dee7);
+  color: #11756e;
+  font-weight: 700;
+  font-size: 13px;
+  flex: none;
+}
+
+.crm-muted {
+  color: var(--crm-muted);
+  font-size: 12px;
+}
+
+.crm-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.crm-toolbar .crm-spacer {
+  flex: 1;
+}
+
+.crm-pager {
+  margin-top: 14px;
+  justify-content: flex-end;
+}
+
+.crm-page-title {
+  margin: 0 0 16px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.crm-table-alert {
+  margin-bottom: 8px;
+}
+
+@media (max-width: 768px) {
+  .crm-toolbar {
+    gap: 8px;
+  }
+}

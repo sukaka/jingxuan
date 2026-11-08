@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.exporting.infrastructure.mapper.ExportJobMapper">
+  <sql id="jobColumns">id,tenant_id AS tenantId,job_no AS jobNo,requested_by AS requestedBy,export_type AS exportType,status,filters_json AS filtersJson,columns_json AS columnsJson,scope_json AS scopeJson,reason,row_count AS rowCount,file_id AS fileId,expires_at AS expiresAt,idempotency_key AS idempotencyKey,request_hash AS requestHash,lease_owner AS leaseOwner,lease_expires_at AS leaseExpiresAt,started_at AS startedAt,finished_at AS finishedAt,last_error AS lastError,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="logColumns">id,tenant_id AS tenantId,job_id AS jobId,actor_user_id AS actorUserId,action,result,reason,denial_code AS denialCode,created_at AS createdAt</sql>
+  <sql id="jobFilters">
+    <if test="exportType != null">AND j.export_type=#{exportType}</if>
+    <if test="status != null">AND j.status=#{status}</if>
+    <if test="visibilityScope != 'ALL'">AND j.requested_by=#{selfId}</if>
+  </sql>
+  <sql id="logFilters">
+    <if test="jobId != null">AND l.job_id=#{jobId}</if>
+    <if test="actorId != null">AND l.actor_user_id=#{actorId}</if>
+    <if test="action != null and action != ''">AND l.action=#{action}</if>
+    <if test="result != null and result != ''">AND l.result=#{result}</if>
+    <if test="visibilityScope != 'ALL'">AND l.actor_user_id=#{selfId}</if>
+  </sql>
+  <sql id="claimableCondition">(j.status='PENDING' OR (j.status='RUNNING' AND (j.lease_expires_at IS NULL OR j.lease_expires_at&lt;=#{now})))</sql>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="e.id">
+    INSERT INTO crm_export_job (tenant_id,job_no,requested_by,export_type,status,filters_json,columns_json,scope_json,reason,row_count,idempotency_key,request_hash)
+    VALUES (#{e.tenantId},#{e.jobNo},#{e.requestedBy},#{e.exportType},'PENDING',#{e.filtersJson},#{e.columnsJson},#{e.scopeJson},#{e.reason},0,#{e.idempotencyKey},#{e.requestHash})
+  </insert>
+  <select id="findById" resultType="com.whale.crm.exporting.domain.ExportJob">
+    SELECT <include refid="jobColumns"/> FROM crm_export_job j WHERE j.tenant_id=#{tenantId} AND j.id=#{id}
+  </select>
+  <select id="findVisibleById" resultType="com.whale.crm.exporting.domain.ExportJob">
+    SELECT <include refid="jobColumns"/> FROM crm_export_job j
+    WHERE j.tenant_id=#{tenantId} AND j.id=#{id}
+    <if test="visibilityScope != 'ALL'">AND j.requested_by=#{selfId}</if>
+  </select>
+  <select id="findByIdempotency" resultType="com.whale.crm.exporting.domain.ExportJob">
+    SELECT <include refid="jobColumns"/> FROM crm_export_job j
+    WHERE j.tenant_id=#{tenantId} AND j.requested_by=#{requestedBy} AND j.idempotency_key=#{key}
+  </select>
+  <select id="search" resultType="com.whale.crm.exporting.domain.ExportJob">
+    SELECT <include refid="jobColumns"/> FROM crm_export_job j WHERE j.tenant_id=#{tenantId}
+    <include refid="jobFilters"/> ORDER BY j.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*) FROM crm_export_job j WHERE j.tenant_id=#{tenantId}<include refid="jobFilters"/>
+  </select>
+  <select id="claimTenantIds" resultType="long">
+    SELECT DISTINCT j.tenant_id FROM crm_export_job j WHERE <include refid="claimableCondition"/>
+  </select>
+  <select id="claimable" resultType="com.whale.crm.exporting.domain.ExportJob">
+    SELECT <include refid="jobColumns"/> FROM crm_export_job j
+    WHERE j.tenant_id=#{tenantId} AND <include refid="claimableCondition"/>
+    ORDER BY j.id ASC LIMIT #{limit}
+  </select>
+  <update id="claim">
+    UPDATE crm_export_job j SET j.status='RUNNING',j.lease_owner=#{owner},j.lease_expires_at=#{until},
+      j.started_at=COALESCE(j.started_at,#{now}),j.finished_at=NULL,j.last_error=NULL,
+      j.updated_at=CURRENT_TIMESTAMP(3),j.version=j.version+1
+    WHERE j.tenant_id=#{tenantId} AND j.id=#{id} AND j.version=#{expectedVersion}
+      AND (j.status='PENDING' OR (j.status='RUNNING' AND (j.lease_expires_at IS NULL OR j.lease_expires_at&lt;=#{now})))
+  </update>
+  <update id="renewLease">
+    UPDATE crm_export_job j SET j.lease_expires_at=#{until},j.updated_at=CURRENT_TIMESTAMP(3)
+    WHERE j.tenant_id=#{tenantId} AND j.id=#{id} AND j.lease_owner=#{owner}
+      AND j.status='RUNNING' AND j.lease_expires_at&gt;CURRENT_TIMESTAMP(3)
+  </update>
+  <update id="markSucceeded">
+    UPDATE crm_export_job j SET j.status='SUCCEEDED',j.file_id=#{fileId},j.row_count=#{rowCount},
+      j.expires_at=#{expiresAt},j.scope_json=#{scopeJson},j.finished_at=#{finishedAt},
+      j.lease_owner=NULL,j.lease_expires_at=NULL,j.last_error=NULL,
+      j.updated_at=CURRENT_TIMESTAMP(3),j.version=j.version+1
+    WHERE j.tenant_id=#{tenantId} AND j.id=#{id} AND j.version=#{expectedVersion}
+      AND j.lease_owner=#{owner} AND j.status='RUNNING'
+  </update>
+  <update id="markFailed">
+    UPDATE crm_export_job j SET j.status='FAILED',j.last_error=#{error},j.finished_at=#{finishedAt},
+      j.lease_owner=NULL,j.lease_expires_at=NULL,j.updated_at=CURRENT_TIMESTAMP(3),j.version=j.version+1
+    WHERE j.tenant_id=#{tenantId} AND j.id=#{id} AND j.version=#{expectedVersion}
+      AND j.lease_owner=#{owner} AND j.status='RUNNING'
+  </update>
+
+  <insert id="insertAccessLog" useGeneratedKeys="true" keyProperty="e.id">
+    INSERT INTO crm_export_access_log (tenant_id,job_id,actor_user_id,action,result,reason,denial_code)
+    VALUES (#{e.tenantId},#{e.jobId},#{e.actorUserId},#{e.action},#{e.result},#{e.reason},#{e.denialCode})
+  </insert>
+  <select id="searchAccessLogs" resultType="com.whale.crm.exporting.domain.ExportAccessLog">
+    SELECT <include refid="logColumns"/> FROM crm_export_access_log l WHERE l.tenant_id=#{tenantId}
+    <include refid="logFilters"/> ORDER BY l.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countAccessLogs" resultType="long">
+    SELECT COUNT(*) FROM crm_export_access_log l WHERE l.tenant_id=#{tenantId}<include refid="logFilters"/>
+  </select>
+</mapper>

@@ -1,0 +1,699 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CRM Domain Event Envelope v1",
+  "description": "发布侧 Outbox relay 契约，覆盖 order.paid.v1、entitlement.redeemed.v1、refund.succeeded.v1、entitlement.refund_revoked.v1、settlement.payment.recorded.v1、appointment.created.v1、appointment.status.changed.v1、redemption.posted.v1、redemption.reversal.requested.v1、redemption.reversal.approved.v1、redemption.reversal.rejected.v1、institution.profile.created.v1、institution.profile.updated.v1、institution.change.requested.v1、institution.change.reviewed.v1、institution.change.revalidated.v1、institution.contract.created.v1、institution.qualification.created.v1、youzan.order.processed.v1、youzan.sync.issue.v1、youzan.sync.completed.v1、wecom.message.archived.v1、wecom.archive.gap.v1、knowledge.sync.requested.v1。topic 映射：order=crm.order.events.v1，entitlement=crm.entitlement.events.v1，refund=crm.refund.events.v1，settlement/settlement_batch/settlement_payment=crm.settlement.events.v1，appointment=crm.appointment.events.v1，redemption/redemption_reversal=crm.redemption.events.v1，institution/institution_file=crm.institution.events.v1，youzan/youzan_order/youzan_sync_issue=crm.youzan.events.v1，wecom=crm.wecom.events.v1，knowledge_document=crm.knowledge.sync.v1。不包含外部供应商回调；仅 knowledge.sync.requested.v1 声明 knowledge-sync consumer/Inbox，不表示其他业务 consumer、入账或 Inbox 去重已实现。",
+  "type": "object",
+  "required": ["event_id", "event_type", "event_version", "tenant_id", "aggregate_type", "aggregate_id", "occurred_at", "correlation_id", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 192,
+      "description": "以事件类型为前缀的 Outbox 确定性事件 ID；当前不是 UUID，Outbox/Inbox 存储最大 192 字符，当前业务事件更短。"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "order.paid.v1",
+        "entitlement.redeemed.v1",
+        "refund.succeeded.v1",
+        "entitlement.refund_revoked.v1",
+        "settlement.payment.recorded.v1",
+        "appointment.created.v1",
+        "appointment.status.changed.v1",
+        "redemption.posted.v1",
+        "redemption.reversal.requested.v1",
+        "redemption.reversal.approved.v1",
+        "redemption.reversal.rejected.v1",
+        "institution.profile.created.v1",
+        "institution.profile.updated.v1",
+        "institution.change.requested.v1",
+        "institution.change.reviewed.v1",
+        "institution.change.revalidated.v1",
+        "institution.contract.created.v1",
+        "institution.qualification.created.v1",
+        "youzan.order.processed.v1",
+        "youzan.sync.issue.v1",
+        "youzan.sync.completed.v1",
+        "wecom.message.archived.v1",
+        "wecom.archive.gap.v1",
+        "knowledge.sync.requested.v1"
+      ]
+    },
+    "event_version": {"const": 1},
+    "tenant_id": {"type": "integer", "minimum": 1},
+    "aggregate_type": {"type": "string", "enum": ["order", "entitlement", "refund", "settlement", "settlement_batch", "settlement_payment", "appointment", "redemption", "redemption_reversal", "institution", "institution_file", "youzan", "youzan_order", "youzan_sync_issue", "wecom", "knowledge_document"]},
+    "aggregate_id": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "correlation_id": {"type": "string", "minLength": 1, "maxLength": 192, "description": "当前发布侧与 event_id 相同。"},
+    "causation_id": {"type": ["string", "null"]},
+    "actor_id": {"type": ["string", "null"]},
+    "payload": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"event_type": {"const": "order.paid.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.order.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^order\\.paid\\.v1:.+"},
+          "aggregate_type": {"const": "order"},
+          "payload": {"$ref": "#/$defs/OrderPaidPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "entitlement.redeemed.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.entitlement.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^entitlement\\.redeemed\\.v1:.+"},
+          "aggregate_type": {"const": "entitlement"},
+          "payload": {"$ref": "#/$defs/EntitlementRedeemedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "refund.succeeded.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.refund.events.v1；仅真实退款成功事实。",
+        "properties": {
+          "event_id": {"pattern": "^refund\\.succeeded\\.v1:.+"},
+          "aggregate_type": {"const": "refund"},
+          "payload": {"$ref": "#/$defs/RefundSucceededPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "entitlement.refund_revoked.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.entitlement.events.v1；与 REFUND_REVOKE 负流水同事务写入。",
+        "properties": {
+          "event_id": {"pattern": "^entitlement\\.refund_revoked\\.v1:.+"},
+          "aggregate_type": {"const": "entitlement"},
+          "payload": {"$ref": "#/$defs/EntitlementRefundRevokedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "settlement.payment.recorded.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.settlement.events.v1；财务付款登记事实，不是银行回调。",
+        "properties": {
+          "event_id": {"pattern": "^settlement\\.payment\\.recorded\\.v1:.+"},
+          "aggregate_type": {"const": "settlement"},
+          "payload": {"$ref": "#/$defs/SettlementPaymentRecordedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "appointment.created.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.appointment.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^appointment\\.created\\.v1:.+"},
+          "aggregate_type": {"const": "appointment"},
+          "payload": {"$ref": "#/$defs/AppointmentCreatedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "appointment.status.changed.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.appointment.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^appointment\\.status\\.changed\\.v1:.+"},
+          "aggregate_type": {"const": "appointment"},
+          "payload": {"$ref": "#/$defs/AppointmentStatusChangedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "wecom.message.archived.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.wecom.events.v1；仅 metadata 和私有对象引用，不含正文。",
+        "properties": {
+          "event_id": {"pattern": "^wecom\\.message\\.archived\\.v1:.+"},
+          "aggregate_type": {"const": "wecom"},
+          "payload": {"$ref": "#/$defs/WecomMessageArchivedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "wecom.archive.gap.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.wecom.events.v1；仅覆盖缺口 metadata，不含正文或 consumer 语义。",
+        "properties": {
+          "event_id": {"pattern": "^wecom\\.archive\\.gap\\.v1:.+"},
+          "aggregate_type": {"const": "wecom"},
+          "payload": {"$ref": "#/$defs/WecomArchiveGapPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "youzan.order.processed.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.youzan.events.v1；实际 aggregate=youzan，relay 同时兼容 youzan_order。",
+        "properties": {
+          "event_id": {"pattern": "^youzan\\.order\\.processed\\.v1:.+"},
+          "aggregate_type": {"type": "string", "enum": ["youzan", "youzan_order"]},
+          "payload": {"$ref": "#/$defs/YouzanOrderProcessedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "youzan.sync.issue.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.youzan.events.v1；实际 aggregate=youzan，relay 同时兼容 youzan_sync_issue。",
+        "properties": {
+          "event_id": {"pattern": "^youzan\\.sync\\.issue\\.v1:.+"},
+          "aggregate_type": {"type": "string", "enum": ["youzan", "youzan_sync_issue"]},
+          "payload": {"$ref": "#/$defs/YouzanSyncIssuePayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "youzan.sync.completed.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.youzan.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^youzan\\.sync\\.completed\\.v1:.+"},
+          "aggregate_type": {"const": "youzan"},
+          "payload": {"$ref": "#/$defs/YouzanSyncCompletedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "institution.profile.created.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.institution.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^institution\\.profile\\.created\\.v1:.+"},
+          "aggregate_type": {"const": "institution"},
+          "payload": {"$ref": "#/$defs/InstitutionProfileCreatedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "institution.profile.updated.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.institution.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^institution\\.profile\\.updated\\.v1:.+"},
+          "aggregate_type": {"const": "institution"},
+          "payload": {"$ref": "#/$defs/InstitutionProfileUpdatedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "institution.change.requested.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.institution.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^institution\\.change\\.requested\\.v1:.+"},
+          "aggregate_type": {"const": "institution"},
+          "payload": {"$ref": "#/$defs/InstitutionChangeRequestedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "institution.change.reviewed.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.institution.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^institution\\.change\\.reviewed\\.v1:.+"},
+          "aggregate_type": {"const": "institution"},
+          "payload": {"$ref": "#/$defs/InstitutionChangeReviewedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "institution.change.revalidated.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.institution.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^institution\\.change\\.revalidated\\.v1:.+"},
+          "aggregate_type": {"const": "institution"},
+          "payload": {"$ref": "#/$defs/InstitutionChangeRevalidatedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "institution.contract.created.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.institution.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^institution\\.contract\\.created\\.v1:.+"},
+          "aggregate_type": {"const": "institution"},
+          "payload": {"$ref": "#/$defs/InstitutionContractCreatedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "institution.qualification.created.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.institution.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^institution\\.qualification\\.created\\.v1:.+"},
+          "aggregate_type": {"const": "institution"},
+          "payload": {"$ref": "#/$defs/InstitutionQualificationCreatedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "redemption.posted.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.redemption.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^redemption\\.posted\\.v1:.+"},
+          "aggregate_type": {"const": "redemption"},
+          "payload": {"$ref": "#/$defs/RedemptionPostedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "redemption.reversal.requested.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.redemption.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^redemption\\.reversal\\.requested\\.v1:.+"},
+          "aggregate_type": {"const": "redemption_reversal"},
+          "payload": {"$ref": "#/$defs/RedemptionReversalRequestedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "redemption.reversal.approved.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.redemption.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^redemption\\.reversal\\.approved\\.v1:.+"},
+          "aggregate_type": {"const": "redemption_reversal"},
+          "payload": {"$ref": "#/$defs/RedemptionReversalApprovedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "redemption.reversal.rejected.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.redemption.events.v1。",
+        "properties": {
+          "event_id": {"pattern": "^redemption\\.reversal\\.rejected\\.v1:.+"},
+          "aggregate_type": {"const": "redemption_reversal"},
+          "payload": {"$ref": "#/$defs/RedemptionReversalRejectedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "knowledge.sync.requested.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.knowledge.sync.v1。只请求知识同步，不表示远端已创建或索引成功。",
+        "properties": {
+          "event_id": {"pattern": "^knowledge\\.sync\\.requested\\.v1:.+"},
+          "aggregate_type": {"const": "knowledge_document"},
+          "payload": {"$ref": "#/$defs/KnowledgeSyncRequestedPayload"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "OrderPaidPayload": {
+      "type": "object",
+      "description": "可信支付确认同事务写入的 Outbox 负载；MANUAL_REVIEW 为人工凭证，PROVIDER_CALLBACK 为适配器验真后的供应商回调。",
+      "required": ["orderId", "paymentId", "customerId", "amountFen", "verificationMethod"],
+      "additionalProperties": false,
+      "properties": {
+        "orderId": {"type": "integer", "format": "int64", "minimum": 1},
+        "paymentId": {"type": "integer", "format": "int64", "minimum": 1},
+        "customerId": {"type": "integer", "format": "int64", "minimum": 1},
+        "amountFen": {"type": "integer", "format": "int64", "minimum": 1, "description": "已核验的支付金额，整数分。"},
+        "verificationMethod": {"type": "string", "enum": ["MANUAL_REVIEW", "PROVIDER_CALLBACK"]}
+      }
+    },
+    "EntitlementRedeemedPayload": {
+      "type": "object",
+      "description": "机构授权操作员最终确认后、REDEEM 负流水同事务写入的 Outbox 负载。",
+      "required": ["entitlementId", "count", "sourceRef"],
+      "additionalProperties": false,
+      "properties": {
+        "entitlementId": {"type": "integer", "format": "int64", "minimum": 1},
+        "count": {"type": "integer", "format": "int32", "minimum": 1},
+        "sourceRef": {"type": "string", "minLength": 1}
+      }
+    },
+    "RefundSucceededPayload": {
+      "type": "object",
+      "description": "人工财务凭证复核或验签供应商回调确认成功后的退款事实；申请、审批和执行中不发布。",
+      "required": ["refundId", "orderId", "customerId", "amountFen", "externalRefundNo", "verificationMethod"],
+      "additionalProperties": false,
+      "properties": {
+        "refundId": {"type": "integer", "format": "int64", "minimum": 1},
+        "orderId": {"type": "integer", "format": "int64", "minimum": 1},
+        "customerId": {"type": "integer", "format": "int64", "minimum": 1},
+        "amountFen": {"type": "integer", "format": "int64", "minimum": 1, "description": "本次成功退款金额，整数分。"},
+        "externalRefundNo": {"type": "string", "minLength": 1, "maxLength": 128},
+        "verificationMethod": {"type": "string", "enum": ["MANUAL_REVIEW", "PROVIDER_CALLBACK"]}
+      }
+    },
+    "EntitlementRefundRevokedPayload": {
+      "type": "object",
+      "description": "每个权益批次的退款回收事实，与 REFUND_REVOKE 负流水同事务写入。",
+      "required": ["refundId", "entitlementId", "count", "allocatedFen", "externalRefundNo"],
+      "additionalProperties": false,
+      "properties": {
+        "refundId": {"type": "integer", "format": "int64", "minimum": 1},
+        "entitlementId": {"type": "integer", "format": "int64", "minimum": 1},
+        "count": {"type": "integer", "format": "int32", "minimum": 1},
+        "allocatedFen": {"type": "integer", "format": "int64", "minimum": 0, "description": "申请时明确分摊到该权益批次的现金，整数分。"},
+        "externalRefundNo": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "SettlementPaymentRecordedPayload": {
+      "type": "object",
+      "description": "财务已登记的结算付款事实，不冒充银行回调，不含银行账号或凭证正文。",
+      "required": ["settlementBatchId", "settlementPaymentId", "institutionId", "amountFen", "paidAt"],
+      "additionalProperties": false,
+      "properties": {
+        "settlementBatchId": {"type": "integer", "format": "int64", "minimum": 1},
+        "settlementPaymentId": {"type": "integer", "format": "int64", "minimum": 1},
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "amountFen": {"type": "integer", "format": "int64", "minimum": 1, "description": "本次登记付款金额，整数分。"},
+        "paidAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "AppointmentCreatedPayload": {
+      "type": "object",
+      "required": ["appointmentId", "customerId", "institutionId", "scheduledAt"],
+      "additionalProperties": false,
+      "properties": {
+        "appointmentId": {"type": "integer", "format": "int64", "minimum": 1},
+        "customerId": {"type": "integer", "format": "int64", "minimum": 1},
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "scheduledAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "AppointmentStatusChangedPayload": {
+      "type": "object",
+      "required": ["appointmentId", "fromStatus", "toStatus", "actorUserId"],
+      "additionalProperties": false,
+      "properties": {
+        "appointmentId": {"type": "integer", "format": "int64", "minimum": 1},
+        "fromStatus": {"type": "string", "enum": ["PENDING_INSTITUTION", "CONFIRMED", "CHECKED_IN", "SERVICE_DONE", "REDEEMED", "REJECTED", "CANCELED", "NO_SHOW"]},
+        "toStatus": {"type": "string", "enum": ["PENDING_INSTITUTION", "CONFIRMED", "CHECKED_IN", "SERVICE_DONE", "REDEEMED", "REJECTED", "CANCELED", "NO_SHOW"]},
+        "actorUserId": {"type": "integer", "format": "int64", "minimum": 1}
+      }
+    },
+    "WecomMessageArchivedPayload": {
+      "type": "object",
+      "description": "合法归档消息的 metadata 与私有加密对象引用，不包含消息正文。",
+      "required": ["messageRef", "corpId", "msgId", "archiveSeq", "conversationId", "customerId", "contentObjectKey", "sentAt"],
+      "additionalProperties": false,
+      "properties": {
+        "messageRef": {"type": "integer", "format": "int64", "minimum": 1},
+        "corpId": {"type": "string", "minLength": 1, "maxLength": 96},
+        "msgId": {"type": "string", "minLength": 1, "maxLength": 192},
+        "archiveSeq": {"type": "integer", "format": "int64", "minimum": 1},
+        "conversationId": {"type": ["string", "null"], "maxLength": 128},
+        "customerId": {"type": ["integer", "null"], "format": "int64", "minimum": 1, "description": "未人工匹配时为 null。"},
+        "contentObjectKey": {"type": "string", "minLength": 1, "maxLength": 255, "description": "私有 AES+MinIO 对象引用，不是公开 URL。"},
+        "sentAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "WecomArchiveGapPayload": {
+      "type": "object",
+      "description": "归档覆盖缺口 metadata，不包含聊天正文或消费去重承诺。",
+      "required": ["corpId", "gapType", "fromSeq"],
+      "additionalProperties": false,
+      "properties": {
+        "corpId": {"type": "string", "minLength": 1, "maxLength": 96},
+        "gapType": {"type": "string", "enum": ["CONSENT_NOT_GRANTED", "MEMBER_NOT_COVERED", "COLLECTOR_ERROR"]},
+        "fromSeq": {"type": "integer", "format": "int64", "minimum": 0}
+      }
+    },
+    "YouzanOrderProcessedPayload": {
+      "type": "object",
+      "description": "Mock 或适配器处理完成后的外部订单与内部订单映射，不包含 raw 密文。",
+      "required": ["shopId", "externalOrderNo", "orderId"],
+      "additionalProperties": false,
+      "properties": {
+        "shopId": {"type": "string", "minLength": 1, "maxLength": 64},
+        "externalOrderNo": {"type": "string", "minLength": 1, "maxLength": 128},
+        "orderId": {"type": "integer", "format": "int64", "minimum": 1}
+      }
+    },
+    "YouzanSyncIssuePayload": {
+      "type": "object",
+      "required": ["eventId", "issueType", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {"type": "string", "minLength": 1, "maxLength": 128, "description": "供应商事件唯一 ID，不是数据库主键。"},
+        "issueType": {"type": "string", "enum": ["MAPPING_FAILED", "CUSTOMER_UNRESOLVED", "PAYMENT_MISMATCH", "RETRY"]},
+        "status": {"const": "OPEN"}
+      }
+    },
+    "YouzanSyncCompletedPayload": {
+      "type": "object",
+      "required": ["shopId", "received", "processed", "issues"],
+      "additionalProperties": false,
+      "properties": {
+        "shopId": {"type": "string", "minLength": 1, "maxLength": 64},
+        "received": {"type": "integer", "format": "int32", "minimum": 0},
+        "processed": {"type": "integer", "format": "int32", "minimum": 0},
+        "issues": {"type": "integer", "format": "int32", "minimum": 0}
+      }
+    },
+    "InstitutionProfileCreatedPayload": {
+      "type": "object",
+      "required": ["institutionId", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "status": {"const": "PENDING"}
+      }
+    },
+    "InstitutionProfileUpdatedPayload": {
+      "type": "object",
+      "required": ["institutionId", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "version": {"type": "integer", "format": "int64", "minimum": 0}
+      }
+    },
+    "InstitutionChangeRequestedPayload": {
+      "type": "object",
+      "required": ["requestId", "institutionId", "changeType", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {"type": "integer", "format": "int64", "minimum": 1},
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "changeType": {"type": "string", "enum": ["ONBOARDING", "PROFILE_FIELD", "CONTRACT_ACTIVATION", "QUALIFICATION_REVIEW"]},
+        "status": {"const": "PENDING_REVIEW"}
+      }
+    },
+    "InstitutionChangeReviewedPayload": {
+      "type": "object",
+      "required": ["requestId", "institutionId", "changeType", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {"type": "integer", "format": "int64", "minimum": 1},
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "changeType": {"type": "string", "enum": ["ONBOARDING", "PROFILE_FIELD", "CONTRACT_ACTIVATION", "QUALIFICATION_REVIEW"]},
+        "status": {"type": "string", "enum": ["PENDING_REVIEW", "APPROVED", "REJECTED", "CONFLICT_REVALIDATE"]}
+      }
+    },
+    "InstitutionChangeRevalidatedPayload": {
+      "type": "object",
+      "required": ["requestId", "institutionId", "changeType", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {"type": "integer", "format": "int64", "minimum": 1},
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "changeType": {"type": "string", "enum": ["ONBOARDING", "PROFILE_FIELD", "CONTRACT_ACTIVATION", "QUALIFICATION_REVIEW"]},
+        "status": {"const": "PENDING_REVIEW"}
+      }
+    },
+    "InstitutionContractCreatedPayload": {
+      "type": "object",
+      "required": ["institutionId", "contractId", "versionNo"],
+      "additionalProperties": false,
+      "properties": {
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "contractId": {"type": "integer", "format": "int64", "minimum": 1},
+        "versionNo": {"type": "integer", "format": "int32", "minimum": 1}
+      }
+    },
+    "InstitutionQualificationCreatedPayload": {
+      "type": "object",
+      "required": ["institutionId", "qualificationId"],
+      "additionalProperties": false,
+      "properties": {
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "qualificationId": {"type": "integer", "format": "int64", "minimum": 1}
+      }
+    },
+    "RedemptionPostedLine": {
+      "type": "object",
+      "required": ["lineId", "entitlementId", "projectId", "count"],
+      "additionalProperties": false,
+      "properties": {
+        "lineId": {"type": "integer", "format": "int64", "minimum": 1},
+        "entitlementId": {"type": "integer", "format": "int64", "minimum": 1},
+        "projectId": {"type": "integer", "format": "int64", "minimum": 1},
+        "count": {"type": "integer", "format": "int32", "minimum": 1}
+      }
+    },
+    "RedemptionPostedPayload": {
+      "type": "object",
+      "description": "机构 OPERATOR 正式核销同事务写入；仅表示 POSTED 事实，金额结算仍待核实。",
+      "required": ["redemptionId", "appointmentId", "institutionId", "customerId", "lines", "settlementStatus"],
+      "additionalProperties": false,
+      "properties": {
+        "redemptionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "appointmentId": {"type": "integer", "format": "int64", "minimum": 1},
+        "institutionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "customerId": {"type": "integer", "format": "int64", "minimum": 1},
+        "lines": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/RedemptionPostedLine"}
+        },
+        "settlementStatus": {"const": "PENDING_VERIFICATION"}
+      }
+    },
+    "RedemptionReversalRequestedPayload": {
+      "type": "object",
+      "required": ["reversalId", "redemptionId", "requestedBy"],
+      "additionalProperties": false,
+      "properties": {
+        "reversalId": {"type": "integer", "format": "int64", "minimum": 1},
+        "redemptionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "requestedBy": {"type": "integer", "format": "int64", "minimum": 1}
+      }
+    },
+    "RedemptionReversalCorrection": {
+      "type": "object",
+      "description": "来自已追加 CORRECTION_IN 账本的项目级补偿视图。",
+      "required": ["ledgerId", "entitlementId", "projectId", "deltaCount", "sourceRef"],
+      "additionalProperties": false,
+      "properties": {
+        "ledgerId": {"type": "integer", "format": "int64", "minimum": 1},
+        "entitlementId": {"type": "integer", "format": "int64", "minimum": 1},
+        "projectId": {"type": "integer", "format": "int64", "minimum": 1},
+        "deltaCount": {"type": "integer", "format": "int32", "minimum": 1},
+        "sourceRef": {"type": "string", "minLength": 1}
+      }
+    },
+    "RedemptionReversalApprovedPayload": {
+      "type": "object",
+      "description": "审核通过并追加 CORRECTION_IN 后发布，corrections 来自真实账本，不覆盖原 POSTED 事实。",
+      "required": ["reversalId", "redemptionId", "status", "reviewedBy", "corrections"],
+      "additionalProperties": false,
+      "properties": {
+        "reversalId": {"type": "integer", "format": "int64", "minimum": 1},
+        "redemptionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "status": {"const": "APPROVED"},
+        "reviewedBy": {"type": "integer", "format": "int64", "minimum": 1},
+        "corrections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/RedemptionReversalCorrection"}
+        }
+      }
+    },
+    "RedemptionReversalRejectedPayload": {
+      "type": "object",
+      "required": ["reversalId", "redemptionId", "status", "reviewedBy"],
+      "additionalProperties": false,
+      "properties": {
+        "reversalId": {"type": "integer", "format": "int64", "minimum": 1},
+        "redemptionId": {"type": "integer", "format": "int64", "minimum": 1},
+        "status": {"const": "REJECTED"},
+        "reviewedBy": {"type": "integer", "format": "int64", "minimum": 1}
+      }
+    },
+    "KnowledgeSyncRequestedPayload": {
+      "type": "object",
+      "description": "仅含同步任务和发布映射 ID，不含素材正文、Dataset/App Key、客户资料或业务写指令。",
+      "required": ["jobId", "documentId"],
+      "additionalProperties": false,
+      "properties": {
+        "jobId": {"type": "integer", "format": "int64", "minimum": 1},
+        "documentId": {"type": "integer", "format": "int64", "minimum": 1}
+      }
+    }
+  }
+}

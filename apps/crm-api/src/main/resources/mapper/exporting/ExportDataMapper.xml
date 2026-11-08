@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.exporting.infrastructure.mapper.ExportDataMapper">
+  <sql id="customerScope">
+    <choose>
+      <when test="q.scope.kind.name() == 'ALL'"></when>
+      <when test="q.scope.kind.name() == 'TEAM'">
+        AND (c.owner_staff_id=#{q.scope.selfId}
+        <if test="q.scope.teamIds.size() > 0">OR c.team_id IN <foreach collection="q.scope.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach></if>)
+      </when>
+      <when test="q.scope.kind.name() == 'SELF'">AND c.owner_staff_id=#{q.scope.selfId}</when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+  </sql>
+  <sql id="followupScope">
+    <choose>
+      <when test="q.scope.kind.name() == 'ALL'"></when>
+      <when test="q.scope.kind.name() == 'TEAM'">
+        AND (c.owner_staff_id=#{q.scope.selfId} OR f.created_by=#{q.scope.selfId}
+        <if test="q.scope.teamIds.size() > 0">OR c.team_id IN <foreach collection="q.scope.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach></if>)
+      </when>
+      <when test="q.scope.kind.name() == 'SELF'">AND (c.owner_staff_id=#{q.scope.selfId} OR f.created_by=#{q.scope.selfId})</when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+  </sql>
+  <sql id="redemptionScope">
+    <choose>
+      <when test="q.scope.kind.name() == 'ALL'"></when>
+      <when test="q.scope.kind.name() == 'TEAM'">
+        AND (r.owner_staff_id=#{q.scope.selfId}
+        <if test="q.scope.teamIds.size() > 0">OR r.team_id IN <foreach collection="q.scope.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach></if>)
+      </when>
+      <when test="q.scope.kind.name() == 'SELF'">AND r.owner_staff_id=#{q.scope.selfId}</when>
+      <when test="q.scope.kind.name() == 'INSTITUTION'">
+        <choose><when test="q.scope.institutionIds.size() > 0">AND r.institution_id IN <foreach collection="q.scope.institutionIds" item="institutionId" open="(" separator="," close=")">#{institutionId}</foreach></when><otherwise>AND 1=0</otherwise></choose>
+      </when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+  </sql>
+  <sql id="customerRestriction">
+    <if test="q.restriction != null and q.restriction.teamIds != null">
+      <choose><when test="q.restriction.teamIds.size() == 0">AND 1=0</when><otherwise>AND c.team_id IN <foreach collection="q.restriction.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach></otherwise></choose>
+    </if>
+    <if test="q.restriction != null and q.restriction.ownerId != null">AND c.owner_staff_id=#{q.restriction.ownerId}</if>
+  </sql>
+  <sql id="followupRestriction">
+    <if test="q.restriction != null and q.restriction.teamIds != null">
+      <choose><when test="q.restriction.teamIds.size() == 0">AND 1=0</when><otherwise>AND c.team_id IN <foreach collection="q.restriction.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach></otherwise></choose>
+    </if>
+    <if test="q.restriction != null and q.restriction.ownerId != null">AND f.owner_staff_id=#{q.restriction.ownerId}</if>
+  </sql>
+  <sql id="redemptionRestriction">
+    <if test="q.restriction != null and q.restriction.teamIds != null">
+      <choose><when test="q.restriction.teamIds.size() == 0">AND 1=0</when><otherwise>AND r.team_id IN <foreach collection="q.restriction.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach></otherwise></choose>
+    </if>
+    <if test="q.restriction != null and q.restriction.ownerId != null">AND r.owner_staff_id=#{q.restriction.ownerId}</if>
+    <if test="q.restriction != null and q.restriction.institutionIds != null">
+      <choose><when test="q.restriction.institutionIds.size() == 0">AND 1=0</when><otherwise>AND r.institution_id IN <foreach collection="q.restriction.institutionIds" item="institutionId" open="(" separator="," close=")">#{institutionId}</foreach></otherwise></choose>
+    </if>
+  </sql>
+
+  <sql id="customerWhere">
+    FROM crm_customer c LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
+    WHERE c.tenant_id=#{q.tenantId} AND c.deleted=0
+    <include refid="customerScope"/><include refid="customerRestriction"/>
+    <if test="q.filter.customerId != null">AND c.id=#{q.filter.customerId}</if>
+    <if test="q.filter.status != null and q.filter.status != ''">AND c.customer_status=#{q.filter.status}</if>
+    <if test="q.filter.cityCode != null and q.filter.cityCode != ''">AND c.city_code=#{q.filter.cityCode}</if>
+    <if test="q.filter.sourceCode != null and q.filter.sourceCode != ''">AND c.source_code=#{q.filter.sourceCode}</if>
+    <if test="q.filter.channelCode != null and q.filter.channelCode != ''">AND c.channel_code=#{q.filter.channelCode}</if>
+    <if test="q.filter.from != null">AND c.created_at&gt;=#{q.filter.from}</if>
+    <if test="q.filter.to != null">AND c.created_at&lt;=#{q.filter.to}</if>
+  </sql>
+  <sql id="orderWhere">
+    FROM crm_order o INNER JOIN crm_customer c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id AND c.deleted=0
+    WHERE o.tenant_id=#{q.tenantId}
+    <include refid="customerScope"/><include refid="customerRestriction"/>
+    <if test="q.filter.customerId != null">AND o.customer_id=#{q.filter.customerId}</if>
+    <if test="q.filter.status != null and q.filter.status != ''">AND o.status=#{q.filter.status}</if>
+    <if test="q.filter.sourceSystem != null and q.filter.sourceSystem != ''">AND o.source_system=#{q.filter.sourceSystem}</if>
+    <if test="q.filter.from != null">AND o.ordered_at&gt;=#{q.filter.from}</if>
+    <if test="q.filter.to != null">AND o.ordered_at&lt;=#{q.filter.to}</if>
+  </sql>
+  <sql id="redemptionWhere">
+    FROM crm_redemption r LEFT JOIN crm_customer c ON c.tenant_id=r.tenant_id AND c.id=r.customer_id
+    WHERE r.tenant_id=#{q.tenantId}
+    <include refid="redemptionScope"/><include refid="redemptionRestriction"/>
+    <if test="q.filter.customerId != null">AND r.customer_id=#{q.filter.customerId}</if>
+    <if test="q.filter.status != null and q.filter.status != ''">AND r.status=#{q.filter.status}</if>
+    <if test="q.filter.from != null">AND r.service_at&gt;=#{q.filter.from}</if>
+    <if test="q.filter.to != null">AND r.service_at&lt;=#{q.filter.to}</if>
+  </sql>
+  <sql id="followupWhere">
+    FROM crm_followup f INNER JOIN crm_customer c ON c.tenant_id=f.tenant_id AND c.id=f.customer_id AND c.deleted=0
+    LEFT JOIN sys_user o ON o.tenant_id=f.tenant_id AND o.id=f.owner_staff_id
+    WHERE f.tenant_id=#{q.tenantId} AND f.deleted=0
+    <include refid="followupScope"/><include refid="followupRestriction"/>
+    <if test="q.filter.customerId != null">AND f.customer_id=#{q.filter.customerId}</if>
+    <if test="q.filter.channelCode != null and q.filter.channelCode != ''">AND f.channel_code=#{q.filter.channelCode}</if>
+    <if test="q.filter.from != null">AND f.contact_at&gt;=#{q.filter.from}</if>
+    <if test="q.filter.to != null">AND f.contact_at&lt;=#{q.filter.to}</if>
+  </sql>
+
+  <select id="count" resultType="long">
+    SELECT COUNT(*)
+    <choose>
+      <when test="q.exportType.name() == 'CUSTOMER'"><include refid="customerWhere"/></when>
+      <when test="q.exportType.name() == 'ORDER'"><include refid="orderWhere"/></when>
+      <when test="q.exportType.name() == 'REDEMPTION'"><include refid="redemptionWhere"/></when>
+      <when test="q.exportType.name() == 'FOLLOWUP'"><include refid="followupWhere"/></when>
+      <otherwise>FROM crm_export_job j WHERE 1=0</otherwise>
+    </choose>
+  </select>
+
+  <select id="page" resultType="map">
+    <choose>
+      <when test="q.exportType.name() == 'CUSTOMER'">
+        SELECT c.id AS rowId,c.customer_no AS customerNo,c.display_name AS displayName,c.nickname AS nickname,
+          c.remark_name AS remarkName,c.mobile_cipher AS mobileCipher,c.city_code AS cityCode,c.source_code AS sourceCode,
+          c.channel_code AS channelCode,c.customer_status AS customerStatus,c.tier_code AS tierCode,
+          c.intent_level AS intentLevel,c.spending_level AS spendingLevel,c.birthday AS birthday,c.points_cached AS points,
+          c.attention_projects AS attentionProjects,c.blocker_note AS blockerNote,c.remark AS remark,
+          c.owner_staff_id AS ownerStaffId,o.display_name AS ownerName,c.team_id AS teamId,
+          c.first_added_at AS firstAddedAt,c.first_order_at AS firstOrderAt,c.last_followup_at AS lastFollowupAt,c.created_at AS createdAt
+        <include refid="customerWhere"/> ORDER BY c.id ASC LIMIT #{q.size} OFFSET #{q.offset}
+      </when>
+      <when test="q.exportType.name() == 'ORDER'">
+        SELECT o.id AS rowId,o.order_no AS orderNo,c.customer_no AS customerNo,
+          COALESCE(c.display_name,c.nickname,c.customer_no) AS customerName,o.sold_by_user_id AS soldByUserId,
+          o.owner_at_sale_id AS ownerAtSaleId,o.external_order_no AS externalOrderNo,o.source_system AS sourceSystem,
+          o.order_type_code AS orderTypeCode,o.campaign_id AS campaignId,o.campaign_batch_id AS campaignBatchId,
+          o.status,o.receiver_type AS receiverType,o.list_amount_fen AS listAmountFen,
+          o.discount_amount_fen AS discountAmountFen,o.payable_fen AS payableFen,o.paid_fen AS paidFen,
+          o.refunded_fen AS refundedFen,o.ordered_at AS orderedAt,o.paid_at AS paidAt,o.created_at AS createdAt
+        <include refid="orderWhere"/> ORDER BY o.id ASC LIMIT #{q.size} OFFSET #{q.offset}
+      </when>
+      <when test="q.exportType.name() == 'REDEMPTION'">
+        SELECT r.id AS rowId,r.id AS redemptionId,r.appointment_id AS appointmentId,c.customer_no AS customerNo,
+          COALESCE(c.display_name,c.nickname,c.customer_no) AS customerName,r.institution_id AS institutionId,
+          r.owner_staff_id AS ownerStaffId,r.team_id AS teamId,r.service_at AS serviceAt,r.status,
+          r.settlement_status AS settlementStatus,r.posted_by AS postedBy,r.posted_at AS postedAt,r.created_at AS createdAt
+        <include refid="redemptionWhere"/> ORDER BY r.id ASC LIMIT #{q.size} OFFSET #{q.offset}
+      </when>
+      <when test="q.exportType.name() == 'FOLLOWUP'">
+        SELECT f.id AS rowId,f.id AS followupId,c.customer_no AS customerNo,
+          COALESCE(c.display_name,c.nickname,c.customer_no) AS customerName,f.owner_staff_id AS ownerStaffId,
+          o.display_name AS ownerName,f.channel_code AS channelCode,f.contact_at AS contactAt,f.summary AS summary,
+          f.intent_project AS intentProject,f.estimated_amount_fen AS estimatedAmountFen,
+          f.next_followup_at AS nextFollowupAt,f.blocker_note AS blockerNote,f.created_by AS createdBy,f.created_at AS createdAt
+        <include refid="followupWhere"/> ORDER BY f.id ASC LIMIT #{q.size} OFFSET #{q.offset}
+      </when>
+      <otherwise>SELECT NULL AS rowId FROM crm_export_job j WHERE 1=0</otherwise>
+    </choose>
+  </select>
+</mapper>

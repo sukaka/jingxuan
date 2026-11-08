@@ -1,0 +1,48 @@
+.crm-ui .wecom-mock-banner { margin-bottom: 18px; padding: 17px 20px; border: 1px solid #dfc98f; border-radius: 14px; background: #fff8e8; }
+.crm-ui .wecom-mock-banner strong { display: block; margin-bottom: 6px; color: #6d5121; font-size: 14px; }
+.crm-ui .wecom-mock-banner p { margin: 0; color: #806c43; font-size: 12px; line-height: 1.75; }
+.crm-ui .wecom-mock-badge { display: inline-flex; margin-bottom: 9px; padding: 3px 9px; border-radius: 5px; background: #16544f; color: #f4faf7; font-size: 11px; font-weight: 800; letter-spacing: 1px; }
+.crm-ui .wecom-control-card { margin-bottom: 16px; }
+.crm-ui .wecom-corp-input { width: min(290px, 100%); }
+.crm-ui .wecom-monitor-panel { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(270px,.75fr); gap: 24px; margin-bottom: 18px; padding: clamp(18px,2.5vw,28px); border: 1px solid #c8ddda; border-radius: 16px; background: #f2f8f6; }
+.crm-ui .wecom-monitor-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+.crm-ui .wecom-monitor-heading h3,
+.crm-ui .wecom-sync-panel h3 { margin: 0 0 5px; color: #123f42; font-size: 16px; }
+.crm-ui .wecom-monitor-heading p,
+.crm-ui .wecom-sync-panel p { margin: 0; color: #65817f; font-size: 12px; line-height: 1.7; }
+.crm-ui .wecom-monitor-alert { margin-bottom: 15px; }
+.crm-ui .wecom-monitor-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 18px; margin: 18px 0 0; }
+.crm-ui .wecom-monitor-facts div { min-width: 0; padding-top: 9px; border-top: 1px solid #d6e5e2; }
+.crm-ui .wecom-monitor-facts dt { margin-bottom: 4px; color: #718b88; font-size: 11px; }
+.crm-ui .wecom-monitor-facts dd { margin: 0; color: #183f42; font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
+.crm-ui .wecom-sync-panel { padding-left: 23px; border-left: 1px solid #c8ddda; }
+.crm-ui .wecom-sync-panel h3 { margin-bottom: 12px; }
+.crm-ui .wecom-sync-panel .el-form-item { margin-bottom: 12px; }
+.crm-ui .wecom-sync-panel .el-input-number { width: 100%; }
+.crm-ui .wecom-sync-note { align-self: center; color: #65817f; font-size: 12px; line-height: 1.8; }
+.crm-ui .wecom-readonly-note { color: #718b88; font-size: 11px; line-height: 1.6; }
+.crm-ui .wecom-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.crm-ui .wecom-section-head h3 { margin: 0 0 4px; color: #183f42; font-size: 15px; }
+.crm-ui .wecom-section-head p { margin: 0; color: #78908f; font-size: 12px; line-height: 1.65; }
+.crm-ui .wecom-message-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.crm-ui .wecom-message-filter .el-input-number { width: 220px; }
+.crm-ui .wecom-table-alert { margin-bottom: 12px; }
+.crm-ui .wecom-cell-sub { margin-top: 3px; color: #829694; font-size: 11px; }
+.crm-ui .wecom-error-text { color: #bd4c5b; line-height: 1.65; }
+.crm-ui .wecom-link-tip { margin-bottom: 14px; }
+.crm-ui .wecom-full-width { width: 100%; }
+.crm-ui .wecom-pager { margin-top: 16px; overflow-x: auto; }
+@media (max-width: 860px) {
+  .crm-ui .wecom-monitor-panel { grid-template-columns: 1fr; gap: 20px; }
+  .crm-ui .wecom-sync-panel { padding-top: 18px; padding-left: 0; border-top: 1px solid #c8ddda; border-left: 0; }
+}
+@media (max-width: 600px) {
+  .crm-ui .wecom-mock-banner { padding: 14px 15px; }
+  .crm-ui .wecom-monitor-facts { grid-template-columns: 1fr; gap: 9px; }
+  .crm-ui .wecom-monitor-heading,
+  .crm-ui .wecom-section-head { flex-direction: column; }
+  .crm-ui .wecom-corp-input,
+  .crm-ui .wecom-message-filter .el-input-number,
+  .crm-ui .wecom-message-filter .el-button { width: 100%; }
+  .crm-ui .wecom-control-card .el-button { flex: 1; }
+}

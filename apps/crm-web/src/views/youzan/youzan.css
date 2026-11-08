@@ -1,0 +1,35 @@
+.crm-ui .youzan-mock-banner { margin-bottom: 18px; padding: 16px 20px; border: 1px solid #ecd7a8; border-radius: 14px; background: linear-gradient(105deg,#fff6df,#fffaf0); }
+.crm-ui .youzan-mock-banner strong { display: block; margin-bottom: 6px; color: #805b24; font-size: 14px; }
+.crm-ui .youzan-mock-banner p { margin: 0; color: #90774c; font-size: 12px; line-height: 1.75; }
+.crm-ui .youzan-mock-badge { display: inline-flex; margin-bottom: 8px; padding: 3px 8px; border-radius: 6px; background: #ad752e; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .5px; }
+.crm-ui .youzan-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.crm-ui .youzan-summary-card { padding: 13px 15px; border: 1px solid #e3edef; border-radius: 11px; background: #fff; }
+.crm-ui .youzan-summary-card small { display: block; margin-bottom: 5px; color: #8298a4; }
+.crm-ui .youzan-summary-card strong { color: #183d4a; font-size: 18px; font-variant-numeric: tabular-nums; }
+.crm-ui .youzan-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 18px 0 12px; }
+.crm-ui .youzan-section-head h3 { margin: 0 0 4px; font-size: 15px; }
+.crm-ui .youzan-section-head p { margin: 0; color: #8298a4; font-size: 11px; line-height: 1.6; }
+.crm-ui .youzan-detail-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px 14px; margin-bottom: 16px; }
+.crm-ui .youzan-detail-item { min-width: 0; padding: 11px 13px; border: 1px solid #e6edf0; border-radius: 10px; background: #fff; }
+.crm-ui .youzan-detail-item small { display: block; margin-bottom: 5px; color: #8298a4; }
+.crm-ui .youzan-detail-item strong,
+.crm-ui .youzan-detail-item span { overflow-wrap: anywhere; font-size: 12px; }
+.crm-ui .youzan-raw { max-height: 280px; overflow: auto; margin: 0; padding: 13px; border-radius: 10px; background: #142b3a; color: #d8e8ed; font: 11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.crm-ui .youzan-error-text { color: #c95667; line-height: 1.65; }
+.crm-ui .youzan-warning-text { color: #ad752e; line-height: 1.65; }
+.crm-ui .youzan-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 12px; }
+.crm-ui .youzan-full { grid-column: 1/-1; }
+.crm-ui .youzan-filter-keyword { width: min(280px,100%); }
+.crm-ui .youzan-filter-select { width: 175px; }
+.crm-ui .youzan-retry-note { color: #79909f; font-size: 11px; line-height: 1.6; }
+@media (max-width: 760px) {
+  .crm-ui .youzan-summary { grid-template-columns: 1fr; }
+  .crm-ui .youzan-detail-grid,
+  .crm-ui .youzan-form-grid { grid-template-columns: 1fr; }
+  .crm-ui .youzan-section-head { flex-direction: column; }
+}
+@media (max-width: 480px) {
+  .crm-ui .youzan-mock-banner { padding: 14px 15px; }
+  .crm-ui .youzan-filter-keyword,
+  .crm-ui .youzan-filter-select { width: 100%; }
+}

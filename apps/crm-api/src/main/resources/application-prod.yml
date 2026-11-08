@@ -1,0 +1,53 @@
+spring:
+  datasource:
+    password: ${MYSQL_PASSWORD}
+  flyway:
+    locations: classpath:db/migration,classpath:db/prod
+  data:
+    redis:
+      password: ${REDIS_PASSWORD}
+
+server:
+  forward-headers-strategy: native
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+app:
+  security:
+    auth:
+      jwt-secret: ${JWT_SECRET}
+      cookie-secure: ${COOKIE_SECURE:true}
+    crypto:
+      aes-key-base64: ${APP_AES_KEY_BASE64}
+      blind-index-pepper: ${APP_BLIND_INDEX_PEPPER}
+  files:
+    enabled: ${FILES_ENABLED:false}
+    bucket: ${FILES_BUCKET:crm-private}
+    endpoint: ${MINIO_ENDPOINT:http://minio:9000}
+    public-endpoint: ${FILES_PUBLIC_ENDPOINT:}
+    region: ${FILES_REGION:us-east-1}
+    access-key: ${MINIO_ROOT_USER:}
+    secret-key: ${MINIO_ROOT_PASSWORD:}
+    clamav-host: ${CLAMAV_HOST:127.0.0.1}
+    clamav-port: ${CLAMAV_PORT:3310}
+  outbox:
+    relay:
+      enabled: true
+  refunds:
+    mock:
+      enabled: false
+  ai:
+    knowledge:
+      sync:
+        kafka:
+          enabled: ${KNOWLEDGE_SYNC_KAFKA_ENABLED:true}
+        worker:
+          enabled: ${KNOWLEDGE_SYNC_WORKER_ENABLED:true}
+    worker:
+      enabled: ${AI_WORKER_ENABLED:true}
+      base-url: ${AI_WORKER_BASE_URL:http://ai-worker:8090}
+      internal-token: ${AI_INTERNAL_TOKEN}

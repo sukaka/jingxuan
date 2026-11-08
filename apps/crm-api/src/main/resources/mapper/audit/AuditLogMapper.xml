@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.platform.audit.infrastructure.mapper.AuditLogMapper">
+
+  <resultMap id="AuditLogMap" type="com.whale.crm.platform.audit.domain.AuditLog">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="actorUserId" column="actor_user_id"/>
+    <result property="actionCode" column="action_code"/>
+    <result property="targetType" column="target_type"/>
+    <result property="targetId" column="target_id"/>
+    <result property="beforeJson" column="before_json"/>
+    <result property="afterJson" column="after_json"/>
+    <result property="traceId" column="trace_id"/>
+    <result property="clientIp" column="client_ip"/>
+    <result property="reason" column="reason"/>
+    <result property="createdAt" column="created_at"/>
+  </resultMap>
+
+  <resultMap id="AuditLogRowMap" type="com.whale.crm.platform.audit.domain.AuditLogRepository$AuditLogRow">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="actorUserId" column="actor_user_id"/>
+    <result property="actorUsername" column="actor_username"/>
+    <result property="actionCode" column="action_code"/>
+    <result property="targetType" column="target_type"/>
+    <result property="targetId" column="target_id"/>
+    <result property="beforeJson" column="before_json"/>
+    <result property="afterJson" column="after_json"/>
+    <result property="traceId" column="trace_id"/>
+    <result property="clientIp" column="client_ip"/>
+    <result property="reason" column="reason"/>
+    <result property="createdAt" column="created_at"/>
+  </resultMap>
+
+  <insert id="insertLog" parameterType="com.whale.crm.platform.audit.domain.AuditLog"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_audit_log
+      (tenant_id, actor_user_id, action_code, target_type, target_id,
+       before_json, after_json, trace_id, client_ip, reason)
+    VALUES
+      (#{tenantId}, #{actorUserId}, #{actionCode}, #{targetType}, #{targetId},
+       #{beforeJson}, #{afterJson}, #{traceId}, #{clientIp}, #{reason})
+  </insert>
+
+  <sql id="searchWhere">
+    FROM crm_audit_log a
+    WHERE a.tenant_id = #{tenantId}
+    <if test="actorUserId != null">
+      AND a.actor_user_id = #{actorUserId}
+    </if>
+    <if test="actionCode != null and actionCode != ''">
+      AND a.action_code = #{actionCode}
+    </if>
+    <if test="targetType != null and targetType != ''">
+      AND a.target_type = #{targetType}
+    </if>
+  </sql>
+
+  <select id="search" resultMap="AuditLogRowMap">
+    SELECT a.id, a.tenant_id, a.actor_user_id, a.action_code, a.target_type, a.target_id,
+           a.before_json, a.after_json, a.trace_id, a.client_ip, a.reason, a.created_at,
+           u.username AS actor_username
+    FROM crm_audit_log a
+    LEFT JOIN sys_user u ON u.tenant_id = a.tenant_id AND u.id = a.actor_user_id
+    WHERE a.tenant_id = #{tenantId}
+    <if test="actorUserId != null">
+      AND a.actor_user_id = #{actorUserId}
+    </if>
+    <if test="actionCode != null and actionCode != ''">
+      AND a.action_code = #{actionCode}
+    </if>
+    <if test="targetType != null and targetType != ''">
+      AND a.target_type = #{targetType}
+    </if>
+    ORDER BY a.id DESC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*) <include refid="searchWhere"/>
+  </select>
+
+</mapper>

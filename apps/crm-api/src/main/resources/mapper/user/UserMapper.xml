@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.platform.user.infrastructure.mapper.UserMapper">
+
+  <resultMap id="SysUserMap" type="com.whale.crm.platform.user.domain.SysUser">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="orgId" column="org_id"/>
+    <result property="teamId" column="team_id"/>
+    <result property="username" column="username"/>
+    <result property="displayName" column="display_name"/>
+    <result property="passwordHash" column="password_hash"/>
+    <result property="userType" column="user_type"/>
+    <result property="status" column="status"/>
+    <result property="lastLoginAt" column="last_login_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <resultMap id="UserListRowMap" type="com.whale.crm.platform.user.domain.UserListRow">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="orgId" column="org_id"/>
+    <result property="teamId" column="team_id"/>
+    <result property="username" column="username"/>
+    <result property="displayName" column="display_name"/>
+    <result property="userType" column="user_type"/>
+    <result property="status" column="status"/>
+    <result property="lastLoginAt" column="last_login_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+    <result property="teamName" column="team_name"/>
+  </resultMap>
+
+  <sql id="userColumns">
+    id, tenant_id, org_id, team_id, username, display_name, password_hash, user_type, status,
+    last_login_at, created_at, updated_at, version
+  </sql>
+
+  <!-- 认证引导查询：登录前按登录名定位，限 2 行用于发现跨租户重复配置 -->
+  <select id="selectByUsernameForAuth" resultMap="SysUserMap">
+    SELECT <include refid="userColumns"/>
+    FROM sys_user
+    WHERE username = #{username}
+    ORDER BY id ASC
+    LIMIT 2
+  </select>
+
+  <!-- 认证引导查询：令牌校验按全局主键定位 -->
+  <select id="selectByIdForAuth" resultMap="SysUserMap">
+    SELECT <include refid="userColumns"/>
+    FROM sys_user
+    WHERE id = #{id}
+  </select>
+
+  <select id="selectById" resultMap="SysUserMap">
+    SELECT <include refid="userColumns"/>
+    FROM sys_user
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <select id="countByUsername" resultType="int">
+    SELECT COUNT(*) FROM sys_user WHERE tenant_id = #{tenantId} AND username = #{username}
+  </select>
+
+  <sql id="searchFilters">
+    <if test="filter.keyword != null and filter.keyword != ''">
+      AND (u.username LIKE CONCAT('%', #{filter.keyword}, '%') OR u.display_name LIKE CONCAT('%', #{filter.keyword}, '%'))
+    </if>
+    <if test="filter.status != null and filter.status != ''">
+      AND u.status = #{filter.status}
+    </if>
+    <if test="filter.userType != null and filter.userType != ''">
+      AND u.user_type = #{filter.userType}
+    </if>
+    <if test="filter.teamId != null">
+      AND u.team_id = #{filter.teamId}
+    </if>
+    <if test="filter.roleCode != null and filter.roleCode != ''">
+      AND EXISTS (
+        SELECT 1 FROM sys_user_role ur
+        INNER JOIN sys_role r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id
+        WHERE ur.tenant_id = u.tenant_id AND ur.user_id = u.id
+          AND r.role_code = #{filter.roleCode} AND r.status = 'ACTIVE'
+      )
+    </if>
+  </sql>
+
+  <sql id="searchWhere">
+    FROM sys_user u
+    WHERE u.tenant_id = #{tenantId}
+    <include refid="searchFilters"/>
+  </sql>
+
+  <select id="search" resultMap="UserListRowMap">
+    SELECT u.id, u.tenant_id, u.org_id, u.team_id, u.username, u.display_name,
+           u.user_type, u.status, u.last_login_at, u.created_at, u.updated_at, u.version,
+           t.team_name
+    FROM sys_user u
+    LEFT JOIN sys_team t ON t.tenant_id = u.tenant_id AND t.id = u.team_id
+    WHERE u.tenant_id = #{tenantId}
+    <include refid="searchFilters"/>
+    ORDER BY u.id ASC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*) <include refid="searchWhere"/>
+  </select>
+
+  <select id="selectTeams" resultType="com.whale.crm.platform.user.domain.UserRepository$TeamOptionRow">
+    SELECT id, team_name AS teamName
+    FROM sys_team
+    WHERE tenant_id = #{tenantId} AND status = 'ACTIVE'
+    ORDER BY team_name, id
+  </select>
+
+  <select id="selectStewardOptions"
+          resultType="com.whale.crm.platform.user.domain.UserRepository$StewardOptionRow">
+    SELECT DISTINCT u.id, u.display_name, u.team_id, t.team_name
+    FROM sys_user u
+    INNER JOIN sys_user_role ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
+    INNER JOIN sys_role r ON r.tenant_id = u.tenant_id AND r.id = ur.role_id
+        AND r.status = 'ACTIVE'
+        AND r.role_code IN <foreach collection="roleCodes" item="rc" open="(" separator="," close=")">#{rc}</foreach>
+    LEFT JOIN sys_team t ON t.tenant_id = u.tenant_id AND t.id = u.team_id
+    WHERE u.tenant_id = #{tenantId} AND u.status = 'ACTIVE' AND u.user_type = 'EMPLOYEE'
+    <if test="teamIdEq != null">
+      AND u.team_id = #{teamIdEq}
+    </if>
+    <if test="userIdEq != null">
+      AND u.id = #{userIdEq}
+    </if>
+    ORDER BY u.id ASC
+  </select>
+
+  <select id="selectDefaultOrgId" resultType="long">
+    SELECT id FROM sys_org WHERE tenant_id = #{tenantId} AND status = 'ACTIVE' ORDER BY id ASC LIMIT 1
+  </select>
+
+  <select id="countTeam" resultType="int">
+    SELECT COUNT(*) FROM sys_team WHERE tenant_id = #{tenantId} AND id = #{teamId}
+  </select>
+
+  <insert id="insertUser" parameterType="com.whale.crm.platform.user.domain.SysUser"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO sys_user (tenant_id, org_id, team_id, username, display_name, password_hash, user_type, status)
+    VALUES (#{tenantId}, #{orgId}, #{teamId}, #{username}, #{displayName}, #{passwordHash}, #{userType}, #{status})
+  </insert>
+
+  <update id="updateProfile">
+    UPDATE sys_user
+    SET display_name = #{displayName},
+        team_id = #{teamId},
+        <if test="passwordHash != null">
+          password_hash = #{passwordHash},
+        </if>
+        version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version}
+  </update>
+
+  <update id="updateStatus">
+    UPDATE sys_user
+    SET status = #{status}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </update>
+
+  <update id="touchLastLogin">
+    UPDATE sys_user SET last_login_at = #{at} WHERE id = #{id}
+  </update>
+
+</mapper>

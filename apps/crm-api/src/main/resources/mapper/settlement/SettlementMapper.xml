@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.settlement.infrastructure.mapper.SettlementMapper">
+  <sql id="batchColumns">id,institution_id AS institutionId,settlement_type AS settlementType,period_key AS periodKey,status,amount_status AS amountStatus,gross_fen AS grossFen,commission_fen AS commissionFen,net_payable_fen AS netPayableFen,paid_fen AS paidFen,rule_version AS ruleVersion,verification_evidence AS verificationEvidence,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="lineColumns">id,settlement_batch_id AS settlementBatchId,redemption_id AS redemptionId,amount_status AS amountStatus,gross_fen AS grossFen,commission_fen AS commissionFen,payable_fen AS payableFen,rate_snapshot AS rateSnapshot,pending_reason AS pendingReason,created_at AS createdAt</sql>
+  <sql id="paymentColumns">id,settlement_batch_id AS settlementBatchId,amount_fen AS amountFen,bank_trade_no AS bankTradeNo,paid_at AS paidAt,voucher_file_id AS voucherFileId,evidence_ref AS evidenceRef,created_by AS createdBy,created_at AS createdAt</sql>
+  <sql id="institutionScope">
+    <if test="scope.institutionIds != null">
+      <choose>
+        <when test="scope.institutionIds.size() > 0">AND institution_id IN <foreach collection="scope.institutionIds" item="id" open="(" separator="," close=")">#{id}</foreach></when>
+        <otherwise>AND 1=0</otherwise>
+      </choose>
+    </if>
+    <if test="institutionId != null">AND institution_id=#{institutionId}</if>
+  </sql>
+
+  <insert id="insertBatch">
+    INSERT INTO crm_settlement_batch (tenant_id,institution_id,settlement_type,period_key,status,amount_status,gross_fen,commission_fen,net_payable_fen,paid_fen)
+    VALUES (#{tenantId},#{entity.institutionId},#{entity.settlementType},#{entity.periodKey},'DRAFT','PENDING_VERIFICATION',0,0,0,0)
+  </insert>
+  <select id="selectBatchByPeriod" resultType="com.whale.crm.settlement.domain.SettlementBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_settlement_batch
+    WHERE tenant_id=#{tenantId} AND institution_id=#{institutionId} AND settlement_type=#{type} AND period_key=#{periodKey}
+  </select>
+  <select id="selectBatch" resultType="com.whale.crm.settlement.domain.SettlementBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_settlement_batch WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectBatchForUpdate" resultType="com.whale.crm.settlement.domain.SettlementBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_settlement_batch WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="searchBatches" resultType="com.whale.crm.settlement.domain.SettlementBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_settlement_batch WHERE tenant_id=#{tenantId}
+    <include refid="institutionScope"/>
+    <if test="type != null and type != ''">AND settlement_type=#{type}</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countBatches" resultType="long">
+    SELECT COUNT(*) FROM crm_settlement_batch WHERE tenant_id=#{tenantId}
+    <include refid="institutionScope"/>
+    <if test="type != null and type != ''">AND settlement_type=#{type}</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </select>
+
+  <insert id="insertLine">
+    INSERT INTO crm_settlement_line (tenant_id,settlement_batch_id,redemption_id,amount_status,gross_fen,commission_fen,payable_fen,rate_snapshot,pending_reason)
+    VALUES (#{tenantId},#{batchId},#{redemptionId},'PENDING_VERIFICATION',0,0,0,#{rateSnapshot},'结算金额与规则需财务人工核准')
+  </insert>
+  <select id="selectLines" resultType="com.whale.crm.settlement.domain.SettlementLine">
+    SELECT <include refid="lineColumns"/> FROM crm_settlement_line
+    WHERE tenant_id=#{tenantId} AND settlement_batch_id=#{batchId} ORDER BY redemption_id
+  </select>
+  <select id="selectLineByRedemption" resultType="com.whale.crm.settlement.domain.SettlementLine">
+    SELECT <include refid="lineColumns"/> FROM crm_settlement_line WHERE tenant_id=#{tenantId} AND redemption_id=#{redemptionId}
+  </select>
+  <select id="lockRedemptions" resultType="com.whale.crm.settlement.domain.SettlementRedemption">
+    SELECT id,institution_id AS institutionId,status,service_at AS serviceAt FROM crm_redemption
+    WHERE tenant_id=#{tenantId} AND id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    ORDER BY id FOR UPDATE
+  </select>
+
+  <update id="updateVerification">
+    UPDATE crm_settlement_batch SET status='CONFIRMED',amount_status='VERIFIED',gross_fen=#{grossFen},
+      commission_fen=#{commissionFen},net_payable_fen=#{netPayableFen},rule_version=#{ruleVersion},
+      verification_evidence=#{verificationEvidence},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status='DRAFT' AND amount_status='PENDING_VERIFICATION'
+  </update>
+  <update id="updatePayment">
+    UPDATE crm_settlement_batch SET paid_fen=#{paidFen},status=#{status},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND amount_status='VERIFIED'
+      AND status IN ('CONFIRMED','PARTIALLY_PAID')
+  </update>
+
+  <insert id="insertPayment">
+    INSERT INTO crm_settlement_payment (tenant_id,settlement_batch_id,amount_fen,bank_trade_no,paid_at,voucher_file_id,evidence_ref,created_by)
+    VALUES (#{tenantId},#{entity.settlementBatchId},#{entity.amountFen},#{entity.bankTradeNo},#{entity.paidAt},#{entity.voucherFileId},#{entity.evidenceRef},#{entity.createdBy})
+  </insert>
+  <select id="selectPaymentByTradeNo" resultType="com.whale.crm.settlement.domain.SettlementPayment">
+    SELECT <include refid="paymentColumns"/> FROM crm_settlement_payment WHERE tenant_id=#{tenantId} AND bank_trade_no=#{bankTradeNo}
+  </select>
+  <select id="selectPayments" resultType="com.whale.crm.settlement.domain.SettlementPayment">
+    SELECT <include refid="paymentColumns"/> FROM crm_settlement_payment
+    WHERE tenant_id=#{tenantId} AND settlement_batch_id=#{batchId} ORDER BY id
+  </select>
+
+  <select id="entitlementLedgerIssues" resultType="com.whale.crm.settlement.domain.ReconciliationIssue">
+    SELECT 'ENTITLEMENT_LEDGER' AS checkType,e.id AS resourceId,NULL AS institutionId,
+      e.available_count AS expectedCount,COALESCE(SUM(l.delta_count),0) AS actualCount,
+      NULL AS expectedFen,NULL AS actualFen,'权益可用次数与账本累计不一致' AS detail
+    FROM crm_entitlement e LEFT JOIN crm_entitlement_ledger l ON l.tenant_id=e.tenant_id AND l.entitlement_id=e.id
+    WHERE e.tenant_id=#{tenantId}
+    GROUP BY e.id,e.available_count HAVING e.available_count != COALESCE(SUM(l.delta_count),0)
+  </select>
+  <select id="orderCashIssues" resultType="com.whale.crm.settlement.domain.ReconciliationIssue">
+    SELECT * FROM (
+      SELECT 'ORDER_PAYMENT_CASH' AS checkType,o.id AS resourceId,NULL AS institutionId,NULL AS expectedCount,NULL AS actualCount,
+        o.paid_fen AS expectedFen,COALESCE(SUM(CASE WHEN p.status='CONFIRMED' THEN p.amount_fen ELSE 0 END),0) AS actualFen,
+        '订单实付与已确认支付流水不一致' AS detail
+      FROM crm_order o LEFT JOIN crm_payment_txn p ON p.tenant_id=o.tenant_id AND p.order_id=o.id
+      WHERE o.tenant_id=#{tenantId} GROUP BY o.id,o.paid_fen
+      HAVING o.paid_fen != COALESCE(SUM(CASE WHEN p.status='CONFIRMED' THEN p.amount_fen ELSE 0 END),0)
+    ) payment_diff
+    UNION ALL
+    SELECT * FROM (
+      SELECT 'ORDER_REFUND_CASH' AS checkType,o.id AS resourceId,NULL AS institutionId,NULL AS expectedCount,NULL AS actualCount,
+        o.refunded_fen AS expectedFen,COALESCE(SUM(CASE WHEN rp.status='SUCCEEDED' THEN rp.amount_fen ELSE 0 END),0) AS actualFen,
+        '订单成功退款额与成功退款流水不一致' AS detail
+      FROM crm_order o LEFT JOIN crm_refund r ON r.tenant_id=o.tenant_id AND r.order_id=o.id
+      LEFT JOIN crm_refund_payment rp ON rp.tenant_id=r.tenant_id AND rp.refund_id=r.id
+      WHERE o.tenant_id=#{tenantId} GROUP BY o.id,o.refunded_fen
+      HAVING o.refunded_fen != COALESCE(SUM(CASE WHEN rp.status='SUCCEEDED' THEN rp.amount_fen ELSE 0 END),0)
+    ) refund_diff
+  </select>
+  <select id="refundAllocationIssues" resultType="com.whale.crm.settlement.domain.ReconciliationIssue">
+    SELECT 'REFUND_ALLOCATION' AS checkType,r.id AS resourceId,NULL AS institutionId,NULL AS expectedCount,NULL AS actualCount,
+      r.succeeded_fen AS expectedFen,COALESCE(SUM(i.allocated_fen),0) AS actualFen,'成功退款额与权益现金分摊不一致' AS detail
+    FROM crm_refund r LEFT JOIN crm_refund_item i ON i.tenant_id=r.tenant_id AND i.refund_id=r.id
+    WHERE r.tenant_id=#{tenantId} AND r.status='SUCCEEDED'
+    GROUP BY r.id,r.succeeded_fen HAVING r.succeeded_fen != COALESCE(SUM(i.allocated_fen),0)
+  </select>
+  <select id="settlementPaymentIssues" resultType="com.whale.crm.settlement.domain.ReconciliationIssue">
+    SELECT 'SETTLEMENT_PAYMENT' AS checkType,b.id AS resourceId,b.institution_id AS institutionId,NULL AS expectedCount,NULL AS actualCount,
+      b.paid_fen AS expectedFen,COALESCE(SUM(p.amount_fen),0) AS actualFen,'批次已付金额与付款流水不一致' AS detail
+    FROM crm_settlement_batch b LEFT JOIN crm_settlement_payment p ON p.tenant_id=b.tenant_id AND p.settlement_batch_id=b.id
+    WHERE b.tenant_id=#{tenantId} <include refid="institutionScope"/>
+    GROUP BY b.id,b.institution_id,b.paid_fen HAVING b.paid_fen != COALESCE(SUM(p.amount_fen),0)
+  </select>
+  <select id="unbatchedRedemptionIssues" resultType="com.whale.crm.settlement.domain.ReconciliationIssue">
+    SELECT 'UNBATCHED_REDEMPTION' AS checkType,r.id AS resourceId,r.institution_id AS institutionId,
+      1 AS expectedCount,0 AS actualCount,NULL AS expectedFen,NULL AS actualFen,'正式核销尚未进入结算批次' AS detail
+    FROM crm_redemption r
+    WHERE r.tenant_id=#{tenantId} AND r.status='POSTED'
+      AND NOT EXISTS (SELECT 1 FROM crm_settlement_line l WHERE l.tenant_id=r.tenant_id AND l.redemption_id=r.id)
+    <include refid="institutionScope"/>
+    ORDER BY r.id
+  </select>
+</mapper>

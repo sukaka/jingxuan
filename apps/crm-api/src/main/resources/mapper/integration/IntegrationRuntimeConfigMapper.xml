@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.integration.config.infrastructure.mapper.IntegrationRuntimeConfigMapper">
+  <sql id="configColumns">c.id,c.tenant_id AS tenantId,c.youzan_real_enabled AS youzanRealEnabled,c.wecom_archive_real_enabled AS wecomArchiveRealEnabled,c.wecom_official_enabled AS wecomOfficialEnabled,c.version</sql>
+  <select id="find" resultType="com.whale.crm.integration.config.domain.IntegrationRuntimeConfig">SELECT <include refid="configColumns"/> FROM crm_integration_runtime_config c WHERE c.tenant_id=#{tenantId}</select>
+  <select id="findForUpdate" resultType="com.whale.crm.integration.config.domain.IntegrationRuntimeConfig">SELECT <include refid="configColumns"/> FROM crm_integration_runtime_config c WHERE c.tenant_id=#{tenantId} FOR UPDATE</select>
+  <insert id="insert">INSERT INTO crm_integration_runtime_config (tenant_id,youzan_real_enabled,wecom_archive_real_enabled,wecom_official_enabled) VALUES (#{tenantId},#{e.youzanRealEnabled},#{e.wecomArchiveRealEnabled},#{e.wecomOfficialEnabled})</insert>
+  <update id="update">UPDATE crm_integration_runtime_config c SET c.youzan_real_enabled=#{e.youzanRealEnabled},c.wecom_archive_real_enabled=#{e.wecomArchiveRealEnabled},c.wecom_official_enabled=#{e.wecomOfficialEnabled},c.updated_at=CURRENT_TIMESTAMP(3),c.version=c.version+1 WHERE c.tenant_id=#{tenantId} AND c.id=#{id} AND c.version=#{version}</update>
+</mapper>

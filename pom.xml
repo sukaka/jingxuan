@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.whale.crm</groupId>
+  <artifactId>whale-crm</artifactId>
+  <version>0.1.1-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>whale-crm</name>
+  <description>鲸选美学 CRM V2.0 monorepo aggregator</description>
+
+  <modules>
+    <module>apps/crm-api</module>
+  </modules>
+</project>

@@ -1,0 +1,103 @@
+CREATE TABLE `crm_wecom_contact` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '租户',
+  `corp_id` VARCHAR(96) NOT NULL COMMENT '企业ID',
+  `external_userid` VARCHAR(192) NOT NULL COMMENT '企微外部联系身份，不是自然人唯一ID',
+  `staff_user_id` BIGINT UNSIGNED NOT NULL COMMENT '关联CRM员工',
+  `customer_id` BIGINT UNSIGNED NULL COMMENT '人工确认后的CRM客户',
+  `consent_status` VARCHAR(32) NOT NULL COMMENT 'PENDING/GRANTED/REVOKED，Mock状态不代表真实授权',
+  `consent_evidence_ref` VARCHAR(255) NULL COMMENT '同意证据引用，不保存敏感证据正文',
+  `link_type` VARCHAR(32) NULL COMMENT 'MANUAL人工确认',
+  `link_reason` VARCHAR(1000) NULL COMMENT '人工匹配理由',
+  `created_by` BIGINT UNSIGNED NULL COMMENT '人工确认人',
+  `last_synced_at` DATETIME(3) NULL COMMENT '最近联系同步时间UTC',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+  `version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '乐观锁',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_wecom_contact_1` (`tenant_id`,`corp_id`,`external_userid`,`staff_user_id`),
+  KEY `idx_wecom_contact_1` (`tenant_id`,`customer_id`),
+  KEY `idx_wecom_contact_2` (`tenant_id`,`staff_user_id`,`consent_status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='企微外部联系与人工身份匹配';
+
+CREATE TABLE `crm_wecom_archive_member` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '租户',
+  `corp_id` VARCHAR(96) NOT NULL COMMENT '企业ID',
+  `staff_user_id` BIGINT UNSIGNED NOT NULL COMMENT '被存档员工',
+  `enabled` TINYINT(1) NOT NULL COMMENT '当前是否覆盖',
+  `source_code` VARCHAR(32) NOT NULL COMMENT 'MOCK/OFFICIAL，当前仅MOCK',
+  `evidence_ref` VARCHAR(255) NULL COMMENT '虚构成员覆盖证据引用',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+  `version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '乐观锁',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_wecom_member_1` (`tenant_id`,`corp_id`,`staff_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='企微归档成员覆盖范围';
+
+CREATE TABLE `crm_wecom_message` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '内部消息引用ID',
+  `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '租户',
+  `corp_id` VARCHAR(96) NOT NULL COMMENT '企业ID',
+  `msg_id` VARCHAR(192) NOT NULL COMMENT '企微消息唯一ID',
+  `archive_seq` BIGINT UNSIGNED NOT NULL COMMENT '归档游标序号',
+  `customer_id` BIGINT UNSIGNED NULL COMMENT '人工匹配后的客户',
+  `external_userid` VARCHAR(192) NOT NULL COMMENT '外部联系身份',
+  `staff_user_id` BIGINT UNSIGNED NOT NULL COMMENT '归属被存档员工',
+  `conversation_id` VARCHAR(128) NULL COMMENT '会话ID',
+  `message_type` VARCHAR(48) NOT NULL COMMENT 'TEXT等归档类型',
+  `sender_type` VARCHAR(32) NOT NULL COMMENT 'EMPLOYEE/CUSTOMER',
+  `sent_at` DATETIME(3) NOT NULL COMMENT '消息发送时间UTC',
+  `content_object_key` VARCHAR(255) NOT NULL COMMENT '私有对象内的AES密文引用',
+  `content_sha256` CHAR(64) NOT NULL COMMENT '密文SHA256',
+  `consent_snapshot` VARCHAR(32) NOT NULL COMMENT '采集时同意快照',
+  `consent_evidence_ref` VARCHAR(255) NULL COMMENT '同意证据引用',
+  `status` VARCHAR(32) NOT NULL COMMENT 'STORED/UNMATCHED',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '归档时间UTC',
+  `version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '乐观锁',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_wecom_message_1` (`tenant_id`,`corp_id`,`msg_id`),
+  UNIQUE KEY `uk_wecom_message_2` (`tenant_id`,`corp_id`,`archive_seq`),
+  KEY `idx_wecom_message_1` (`tenant_id`,`customer_id`,`sent_at`),
+  KEY `idx_wecom_message_2` (`tenant_id`,`staff_user_id`,`sent_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='合法归档的企微消息元数据，无聊天全文';
+
+CREATE TABLE `crm_wecom_cursor` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '租户',
+  `corp_id` VARCHAR(96) NOT NULL COMMENT '企业ID',
+  `archive_scope` VARCHAR(128) NOT NULL COMMENT '归档范围',
+  `last_seq` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '最后完整成功区间末尾seq',
+  `last_success_at` DATETIME(3) NULL COMMENT '最近成功采集UTC',
+  `last_attempt_at` DATETIME(3) NULL COMMENT '最近尝试UTC',
+  `status` VARCHAR(32) NOT NULL COMMENT 'NEVER_SYNCED/SUCCESS/ERROR',
+  `consecutive_failures` INT NOT NULL DEFAULT 0 COMMENT '连续失败次数',
+  `last_error` VARCHAR(1000) NULL COMMENT '脱敏失败信息，不含消息正文',
+  `data_gap` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '当前是否存在覆盖缺口',
+  `gap_reason` VARCHAR(1000) NULL COMMENT '缺口原因',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+  `version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '乐观锁',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_wecom_cursor_1` (`tenant_id`,`corp_id`,`archive_scope`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='企微归档成功游标与当前覆盖状态';
+
+CREATE TABLE `crm_wecom_data_gap` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '租户',
+  `corp_id` VARCHAR(96) NOT NULL COMMENT '企业ID',
+  `archive_scope` VARCHAR(128) NOT NULL COMMENT '归档范围',
+  `gap_type` VARCHAR(48) NOT NULL COMMENT 'NEVER_SYNCED/COLLECTOR_ERROR/CONSENT_REVOKED/MEMBER_NOT_COVERED',
+  `status` VARCHAR(32) NOT NULL COMMENT 'OPEN/RESOLVED',
+  `from_seq` BIGINT UNSIGNED NULL COMMENT '缺口起始seq',
+  `to_seq` BIGINT UNSIGNED NULL COMMENT '缺口结束seq，未知为空',
+  `detail_masked` VARCHAR(1000) NOT NULL COMMENT '脱敏缺口说明，不含聊天正文',
+  `first_seen_at` DATETIME(3) NOT NULL COMMENT '首次发现UTC',
+  `last_seen_at` DATETIME(3) NOT NULL COMMENT '最近发现UTC',
+  `resolved_at` DATETIME(3) NULL COMMENT '恢复时间UTC，历史仍保留',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+  `version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '乐观锁',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_wecom_gap_1` (`tenant_id`,`corp_id`,`archive_scope`,`gap_type`,`from_seq`),
+  KEY `idx_wecom_gap_1` (`tenant_id`,`status`,`last_seen_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='企微采集覆盖缺口历史';

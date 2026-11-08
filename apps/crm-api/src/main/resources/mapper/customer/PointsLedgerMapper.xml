@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.PointsLedgerMapper">
+
+  <resultMap id="PointsLedgerMap" type="com.whale.crm.customer.domain.PointsLedgerEntry">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="customerId" column="customer_id"/>
+    <result property="delta" column="delta"/>
+    <result property="reasonCode" column="reason_code"/>
+    <result property="sourceType" column="source_type"/>
+    <result property="sourceRef" column="source_ref"/>
+    <result property="operatorUserId" column="operator_user_id"/>
+    <result property="createdAt" column="created_at"/>
+  </resultMap>
+
+  <select id="selectByCustomerId" resultMap="PointsLedgerMap">
+    SELECT id, tenant_id, customer_id, delta, reason_code, source_type, source_ref, operator_user_id, created_at
+    FROM crm_points_ledger
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId}
+    ORDER BY id ASC
+  </select>
+
+  <select id="sumDelta" resultType="long">
+    SELECT COALESCE(SUM(delta), 0) FROM crm_points_ledger
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId}
+  </select>
+
+  <insert id="insertEntry" parameterType="com.whale.crm.customer.domain.PointsLedgerEntry"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_points_ledger (tenant_id, customer_id, delta, reason_code, source_type, source_ref,
+                                   operator_user_id)
+    VALUES (#{tenantId}, #{customerId}, #{delta}, #{reasonCode}, #{sourceType}, #{sourceRef},
+            #{operatorUserId})
+  </insert>
+
+  <update id="reassignCustomer">
+    UPDATE crm_points_ledger
+    SET customer_id = #{toCustomerId}
+    WHERE tenant_id = #{tenantId} AND customer_id = #{fromCustomerId}
+  </update>
+
+</mapper>

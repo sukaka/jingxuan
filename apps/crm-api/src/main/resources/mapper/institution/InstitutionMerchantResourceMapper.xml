@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.institution.infrastructure.mapper.InstitutionMerchantResourceMapper">
+  <sql id="columns">r.id,r.resource_no AS resourceNo,r.institution_id AS institutionId,r.resource_type AS resourceType,r.title,r.subtitle,r.description,r.file_id AS fileId,r.status,r.created_by AS createdBy,r.updated_by AS updatedBy,r.created_at AS createdAt,r.updated_at AS updatedAt,r.version</sql>
+  <sql id="institutionScope">
+    <if test="scope.scopeType == 'NONE'">AND 1=0</if>
+    <if test="scope.scopeType == 'INSTITUTION'">
+      <choose>
+        <when test="scope.institutionIds != null and scope.institutionIds.size() > 0">AND r.institution_id IN <foreach collection="scope.institutionIds" item="id" open="(" separator="," close=")">#{id}</foreach></when>
+        <otherwise>AND 1=0</otherwise>
+      </choose>
+    </if>
+  </sql>
+  <sql id="profileScope">
+    <if test="scope.scopeType == 'NONE'">AND 1=0</if>
+    <if test="scope.scopeType == 'INSTITUTION'">
+      <choose>
+        <when test="scope.institutionIds != null and scope.institutionIds.size() > 0">AND i.id IN <foreach collection="scope.institutionIds" item="id" open="(" separator="," close=")">#{id}</foreach></when>
+        <otherwise>AND 1=0</otherwise>
+      </choose>
+    </if>
+  </sql>
+  <sql id="filters">
+    <include refid="institutionScope"/>
+    <if test="institutionId != null">AND r.institution_id=#{institutionId}</if>
+    <if test="resourceType != null">AND r.resource_type=#{resourceType}</if>
+    <if test="status != null">AND r.status=#{status}</if>
+    <if test="keyword != null and keyword != ''">AND (r.title LIKE CONCAT('%',#{keyword},'%') OR r.subtitle LIKE CONCAT('%',#{keyword},'%') OR r.description LIKE CONCAT('%',#{keyword},'%'))</if>
+  </sql>
+
+  <insert id="insert">
+    INSERT INTO crm_institution_merchant_resource
+      (tenant_id,resource_no,institution_id,resource_type,title,subtitle,description,file_id,status,created_by)
+    VALUES (#{tenantId},#{entity.resourceNo},#{entity.institutionId},#{entity.resourceType},#{entity.title},
+      #{entity.subtitle},#{entity.description},#{entity.fileId},#{entity.status},#{entity.createdBy})
+  </insert>
+  <select id="selectByResourceNo" resultType="com.whale.crm.institution.domain.InstitutionMerchantResource">
+    SELECT <include refid="columns"/> FROM crm_institution_merchant_resource r
+    WHERE r.tenant_id=#{tenantId} AND r.resource_no=#{resourceNo}
+  </select>
+  <select id="select" resultType="com.whale.crm.institution.domain.InstitutionMerchantResource">
+    SELECT <include refid="columns"/> FROM crm_institution_merchant_resource r
+    WHERE r.tenant_id=#{tenantId} AND r.id=#{id}
+  </select>
+  <select id="selectForUpdate" resultType="com.whale.crm.institution.domain.InstitutionMerchantResource">
+    SELECT <include refid="columns"/> FROM crm_institution_merchant_resource r
+    WHERE r.tenant_id=#{tenantId} AND r.id=#{id} FOR UPDATE
+  </select>
+  <select id="search" resultType="com.whale.crm.institution.domain.InstitutionMerchantResource">
+    SELECT <include refid="columns"/> FROM crm_institution_merchant_resource r
+    INNER JOIN crm_institution i ON i.tenant_id=r.tenant_id AND i.id=r.institution_id AND i.archived=0
+    WHERE r.tenant_id=#{tenantId}
+    <include refid="filters"/>
+    ORDER BY r.resource_type,r.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="count" resultType="long">
+    SELECT COUNT(*) FROM crm_institution_merchant_resource r
+    INNER JOIN crm_institution i ON i.tenant_id=r.tenant_id AND i.id=r.institution_id AND i.archived=0
+    WHERE r.tenant_id=#{tenantId}
+    <include refid="filters"/>
+  </select>
+  <select id="summarize" resultType="com.whale.crm.institution.domain.InstitutionMerchantResourceSummary">
+    SELECT i.id AS institutionId,
+      COALESCE(SUM(CASE WHEN r.resource_type='DOCTOR' THEN 1 ELSE 0 END),0) AS doctorCount,
+      COALESCE(SUM(CASE WHEN r.resource_type='EQUIPMENT' THEN 1 ELSE 0 END),0) AS equipmentCount,
+      COALESCE(SUM(CASE WHEN r.resource_type='CASE' THEN 1 ELSE 0 END),0) AS caseCount
+    FROM crm_institution i
+    LEFT JOIN crm_institution_merchant_resource r ON r.tenant_id=i.tenant_id AND r.institution_id=i.id AND r.status='PUBLISHED'
+    WHERE i.tenant_id=#{tenantId} AND i.archived=0
+    <include refid="profileScope"/>
+    GROUP BY i.id ORDER BY i.id
+  </select>
+  <update id="update">
+    UPDATE crm_institution_merchant_resource
+    SET title=#{title},subtitle=#{subtitle},description=#{description},file_id=#{fileId},status=#{status},
+      updated_by=#{updatedBy},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+  </update>
+</mapper>

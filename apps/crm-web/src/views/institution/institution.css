@@ -1,0 +1,35 @@
+.crm-ui .institution-profile-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 12px; }
+.crm-ui .institution-full { grid-column: 1/-1; }
+.crm-ui .institution-card-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-bottom: 16px; }
+.crm-ui .institution-soft-card { padding: 16px 18px; border: 1px solid #e3edef; border-radius: 12px; background: #fff; }
+.crm-ui .institution-soft-card h3 { margin: 0 0 10px; font-size: 15px; }
+.crm-ui .institution-soft-card p { margin: 0; color: #6f8794; font-size: 12px; line-height: 1.8; }
+.crm-ui .institution-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 20px 0 12px; }
+.crm-ui .institution-section-head h3 { margin: 0 0 4px; font-size: 15px; }
+.crm-ui .institution-section-head p { margin: 0; color: #8298a4; font-size: 11px; line-height: 1.6; }
+.crm-ui .institution-step-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 12px 0 18px; }
+.crm-ui .institution-step { padding: 12px 14px; border: 1px solid #e3edef; border-radius: 10px; background: #fff; }
+.crm-ui .institution-step small { display: block; margin-bottom: 5px; color: #8298a4; }
+.crm-ui .institution-step strong { display: block; margin-bottom: 4px; font-size: 13px; }
+.crm-ui .institution-step span { color: #79909f; font-size: 11px; }
+.crm-ui .institution-sensitive { padding: 12px 14px; border: 1px solid #eee2c9; border-radius: 10px; background: #fff9ed; color: #846c3e; font-size: 12px; line-height: 1.7; }
+.crm-ui .institution-file-box { padding: 14px; border: 1px dashed #b8d6d1; border-radius: 11px; background: #f5faf9; }
+.crm-ui .institution-file-meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 10px; font-size: 12px; }
+.crm-ui .institution-file-name { min-width: 0; overflow-wrap: anywhere; }
+.crm-ui .institution-file-error { margin-top: 8px; color: #c95667; font-size: 12px; line-height: 1.6; }
+.crm-ui .institution-file-success { margin-top: 8px; color: #168268; font-size: 12px; line-height: 1.6; }
+.crm-ui .institution-filter-keyword { width: min(280px,100%); }
+.crm-ui .institution-filter-select { width: 160px; }
+.crm-ui .institution-version { color: #79909f; font-size: 11px; font-variant-numeric: tabular-nums; }
+.crm-ui .institution-masked { font-family: ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing: .3px; }
+@media (max-width: 760px) {
+  .crm-ui .institution-profile-grid,
+  .crm-ui .institution-card-grid,
+  .crm-ui .institution-step-grid { grid-template-columns: 1fr; }
+  .crm-ui .institution-section-head { flex-direction: column; }
+}
+@media (max-width: 480px) {
+  .crm-ui .institution-filter-select,
+  .crm-ui .institution-filter-keyword { width: 100%; }
+  .crm-ui .institution-file-meta { flex-direction: column; }
+}

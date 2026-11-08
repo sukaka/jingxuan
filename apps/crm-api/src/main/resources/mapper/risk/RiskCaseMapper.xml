@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.risk.infrastructure.mapper.RiskCaseMapper">
+  <sql id="caseColumns">id,tenant_id AS tenantId,risk_case_no AS riskCaseNo,risk_type AS riskType,severity,source_type AS sourceType,source_ref AS sourceRef,status,owner_user_id AS ownerUserId,evidence,resolution,resolved_at AS resolvedAt,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="historyColumns">id,tenant_id AS tenantId,risk_case_id AS riskCaseId,action,from_status AS fromStatus,to_status AS toStatus,actor_user_id AS actorUserId,note,created_at AS createdAt</sql>
+  <sql id="filters">
+    <if test="q.status != null and q.status != ''">AND status=#{q.status}</if>
+    <if test="q.severity != null and q.severity != ''">AND severity=#{q.severity}</if>
+    <if test="q.riskType != null and q.riskType != ''">AND risk_type=#{q.riskType}</if>
+    <if test="q.sourceType != null and q.sourceType != ''">AND source_type=#{q.sourceType}</if>
+    <if test="q.sourceRef != null and q.sourceRef != ''">AND source_ref=#{q.sourceRef}</if>
+    <if test="q.ownerUserId != null">AND owner_user_id=#{q.ownerUserId}</if>
+    <if test="q.keyword != null and q.keyword != ''">
+      AND (risk_case_no LIKE CONCAT('%',#{q.keyword},'%') OR source_ref LIKE CONCAT('%',#{q.keyword},'%')
+        OR risk_type LIKE CONCAT('%',#{q.keyword},'%') OR evidence LIKE CONCAT('%',#{q.keyword},'%'))
+    </if>
+  </sql>
+
+  <select id="findById" resultType="com.whale.crm.risk.domain.RiskCase">
+    SELECT <include refid="caseColumns"/> FROM crm_risk_case WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="findByIdForUpdate" resultType="com.whale.crm.risk.domain.RiskCase">
+    SELECT <include refid="caseColumns"/> FROM crm_risk_case WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="findBySource" resultType="com.whale.crm.risk.domain.RiskCase">
+    SELECT <include refid="caseColumns"/> FROM crm_risk_case
+    WHERE tenant_id=#{tenantId} AND source_type=#{sourceType} AND source_ref=#{sourceRef} AND risk_type=#{riskType}
+  </select>
+  <select id="findBySourceForUpdate" resultType="com.whale.crm.risk.domain.RiskCase">
+    SELECT <include refid="caseColumns"/> FROM crm_risk_case
+    WHERE tenant_id=#{tenantId} AND source_type=#{sourceType} AND source_ref=#{sourceRef} AND risk_type=#{riskType}
+    FOR UPDATE
+  </select>
+  <select id="search" resultType="com.whale.crm.risk.domain.RiskCase">
+    SELECT <include refid="caseColumns"/> FROM crm_risk_case WHERE tenant_id=#{q.tenantId}
+    <include refid="filters"/> ORDER BY created_at DESC,id DESC LIMIT #{q.size} OFFSET #{q.offset}
+  </select>
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*) FROM crm_risk_case WHERE tenant_id=#{q.tenantId} <include refid="filters"/>
+  </select>
+
+  <select id="findCustomerLinks" resultType="com.whale.crm.risk.domain.RiskCustomerLink">
+    SELECT r.id AS riskCaseId,o.id AS orderId,o.order_no AS orderNo,
+      c.id AS customerId,c.customer_no AS customerNo,COALESCE(c.display_name,c.nickname) AS customerName
+    FROM crm_risk_case r
+    LEFT JOIN crm_youzan_sync_issue yi ON yi.tenant_id=r.tenant_id
+      AND r.source_type='YOUZAN_SYNC_ISSUE' AND r.source_ref REGEXP '^[1-9][0-9]*$'
+      AND yi.id=CAST(r.source_ref AS UNSIGNED)
+    LEFT JOIN crm_youzan_event ye ON ye.tenant_id=yi.tenant_id AND ye.id=yi.event_id
+    LEFT JOIN crm_youzan_order_map yom ON yom.tenant_id=ye.tenant_id AND yom.shop_id=ye.shop_id
+      AND yom.external_order_no=ye.external_order_no
+    LEFT JOIN crm_youzan_customer_link ycl ON ycl.tenant_id=ye.tenant_id AND ycl.shop_id=ye.shop_id
+      AND ycl.external_customer_id=JSON_UNQUOTE(JSON_EXTRACT(ye.payload_masked_json,'$.external_customer_id'))
+    LEFT JOIN crm_refund rf ON rf.tenant_id=r.tenant_id
+      AND r.source_type='REFUND' AND r.source_ref REGEXP '^[1-9][0-9]*$'
+      AND rf.id=CAST(r.source_ref AS UNSIGNED)
+    LEFT JOIN crm_entitlement e ON e.tenant_id=r.tenant_id
+      AND r.source_type='ENTITLEMENT' AND r.source_ref REGEXP '^[1-9][0-9]*$'
+      AND e.id=CAST(r.source_ref AS UNSIGNED)
+    LEFT JOIN crm_order_item oi ON oi.tenant_id=e.tenant_id AND oi.id=e.order_item_id
+    LEFT JOIN crm_redemption rd ON rd.tenant_id=r.tenant_id
+      AND r.source_type='REDEMPTION' AND r.source_ref REGEXP '^[1-9][0-9]*$'
+      AND rd.id=CAST(r.source_ref AS UNSIGNED)
+    LEFT JOIN crm_order o ON o.tenant_id=r.tenant_id AND (
+      (r.source_type='ORDER' AND r.source_ref REGEXP '^[1-9][0-9]*$' AND o.id=CAST(r.source_ref AS UNSIGNED))
+      OR (r.source_type='YOUZAN_SYNC_ISSUE' AND o.id=COALESCE(ye.order_id,yom.crm_order_id))
+      OR (r.source_type='REFUND' AND o.id=rf.order_id)
+      OR (r.source_type='ENTITLEMENT' AND o.id=oi.order_id))
+    INNER JOIN crm_customer c ON c.tenant_id=r.tenant_id
+      AND c.id=COALESCE(o.customer_id,ycl.customer_id,rf.customer_id,e.customer_id,rd.customer_id)
+    WHERE r.tenant_id=#{tenantId} AND r.id IN
+    <foreach collection="riskCaseIds" item="riskCaseId" open="(" separator="," close=")">#{riskCaseId}</foreach>
+    ORDER BY r.id
+  </select>
+
+  <insert id="insert">
+    INSERT INTO crm_risk_case (tenant_id,risk_case_no,risk_type,severity,source_type,source_ref,status,owner_user_id,evidence,resolution,resolved_at)
+    VALUES (#{e.tenantId},#{e.riskCaseNo},#{e.riskType},#{e.severity},#{e.sourceType},#{e.sourceRef},#{e.status},
+      #{e.ownerUserId,jdbcType=BIGINT},#{e.evidence,jdbcType=VARCHAR},#{e.resolution,jdbcType=VARCHAR},#{e.resolvedAt,jdbcType=TIMESTAMP})
+  </insert>
+  <update id="updateStatus">
+    UPDATE crm_risk_case SET status=#{toStatus},owner_user_id=#{ownerUserId,jdbcType=BIGINT},
+      resolution=#{resolution,jdbcType=VARCHAR},resolved_at=#{resolvedAt,jdbcType=TIMESTAMP},
+      updated_at=CURRENT_TIMESTAMP(3),version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status=#{fromStatus}
+  </update>
+  <insert id="insertHistory">
+    INSERT INTO crm_risk_case_history (tenant_id,risk_case_id,action,from_status,to_status,actor_user_id,note)
+    VALUES (#{e.tenantId},#{e.riskCaseId},#{e.action},#{e.fromStatus,jdbcType=VARCHAR},#{e.toStatus},
+      #{e.actorUserId,jdbcType=BIGINT},#{e.note,jdbcType=VARCHAR})
+  </insert>
+  <select id="findHistory" resultType="com.whale.crm.risk.domain.RiskCaseHistory">
+    SELECT <include refid="historyColumns"/> FROM crm_risk_case_history
+    WHERE tenant_id=#{tenantId} AND risk_case_id=#{riskCaseId} ORDER BY id
+  </select>
+</mapper>

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.FollowupMapper">
+
+  <resultMap id="FollowupMap" type="com.whale.crm.customer.domain.Followup">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="customerId" column="customer_id"/>
+    <result property="ownerStaffId" column="owner_staff_id"/>
+    <result property="channelCode" column="channel_code"/>
+    <result property="contactAt" column="contact_at"/>
+    <result property="summary" column="summary"/>
+    <result property="intentProject" column="intent_project"/>
+    <result property="estimatedAmountFen" column="estimated_amount_fen"/>
+    <result property="nextFollowupAt" column="next_followup_at"/>
+    <result property="blockerNote" column="blocker_note"/>
+    <result property="createdBy" column="created_by"/>
+    <result property="deleted" column="deleted"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <sql id="followupColumns">
+    id, tenant_id, customer_id, owner_staff_id, channel_code, contact_at, summary, intent_project,
+    estimated_amount_fen, next_followup_at, blocker_note, created_by, deleted, created_at, updated_at, version
+  </sql>
+
+  <!-- 范围与客户列表同语义：跟进挂在可见客户上（TEAM=客户团队可见或本人持有；SELF=本人持有客户或本人登记） -->
+  <sql id="scopedWhere">
+    FROM crm_followup f
+    INNER JOIN crm_customer c ON c.tenant_id = f.tenant_id AND c.id = f.customer_id
+    LEFT JOIN sys_user o ON o.tenant_id = f.tenant_id AND o.id = f.owner_staff_id
+    WHERE f.tenant_id = #{tenantId} AND f.deleted = 0
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id = #{selfId} OR f.created_by = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="teamIds" item="t" open="(" separator="," close=")">#{t}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">
+        AND (c.owner_staff_id = #{selfId} OR f.created_by = #{selfId})
+      </when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+    <if test="customerId != null">
+      AND f.customer_id = #{customerId}
+    </if>
+  </sql>
+
+  <select id="search" resultType="com.whale.crm.customer.domain.FollowupRepository$FollowupListRow">
+    SELECT f.id, f.customer_id,
+           COALESCE(c.display_name, c.nickname, c.customer_no) AS customer_name,
+           f.owner_staff_id, o.display_name AS owner_staff_name, f.channel_code, f.contact_at, f.summary, f.intent_project,
+           f.estimated_amount_fen, f.next_followup_at, f.blocker_note, f.created_by, f.created_at, f.version
+    <include refid="scopedWhere"/>
+    ORDER BY f.id DESC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*)
+    <include refid="scopedWhere"/>
+  </select>
+
+  <select id="selectById" resultMap="FollowupMap">
+    SELECT <include refid="followupColumns"/>
+    FROM crm_followup
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <insert id="insertFollowup" parameterType="com.whale.crm.customer.domain.Followup"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_followup (tenant_id, customer_id, owner_staff_id, channel_code, contact_at, summary,
+                              intent_project, estimated_amount_fen, next_followup_at, blocker_note, created_by)
+    VALUES (#{tenantId}, #{customerId}, #{ownerStaffId}, #{channelCode}, #{contactAt}, #{summary},
+            #{intentProject}, #{estimatedAmountFen}, #{nextFollowupAt}, #{blockerNote}, #{createdBy})
+  </insert>
+
+  <update id="updateFollowup" parameterType="com.whale.crm.customer.domain.Followup">
+    UPDATE crm_followup
+    SET channel_code = #{channelCode}, contact_at = #{contactAt}, summary = #{summary},
+        intent_project = #{intentProject}, estimated_amount_fen = #{estimatedAmountFen},
+        next_followup_at = #{nextFollowupAt}, blocker_note = #{blockerNote}, deleted = #{deleted},
+        version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version}
+  </update>
+
+  <update id="reassignCustomer">
+    UPDATE crm_followup SET customer_id = #{toCustomerId}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND customer_id = #{fromCustomerId}
+  </update>
+
+</mapper>

@@ -1,0 +1,586 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.reporting.infrastructure.mapper.ReportingMapper">
+
+  <sql id="customerScope">
+    <choose>
+      <when test="query.scope.scopeType == 'ALL'"></when>
+      <when test="query.scope.scopeType == 'TEAM'">
+        AND (c.owner_staff_id = #{query.scope.selfId}
+        <if test="query.scope.teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="query.scope.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>
+        </if>)
+      </when>
+      <when test="query.scope.scopeType == 'SELF'">AND c.owner_staff_id = #{query.scope.selfId}</when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+  </sql>
+
+  <sql id="orderFactFilters">
+    <if test="query.criteria.sourceSystem != 'ALL'">AND o.source_system = #{query.criteria.sourceSystem}</if>
+    <if test="query.criteria.customerId != null">AND o.customer_id = #{query.criteria.customerId}</if>
+    <if test="query.criteria.campaignId != null">AND o.campaign_id = #{query.criteria.campaignId}</if>
+    <if test="query.criteria.campaignBatchId != null">AND o.campaign_batch_id = #{query.criteria.campaignBatchId}</if>
+    <if test="query.criteria.channelId != null">AND o.channel_id = #{query.criteria.channelId}</if>
+    <if test="query.criteria.skuId != null">
+      AND EXISTS (SELECT 1 FROM crm_order_item filter_oi
+                  WHERE filter_oi.tenant_id = o.tenant_id AND filter_oi.order_id = o.id
+                    AND filter_oi.sku_id = #{query.criteria.skuId})
+    </if>
+  </sql>
+
+  <sql id="orderReceiverFilter">
+    <if test="query.criteria.receiverType != 'ALL'">AND o.receiver_type = #{query.criteria.receiverType}</if>
+  </sql>
+
+  <sql id="paymentReceiverFilter">
+    <if test="query.criteria.receiverType != 'ALL'">AND p.receiver_type = #{query.criteria.receiverType}</if>
+  </sql>
+
+  <sql id="operationsFactUnion">
+    SELECT 'FOLLOWUP' AS fact_type, f.id AS source_id, f.id AS parent_id, NULL AS order_id,
+           f.customer_id, NULL AS campaign_id, NULL AS campaign_batch_id, NULL AS sku_id,
+           f.contact_at AS event_at, NULL AS amount_fen, NULL AS quantity, NULL AS source_system, NULL AS receiver_type
+    FROM crm_followup f
+    INNER JOIN crm_customer c ON c.tenant_id = f.tenant_id AND c.id = f.customer_id AND c.deleted = 0
+    WHERE f.tenant_id = #{query.tenantId} AND f.deleted = 0 AND f.contact_at IS NOT NULL
+      AND f.contact_at &gt;= #{query.window.fromUtc} AND f.contact_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="query.criteria.customerId != null">AND f.customer_id = #{query.criteria.customerId}</if>
+    UNION ALL
+    SELECT 'APPOINTMENT_CONFIRMED', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
+           h.created_at, NULL, NULL, NULL, NULL
+    FROM crm_appointment_history h
+    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+    INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
+    WHERE h.tenant_id = #{query.tenantId} AND h.to_status = 'CONFIRMED'
+      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="query.criteria.customerId != null">AND a.customer_id = #{query.criteria.customerId}</if>
+      <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
+    UNION ALL
+    SELECT 'CHECKED_IN', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
+           h.created_at, NULL, NULL, NULL, NULL
+    FROM crm_appointment_history h
+    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+    INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
+    WHERE h.tenant_id = #{query.tenantId} AND h.to_status = 'CHECKED_IN'
+      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="query.criteria.customerId != null">AND a.customer_id = #{query.criteria.customerId}</if>
+      <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
+    UNION ALL
+    SELECT 'SERVICE_DONE', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
+           h.created_at, NULL, NULL, NULL, NULL
+    FROM crm_appointment_history h
+    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+    INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
+    WHERE h.tenant_id = #{query.tenantId} AND h.from_status = 'CHECKED_IN' AND h.to_status = 'SERVICE_DONE'
+      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="query.criteria.customerId != null">AND a.customer_id = #{query.criteria.customerId}</if>
+      <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
+    UNION ALL
+    SELECT 'REDEMPTION', l.id, r.id, NULL, r.customer_id, NULL, NULL, NULL,
+           r.posted_at, NULL, l.count, NULL, NULL
+    FROM crm_redemption_line l
+    INNER JOIN crm_redemption r ON r.tenant_id = l.tenant_id AND r.id = l.redemption_id AND r.status = 'POSTED'
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
+    WHERE l.tenant_id = #{query.tenantId} AND r.posted_at IS NOT NULL
+      AND r.posted_at &gt;= #{query.window.fromUtc} AND r.posted_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="query.criteria.customerId != null">AND r.customer_id = #{query.criteria.customerId}</if>
+      <if test="query.criteria.institutionId != null">AND r.institution_id = #{query.criteria.institutionId}</if>
+    UNION ALL
+    SELECT 'PAYMENT', p.id, o.id, o.id, o.customer_id, o.campaign_id, o.campaign_batch_id, NULL,
+           p.confirmed_at, p.amount_fen, NULL, o.source_system, p.receiver_type
+    FROM crm_payment_txn p
+    INNER JOIN crm_order o ON o.tenant_id = p.tenant_id AND o.id = p.order_id
+      AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
+    INNER JOIN crm_customer c ON c.tenant_id = o.tenant_id AND c.id = o.customer_id AND c.deleted = 0
+    WHERE p.tenant_id = #{query.tenantId} AND p.status = 'CONFIRMED' AND p.confirmed_at IS NOT NULL
+      AND p.confirmed_at &gt;= #{query.window.fromUtc} AND p.confirmed_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="paymentReceiverFilter"/>
+    UNION ALL
+    SELECT 'REFUND', rp.id, r.id, o.id, r.customer_id, o.campaign_id, o.campaign_batch_id, NULL,
+           rp.succeeded_at, rp.amount_fen, NULL, o.source_system, o.receiver_type
+    FROM crm_refund_payment rp
+    INNER JOIN crm_refund r ON r.tenant_id = rp.tenant_id AND r.id = rp.refund_id AND r.status = 'SUCCEEDED'
+    INNER JOIN crm_order o ON o.tenant_id = r.tenant_id AND o.id = r.order_id
+      AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
+    WHERE rp.tenant_id = #{query.tenantId} AND rp.status = 'SUCCEEDED' AND rp.succeeded_at IS NOT NULL
+      AND rp.succeeded_at &gt;= #{query.window.fromUtc} AND rp.succeeded_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="orderReceiverFilter"/>
+  </sql>
+
+  <sql id="operationsAggregates">
+    COUNT(DISTINCT CASE WHEN fact_type = 'FOLLOWUP' THEN customer_id END) AS contactCustomerCount,
+    COALESCE(SUM(CASE WHEN fact_type = 'FOLLOWUP' THEN 1 ELSE 0 END),0) AS contactEventCount,
+    COUNT(DISTINCT CASE WHEN fact_type = 'PAYMENT' THEN parent_id END) AS paidOrderCount,
+    COUNT(DISTINCT CASE WHEN fact_type = 'APPOINTMENT_CONFIRMED' THEN parent_id END) AS confirmedAppointmentCount,
+    COUNT(DISTINCT CASE WHEN fact_type = 'CHECKED_IN' THEN customer_id END) AS checkedInCustomerCount,
+    COUNT(DISTINCT CASE WHEN fact_type = 'CHECKED_IN' THEN parent_id END) AS checkedInAppointmentCount,
+    COUNT(DISTINCT CASE WHEN fact_type = 'SERVICE_DONE' THEN parent_id END) AS serviceCompletedCount,
+    COUNT(DISTINCT CASE WHEN fact_type = 'REDEMPTION' THEN parent_id END) AS redemptionBatchCount,
+    COUNT(DISTINCT CASE WHEN fact_type = 'REDEMPTION' THEN customer_id END) AS redeemedCustomerCount,
+    COALESCE(SUM(CASE WHEN fact_type = 'REDEMPTION' THEN quantity ELSE 0 END),0) AS redeemedCount,
+    COUNT(DISTINCT CASE WHEN fact_type = 'REFUND' THEN parent_id END) AS refundCount,
+    COALESCE(SUM(CASE WHEN fact_type = 'PAYMENT' THEN amount_fen ELSE 0 END),0) AS paidFen,
+    COALESCE(SUM(CASE WHEN fact_type = 'PAYMENT' AND receiver_type = 'PLATFORM' THEN amount_fen ELSE 0 END),0) AS platformPaidFen,
+    COALESCE(SUM(CASE WHEN fact_type = 'PAYMENT' AND receiver_type = 'INSTITUTION' THEN amount_fen ELSE 0 END),0) AS institutionPaidFen,
+    COALESCE(SUM(CASE WHEN fact_type = 'REFUND' THEN amount_fen ELSE 0 END),0) AS refundFen,
+    COALESCE(SUM(CASE WHEN fact_type = 'REFUND' AND receiver_type = 'PLATFORM' THEN amount_fen ELSE 0 END),0) AS platformRefundFen,
+    COALESCE(SUM(CASE WHEN fact_type = 'REFUND' AND receiver_type = 'INSTITUTION' THEN amount_fen ELSE 0 END),0) AS institutionRefundFen,
+    MAX(event_at) AS sourceWatermark
+  </sql>
+
+  <select id="countNewCustomers" resultType="long">
+    SELECT COUNT(*)
+    FROM crm_customer c
+    WHERE c.tenant_id = #{query.tenantId} AND c.deleted = 0
+      AND c.created_at &gt;= #{query.window.fromUtc} AND c.created_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="query.criteria.customerId != null">AND c.id = #{query.criteria.customerId}</if>
+  </select>
+
+  <select id="operations" resultType="com.whale.crm.reporting.domain.ReportingRepository$OperationsFactRow">
+    WITH operations_facts AS (<include refid="operationsFactUnion"/>)
+    SELECT <include refid="operationsAggregates"/> FROM operations_facts
+  </select>
+
+  <select id="operationsDrillDown" resultType="com.whale.crm.reporting.domain.ReportFact">
+    WITH operations_facts AS (<include refid="operationsFactUnion"/>)
+    SELECT fact_type AS factType, source_id AS sourceId, order_id AS orderId, customer_id AS customerId,
+           campaign_id AS campaignId, campaign_batch_id AS campaignBatchId, sku_id AS skuId,
+           event_at AS eventAt, amount_fen AS amountFen, quantity, source_system AS sourceSystem,
+           receiver_type AS receiverType
+    FROM operations_facts
+    WHERE fact_type = #{factType}
+    ORDER BY event_at DESC, source_id DESC LIMIT #{limit}
+  </select>
+
+  <sql id="operationsEnrichedFacts">
+    SELECT f.*, COALESCE(sf.owner_staff_id, sa.owner_staff_id, sr.owner_staff_id, so.owner_at_sale_id) AS staff_id,
+           COALESCE(sa.institution_id, sr.institution_id) AS institution_id
+    FROM operations_facts f
+    LEFT JOIN crm_followup sf ON sf.tenant_id = #{query.tenantId} AND sf.id = f.source_id
+      AND f.fact_type = 'FOLLOWUP'
+    LEFT JOIN crm_appointment_history sh ON sh.tenant_id = #{query.tenantId} AND sh.id = f.source_id
+      AND f.fact_type IN ('APPOINTMENT_CONFIRMED','CHECKED_IN','SERVICE_DONE')
+    LEFT JOIN crm_appointment sa ON sa.tenant_id = sh.tenant_id AND sa.id = sh.appointment_id
+    LEFT JOIN crm_redemption_line srl ON srl.tenant_id = #{query.tenantId} AND srl.id = f.source_id
+      AND f.fact_type = 'REDEMPTION'
+    LEFT JOIN crm_redemption sr ON sr.tenant_id = srl.tenant_id AND sr.id = srl.redemption_id
+    LEFT JOIN crm_order so ON so.tenant_id = #{query.tenantId} AND so.id = f.order_id
+      AND f.fact_type IN ('PAYMENT','REFUND')
+  </sql>
+
+  <sql id="operationsStaffAggregates">
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'FOLLOWUP' THEN e.customer_id END) AS contactCustomerCount,
+    COALESCE(SUM(CASE WHEN e.fact_type = 'FOLLOWUP' THEN 1 ELSE 0 END),0) AS contactEventCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'PAYMENT' THEN e.parent_id END) AS paidOrderCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'APPOINTMENT_CONFIRMED' THEN e.parent_id END) AS confirmedAppointmentCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'SERVICE_DONE' THEN e.parent_id END) AS serviceCompletedCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'CHECKED_IN' THEN e.customer_id END) AS checkedInCustomerCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'CHECKED_IN' THEN e.parent_id END) AS checkedInAppointmentCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'REDEMPTION' THEN e.parent_id END) AS redemptionBatchCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'REDEMPTION' THEN e.customer_id END) AS redeemedCustomerCount,
+    COALESCE(SUM(CASE WHEN e.fact_type = 'REDEMPTION' THEN e.quantity ELSE 0 END),0) AS redeemedCount,
+    COALESCE(SUM(CASE WHEN e.fact_type = 'PAYMENT' THEN e.amount_fen ELSE 0 END),0) AS paidFen
+  </sql>
+
+  <sql id="operationsInstitutionAggregates">
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'APPOINTMENT_CONFIRMED' THEN e.parent_id END) AS confirmedAppointmentCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'SERVICE_DONE' THEN e.parent_id END) AS serviceCompletedCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'CHECKED_IN' THEN e.customer_id END) AS checkedInCustomerCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'CHECKED_IN' THEN e.parent_id END) AS checkedInAppointmentCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'REDEMPTION' THEN e.parent_id END) AS redemptionBatchCount,
+    COUNT(DISTINCT CASE WHEN e.fact_type = 'REDEMPTION' THEN e.customer_id END) AS redeemedCustomerCount,
+    COALESCE(SUM(CASE WHEN e.fact_type = 'REDEMPTION' THEN e.quantity ELSE 0 END),0) AS redeemedCount
+  </sql>
+
+  <select id="operationsStaff" resultType="com.whale.crm.reporting.domain.ReportingRepository$OperationsStaffFactRow">
+    WITH operations_facts AS (<include refid="operationsFactUnion"/>),
+    enriched AS (<include refid="operationsEnrichedFacts"/>)
+    SELECT e.staff_id AS staffUserId, MAX(u.display_name) AS staffName,
+           <include refid="operationsStaffAggregates"/>
+    FROM enriched e
+    LEFT JOIN sys_user u ON u.tenant_id = #{query.tenantId} AND u.id = e.staff_id
+    WHERE e.staff_id IS NOT NULL
+      <if test="query.criteria.staffUserId != null">AND e.staff_id = #{query.criteria.staffUserId}</if>
+      <if test="query.scope.scopeType == 'SELF'">AND e.staff_id = #{query.scope.selfId}</if>
+    GROUP BY e.staff_id
+    ORDER BY e.staff_id
+  </select>
+
+  <select id="operationsInstitutions" resultType="com.whale.crm.reporting.domain.ReportingRepository$OperationsInstitutionFactRow">
+    WITH operations_facts AS (<include refid="operationsFactUnion"/>),
+    enriched AS (<include refid="operationsEnrichedFacts"/>)
+    SELECT e.institution_id AS institutionId,
+           COALESCE(MAX(i.short_name), MAX(i.full_name)) AS institutionName,
+           <include refid="operationsInstitutionAggregates"/>,
+           SUM(outstanding.pending_fen) AS pendingReconciliationFen
+    FROM enriched e
+    LEFT JOIN crm_institution i ON i.tenant_id = #{query.tenantId} AND i.id = e.institution_id
+    LEFT JOIN (
+      SELECT sl.tenant_id, sl.redemption_id,
+             SUM(CASE WHEN sb.amount_status = 'VERIFIED'
+                      THEN sb.net_payable_fen - sb.paid_fen ELSE NULL END) AS pending_fen
+      FROM crm_settlement_line sl
+      INNER JOIN crm_settlement_batch sb ON sb.tenant_id = sl.tenant_id AND sb.id = sl.settlement_batch_id
+      WHERE sl.tenant_id = #{query.tenantId}
+      GROUP BY sl.tenant_id, sl.redemption_id
+    ) outstanding ON outstanding.tenant_id = #{query.tenantId}
+      AND outstanding.redemption_id = e.parent_id AND e.fact_type = 'REDEMPTION'
+    WHERE e.institution_id IS NOT NULL
+      <if test="query.criteria.institutionId != null">AND e.institution_id = #{query.criteria.institutionId}</if>
+      <if test="query.criteria.staffUserId != null">AND e.staff_id = #{query.criteria.staffUserId}</if>
+      <if test="query.scope.scopeType == 'SELF'">AND e.staff_id = #{query.scope.selfId}</if>
+    GROUP BY e.institution_id
+    ORDER BY e.institution_id
+  </select>
+
+  <sql id="performanceAttribution">
+    <choose>
+      <when test="performanceRole == 'MANAGER'">o.owner_at_sale_id</when>
+      <otherwise>o.business_owner_at_sale_id</otherwise>
+    </choose>
+  </sql>
+
+  <sql id="performanceChannelJoin">
+    <if test="performanceRole == 'BUSINESS'">
+      INNER JOIN crm_partner_channel pch ON pch.tenant_id = o.tenant_id AND pch.id = o.channel_id
+    </if>
+  </sql>
+
+  <sql id="performanceAttributionFilter">
+    <if test="query.scope.scopeType == 'SELF' and performanceRole == 'MANAGER'">
+      AND o.owner_at_sale_id = #{query.scope.selfId}
+    </if>
+    <if test="query.scope.scopeType == 'SELF' and performanceRole == 'BUSINESS'">
+      AND o.business_owner_at_sale_id = #{query.scope.selfId}
+    </if>
+    <if test="query.criteria.staffUserId != null and performanceRole == 'MANAGER'">
+      AND o.owner_at_sale_id = #{query.criteria.staffUserId}
+    </if>
+    <if test="query.criteria.staffUserId != null and performanceRole == 'BUSINESS'">
+      AND o.business_owner_at_sale_id = #{query.criteria.staffUserId}
+    </if>
+  </sql>
+
+  <sql id="performanceFactUnion">
+    SELECT 'PAYMENT' AS fact_type, p.id AS source_id, o.id AS parent_id, o.id AS order_id,
+           o.customer_id, o.campaign_id, o.campaign_batch_id, NULL AS sku_id,
+           <include refid="performanceAttribution"/> AS attribution_user_id,
+           p.confirmed_at AS event_at, p.amount_fen, NULL AS quantity, o.source_system, p.receiver_type
+    FROM crm_payment_txn p
+    INNER JOIN crm_order o ON o.tenant_id = p.tenant_id AND o.id = p.order_id
+      AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
+    <include refid="performanceChannelJoin"/>
+    INNER JOIN crm_customer c ON c.tenant_id = o.tenant_id AND c.id = o.customer_id AND c.deleted = 0
+    WHERE p.tenant_id = #{query.tenantId} AND p.status = 'CONFIRMED' AND p.confirmed_at IS NOT NULL
+      AND p.confirmed_at &gt;= #{query.window.fromUtc} AND p.confirmed_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="paymentReceiverFilter"/>
+      <include refid="performanceAttributionFilter"/>
+    UNION ALL
+    SELECT 'REFUND', rp.id, r.id, o.id, r.customer_id, o.campaign_id, o.campaign_batch_id, NULL,
+           <include refid="performanceAttribution"/>, rp.succeeded_at, rp.amount_fen, NULL,
+           o.source_system, o.receiver_type
+    FROM crm_refund_payment rp
+    INNER JOIN crm_refund r ON r.tenant_id = rp.tenant_id AND r.id = rp.refund_id AND r.status = 'SUCCEEDED'
+    INNER JOIN crm_order o ON o.tenant_id = r.tenant_id AND o.id = r.order_id
+      AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
+    <include refid="performanceChannelJoin"/>
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
+    WHERE rp.tenant_id = #{query.tenantId} AND rp.status = 'SUCCEEDED' AND rp.succeeded_at IS NOT NULL
+      AND rp.succeeded_at &gt;= #{query.window.fromUtc} AND rp.succeeded_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="orderReceiverFilter"/>
+      <include refid="performanceAttributionFilter"/>
+  </sql>
+
+  <sql id="performanceAggregates">
+    COUNT(DISTINCT CASE WHEN f.fact_type = 'PAYMENT' THEN f.parent_id END) AS paidOrderCount,
+    COUNT(DISTINCT CASE WHEN f.fact_type = 'REFUND' THEN f.parent_id END) AS refundCount,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'PAYMENT' THEN f.amount_fen ELSE 0 END),0) AS paidFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'PAYMENT' AND f.receiver_type = 'PLATFORM' THEN f.amount_fen ELSE 0 END),0) AS platformPaidFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'PAYMENT' AND f.receiver_type = 'INSTITUTION' THEN f.amount_fen ELSE 0 END),0) AS institutionPaidFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'REFUND' THEN f.amount_fen ELSE 0 END),0) AS refundFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'REFUND' AND f.receiver_type = 'PLATFORM' THEN f.amount_fen ELSE 0 END),0) AS platformRefundFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'REFUND' AND f.receiver_type = 'INSTITUTION' THEN f.amount_fen ELSE 0 END),0) AS institutionRefundFen,
+    MAX(f.event_at) AS sourceWatermark
+  </sql>
+
+  <select id="performance" resultType="com.whale.crm.reporting.domain.ReportingRepository$PerformanceFactRow">
+    WITH performance_facts AS (<include refid="performanceFactUnion"/>)
+    SELECT f.attribution_user_id AS userId, MAX(u.display_name) AS displayName,
+           <include refid="performanceAggregates"/>
+    FROM performance_facts f
+    LEFT JOIN sys_user u ON u.tenant_id = #{query.tenantId} AND u.id = f.attribution_user_id
+    GROUP BY f.attribution_user_id
+  </select>
+
+  <select id="performanceDrillDown" resultType="com.whale.crm.reporting.domain.ReportFact">
+    WITH performance_facts AS (<include refid="performanceFactUnion"/>)
+    SELECT fact_type AS factType, source_id AS sourceId, order_id AS orderId, customer_id AS customerId,
+           campaign_id AS campaignId, campaign_batch_id AS campaignBatchId, sku_id AS skuId,
+           event_at AS eventAt, amount_fen AS amountFen, quantity, source_system AS sourceSystem,
+           receiver_type AS receiverType
+    FROM performance_facts
+    WHERE fact_type = #{factType}
+    ORDER BY event_at DESC, source_id DESC LIMIT #{limit}
+  </select>
+
+  <select id="dailyFacts" resultType="com.whale.crm.reporting.domain.ReportingRepository$DailyFactRow">
+    WITH performance_facts AS (<include refid="performanceFactUnion"/>)
+    SELECT fact_type AS factType, parent_id AS parentId, event_at AS eventAt, amount_fen AS amountFen
+    FROM performance_facts
+  </select>
+
+  <select id="approvedTargets" resultType="com.whale.crm.reporting.domain.ReportingRepository$ApprovedTargetRow">
+    SELECT staff_user_id AS staffUserId, target_fen AS targetFen
+    FROM crm_performance_snapshot
+    WHERE tenant_id = #{query.tenantId} AND performance_role = #{performanceRole}
+      AND period_key = #{periodKey} AND status = 'APPROVED' AND approved_by IS NOT NULL
+      AND target_fen IS NOT NULL AND rule_version = #{query.criteria.metricVersion}
+    <choose>
+      <when test="staffIds != null and staffIds.size() > 0">
+        AND staff_user_id IN <foreach collection="staffIds" item="staffId" open="(" separator="," close=")">#{staffId}</foreach>
+      </when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+  </select>
+
+  <sql id="campaignOrderJoin">
+    INNER JOIN crm_order_item oi ON oi.tenant_id = e.tenant_id AND oi.id = e.order_item_id
+    INNER JOIN crm_order o ON o.tenant_id = oi.tenant_id AND o.id = oi.order_id
+      AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
+  </sql>
+
+  <sql id="campaignFactUnion">
+    SELECT 'PAYMENT' AS fact_type, p.id AS source_id, o.id AS parent_id, o.id AS order_id,
+           o.customer_id, o.campaign_id, o.campaign_batch_id, o.campaign_code_snapshot AS campaign_code,
+           o.campaign_name_snapshot AS campaign_name, o.batch_code_snapshot AS batch_code,
+           o.batch_name_snapshot AS batch_name, p.confirmed_at AS event_at, p.amount_fen,
+           NULL AS quantity, o.source_system, p.receiver_type
+    FROM crm_payment_txn p
+    INNER JOIN crm_order o ON o.tenant_id = p.tenant_id AND o.id = p.order_id
+      AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
+    INNER JOIN crm_customer c ON c.tenant_id = o.tenant_id AND c.id = o.customer_id AND c.deleted = 0
+    WHERE p.tenant_id = #{query.tenantId} AND p.status = 'CONFIRMED' AND p.confirmed_at IS NOT NULL
+      AND p.confirmed_at &gt;= #{query.window.fromUtc} AND p.confirmed_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="paymentReceiverFilter"/>
+    UNION ALL
+    SELECT 'REFUND', rp.id, r.id, o.id, r.customer_id, o.campaign_id, o.campaign_batch_id,
+           o.campaign_code_snapshot, o.campaign_name_snapshot, o.batch_code_snapshot, o.batch_name_snapshot,
+           rp.succeeded_at, rp.amount_fen, NULL, o.source_system, o.receiver_type
+    FROM crm_refund_payment rp
+    INNER JOIN crm_refund r ON r.tenant_id = rp.tenant_id AND r.id = rp.refund_id AND r.status = 'SUCCEEDED'
+    INNER JOIN crm_order o ON o.tenant_id = r.tenant_id AND o.id = r.order_id
+      AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
+    WHERE rp.tenant_id = #{query.tenantId} AND rp.status = 'SUCCEEDED' AND rp.succeeded_at IS NOT NULL
+      AND rp.succeeded_at &gt;= #{query.window.fromUtc} AND rp.succeeded_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="orderReceiverFilter"/>
+    UNION ALL
+    SELECT 'APPOINTMENT_CONFIRMED', h.id, a.id, o.id, a.customer_id, o.campaign_id, o.campaign_batch_id,
+           o.campaign_code_snapshot, o.campaign_name_snapshot, o.batch_code_snapshot, o.batch_name_snapshot,
+           h.created_at, NULL, NULL, o.source_system, o.receiver_type
+    FROM crm_appointment_history h
+    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+    INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
+    INNER JOIN crm_appointment_item ai ON ai.tenant_id = a.tenant_id AND ai.appointment_id = a.id
+    INNER JOIN crm_entitlement e ON e.tenant_id = ai.tenant_id AND e.id = ai.entitlement_id
+    <include refid="campaignOrderJoin"/>
+    WHERE h.tenant_id = #{query.tenantId} AND h.to_status = 'CONFIRMED'
+      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="orderReceiverFilter"/>
+      <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
+    UNION ALL
+    SELECT 'CHECKED_IN', h.id, a.id, o.id, a.customer_id, o.campaign_id, o.campaign_batch_id,
+           o.campaign_code_snapshot, o.campaign_name_snapshot, o.batch_code_snapshot, o.batch_name_snapshot,
+           h.created_at, NULL, NULL, o.source_system, o.receiver_type
+    FROM crm_appointment_history h
+    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+    INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
+    INNER JOIN crm_appointment_item ai ON ai.tenant_id = a.tenant_id AND ai.appointment_id = a.id
+    INNER JOIN crm_entitlement e ON e.tenant_id = ai.tenant_id AND e.id = ai.entitlement_id
+    <include refid="campaignOrderJoin"/>
+    WHERE h.tenant_id = #{query.tenantId} AND h.to_status = 'CHECKED_IN'
+      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="orderReceiverFilter"/>
+      <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
+    UNION ALL
+    SELECT 'REDEMPTION', l.id, r.id, o.id, r.customer_id, o.campaign_id, o.campaign_batch_id,
+           o.campaign_code_snapshot, o.campaign_name_snapshot, o.batch_code_snapshot, o.batch_name_snapshot,
+           r.posted_at, NULL, l.count, o.source_system, o.receiver_type
+    FROM crm_redemption_line l
+    INNER JOIN crm_redemption r ON r.tenant_id = l.tenant_id AND r.id = l.redemption_id AND r.status = 'POSTED'
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
+    INNER JOIN crm_entitlement e ON e.tenant_id = l.tenant_id AND e.id = l.entitlement_id
+    <include refid="campaignOrderJoin"/>
+    WHERE l.tenant_id = #{query.tenantId} AND r.posted_at IS NOT NULL
+      AND r.posted_at &gt;= #{query.window.fromUtc} AND r.posted_at &lt; #{query.window.toUtcExclusive}
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="orderReceiverFilter"/>
+      <if test="query.criteria.institutionId != null">AND r.institution_id = #{query.criteria.institutionId}</if>
+  </sql>
+
+  <sql id="campaignAggregates">
+    COUNT(DISTINCT CASE WHEN f.fact_type = 'PAYMENT' THEN f.parent_id END) AS paidOrderCount,
+    COUNT(DISTINCT CASE WHEN f.fact_type = 'REFUND' THEN f.parent_id END) AS refundCount,
+    COUNT(DISTINCT CASE WHEN f.fact_type = 'APPOINTMENT_CONFIRMED' THEN f.parent_id END) AS confirmedAppointmentCount,
+    COUNT(DISTINCT CASE WHEN f.fact_type = 'CHECKED_IN' THEN f.customer_id END) AS checkedInCustomerCount,
+    COUNT(DISTINCT CASE WHEN f.fact_type = 'CHECKED_IN' THEN f.parent_id END) AS checkedInAppointmentCount,
+    COUNT(DISTINCT CASE WHEN f.fact_type = 'REDEMPTION' THEN f.parent_id END) AS redemptionBatchCount,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'REDEMPTION' THEN f.quantity ELSE 0 END),0) AS redeemedCount,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'PAYMENT' THEN f.amount_fen ELSE 0 END),0) AS paidFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'PAYMENT' AND f.receiver_type = 'PLATFORM' THEN f.amount_fen ELSE 0 END),0) AS platformPaidFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'PAYMENT' AND f.receiver_type = 'INSTITUTION' THEN f.amount_fen ELSE 0 END),0) AS institutionPaidFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'REFUND' THEN f.amount_fen ELSE 0 END),0) AS refundFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'REFUND' AND f.receiver_type = 'PLATFORM' THEN f.amount_fen ELSE 0 END),0) AS platformRefundFen,
+    COALESCE(SUM(CASE WHEN f.fact_type = 'REFUND' AND f.receiver_type = 'INSTITUTION' THEN f.amount_fen ELSE 0 END),0) AS institutionRefundFen,
+    MAX(f.event_at) AS sourceWatermark
+  </sql>
+
+  <select id="campaigns" resultType="com.whale.crm.reporting.domain.ReportingRepository$CampaignFactRow">
+    WITH campaign_facts AS (<include refid="campaignFactUnion"/>)
+    SELECT f.campaign_id AS campaignId, f.campaign_batch_id AS campaignBatchId,
+           COALESCE(MAX(f.campaign_code), MAX(ca.campaign_code)) AS campaignCode,
+           COALESCE(MAX(f.batch_code), MAX(cb.batch_code)) AS campaignBatchCode,
+           COALESCE(MAX(f.campaign_name), MAX(ca.campaign_name)) AS campaignName,
+           COALESCE(MAX(f.batch_name), MAX(cb.batch_name)) AS campaignBatchName,
+           <include refid="campaignAggregates"/>
+    FROM campaign_facts f
+    LEFT JOIN crm_campaign ca ON ca.tenant_id = #{query.tenantId} AND ca.id = f.campaign_id
+    LEFT JOIN crm_campaign_batch cb ON cb.tenant_id = #{query.tenantId} AND cb.id = f.campaign_batch_id
+      AND cb.campaign_id = f.campaign_id
+    WHERE f.campaign_id IS NOT NULL
+    GROUP BY f.campaign_id, f.campaign_batch_id
+  </select>
+
+  <select id="campaignTotals" resultType="com.whale.crm.reporting.domain.ReportingRepository$CampaignFactRow">
+    WITH campaign_facts AS (<include refid="campaignFactUnion"/>)
+    SELECT NULL AS campaignId, NULL AS campaignBatchId, NULL AS campaignCode, NULL AS campaignBatchCode,
+           NULL AS campaignName, NULL AS campaignBatchName, <include refid="campaignAggregates"/>
+    FROM campaign_facts f
+    WHERE f.campaign_id IS NOT NULL
+  </select>
+
+  <select id="campaignDrillDown" resultType="com.whale.crm.reporting.domain.ReportFact">
+    WITH campaign_facts AS (<include refid="campaignFactUnion"/>)
+    SELECT fact_type AS factType, source_id AS sourceId, order_id AS orderId, customer_id AS customerId,
+           campaign_id AS campaignId, campaign_batch_id AS campaignBatchId, NULL AS skuId,
+           event_at AS eventAt, amount_fen AS amountFen, quantity, source_system AS sourceSystem,
+           receiver_type AS receiverType
+    FROM campaign_facts f
+    WHERE f.campaign_id IS NOT NULL AND f.fact_type = #{factType}
+    ORDER BY event_at DESC, source_id DESC LIMIT #{limit}
+  </select>
+
+  <sql id="skuSales">
+    SELECT oi.tenant_id, oi.sku_id, oi.id AS order_item_id, o.id AS order_id, o.customer_id,
+           o.campaign_id, o.campaign_batch_id, o.paid_at AS event_at, oi.purchase_quantity AS quantity,
+           o.source_system, o.receiver_type
+    FROM crm_order_item oi
+    INNER JOIN crm_order o ON o.tenant_id = oi.tenant_id AND o.id = oi.order_id
+      AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED') AND o.paid_at IS NOT NULL
+    INNER JOIN crm_customer c ON c.tenant_id = o.tenant_id AND c.id = o.customer_id AND c.deleted = 0
+    WHERE oi.tenant_id = #{query.tenantId}
+      AND o.paid_at &gt;= #{query.window.fromUtc} AND o.paid_at &lt; #{query.window.toUtcExclusive}
+      AND EXISTS (SELECT 1 FROM crm_payment_txn actual_payment
+                  WHERE actual_payment.tenant_id = oi.tenant_id AND actual_payment.order_id = o.id
+                    AND actual_payment.status = 'CONFIRMED' AND actual_payment.confirmed_at IS NOT NULL)
+      <include refid="customerScope"/>
+      <include refid="orderFactFilters"/>
+      <include refid="orderReceiverFilter"/>
+  </sql>
+
+  <sql id="skuInstitutionFilter">
+    <if test="query.criteria.institutionId != null">
+      AND EXISTS (SELECT 1 FROM crm_sku_institution filter_si
+                  INNER JOIN crm_institution filter_i ON filter_i.tenant_id = filter_si.tenant_id
+                    AND filter_i.id = filter_si.institution_id AND filter_i.status = 'ACTIVE'
+                  WHERE filter_si.tenant_id = #{query.tenantId} AND filter_si.sku_id = s.id
+                    AND filter_si.institution_id = #{query.criteria.institutionId} AND filter_si.status = 'ACTIVE')
+    </if>
+  </sql>
+
+  <select id="skuQuality" resultType="com.whale.crm.reporting.domain.ReportingRepository$SkuQualityFactRow">
+    WITH sku_sales AS (<include refid="skuSales"/>),
+    sales_by_sku AS (
+      SELECT sku_id, SUM(quantity) AS sales_quantity, COUNT(DISTINCT order_id) AS paid_order_count,
+             COUNT(*) AS paid_line_count, MAX(event_at) AS last_sold_at
+      FROM sku_sales GROUP BY sku_id
+    )
+    SELECT s.id AS skuId, s.sku_code AS skuCode, s.package_version_id AS packageVersionId,
+           p.package_name AS packageName, s.spec_name AS specName, s.sale_price_fen AS salePriceFen,
+           s.status AS skuStatus,
+           (SELECT COUNT(*) FROM crm_sku_institution si
+            INNER JOIN crm_institution i ON i.tenant_id = si.tenant_id AND i.id = si.institution_id AND i.status = 'ACTIVE'
+            WHERE si.tenant_id = s.tenant_id AND si.sku_id = s.id AND si.status = 'ACTIVE') AS activeInstitutionCount,
+           COALESCE(ss.sales_quantity,0) AS salesQuantity,
+           COALESCE(ss.paid_order_count,0) AS paidOrderCount,
+           COALESCE(ss.paid_line_count,0) AS paidLineCount,
+           ss.last_sold_at AS lastSoldAt
+    FROM crm_sku s
+    LEFT JOIN crm_package_version pv ON pv.tenant_id = s.tenant_id AND pv.id = s.package_version_id
+    LEFT JOIN crm_package p ON p.tenant_id = pv.tenant_id AND p.id = pv.package_id
+    LEFT JOIN sales_by_sku ss ON ss.sku_id = s.id
+    WHERE s.tenant_id = #{query.tenantId}
+      <if test="query.criteria.skuId != null">AND s.id = #{query.criteria.skuId}</if>
+      <include refid="skuInstitutionFilter"/>
+    ORDER BY s.id LIMIT #{query.size} OFFSET #{query.offset}
+  </select>
+
+  <select id="countSku" resultType="long">
+    SELECT COUNT(*) FROM crm_sku s
+    WHERE s.tenant_id = #{query.tenantId}
+      <if test="query.criteria.skuId != null">AND s.id = #{query.criteria.skuId}</if>
+      <include refid="skuInstitutionFilter"/>
+  </select>
+
+  <sql id="salesInstitutionFilter">
+    <if test="query.criteria.institutionId != null">
+      AND EXISTS (SELECT 1 FROM crm_sku_institution sales_si
+                  INNER JOIN crm_institution sales_i ON sales_i.tenant_id = sales_si.tenant_id
+                    AND sales_i.id = sales_si.institution_id AND sales_i.status = 'ACTIVE'
+                  WHERE sales_si.tenant_id = #{query.tenantId} AND sales_si.sku_id = sku_sales.sku_id
+                    AND sales_si.institution_id = #{query.criteria.institutionId} AND sales_si.status = 'ACTIVE')
+    </if>
+  </sql>
+
+  <select id="skuSourceWatermark" resultType="java.time.Instant">
+    WITH sku_sales AS (<include refid="skuSales"/>)
+    SELECT MAX(event_at) FROM sku_sales
+    WHERE 1 = 1 <include refid="salesInstitutionFilter"/>
+  </select>
+
+  <select id="skuDrillDown" resultType="com.whale.crm.reporting.domain.ReportFact">
+    WITH sku_sales AS (<include refid="skuSales"/>)
+    SELECT 'PAID_ORDER_LINE' AS factType, order_item_id AS sourceId, order_id AS orderId,
+           customer_id AS customerId, campaign_id AS campaignId, campaign_batch_id AS campaignBatchId,
+           sku_id AS skuId, event_at AS eventAt, NULL AS amountFen, quantity,
+           source_system AS sourceSystem, receiver_type AS receiverType
+    FROM sku_sales
+    WHERE 1 = 1 <include refid="salesInstitutionFilter"/>
+    ORDER BY event_at DESC, order_item_id DESC LIMIT #{limit}
+  </select>
+</mapper>

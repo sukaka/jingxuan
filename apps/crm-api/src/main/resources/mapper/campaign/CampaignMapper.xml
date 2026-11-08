@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.campaign.infrastructure.mapper.CampaignMapper">
+  <sql id="campaignColumns">id,campaign_code AS campaignCode,campaign_name AS campaignName,campaign_type AS campaignType,starts_at AS startsAt,ends_at AS endsAt,status,created_at AS createdAt,version</sql>
+  <sql id="batchColumns">id,campaign_id AS campaignId,batch_code AS batchCode,batch_name AS batchName,starts_at AS startsAt,ends_at AS endsAt,status,created_at AS createdAt,version</sql>
+  <sql id="channelColumns">id,channel_no AS channelNo,name,platform_code AS platformCode,business_owner_user_id AS businessOwnerUserId,status,remarks,created_at AS createdAt,version</sql>
+  <sql id="campaignWhere">
+    WHERE tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (campaign_code LIKE CONCAT('%',#{keyword},'%') OR campaign_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    <if test="campaignType != null and campaignType != ''">AND campaign_type=#{campaignType}</if>
+  </sql>
+
+  <select id="searchCampaigns" resultType="com.whale.crm.campaign.domain.Campaign">
+    SELECT <include refid="campaignColumns"/> FROM crm_campaign <include refid="campaignWhere"/>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countCampaigns" resultType="long">
+    SELECT COUNT(*) FROM crm_campaign <include refid="campaignWhere"/>
+  </select>
+  <select id="selectCampaign" resultType="com.whale.crm.campaign.domain.Campaign">
+    SELECT <include refid="campaignColumns"/> FROM crm_campaign WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectCampaignForUpdate" resultType="com.whale.crm.campaign.domain.Campaign">
+    SELECT <include refid="campaignColumns"/> FROM crm_campaign WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectCampaignByCode" resultType="com.whale.crm.campaign.domain.Campaign">
+    SELECT <include refid="campaignColumns"/> FROM crm_campaign WHERE tenant_id=#{tenantId} AND campaign_code=#{code}
+  </select>
+  <insert id="insertCampaign">
+    INSERT INTO crm_campaign (tenant_id,campaign_code,campaign_name,campaign_type,starts_at,ends_at,status)
+    VALUES (#{tenantId},#{entity.campaignCode},#{entity.campaignName},#{entity.campaignType},#{entity.startsAt},#{entity.endsAt},#{entity.status})
+  </insert>
+  <update id="updateCampaign">
+    UPDATE crm_campaign SET campaign_name=#{entity.campaignName},campaign_type=#{entity.campaignType},
+      starts_at=#{entity.startsAt},ends_at=#{entity.endsAt},status=#{entity.status},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version}
+  </update>
+
+  <select id="selectBatches" resultType="com.whale.crm.campaign.domain.CampaignBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_campaign_batch
+    WHERE tenant_id=#{tenantId} AND campaign_id=#{campaignId} ORDER BY id
+  </select>
+  <select id="selectBatch" resultType="com.whale.crm.campaign.domain.CampaignBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_campaign_batch
+    WHERE tenant_id=#{tenantId} AND campaign_id=#{campaignId} AND id=#{batchId}
+  </select>
+  <select id="selectBatchByCode" resultType="com.whale.crm.campaign.domain.CampaignBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_campaign_batch
+    WHERE tenant_id=#{tenantId} AND campaign_id=#{campaignId} AND batch_code=#{code}
+  </select>
+  <insert id="insertBatch">
+    INSERT INTO crm_campaign_batch (tenant_id,campaign_id,batch_code,batch_name,starts_at,ends_at,status)
+    VALUES (#{tenantId},#{entity.campaignId},#{entity.batchCode},#{entity.batchName},#{entity.startsAt},#{entity.endsAt},#{entity.status})
+  </insert>
+  <update id="updateBatch">
+    UPDATE crm_campaign_batch SET batch_name=#{entity.batchName},starts_at=#{entity.startsAt},ends_at=#{entity.endsAt},status=#{entity.status},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND campaign_id=#{entity.campaignId} AND version=#{entity.version}
+  </update>
+
+  <sql id="channelWhere">
+    WHERE tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (channel_no LIKE CONCAT('%',#{keyword},'%') OR name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND status=#{status}</if>
+    <if test="businessOwnerUserId != null">AND business_owner_user_id=#{businessOwnerUserId}</if>
+  </sql>
+  <select id="searchChannels" resultType="com.whale.crm.campaign.domain.PartnerChannel">
+    SELECT <include refid="channelColumns"/> FROM crm_partner_channel <include refid="channelWhere"/>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countChannels" resultType="long">
+    SELECT COUNT(*) FROM crm_partner_channel <include refid="channelWhere"/>
+  </select>
+  <select id="selectChannel" resultType="com.whale.crm.campaign.domain.PartnerChannel">
+    SELECT <include refid="channelColumns"/> FROM crm_partner_channel WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectChannelByNo" resultType="com.whale.crm.campaign.domain.PartnerChannel">
+    SELECT <include refid="channelColumns"/> FROM crm_partner_channel WHERE tenant_id=#{tenantId} AND channel_no=#{channelNo}
+  </select>
+  <insert id="insertChannel">
+    INSERT INTO crm_partner_channel (tenant_id,channel_no,name,platform_code,business_owner_user_id,status,remarks)
+    VALUES (#{tenantId},#{entity.channelNo},#{entity.name},#{entity.platformCode},#{entity.businessOwnerUserId},#{entity.status},#{entity.remarks})
+  </insert>
+  <update id="updateChannel">
+    UPDATE crm_partner_channel SET name=#{entity.name},platform_code=#{entity.platformCode},
+      business_owner_user_id=#{entity.businessOwnerUserId},status=#{entity.status},remarks=#{entity.remarks},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version}
+  </update>
+  <select id="countActiveEmployee" resultType="int">
+    SELECT COUNT(*) FROM sys_user
+    WHERE tenant_id=#{tenantId} AND id=#{userId} AND user_type='EMPLOYEE' AND status='ACTIVE'
+  </select>
+</mapper>

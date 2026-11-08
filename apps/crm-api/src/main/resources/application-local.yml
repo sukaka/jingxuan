@@ -1,0 +1,21 @@
+# 本地开发：在 schema 迁移后追加开发用字典种子数据（幂等）。
+# 生产环境不包含 db/dev 目录，种子不会进入正式库。
+spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/dev
+
+app:
+  files:
+    enabled: ${FILES_ENABLED:true}
+    bucket: ${FILES_BUCKET:crm-private-dev}
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ROOT_USER:dev_minio_CHANGE_ME}
+    secret-key: ${MINIO_ROOT_PASSWORD:dev_minio_secret_CHANGE_ME}
+    clamav-host: ${CLAMAV_HOST:localhost}
+    clamav-port: ${CLAMAV_PORT:3310}
+  outbox:
+    relay:
+      enabled: true
+  refunds:
+    mock:
+      enabled: ${REFUND_MOCK_ENABLED:true}

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.platform.user.infrastructure.mapper.DataScopeMapper">
+
+  <resultMap id="DataScopeRowMap" type="com.whale.crm.platform.user.domain.DataScopeRow">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="userId" column="user_id"/>
+    <result property="resource" column="resource"/>
+    <result property="scopeType" column="scope_type"/>
+    <result property="scopeRefId" column="scope_ref_id"/>
+    <result property="expiresAt" column="expires_at"/>
+  </resultMap>
+
+  <select id="selectActiveScopes" resultMap="DataScopeRowMap">
+    SELECT id, tenant_id, user_id, resource, scope_type, scope_ref_id, expires_at
+    FROM sys_data_scope
+    WHERE tenant_id = #{tenantId} AND user_id = #{userId} AND resource = #{resource}
+      AND (expires_at IS NULL OR expires_at &gt; #{now})
+  </select>
+
+</mapper>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.ai.infrastructure.mapper.AiProviderConfigMapper">
+  <sql id="configColumns">c.id,c.tenant_id AS tenantId,c.provider,c.base_url AS baseUrl,c.api_key_cipher AS apiKeyCipher,c.model,c.timeout_seconds AS timeoutSeconds,c.enabled,c.connection_status AS connectionStatus,c.last_error_masked AS lastErrorMasked,c.last_connected_at AS lastConnectedAt,c.created_at AS createdAt,c.updated_at AS updatedAt,c.version</sql>
+  <select id="find" resultType="com.whale.crm.ai.domain.AiProviderConfig">SELECT <include refid="configColumns"/> FROM crm_ai_provider_config c WHERE c.tenant_id=#{tenantId}</select>
+  <select id="findForUpdate" resultType="com.whale.crm.ai.domain.AiProviderConfig">SELECT <include refid="configColumns"/> FROM crm_ai_provider_config c WHERE c.tenant_id=#{tenantId} FOR UPDATE</select>
+  <insert id="insert">INSERT INTO crm_ai_provider_config (tenant_id,provider,base_url,api_key_cipher,model,timeout_seconds,enabled,connection_status) VALUES (#{tenantId},#{e.provider},#{e.baseUrl},#{e.apiKeyCipher},#{e.model},#{e.timeoutSeconds},#{e.enabled},'UNVERIFIED')</insert>
+  <update id="update">UPDATE crm_ai_provider_config c SET c.provider=#{e.provider},c.base_url=#{e.baseUrl},c.api_key_cipher=#{e.apiKeyCipher},c.model=#{e.model},c.timeout_seconds=#{e.timeoutSeconds},c.enabled=#{e.enabled},c.connection_status='UNVERIFIED',c.last_error_masked=NULL,c.last_connected_at=NULL,c.updated_at=CURRENT_TIMESTAMP(3),c.version=c.version+1 WHERE c.tenant_id=#{tenantId} AND c.id=#{id} AND c.version=#{version}</update>
+  <update id="updateConnection">UPDATE crm_ai_provider_config c SET c.connection_status=#{status},c.last_error_masked=#{errorMasked}<if test="connectedAt != null">,c.last_connected_at=#{connectedAt}</if>,c.updated_at=CURRENT_TIMESTAMP(3),c.version=c.version+1 WHERE c.tenant_id=#{tenantId} AND c.id=#{id} AND c.version=#{version}</update>
+</mapper>

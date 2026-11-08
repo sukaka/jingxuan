@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<FindBugsFilter>
+  <Match>
+    <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+    <Or>
+      <Class name="com.whale.crm.file.application.ClamAvScanner"/>
+      <Class name="com.whale.crm.platform.security.JwtService"/>
+      <Class name="com.whale.crm.platform.security.crypto.AesGcmCipher"/>
+      <Class name="com.whale.crm.trading.application.OutboxRelayService"/>
+    </Or>
+  </Match>
+  <Match>
+    <And>
+      <Bug pattern="EI_EXPOSE_REP2"/>
+      <Or>
+        <Field type="com.fasterxml.jackson.databind.ObjectMapper"/>
+        <Field type="org.springframework.data.redis.core.StringRedisTemplate"/>
+        <Field name="http"/>
+        <Field name="contacts"/>
+        <Field name="~(?i).*(Repository|Mapper|Service|Client|Properties|Factory|Provider|Manager|Template|Cipher|Scanner|Inspector|Adapter|Configuration|Config|Operations|Encoder)$"/>
+      </Or>
+    </And>
+  </Match>
+</FindBugsFilter>
