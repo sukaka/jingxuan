@@ -2,6 +2,7 @@ package com.whale.crm.campaign.infrastructure.mapper;
 
 import com.whale.crm.campaign.domain.Campaign;
 import com.whale.crm.campaign.domain.CampaignBatch;
+import com.whale.crm.campaign.domain.ChannelOwnerOption;
 import com.whale.crm.campaign.domain.PartnerChannel;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -30,14 +31,16 @@ public interface CampaignMapper {
     int updateBatch(@Param("tenantId") long tenantId, @Param("entity") CampaignBatch batch);
 
     List<PartnerChannel> searchChannels(@Param("tenantId") long tenantId, @Param("keyword") String keyword,
-                                        @Param("status") String status,
+                                        @Param("status") String status, @Param("channelType") String channelType,
                                         @Param("businessOwnerUserId") Long businessOwnerUserId,
                                         @Param("offset") int offset, @Param("size") int size);
     long countChannels(@Param("tenantId") long tenantId, @Param("keyword") String keyword,
-                       @Param("status") String status, @Param("businessOwnerUserId") Long businessOwnerUserId);
+                       @Param("status") String status, @Param("channelType") String channelType,
+                       @Param("businessOwnerUserId") Long businessOwnerUserId);
     PartnerChannel selectChannel(@Param("tenantId") long tenantId, @Param("id") long id);
     PartnerChannel selectChannelByNo(@Param("tenantId") long tenantId, @Param("channelNo") String channelNo);
     void insertChannel(@Param("tenantId") long tenantId, @Param("entity") PartnerChannel channel);
     int updateChannel(@Param("tenantId") long tenantId, @Param("entity") PartnerChannel channel);
     int countActiveEmployee(@Param("tenantId") long tenantId, @Param("userId") long userId);
+    List<ChannelOwnerOption> selectActiveChannelOwners(@Param("tenantId") long tenantId);
 }

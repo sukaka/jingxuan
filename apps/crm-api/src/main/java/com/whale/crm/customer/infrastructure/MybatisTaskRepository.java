@@ -54,6 +54,21 @@ public class MybatisTaskRepository implements TaskRepository {
     }
 
     @Override
+    public Optional<CrmTask> findBySource(long tenantId, String sourceType, String sourceRef) {
+        return Optional.ofNullable(taskMapper.selectBySource(tenantId, sourceType, sourceRef));
+    }
+
+    @Override
+    public int insertAutomatic(CrmTask task) {
+        return taskMapper.insertAutomaticTask(task);
+    }
+
+    @Override
+    public int updateAutomaticDueAt(long tenantId, long taskId, Instant dueAt) {
+        return taskMapper.updateAutomaticDueAt(tenantId, taskId, dueAt);
+    }
+
+    @Override
     public int update(CrmTask task) {
         return taskMapper.updateTask(task);
     }

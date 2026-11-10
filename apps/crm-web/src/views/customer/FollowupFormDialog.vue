@@ -169,6 +169,7 @@ async function submit() {
           value-format="YYYY-MM-DD[T]HH:mm:ssZ"
           class="full-width"
         />
+        <span class="crm-muted">填写后自动生成回访任务；改期仅更新待处理任务</span>
       </el-form-item>
       <el-form-item label="卡点">
         <el-input v-model="form.blockerNote" type="textarea" :rows="2" />

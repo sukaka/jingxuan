@@ -3,8 +3,8 @@ package com.whale.crm.customer.domain;
 import java.time.Instant;
 
 /**
- * 人工与 AI 待办（crm_task）。OPEN 接手/转派到 PROCESSING，PROCESSING 可退回 OPEN 或完成到 DONE。
- * 历史 CANCELED 与 DONE 均为终态；source_type=MANUAL 为手工创建。
+ * 人工、跟进规则与 AI 待办（crm_task）。OPEN 接手/转派到 PROCESSING，PROCESSING 可退回 OPEN 或完成到 DONE。
+ * 历史 CANCELED 与 DONE 均为终态；source_type 区分手工、跟进规则和 AI 来源。
  */
 public class CrmTask {
 
@@ -19,6 +19,7 @@ public class CrmTask {
     public static final String PRIORITY_HIGH = "HIGH";
 
     public static final String SOURCE_MANUAL = "MANUAL";
+    public static final String SOURCE_FOLLOWUP = "FOLLOWUP";
 
     private Long id;
     private Long tenantId;

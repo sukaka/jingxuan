@@ -10,6 +10,7 @@ import com.whale.crm.campaign.domain.OrderAttributionSnapshot;
 import com.whale.crm.campaign.domain.PartnerChannel;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.crypto.AesGcmCipher;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,8 @@ class CampaignApplicationServiceTest {
 
     private final CampaignRepository repository = mock(CampaignRepository.class);
     private final AuditService auditService = mock(AuditService.class);
-    private final CampaignApplicationService service = new CampaignApplicationService(repository, auditService);
+    private final CampaignApplicationService service = new CampaignApplicationService(repository, auditService,
+            mock(AesGcmCipher.class));
 
     @Test
     void resolvesOwnedBatchAndRealChannelIntoSaleSnapshots() {
@@ -128,8 +130,7 @@ class CampaignApplicationServiceTest {
     @Test
     void channelCreateDoesNotAcceptUnknownOwner() {
         CurrentUser admin = user(1L, "channel:write");
-        CreateChannelRequest request = new CreateChannelRequest("CHANNEL-CHECK", "渠道",
-                "WEIBO", 999L, "ACTIVE", null);
+        CreateChannelRequest request = channelRequest(null, null, null, null, null, 999L);
         when(repository.findChannelByNo(1L, "CHANNEL-CHECK")).thenReturn(Optional.empty());
         when(repository.countActiveEmployee(1L, 999L)).thenReturn(0);
 
@@ -137,6 +138,35 @@ class CampaignApplicationServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("同租户启用中的内部员工");
         verify(repository, never()).insertChannel(anyLong(), any());
+    }
+
+    @Test
+    void channelProfileRejectsInvalidPhoneIdCardCommissionAndDates() {
+        CurrentUser admin = user(1L, "channel:write");
+
+        assertThatThrownBy(() -> service.createChannel(1L, admin,
+                channelRequest("138000000000", null, null, null, null, null)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("11位");
+        assertThatThrownBy(() -> service.createChannel(1L, admin,
+                channelRequest(null, "12345678", null, null, null, null)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("18位");
+        assertThatThrownBy(() -> service.createChannel(1L, admin,
+                channelRequest(null, "110105194912310021", null, null, null, null)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("校验码");
+        assertThatThrownBy(() -> service.createChannel(1L, admin,
+                channelRequest(null, null, java.math.BigDecimal.valueOf(100.01), null, null, null)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("100%");
+        assertThatThrownBy(() -> service.createChannel(1L, admin,
+                channelRequest(null, null, null, java.time.LocalDate.parse("2026-02-01"),
+                        java.time.LocalDate.parse("2026-01-01"), null)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不得早于");
+        verify(repository, never()).insertChannel(anyLong(), any());
+    }
+
+    private CreateChannelRequest channelRequest(String phone, String idCard, java.math.BigDecimal commission,
+                                                java.time.LocalDate start, java.time.LocalDate end, Long ownerId) {
+        return new CreateChannelRequest("CHANNEL-CHECK", "渠道", "BLOGGER", "WEIBO", commission, ownerId, null,
+                phone, idCard, null, start, end, null, null, null, "ACTIVE", null);
     }
 
     private Campaign campaign(String status, Instant startsAt, Instant endsAt) {
@@ -154,8 +184,8 @@ class CampaignApplicationServiceTest {
     }
 
     private PartnerChannel channel(String status, Long ownerId) {
-        return new PartnerChannel(33L, "CHANNEL", "渠道原名", "WEIBO", ownerId, status, null,
-                NOW.minusSeconds(100), 0L);
+        return new PartnerChannel(33L, "CHANNEL", "渠道原名", "BLOGGER", "WEIBO", null, ownerId, "测试商务", null, null,
+                null, null, null, null, null, null, null, status, null, NOW.minusSeconds(100), 0L);
     }
 
     private CurrentUser user(long tenantId, String permission) {

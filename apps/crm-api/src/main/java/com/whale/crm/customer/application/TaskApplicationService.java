@@ -4,10 +4,13 @@ import com.whale.crm.customer.api.dto.CreateTaskRequest;
 import com.whale.crm.customer.api.dto.TaskItemResponse;
 import com.whale.crm.customer.api.dto.UpdateTaskRequest;
 import com.whale.crm.customer.domain.CrmTask;
+import com.whale.crm.customer.domain.Customer;
+import com.whale.crm.customer.domain.Followup;
 import com.whale.crm.customer.domain.TaskDutySummary;
 import com.whale.crm.customer.domain.TaskRepository;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.security.DataScope;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
@@ -22,8 +25,9 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 回访/待办任务（crm_task）。创建即分配给本人；列表范围 ALL/TEAM/SELF 由客户数据范围收敛，
- * assigneeId 参数只允许收窄。通用更新不改变状态，接手/转派/退回/完成统一走动作服务。
+ * 回访/待办任务（crm_task）。手工创建分配给本人；跟进规则按客户负责人创建。
+ * 列表范围 ALL/TEAM/SELF 由客户数据范围收敛，assigneeId 参数只允许收窄。
+ * 通用更新不改变状态，接手/转派/退回/完成统一走动作服务。
  */
 @Service
 public class TaskApplicationService {
@@ -32,15 +36,18 @@ public class TaskApplicationService {
     private final CustomerScopeSupport scopeSupport;
     private final AuditService auditService;
     private final TaskActionApplicationService actionService;
+    private final CurrentUserService currentUserService;
 
     public TaskApplicationService(TaskRepository taskRepository,
                                   CustomerScopeSupport scopeSupport,
                                   AuditService auditService,
-                                  TaskActionApplicationService actionService) {
+                                  TaskActionApplicationService actionService,
+                                  CurrentUserService currentUserService) {
         this.taskRepository = taskRepository;
         this.scopeSupport = scopeSupport;
         this.auditService = auditService;
         this.actionService = actionService;
+        this.currentUserService = currentUserService;
     }
 
     @Transactional(readOnly = true)
@@ -100,6 +107,60 @@ public class TaskApplicationService {
         CrmTask persisted = taskRepository.findById(tenantId, task.getId()).orElseThrow();
         auditService.record(tenantId, user.userId(), AuditService.ACTION_TASK_CREATE, "TASK",
                 Long.toString(task.getId()), null, taskSnapshot(persisted), null);
+        return toResponse(persisted);
+    }
+
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public TaskItemResponse syncFromFollowup(long tenantId, CurrentUser user, Followup followup, Customer customer) {
+        if (followup.getNextFollowupAt() == null || followup.isDeleted()) {
+            return null;
+        }
+        scopeSupport.requireVisible(tenantId, customer.getId(), user);
+        long assigneeUserId = currentUserService.loadById(followup.getOwnerStaffId())
+                .filter(owner -> owner.tenantId() == tenantId)
+                .map(CurrentUser::userId)
+                .orElse(user.userId());
+        String sourceRef = CrmTask.SOURCE_FOLLOWUP + ":" + followup.getId();
+        String customerName = java.util.stream.Stream.of(customer.getDisplayName(), customer.getNickname(), customer.getCustomerNo())
+                .filter(value -> value != null && !value.isBlank()).findFirst().orElse("客户");
+        String project = blankToNull(followup.getIntentProject());
+        String title = "回访：" + customerName + (project == null ? "" : " · " + project);
+
+        CrmTask task = new CrmTask();
+        task.setTenantId(tenantId);
+        task.setCustomerId(customer.getId());
+        task.setAssigneeUserId(assigneeUserId);
+        task.setOriginalAssigneeUserId(assigneeUserId);
+        task.setTaskTeamId(customer.getTeamId());
+        task.setTaskType("FOLLOWUP");
+        task.setPriority(CrmTask.PRIORITY_MEDIUM);
+        task.setStatus(CrmTask.STATUS_OPEN);
+        task.setTitle(title.length() <= 255 ? title : title.substring(0, 255));
+        task.setDescription(followup.getSummary() != null && !followup.getSummary().isBlank()
+                ? followup.getSummary() : blankToNull(followup.getBlockerNote()));
+        task.setDueAt(followup.getNextFollowupAt());
+        task.setSourceType(CrmTask.SOURCE_FOLLOWUP);
+        task.setSourceRef(sourceRef);
+
+        boolean existed = taskRepository.findBySource(tenantId, CrmTask.SOURCE_FOLLOWUP, sourceRef).isPresent();
+        taskRepository.insertAutomatic(task);
+        CrmTask persisted = taskRepository.findBySource(tenantId, CrmTask.SOURCE_FOLLOWUP, sourceRef).orElseThrow();
+        if (!existed) {
+            auditService.record(tenantId, user.userId(), AuditService.ACTION_TASK_CREATE, "TASK",
+                    Long.toString(persisted.getId()), null, taskSnapshot(persisted), "根据下次跟进时间自动创建");
+            return toResponse(persisted);
+        }
+        if (CrmTask.STATUS_OPEN.equals(persisted.getStatus())
+                && !Objects.equals(persisted.getDueAt(), followup.getNextFollowupAt())) {
+            Map<String, Object> beforeSnapshot = taskSnapshot(persisted);
+            int updated = taskRepository.updateAutomaticDueAt(tenantId, persisted.getId(), followup.getNextFollowupAt());
+            if (updated == 1) {
+                CrmTask after = taskRepository.findById(tenantId, persisted.getId()).orElseThrow();
+                auditService.record(tenantId, user.userId(), AuditService.ACTION_TASK_UPDATE, "TASK",
+                        Long.toString(after.getId()), beforeSnapshot, taskSnapshot(after), "根据下次跟进时间自动调整");
+                return toResponse(after);
+            }
+        }
         return toResponse(persisted);
     }
 

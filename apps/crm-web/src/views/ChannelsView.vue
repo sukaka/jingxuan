@@ -2,12 +2,13 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Channel } from '../api/channel'
-import { createChannel, listChannels, updateChannel } from '../api/channel'
+import { listChannels, updateChannel } from '../api/channel'
 import PageCard from '../components/prototype/PageCard.vue'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import { useAuthStore } from '../stores/auth'
 import { ApiError } from '../types/api'
 import StatusPill from './customer/StatusPill.vue'
+import ChannelFormDialog from './channel/ChannelFormDialog.vue'
 import { useDictionaries } from './customer/shared'
 import './customer/customer-ui.css'
 
@@ -18,7 +19,13 @@ const channels = ref<Channel[]>([])
 const total = ref(0)
 const loading = ref(false)
 const errorMessage = ref('')
-const query = reactive({ keyword: '', status: '' as '' | Channel['status'], page: 1, size: 20 })
+const query = reactive({
+  keyword: '',
+  status: '' as '' | Channel['status'],
+  channelType: '' as '' | Channel['channelType'],
+  page: 1,
+  size: 20,
+})
 
 const STATUS_LABELS: Record<string, string> = {
   ACTIVE: '合作中',
@@ -36,9 +43,40 @@ function statusTone(status: string): 'success' | 'warning' | 'dark' {
   return 'warning'
 }
 
+function channelTypeLabel(type: Channel['channelType']): string {
+  return ({ BLOGGER: '博主/达人', DISTRIBUTION: '分销', REFERRAL: '老带新' } as Record<string, string>)[type] ?? '未知类型'
+}
+
+function channelTypeTone(type: Channel['channelType']): 'teal' | 'purple' | 'orange' | 'dark' {
+  return ({ BLOGGER: 'teal', DISTRIBUTION: 'purple', REFERRAL: 'orange' } as const)[type] ?? 'dark'
+}
+
 function platformLabel(code: string | null): string {
   if (!code) return '未配置平台'
   return dicts.options('customerChannels').find((option) => option.code === code)?.label ?? code
+}
+
+function settlementLabel(code: string | null): string {
+  if (!code) return '—'
+  if (code === 'MONTHLY') return '电汇月结'
+  if (code === 'TWICE_MONTHLY') return '电汇每月两次'
+  return dicts.options('settlementTypes').find((option) => option.code === code)?.label ?? code
+}
+
+function maskPhone(value: string | null): string {
+  if (!value) return '—'
+  return value.length === 11 ? `${value.slice(0, 3)}****${value.slice(-4)}` : '****'
+}
+
+function maskIdCard(value: string | null): string {
+  if (!value) return '—'
+  return value.length >= 11 ? `${value.slice(0, 6)}${'*'.repeat(value.length - 10)}${value.slice(-4)}` : '****'
+}
+
+function maskBankAccount(value: string | null): string {
+  if (!value) return '—'
+  const normalized = value.replace(/\s/g, '')
+  return normalized.length > 4 ? `**** **** **** ${normalized.slice(-4)}` : '****'
 }
 
 function errorText(error: unknown): string {
@@ -58,6 +96,7 @@ async function load(page = query.page) {
       size: query.size,
       keyword: query.keyword || undefined,
       status: query.status || undefined,
+      channelType: query.channelType || undefined,
     })
     channels.value = result.items
     total.value = result.total
@@ -73,86 +112,20 @@ async function load(page = query.page) {
 }
 
 const formVisible = ref(false)
-const saving = ref(false)
-const form = reactive({
-  id: 0,
-  channelNo: '',
-  name: '',
-  platformCode: '',
-  businessOwnerUserId: undefined as number | undefined,
-  status: 'ACTIVE' as Channel['status'],
-  remarks: '',
-  version: 0,
-})
-
-const platformOptions = computed(() => {
-  const active = dicts.options('customerChannels')
-  if (!form.platformCode || active.some((option) => option.code === form.platformCode)) return active
-  return [...active, { code: form.platformCode, label: `${form.platformCode}（历史/停用）`, sortNo: -1 }]
-})
+const editingChannel = ref<Channel | null>(null)
 
 function openCreate() {
-  Object.assign(form, {
-    id: 0,
-    channelNo: '',
-    name: '',
-    platformCode: '',
-    businessOwnerUserId: undefined,
-    status: 'ACTIVE',
-    remarks: '',
-    version: 0,
-  })
+  editingChannel.value = null
   formVisible.value = true
 }
 
 function openEdit(item: Channel) {
-  Object.assign(form, {
-    id: item.id,
-    channelNo: item.channelNo,
-    name: item.name,
-    platformCode: item.platformCode ?? '',
-    businessOwnerUserId: item.businessOwnerUserId ?? undefined,
-    status: item.status,
-    remarks: item.remarks ?? '',
-    version: item.version,
-  })
+  editingChannel.value = item
   formVisible.value = true
 }
 
-async function save() {
-  if (saving.value) return
-  if (!form.name.trim() || (!form.id && !form.channelNo.trim())) {
-    ElMessage.warning('请填写渠道编号与达人/渠道名称')
-    return
-  }
-  saving.value = true
-  try {
-    if (form.id) {
-      await updateChannel(form.id, {
-        name: form.name.trim(),
-        platformCode: form.platformCode || null,
-        businessOwnerUserId: form.businessOwnerUserId ?? null,
-        status: form.status,
-        remarks: form.remarks.trim() || null,
-        version: form.version,
-      })
-    } else {
-      await createChannel({
-        channelNo: form.channelNo.trim(),
-        name: form.name.trim(),
-        platformCode: form.platformCode || undefined,
-        businessOwnerUserId: form.businessOwnerUserId ?? undefined,
-        remarks: form.remarks.trim() || undefined,
-      })
-    }
-    formVisible.value = false
-    ElMessage.success(form.id ? '渠道已保存' : '渠道已创建')
-    await load()
-  } catch (error) {
-    ElMessage.error(errorText(error))
-  } finally {
-    saving.value = false
-  }
+async function handleSaved() {
+  await load()
 }
 
 async function pause(item: Channel) {
@@ -164,8 +137,19 @@ async function pause(item: Channel) {
   try {
     await updateChannel(item.id, {
       name: item.name,
+      channelType: item.channelType,
       platformCode: item.platformCode,
+      commissionPercent: item.commissionPercent,
       businessOwnerUserId: item.businessOwnerUserId,
+      realName: item.realName,
+      contactPhone: item.contactPhone,
+      idCardNumber: item.idCardNumber,
+      settlementMethod: item.settlementMethod,
+      cooperationStartDate: item.cooperationStartDate,
+      cooperationEndDate: item.cooperationEndDate,
+      paymentAccountName: item.paymentAccountName,
+      paymentAccountNo: item.paymentAccountNo,
+      paymentBankName: item.paymentBankName,
       status: 'INACTIVE',
       remarks: item.remarks,
       version: item.version,
@@ -179,6 +163,7 @@ async function pause(item: Channel) {
 
 onMounted(() => {
   void dicts.load('customerChannels')
+  void dicts.load('settlementTypes')
   void load()
 })
 </script>
@@ -202,28 +187,46 @@ onMounted(() => {
       <div class="proto-toolbar">
         <div class="proto-toolbar-left">
           <el-input v-model="query.keyword" clearable placeholder="渠道编号 / 名称" class="keyword" @keyup.enter="load(1)" />
+          <el-select v-model="query.channelType" clearable placeholder="合作类型" class="status-filter" data-testid="channel-type-filter">
+            <el-option label="博主/达人" value="BLOGGER" />
+            <el-option label="分销" value="DISTRIBUTION" />
+            <el-option label="老带新" value="REFERRAL" />
+          </el-select>
           <el-select v-model="query.status" clearable placeholder="合作状态" class="status-filter">
             <el-option label="合作中" value="ACTIVE" />
             <el-option label="暂停合作" value="INACTIVE" />
             <el-option label="已归档" value="ARCHIVED" />
           </el-select>
           <el-button type="primary" :loading="loading" @click="load(1)">查询</el-button>
-          <el-button @click="query.keyword = ''; query.status = ''; load(1)">重置</el-button>
+          <el-button @click="query.keyword = ''; query.status = ''; query.channelType = ''; load(1)">重置</el-button>
         </div>
         <span class="proto-note">平台选项来自客户渠道字典，停用项不可新选</span>
       </div>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
       <div class="proto-table-wrap">
         <app-table v-loading="loading" :data="channels">
-          <el-table-column prop="channelNo" label="渠道编号" min-width="135" />
-          <el-table-column prop="name" label="达人 / 渠道" min-width="170" />
-          <el-table-column label="推广平台" min-width="120">
+          <el-table-column prop="channelNo" label="渠道编号" min-width="135" fixed="left" />
+          <el-table-column prop="name" label="博主姓名/昵称" min-width="160" />
+          <el-table-column label="合作类型" min-width="125"><template #default="{ row }"><span class="proto-pill" :class="channelTypeTone(row.channelType)">{{ channelTypeLabel(row.channelType) }}</span></template></el-table-column>
+          <el-table-column label="推广渠道" min-width="120">
             <template #default="{ row }"><span class="proto-pill info">{{ platformLabel(row.platformCode) }}</span></template>
           </el-table-column>
-          <el-table-column label="对接商务" min-width="120">
-            <template #default="{ row }">{{ row.businessOwnerUserId ? `用户 #${row.businessOwnerUserId}` : '未分配' }}</template>
+          <el-table-column label="分佣比例" width="110" align="right">
+            <template #default="{ row }">{{ row.commissionPercent === null ? '—' : `${row.commissionPercent}%` }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="110">
+          <el-table-column label="对接商务" min-width="120">
+            <template #default="{ row }">{{ row.businessOwnerName || '未分配' }}</template>
+          </el-table-column>
+          <el-table-column prop="realName" label="真实姓名" min-width="120"><template #default="{ row }">{{ row.realName || '—' }}</template></el-table-column>
+          <el-table-column prop="contactPhone" label="联系方式（脱敏）" min-width="150"><template #default="{ row }">{{ maskPhone(row.contactPhone) }}</template></el-table-column>
+          <el-table-column prop="idCardNumber" label="身份证号（脱敏）" min-width="190"><template #default="{ row }">{{ maskIdCard(row.idCardNumber) }}</template></el-table-column>
+          <el-table-column label="结算方式" min-width="120"><template #default="{ row }">{{ settlementLabel(row.settlementMethod) }}</template></el-table-column>
+          <el-table-column prop="cooperationStartDate" label="合作开始时间" min-width="135"><template #default="{ row }">{{ row.cooperationStartDate || '—' }}</template></el-table-column>
+          <el-table-column prop="cooperationEndDate" label="合作结束时间" min-width="135"><template #default="{ row }">{{ row.cooperationEndDate || '—' }}</template></el-table-column>
+          <el-table-column prop="paymentAccountName" label="收款账户信息" min-width="150"><template #default="{ row }">{{ row.paymentAccountName || '—' }}</template></el-table-column>
+          <el-table-column prop="paymentAccountNo" label="收款账号（脱敏）" min-width="190"><template #default="{ row }">{{ maskBankAccount(row.paymentAccountNo) }}</template></el-table-column>
+          <el-table-column prop="paymentBankName" label="收款开户行" min-width="170"><template #default="{ row }">{{ row.paymentBankName || '—' }}</template></el-table-column>
+          <el-table-column label="合作状态" width="110">
             <template #default="{ row }"><StatusPill :text="statusLabel(row.status)" :tone="statusTone(row.status)" /></template>
           </el-table-column>
           <el-table-column prop="remarks" label="备注" min-width="160" show-overflow-tooltip>
@@ -249,43 +252,7 @@ onMounted(() => {
       />
     </PageCard>
 
-    <el-dialog v-model="formVisible" :title="form.id ? '修改合作渠道' : '新增渠道达人'" width="560px">
-      <el-alert type="warning" :closable="false" title="这里只维护渠道主数据，不录入线索或订单数；真实归因由业务流水计算。" class="form-alert" />
-      <el-form label-width="110px">
-        <el-form-item label="渠道编号" required>
-          <el-input v-model="form.channelNo" :disabled="!!form.id" placeholder="稳定且唯一，创建后不可改" />
-        </el-form-item>
-        <el-form-item label="达人/渠道" required>
-          <el-input v-model="form.name" placeholder="博主昵称或合作渠道名称" />
-        </el-form-item>
-        <el-form-item label="推广平台">
-          <el-select v-model="form.platformCode" clearable filterable class="full-width">
-            <el-option
-              v-for="option in platformOptions"
-              :key="option.code"
-              :label="option.label"
-              :value="option.code"
-              :disabled="option.label.endsWith('（历史/停用）')"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="对接商务 ID">
-          <el-input-number v-model="form.businessOwnerUserId" :min="1" :precision="0" controls-position="right" class="full-width" />
-          <span class="form-help">可空；填写员工 ID，由后端校验租户、状态与商务归属</span>
-        </el-form-item>
-        <el-form-item v-if="form.id" label="当前状态">
-          <StatusPill :text="statusLabel(form.status)" :tone="statusTone(form.status)" />
-          <span class="form-help">状态通过独立操作变更，不在普通编辑中跳转</span>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="form.remarks" type="textarea" :rows="3" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="formVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" data-testid="channel-save" @click="save">保存</el-button>
-      </template>
-    </el-dialog>
+    <ChannelFormDialog v-model="formVisible" :channel="editingChannel" @saved="handleSaved" />
   </div>
 </template>
 
@@ -294,9 +261,6 @@ onMounted(() => {
 .keyword { width: min(280px, 100%); }
 .status-filter { width: 145px; }
 .pause-action { color: var(--el-color-danger) !important; }
-.full-width { width: 100%; }
-.form-alert { margin-bottom: 18px; }
-.form-help { display: block; margin-top: 5px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.6; }
 @media (max-width: 760px) {
   .keyword, .status-filter { width: 100%; }
 }

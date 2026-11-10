@@ -3,6 +3,7 @@ package com.whale.crm.campaign.api;
 import com.whale.crm.campaign.api.dto.CreateChannelRequest;
 import com.whale.crm.campaign.api.dto.UpdateChannelRequest;
 import com.whale.crm.campaign.application.CampaignApplicationService;
+import com.whale.crm.campaign.domain.ChannelOwnerOption;
 import com.whale.crm.campaign.domain.PartnerChannel;
 import com.whale.crm.platform.context.TenantContext;
 import com.whale.crm.platform.security.SecuritySupport;
@@ -13,6 +14,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -44,10 +46,18 @@ public class ChannelController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) @Size(max = 64) String keyword,
             @RequestParam(required = false) @Size(max = 32) String status,
+            @RequestParam(required = false) @Pattern(regexp = "BLOGGER|DISTRIBUTION|REFERRAL") String channelType,
             @RequestParam(required = false) Long businessOwnerUserId,
             HttpServletRequest request) {
         return ApiResponse.ok(service.channels(TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser(),
-                keyword, status, businessOwnerUserId, page, size), requestId(request));
+                keyword, status, channelType, businessOwnerUserId, page, size), requestId(request));
+    }
+
+    @GetMapping("/owner-options")
+    @PreAuthorize("hasAuthority('channel:read')")
+    public ApiResponse<java.util.List<ChannelOwnerOption>> ownerOptions(HttpServletRequest request) {
+        return ApiResponse.ok(service.channelOwnerOptions(TenantContext.currentTenantId(),
+                SecuritySupport.requireCurrentUser()), requestId(request));
     }
 
     @PostMapping

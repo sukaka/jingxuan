@@ -62,11 +62,55 @@ function severityTone(severity: string): string {
 }
 
 function riskTypeLabel(type: string): string {
-  return ({ MAPPING: '商品映射', PAYMENT: '支付异常', ENTITLEMENT: '权益异常', SECURITY: '安全异常' } as Record<string, string>)[type] ?? type
+  return ({
+    MAPPING: '商品映射',
+    MAPPING_FAILED: '商品匹配失败',
+    CUSTOMER_UNRESOLVED: '客户待匹配',
+    PAYMENT: '支付异常',
+    PAYMENT_MISMATCH: '支付信息不一致',
+    ENTITLEMENT: '权益异常',
+    ENTITLEMENT_LEDGER: '权益流水不一致',
+    ORDER_PAYMENT_CASH: '订单收款不一致',
+    ORDER_REFUND_CASH: '订单退款不一致',
+    REFUND_ALLOCATION: '退款分摊异常',
+    SETTLEMENT_PAYMENT: '结算付款异常',
+    UNBATCHED_REDEMPTION: '核销未纳入结算',
+    RETRY: '等待重试',
+    DEAD_LETTER: '同步已暂停',
+    SECURITY: '安全异常',
+  } as Record<string, string>)[type] ?? '其他异常'
 }
 
 function sourceLabel(type: string): string {
-  return ({ YOUZAN_ORDER: '有赞订单', ORDER: '订单', REDEMPTION: '核销', REFUND: '退款', SECURITY: '安全' } as Record<string, string>)[type] ?? type
+  return ({
+    YOUZAN_ORDER: '有赞订单',
+    YOUZAN_SYNC_ISSUE: '有赞同步',
+    ORDER: '订单',
+    REDEMPTION: '核销',
+    REFUND: '退款',
+    ENTITLEMENT: '权益',
+    SETTLEMENT_BATCH: '机构结算',
+    RECONCILIATION: '对账',
+    SECURITY: '安全',
+  } as Record<string, string>)[type] ?? '其他来源'
+}
+
+function evidenceText(evidence: string | null): string {
+  if (!evidence?.trim()) return '未提供问题说明'
+  try {
+    const value = JSON.parse(evidence) as unknown
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>
+      for (const key of ['detail', 'lastError', 'message', 'reason', 'description']) {
+        const text = record[key]
+        if (typeof text === 'string' && text.trim()) return text.trim()
+      }
+      return '系统已记录异常，请认领后核对来源数据'
+    }
+  } catch {
+    return evidence
+  }
+  return evidence
 }
 
 function customerLabel(item: RiskCase): string {
@@ -264,7 +308,7 @@ onBeforeUnmount(() => {
             <el-table-column label="风险单" min-width="155" fixed="left">
               <template #default="{ row }"><strong>{{ row.riskCaseNo }}</strong><div class="proto-subcell">{{ formatDateTime(row.createdAt) }}</div></template>
             </el-table-column>
-            <el-table-column label="来源 / 引用" min-width="155">
+            <el-table-column label="来源 / 编号" min-width="155">
               <template #default="{ row }"><span class="proto-pill info">{{ sourceLabel(row.sourceType) }}</span><div class="proto-subcell source-ref">{{ row.sourceRef }}</div></template>
             </el-table-column>
             <el-table-column label="客户" min-width="185">
@@ -277,8 +321,8 @@ onBeforeUnmount(() => {
             </el-table-column>
             <el-table-column label="异常类型" min-width="125"><template #default="{ row }">{{ riskTypeLabel(row.riskType) }}</template></el-table-column>
             <el-table-column label="级别" width="95"><template #default="{ row }"><span class="proto-pill" :class="severityTone(row.severity)">{{ severityLabel(row.severity) }}</span></template></el-table-column>
-            <el-table-column label="发现内容（服务端脱敏摘要）" min-width="260">
-              <template #default="{ row }"><div class="risk-evidence">{{ row.evidence || '未提供风险证据摘要' }}</div></template>
+            <el-table-column label="问题说明" min-width="260">
+              <template #default="{ row }"><div class="risk-evidence">{{ evidenceText(row.evidence) }}</div></template>
             </el-table-column>
             <el-table-column label="责任人" width="115"><template #default="{ row }">{{ row.ownerUserId ? `用户 #${row.ownerUserId}` : '未认领' }}</template></el-table-column>
             <el-table-column label="状态" width="100"><template #default="{ row }"><span class="proto-pill" :class="statusTone(row.status)">{{ statusLabel(row.status) }}</span></template></el-table-column>
@@ -327,10 +371,10 @@ onBeforeUnmount(() => {
             <dl>
               <div><dt>来源</dt><dd>{{ sourceLabel(detail.riskCase.sourceType) }} · {{ detail.riskCase.sourceRef }}</dd></div>
               <div><dt>责任人</dt><dd>{{ detail.riskCase.ownerUserId ? `用户 #${detail.riskCase.ownerUserId}` : '未认领' }}</dd></div>
-              <div><dt>乐观锁版本</dt><dd>{{ detail.riskCase.version }}</dd></div>
+              <div><dt>记录版本</dt><dd>{{ detail.riskCase.version }}</dd></div>
               <div><dt>处理时间</dt><dd>{{ formatDateTime(detail.riskCase.resolvedAt) }}</dd></div>
             </dl>
-            <div class="fact-block"><strong>风险证据（脱敏）</strong><p>{{ detail.riskCase.evidence || '—' }}</p></div>
+            <div class="fact-block"><strong>问题说明（已隐藏敏感信息）</strong><p>{{ evidenceText(detail.riskCase.evidence) }}</p></div>
             <div class="fact-block"><strong>处理结论</strong><p>{{ detail.riskCase.resolution || '尚未填写处理结论' }}</p></div>
           </section>
 

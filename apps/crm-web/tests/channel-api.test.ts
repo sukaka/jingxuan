@@ -46,12 +46,14 @@ describe('P2 渠道 API 契约', () => {
     await createChannel({
       channelNo: 'CH-TEST',
       name: '测试渠道',
+      channelType: 'BLOGGER',
       platformCode: 'XHS',
       businessOwnerUserId: 8,
       remarks: '契约测试',
     })
     await updateChannel(91, {
       name: '测试渠道（调整）',
+      channelType: 'DISTRIBUTION',
       platformCode: 'XHS',
       businessOwnerUserId: 8,
       status: 'INACTIVE',
@@ -64,6 +66,7 @@ describe('P2 渠道 API 契约', () => {
     expect(calls[0]?.data).toEqual({
       channelNo: 'CH-TEST',
       name: '测试渠道',
+      channelType: 'BLOGGER',
       platformCode: 'XHS',
       businessOwnerUserId: 8,
       remarks: '契约测试',
@@ -72,6 +75,7 @@ describe('P2 渠道 API 契约', () => {
     expect(calls[1]?.url).toBe('/channels/91')
     expect(calls[1]?.data).toEqual({
       name: '测试渠道（调整）',
+      channelType: 'DISTRIBUTION',
       platformCode: 'XHS',
       businessOwnerUserId: 8,
       status: 'INACTIVE',

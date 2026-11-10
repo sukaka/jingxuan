@@ -19,12 +19,13 @@ public interface CampaignRepository {
     void insertBatch(long tenantId, CampaignBatch batch);
     int updateBatch(long tenantId, CampaignBatch batch);
 
-    List<PartnerChannel> searchChannels(long tenantId, String keyword, String status, Long businessOwnerUserId,
-                                        int offset, int size);
-    long countChannels(long tenantId, String keyword, String status, Long businessOwnerUserId);
+    List<PartnerChannel> searchChannels(long tenantId, String keyword, String status, String channelType,
+                                        Long businessOwnerUserId, int offset, int size);
+    long countChannels(long tenantId, String keyword, String status, String channelType, Long businessOwnerUserId);
     Optional<PartnerChannel> findChannel(long tenantId, long id);
     Optional<PartnerChannel> findChannelByNo(long tenantId, String channelNo);
     void insertChannel(long tenantId, PartnerChannel channel);
     int updateChannel(long tenantId, PartnerChannel channel);
     int countActiveEmployee(long tenantId, long userId);
+    List<ChannelOwnerOption> listActiveChannelOwners(long tenantId);
 }

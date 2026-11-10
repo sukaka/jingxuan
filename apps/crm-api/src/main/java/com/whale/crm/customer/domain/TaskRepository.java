@@ -24,6 +24,12 @@ public interface TaskRepository {
 
     void insert(CrmTask task);
 
+    Optional<CrmTask> findBySource(long tenantId, String sourceType, String sourceRef);
+
+    int insertAutomatic(CrmTask task);
+
+    int updateAutomaticDueAt(long tenantId, long taskId, Instant dueAt);
+
     /**
      * 通用字段乐观锁更新；不更新状态、负责人或动作时间。
      */

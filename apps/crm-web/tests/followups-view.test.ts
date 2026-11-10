@@ -91,6 +91,18 @@ describe('FollowupsView 每日跟进台账', () => {
     expect(wrapper.text()).toContain('无跟进查看权限')
   })
 
+  it('展示下次跟进自动生成任务的规则说明', async () => {
+    vi.mocked(listFollowups).mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
+    const wrapper = mountView(managerUser)
+    await flushPromises()
+
+    const openButton = wrapper.findAll('button').find((b) => b.text().includes('新增沟通记录'))
+    await openButton?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('填写后自动生成回访任务；改期仅更新待处理任务')
+  })
+
   it('登记表单缺少客户 ID/沟通方式时不发请求', async () => {
     vi.mocked(listFollowups).mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
     const wrapper = mountView(managerUser)

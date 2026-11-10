@@ -122,6 +122,25 @@
             #{taskType}, #{priority}, #{status}, #{title}, #{description}, #{dueAt}, #{sourceType}, #{sourceRef})
   </insert>
 
+  <select id="selectBySource" resultMap="TaskMap">
+    SELECT <include refid="taskColumns"/>
+    FROM crm_task t
+    WHERE t.tenant_id = #{tenantId} AND t.source_type = #{sourceType} AND t.source_ref = #{sourceRef}
+  </select>
+
+  <insert id="insertAutomaticTask" parameterType="com.whale.crm.customer.domain.CrmTask">
+    INSERT INTO crm_task (tenant_id, customer_id, assignee_user_id, original_assignee_user_id, task_team_id,
+                          task_type, priority, status, title, description, due_at, source_type, source_ref)
+    VALUES (#{tenantId}, #{customerId}, #{assigneeUserId}, #{originalAssigneeUserId}, #{taskTeamId},
+            #{taskType}, #{priority}, #{status}, #{title}, #{description}, #{dueAt}, #{sourceType}, #{sourceRef})
+    ON DUPLICATE KEY UPDATE id = id
+  </insert>
+
+  <update id="updateAutomaticDueAt">
+    UPDATE crm_task SET due_at = #{dueAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{taskId} AND status = 'OPEN'
+  </update>
+
   <update id="updateTask" parameterType="com.whale.crm.customer.domain.CrmTask">
     UPDATE crm_task
     SET task_type = #{taskType}, priority = #{priority}, title = #{title},

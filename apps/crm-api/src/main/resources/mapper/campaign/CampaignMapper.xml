@@ -3,7 +3,7 @@
 <mapper namespace="com.whale.crm.campaign.infrastructure.mapper.CampaignMapper">
   <sql id="campaignColumns">id,campaign_code AS campaignCode,campaign_name AS campaignName,campaign_type AS campaignType,starts_at AS startsAt,ends_at AS endsAt,status,created_at AS createdAt,version</sql>
   <sql id="batchColumns">id,campaign_id AS campaignId,batch_code AS batchCode,batch_name AS batchName,starts_at AS startsAt,ends_at AS endsAt,status,created_at AS createdAt,version</sql>
-  <sql id="channelColumns">id,channel_no AS channelNo,name,platform_code AS platformCode,business_owner_user_id AS businessOwnerUserId,status,remarks,created_at AS createdAt,version</sql>
+  <sql id="channelColumns">c.id,c.channel_no AS channelNo,c.name,c.channel_type AS channelType,c.platform_code AS platformCode,c.commission_percent AS commissionPercent,c.business_owner_user_id AS businessOwnerUserId,u.display_name AS businessOwnerName,c.real_name AS realName,c.contact_phone_cipher AS contactPhone,c.id_card_number_cipher AS idCardNumber,c.settlement_method AS settlementMethod,c.cooperation_start_date AS cooperationStartDate,c.cooperation_end_date AS cooperationEndDate,c.payment_account_name_cipher AS paymentAccountName,c.payment_account_no_cipher AS paymentAccountNo,c.payment_bank_name AS paymentBankName,c.status,c.remarks,c.created_at AS createdAt,c.version</sql>
   <sql id="campaignWhere">
     WHERE tenant_id=#{tenantId}
     <if test="keyword != null and keyword != ''">AND (campaign_code LIKE CONCAT('%',#{keyword},'%') OR campaign_name LIKE CONCAT('%',#{keyword},'%'))</if>
@@ -59,31 +59,43 @@
   </update>
 
   <sql id="channelWhere">
-    WHERE tenant_id=#{tenantId}
-    <if test="keyword != null and keyword != ''">AND (channel_no LIKE CONCAT('%',#{keyword},'%') OR name LIKE CONCAT('%',#{keyword},'%'))</if>
-    <if test="status != null and status != ''">AND status=#{status}</if>
-    <if test="businessOwnerUserId != null">AND business_owner_user_id=#{businessOwnerUserId}</if>
+    WHERE c.tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (c.channel_no LIKE CONCAT('%',#{keyword},'%') OR c.name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND c.status=#{status}</if>
+    <if test="channelType != null and channelType != ''">AND c.channel_type=#{channelType}</if>
+    <if test="businessOwnerUserId != null">AND c.business_owner_user_id=#{businessOwnerUserId}</if>
   </sql>
   <select id="searchChannels" resultType="com.whale.crm.campaign.domain.PartnerChannel">
-    SELECT <include refid="channelColumns"/> FROM crm_partner_channel <include refid="channelWhere"/>
-    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+    SELECT <include refid="channelColumns"/> FROM crm_partner_channel c
+    LEFT JOIN sys_user u ON u.tenant_id=c.tenant_id AND u.id=c.business_owner_user_id
+    <include refid="channelWhere"/>
+    ORDER BY c.id DESC LIMIT #{size} OFFSET #{offset}
   </select>
   <select id="countChannels" resultType="long">
-    SELECT COUNT(*) FROM crm_partner_channel <include refid="channelWhere"/>
+    SELECT COUNT(*) FROM crm_partner_channel c <include refid="channelWhere"/>
   </select>
   <select id="selectChannel" resultType="com.whale.crm.campaign.domain.PartnerChannel">
-    SELECT <include refid="channelColumns"/> FROM crm_partner_channel WHERE tenant_id=#{tenantId} AND id=#{id}
+    SELECT <include refid="channelColumns"/> FROM crm_partner_channel c
+    LEFT JOIN sys_user u ON u.tenant_id=c.tenant_id AND u.id=c.business_owner_user_id
+    WHERE c.tenant_id=#{tenantId} AND c.id=#{id}
   </select>
   <select id="selectChannelByNo" resultType="com.whale.crm.campaign.domain.PartnerChannel">
-    SELECT <include refid="channelColumns"/> FROM crm_partner_channel WHERE tenant_id=#{tenantId} AND channel_no=#{channelNo}
+    SELECT <include refid="channelColumns"/> FROM crm_partner_channel c
+    LEFT JOIN sys_user u ON u.tenant_id=c.tenant_id AND u.id=c.business_owner_user_id
+    WHERE c.tenant_id=#{tenantId} AND c.channel_no=#{channelNo}
+  </select>
+  <select id="selectActiveChannelOwners" resultType="com.whale.crm.campaign.domain.ChannelOwnerOption">
+    SELECT id,display_name AS displayName FROM sys_user
+    WHERE tenant_id=#{tenantId} AND user_type='EMPLOYEE' AND status='ACTIVE'
+    ORDER BY display_name,id
   </select>
   <insert id="insertChannel">
-    INSERT INTO crm_partner_channel (tenant_id,channel_no,name,platform_code,business_owner_user_id,status,remarks)
-    VALUES (#{tenantId},#{entity.channelNo},#{entity.name},#{entity.platformCode},#{entity.businessOwnerUserId},#{entity.status},#{entity.remarks})
+    INSERT INTO crm_partner_channel (tenant_id,channel_no,name,channel_type,platform_code,commission_percent,business_owner_user_id,real_name,contact_phone_cipher,id_card_number_cipher,settlement_method,cooperation_start_date,cooperation_end_date,payment_account_name_cipher,payment_account_no_cipher,payment_bank_name,status,remarks)
+    VALUES (#{tenantId},#{entity.channelNo},#{entity.name},#{entity.channelType},#{entity.platformCode},#{entity.commissionPercent},#{entity.businessOwnerUserId},#{entity.realName},#{entity.contactPhone},#{entity.idCardNumber},#{entity.settlementMethod},#{entity.cooperationStartDate},#{entity.cooperationEndDate},#{entity.paymentAccountName},#{entity.paymentAccountNo},#{entity.paymentBankName},#{entity.status},#{entity.remarks})
   </insert>
   <update id="updateChannel">
-    UPDATE crm_partner_channel SET name=#{entity.name},platform_code=#{entity.platformCode},
-      business_owner_user_id=#{entity.businessOwnerUserId},status=#{entity.status},remarks=#{entity.remarks},version=version+1
+    UPDATE crm_partner_channel SET name=#{entity.name},channel_type=#{entity.channelType},platform_code=#{entity.platformCode},commission_percent=#{entity.commissionPercent},
+      business_owner_user_id=#{entity.businessOwnerUserId},real_name=#{entity.realName},contact_phone_cipher=#{entity.contactPhone},id_card_number_cipher=#{entity.idCardNumber},settlement_method=#{entity.settlementMethod},cooperation_start_date=#{entity.cooperationStartDate},cooperation_end_date=#{entity.cooperationEndDate},payment_account_name_cipher=#{entity.paymentAccountName},payment_account_no_cipher=#{entity.paymentAccountNo},payment_bank_name=#{entity.paymentBankName},status=#{entity.status},remarks=#{entity.remarks},version=version+1
     WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version}
   </update>
   <select id="countActiveEmployee" resultType="int">

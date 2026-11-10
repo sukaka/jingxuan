@@ -24,6 +24,7 @@ import java.util.Objects;
 
 /**
  * 每日跟进（crm_followup）。每次跟进追加新流水，不覆盖历史；创建后同事务刷新客户 last_followup_at。
+ * 设置或修改下次跟进时间时，同事务生成或调整 OPEN 回访任务，不改变其他任务状态。
  * 修改/软删除权限：创建者本人，或客户同组主管（MANAGER_LEAD），或 ADMIN。
  */
 @Service
@@ -33,15 +34,18 @@ public class FollowupApplicationService {
     private final CustomerRepository customerRepository;
     private final CustomerScopeSupport scopeSupport;
     private final AuditService auditService;
+    private final TaskApplicationService taskService;
 
     public FollowupApplicationService(FollowupRepository followupRepository,
                                       CustomerRepository customerRepository,
                                       CustomerScopeSupport scopeSupport,
-                                      AuditService auditService) {
+                                      AuditService auditService,
+                                      TaskApplicationService taskService) {
         this.followupRepository = followupRepository;
         this.customerRepository = customerRepository;
         this.scopeSupport = scopeSupport;
         this.auditService = auditService;
+        this.taskService = taskService;
     }
 
     @Transactional(readOnly = true)
@@ -88,6 +92,7 @@ public class FollowupApplicationService {
         Followup persisted = followupRepository.findById(tenantId, followup.getId()).orElseThrow();
         auditService.record(tenantId, user.userId(), AuditService.ACTION_FOLLOWUP_CREATE, "FOLLOWUP",
                 Long.toString(followup.getId()), null, followupSnapshot(persisted), null);
+        taskService.syncFromFollowup(tenantId, user, persisted, customer);
         return toResponse(persisted, null);
     }
 
@@ -109,6 +114,8 @@ public class FollowupApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
         }
 
+        Instant previousNextFollowupAt = existing.getNextFollowupAt();
+        Map<String, Object> beforeSnapshot = followupSnapshot(existing);
         existing.setChannelCode(request.channelCode() != null ? request.channelCode() : existing.getChannelCode());
         existing.setContactAt(request.contactAt() != null ? request.contactAt() : existing.getContactAt());
         existing.setSummary(request.summary() != null ? blankToNull(request.summary()) : existing.getSummary());
@@ -116,7 +123,6 @@ public class FollowupApplicationService {
         existing.setEstimatedAmountFen(request.estimatedAmountFen() != null ? request.estimatedAmountFen() : existing.getEstimatedAmountFen());
         existing.setNextFollowupAt(request.nextFollowupAt() != null ? request.nextFollowupAt() : existing.getNextFollowupAt());
         existing.setBlockerNote(request.blockerNote() != null ? blankToNull(request.blockerNote()) : existing.getBlockerNote());
-        Map<String, Object> beforeSnapshot = followupSnapshot(existing);
         int rows = followupRepository.update(existing);
         if (rows == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
@@ -124,6 +130,9 @@ public class FollowupApplicationService {
         Followup after = followupRepository.findById(tenantId, followupId).orElseThrow();
         auditService.record(tenantId, user.userId(), AuditService.ACTION_FOLLOWUP_UPDATE, "FOLLOWUP",
                 Long.toString(followupId), beforeSnapshot, followupSnapshot(after), null);
+        if (!Objects.equals(previousNextFollowupAt, after.getNextFollowupAt())) {
+            taskService.syncFromFollowup(tenantId, user, after, customer);
+        }
         return toResponse(after, null);
     }
 

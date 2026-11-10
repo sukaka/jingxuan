@@ -3,6 +3,7 @@ package com.whale.crm.campaign.infrastructure;
 import com.whale.crm.campaign.domain.Campaign;
 import com.whale.crm.campaign.domain.CampaignBatch;
 import com.whale.crm.campaign.domain.CampaignRepository;
+import com.whale.crm.campaign.domain.ChannelOwnerOption;
 import com.whale.crm.campaign.domain.PartnerChannel;
 import com.whale.crm.campaign.infrastructure.mapper.CampaignMapper;
 import org.springframework.stereotype.Repository;
@@ -57,13 +58,13 @@ public class MybatisCampaignRepository implements CampaignRepository {
     public void insertBatch(long tenantId, CampaignBatch batch) { mapper.insertBatch(tenantId, batch); }
     public int updateBatch(long tenantId, CampaignBatch batch) { return mapper.updateBatch(tenantId, batch); }
 
-    public List<PartnerChannel> searchChannels(long tenantId, String keyword, String status,
+    public List<PartnerChannel> searchChannels(long tenantId, String keyword, String status, String channelType,
                                                Long businessOwnerUserId, int offset, int size) {
-        return mapper.searchChannels(tenantId, keyword, status, businessOwnerUserId, offset, size);
+        return mapper.searchChannels(tenantId, keyword, status, channelType, businessOwnerUserId, offset, size);
     }
 
-    public long countChannels(long tenantId, String keyword, String status, Long businessOwnerUserId) {
-        return mapper.countChannels(tenantId, keyword, status, businessOwnerUserId);
+    public long countChannels(long tenantId, String keyword, String status, String channelType, Long businessOwnerUserId) {
+        return mapper.countChannels(tenantId, keyword, status, channelType, businessOwnerUserId);
     }
 
     public Optional<PartnerChannel> findChannel(long tenantId, long id) {
@@ -77,4 +78,7 @@ public class MybatisCampaignRepository implements CampaignRepository {
     public void insertChannel(long tenantId, PartnerChannel channel) { mapper.insertChannel(tenantId, channel); }
     public int updateChannel(long tenantId, PartnerChannel channel) { return mapper.updateChannel(tenantId, channel); }
     public int countActiveEmployee(long tenantId, long userId) { return mapper.countActiveEmployee(tenantId, userId); }
+    public List<ChannelOwnerOption> listActiveChannelOwners(long tenantId) {
+        return mapper.selectActiveChannelOwners(tenantId);
+    }
 }

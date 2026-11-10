@@ -306,8 +306,9 @@ CREATE TABLE IF NOT EXISTS `crm_task` (
   `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',
   `version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '乐观锁版本',
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_task_source` (`tenant_id`,`source_type`,`source_ref`),
   KEY `idx_task_1` (`tenant_id`,`assignee_user_id`,`due_at`,`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='人工与 AI 待办';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='人工、跟进规则与 AI 待办';
 
 CREATE TABLE IF NOT EXISTS `crm_institution` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',

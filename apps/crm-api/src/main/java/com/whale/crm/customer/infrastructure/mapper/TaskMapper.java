@@ -31,6 +31,14 @@ public interface TaskMapper {
 
     int insertTask(CrmTask task);
 
+    CrmTask selectBySource(@Param("tenantId") long tenantId, @Param("sourceType") String sourceType,
+                           @Param("sourceRef") String sourceRef);
+
+    int insertAutomaticTask(CrmTask task);
+
+    int updateAutomaticDueAt(@Param("tenantId") long tenantId, @Param("taskId") long taskId,
+                             @Param("dueAt") Instant dueAt);
+
     int updateTask(CrmTask task);
 
     int applyAction(@Param("task") CrmTask task, @Param("expectedStatus") String expectedStatus);

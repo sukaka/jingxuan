@@ -168,6 +168,105 @@ class CampaignApiIT extends AbstractMysqlIT {
                 Integer.class, Long.toString(channelId))).isEqualTo(2);
     }
 
+    @Test
+    void channelProfileValidatesFormatsEncryptsSensitiveFieldsAndRedactsAudit() throws Exception {
+        AuthCookies admin = login("admin");
+        Map<String, Object> create = channelProfileBody("P2-CHANNEL-PROFILE");
+        JsonNode channel = data(postJson("/api/v1/channels", admin, create));
+        long channelId = channel.at("/id").asLong();
+        org.assertj.core.api.Assertions.assertThat(channel.at("/commissionPercent").decimalValue())
+                .isEqualByComparingTo("12.50");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/contactPhone").asText()).isEqualTo("13800000000");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/idCardNumber").asText()).isEqualTo("11010519491231002X");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/settlementMethod").asText()).isEqualTo("MONTHLY");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/paymentAccountNo").asText()).isEqualTo("0000000000000001");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/businessOwnerName").asText()).isEqualTo("孙周");
+        mockMvc.perform(get("/api/v1/channels/owner-options").cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.id == 6 && @.displayName == '孙周')]").isNotEmpty());
+
+        Map<String, Object> automatic = channelProfileBody("P2-CHANNEL-AUTO-NUMBER");
+        automatic.remove("channelNo");
+        JsonNode automaticChannel = data(postJson("/api/v1/channels", admin, automatic));
+        org.assertj.core.api.Assertions.assertThat(automaticChannel.at("/channelNo").asText())
+                .startsWith("CH").hasSize(28).matches("CH[0-9A-Z]{26}");
+
+        Map<String, Object> distribution = channelProfileBody("P2-CHANNEL-DISTRIBUTION");
+        distribution.put("channelType", "DISTRIBUTION");
+        distribution.put("settlementMethod", "TWICE_MONTHLY");
+        JsonNode distributionChannel = data(postJson("/api/v1/channels", admin, distribution));
+        org.assertj.core.api.Assertions.assertThat(distributionChannel.at("/channelType").asText())
+                .isEqualTo("DISTRIBUTION");
+        mockMvc.perform(get("/api/v1/channels?channelType=DISTRIBUTION").cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].channelType").value("DISTRIBUTION"));
+
+        Map<String, Object> mismatched = channelProfileBody("P2-CHANNEL-BAD-SETTLEMENT");
+        mismatched.put("channelType", "BLOGGER");
+        mismatched.put("settlementMethod", "TWICE_MONTHLY");
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(mismatched))).andExpect(status().isBadRequest());
+        mismatched = channelProfileBody("P2-CHANNEL-REFERRAL-UNCONFIRMED");
+        mismatched.put("channelType", "REFERRAL");
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(mismatched))).andExpect(status().isBadRequest());
+
+        for (String column : new String[]{"contact_phone_cipher", "id_card_number_cipher",
+                "payment_account_name_cipher", "payment_account_no_cipher"}) {
+            String stored = jdbcTemplate.queryForObject("SELECT " + column
+                    + " FROM crm_partner_channel WHERE tenant_id=1 AND id=?", String.class, channelId);
+            org.assertj.core.api.Assertions.assertThat(stored).isNotBlank()
+                    .doesNotContain("13800000000", "11010519491231002X", "0000000000000001", "合成收款账户");
+        }
+        String audit = jdbcTemplate.queryForObject("SELECT CONCAT_WS('',before_json,after_json) FROM crm_audit_log "
+                + "WHERE target_type='PARTNER_CHANNEL' AND target_id=? AND action_code='CHANNEL_CREATE'",
+                String.class, Long.toString(channelId));
+        org.assertj.core.api.Assertions.assertThat(audit).doesNotContain("13800000000", "11010519491231002X",
+                "0000000000000001", "合成真实姓名", "合成收款账户");
+
+        Map<String, Object> invalid = channelProfileBody("P2-CHANNEL-PHONE-12");
+        invalid.put("contactPhone", "138000000000");
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(invalid))).andExpect(status().isBadRequest());
+        invalid = channelProfileBody("P2-CHANNEL-ID-8");
+        invalid.put("idCardNumber", "12345678");
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(invalid))).andExpect(status().isBadRequest());
+        invalid = channelProfileBody("P2-CHANNEL-ID-CHECKSUM");
+        invalid.put("idCardNumber", "110105194912310021");
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(invalid))).andExpect(status().isBadRequest());
+        invalid = channelProfileBody("P2-CHANNEL-DATE");
+        invalid.put("cooperationStartDate", "2027-01-01");
+        invalid.put("cooperationEndDate", "2026-01-01");
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(invalid))).andExpect(status().isBadRequest());
+        invalid = channelProfileBody("P2-CHANNEL-COMMISSION");
+        invalid.put("commissionPercent", 100.01);
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(invalid))).andExpect(status().isBadRequest());
+    }
+
+    private Map<String, Object> channelProfileBody(String channelNo) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("channelNo", channelNo);
+        body.put("name", "合成博主昵称");
+        body.put("platformCode", "WEIBO");
+        body.put("commissionPercent", "12.50");
+        body.put("businessOwnerUserId", 6);
+        body.put("realName", "合成真实姓名");
+        body.put("contactPhone", "13800000000");
+        body.put("idCardNumber", "11010519491231002X");
+        body.put("settlementMethod", "MONTHLY");
+        body.put("cooperationStartDate", "2026-01-01");
+        body.put("cooperationEndDate", "2026-12-31");
+        body.put("paymentAccountName", "合成收款账户");
+        body.put("paymentAccountNo", "0000000000000001");
+        body.put("paymentBankName", "合成测试开户行");
+        body.put("remarks", "仅用于集成测试的合成渠道资料");
+        return body;
+    }
+
     private Map<String, Object> campaignBody(String code, String name) {
         Map<String, Object> body = new HashMap<>();
         body.put("campaignCode", code);

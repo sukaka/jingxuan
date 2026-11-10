@@ -226,6 +226,31 @@ describe('RiskCasesView 服务端状态机与追加历史', () => {
     expect(listRiskCases).toHaveBeenCalledTimes(2)
   })
 
+  it('异常编码和 JSON 摘要在列表及详情中转为中文问题说明', async () => {
+    const item = {
+      ...risk('CLOSED'),
+      riskType: 'CUSTOMER_UNRESOLVED',
+      sourceType: 'YOUZAN_SYNC_ISSUE',
+      evidence: '{"issueId":2,"issueType":"CUSTOMER_UNRESOLVED","sourceStatus":"OPEN","detail":"客户尚未人工确认映射","attempts":1}',
+    }
+    vi.mocked(listRiskCases).mockResolvedValue({ items: [item], total: 1, page: 1, size: 20 })
+    vi.mocked(getRiskCase).mockResolvedValue(detail(item))
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('客户待匹配')
+    expect(wrapper.text()).toContain('有赞同步')
+    expect(wrapper.text()).toContain('客户尚未人工确认映射')
+    expect(wrapper.text()).not.toContain('CUSTOMER_UNRESOLVED')
+    expect(wrapper.text()).not.toContain('YOUZAN_SYNC_ISSUE')
+    expect(wrapper.text()).not.toContain('"issueId"')
+
+    await click('risk-history-31')
+    expect(document.body.textContent).toContain('问题说明（已隐藏敏感信息）')
+    expect(document.body.textContent).toContain('客户尚未人工确认映射')
+    expect(document.body.textContent).not.toContain('"issueId"')
+  })
+
   it('只读账号没有动作入口；无查看权限时不请求台账', async () => {
     const readonly = mountView(['risk:read'])
     await flushPromises()

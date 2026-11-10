@@ -20,6 +20,7 @@ import {
 import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
 import WecomArchiveView from '../src/views/WecomArchiveView.vue'
+import workspaceSource from '../src/views/WecomArchiveView.vue?raw'
 import WecomArchiveAdminView from '../src/views/WecomArchiveAdminView.vue'
 
 vi.mock('../src/api/wecom', () => ({
@@ -453,5 +454,10 @@ describe('WecomArchiveView 三栏会话工作区', () => {
     expect(wrapper.text()).toContain('部分内容未获授权或暂不可读取，未展示旧全文')
     expect(wrapper.text()).not.toContain('第一会话授权全文')
     expect(wrapper.text()).not.toContain('wecom/mock-private-object-b')
+  })
+
+  it('AI 操作按钮清除相邻左边距，保持全宽左右对齐', () => {
+    expect(workspaceSource).toMatch(/\.ai-panel \.el-button\{width:100%;margin-top:10px\}/)
+    expect(workspaceSource).toMatch(/\.ai-panel \.el-button \+ \.el-button\{margin-left:0\}/)
   })
 })
