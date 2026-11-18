@@ -15,11 +15,12 @@ public interface TaskMapper {
     List<CrmTask> search(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
                          @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
                          @Param("assigneeId") Long assigneeId, @Param("status") String status,
-                         @Param("offset") int offset, @Param("size") int size);
+                         @Param("customerId") Long customerId, @Param("offset") int offset, @Param("size") int size);
 
     long countSearch(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
                      @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
-                     @Param("assigneeId") Long assigneeId, @Param("status") String status);
+                     @Param("assigneeId") Long assigneeId, @Param("status") String status,
+                     @Param("customerId") Long customerId);
 
     TaskDutySummary dutySummary(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
                                 @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
@@ -33,6 +34,8 @@ public interface TaskMapper {
 
     CrmTask selectBySource(@Param("tenantId") long tenantId, @Param("sourceType") String sourceType,
                            @Param("sourceRef") String sourceRef);
+
+    CrmTask selectOpenAutomaticByCustomer(@Param("tenantId") long tenantId, @Param("customerId") long customerId);
 
     int insertAutomaticTask(CrmTask task);
 

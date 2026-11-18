@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
 import { installAuthGuard } from './guards'
 
 /** 路由表单独导出,便于守卫单测复用同一份 meta 配置 */
@@ -9,6 +10,12 @@ export const routes: RouteRecordRaw[] = [
     name: 'home',
     component: () => import('../views/HomeView.vue'),
     meta: { title: '工作台', section: '首页总览' },
+  },
+  {
+    path: '/notifications',
+    name: 'notifications',
+    component: () => import('../views/NotificationsView.vue'),
+    meta: { title: '通知中心', section: '首页总览' },
   },
   {
     path: '/customers',
@@ -23,10 +30,40 @@ export const routes: RouteRecordRaw[] = [
     meta: { title: '查重合并', section: '客户管理', permission: 'customer:merge' },
   },
   {
+    path: '/customers/segments',
+    name: 'customer-segments',
+    component: () => import('../views/CustomerSegmentsView.vue'),
+    meta: { title: '客户分组', section: '客户管理', permission: 'customer:read' },
+  },
+  {
+    path: '/customers/tier-reviews',
+    name: 'customer-tier-reviews',
+    component: () => import('../views/CustomerTierReviewsView.vue'),
+    meta: { title: '等级复核', section: '客户管理', permission: 'customer:read' },
+  },
+  {
+    path: '/customers/batch-tag-jobs',
+    name: 'batch-tag-jobs',
+    component: () => import('../views/BatchTagJobsView.vue'),
+    meta: { title: '批量标签', section: '客户管理', permission: 'customer:read' },
+  },
+  {
     path: '/followups',
     name: 'followups',
     component: () => import('../views/FollowupsView.vue'),
     meta: { title: '每日跟进', section: '客户管理', permission: 'followup:read' },
+  },
+  {
+    path: '/followups/monthly-dispatch',
+    name: 'monthly-dispatch',
+    component: () => import('../views/MonthlyDispatchView.vue'),
+    meta: { title: '月度派单', section: '客户管理', permission: 'followup:read' },
+  },
+  {
+    path: '/complaints',
+    name: 'complaints',
+    component: () => import('../views/ComplaintsView.vue'),
+    meta: { title: '客诉', section: '客户管理', permission: 'complaint:read' },
   },
   {
     path: '/tasks',
@@ -89,6 +126,12 @@ export const routes: RouteRecordRaw[] = [
     meta: { title: '企业微信 · AI', section: '客户管理', permission: 'wecom:read' },
   },
   {
+    path: '/ai/chat-delegation',
+    name: 'ai-chat-delegation',
+    component: () => import('../views/AiChatDelegationView.vue'),
+    meta: { title: 'AI 聊天托管', section: '客户管理', permission: 'ai:read' },
+  },
+  {
     path: '/integrations/wecom/monitor',
     name: 'wecom-monitor',
     component: () => import('../views/WecomMonitorView.vue'),
@@ -141,6 +184,12 @@ export const routes: RouteRecordRaw[] = [
     name: 'operations-dashboard',
     component: () => import('../views/dashboard/OperationsDashboardView.vue'),
     meta: { title: '运营数据大屏', section: '数据经营', permission: 'report:read', display: true },
+  },
+  {
+    path: '/operations/wecom-analytics',
+    name: 'wecom-analytics',
+    component: () => import('../views/WecomAnalyticsView.vue'),
+    meta: { title: '企微运营分析', section: '数据经营', permission: 'report:read' },
   },
   {
     path: '/operations',
@@ -209,6 +258,34 @@ export const routes: RouteRecordRaw[] = [
     meta: { title: '审计日志', section: '系统管理', permission: 'audit:read' },
   },
   {
+    path: '/settings/customer-tiers',
+    name: 'customer-tier-settings',
+    component: () => import('../views/CustomerTierSettingsView.vue'),
+    meta: { title: '分级规则', section: '系统管理', permission: 'customer:write' },
+    beforeEnter: () => {
+      const auth = useAuthStore()
+      return auth.hasRole('ADMIN') ? true : { name: 'forbidden' }
+    },
+  },
+  {
+    path: '/settings/followup-automation',
+    name: 'followup-automation-settings',
+    component: () => import('../views/FollowupAutomationSettingsView.vue'),
+    meta: { title: '跟进提醒', section: '系统管理', permission: 'followup:read' },
+  },
+  {
+    path: '/settings/complaint-automation',
+    name: 'complaint-automation-settings',
+    component: () => import('../views/ComplaintAutomationSettingsView.vue'),
+    meta: { title: '客诉关键词', section: '系统管理', permission: 'complaint:config' },
+  },
+  {
+    path: '/settings/quick-replies',
+    name: 'quick-reply-settings',
+    component: () => import('../views/QuickReplyAdminView.vue'),
+    meta: { title: '快捷话术库', section: '系统管理', permission: 'quickreply:manage' },
+  },
+  {
     path: '/settings/ai',
     name: 'ai-settings',
     component: () => import('../views/AiSettingsView.vue'),
@@ -237,6 +314,18 @@ export const routes: RouteRecordRaw[] = [
     name: 'login',
     component: () => import('../views/LoginView.vue'),
     meta: { title: '登录', public: true },
+  },
+  {
+    path: '/h5/cards/:shareKey',
+    name: 'public-h5-card',
+    component: () => import('../views/PublicH5CardView.vue'),
+    meta: { title: '项目介绍', public: true, display: true },
+  },
+  {
+    path: '/wecom/sidebar',
+    name: 'wecom-sidebar',
+    component: () => import('../views/WecomSidebarView.vue'),
+    meta: { title: '企微客户助手', public: true, display: true },
   },
   {
     path: '/:pathMatch(.*)*',

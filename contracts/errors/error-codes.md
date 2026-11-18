@@ -27,3 +27,5 @@
 P1-4 退款与结算复用上述稳定码：自审/越权为 `FORBIDDEN`，回调验签失败为 `UNAUTHORIZED`，非法状态、超额回收、待核实付款、超额付款、重复核销/银行流水及幂等冲突为 `CONFLICT`，字段、金额分摊和 `grossFen-commissionFen=netPayableFen` 等输入错误为 `VALIDATION_FAILED`。不得通过新增细分码绕过客户端对稳定通用码的处理；错误消息不得包含凭证正文或银行敏感信息。
 
 P2-KB-1 Dify 知识配置复用现有 AI 错误码：`AI_PROVIDER_DISABLED` 包含 `FEATURE_REAL_DIFY` 未开启，`AI_PROVIDER_NOT_CONFIGURED` 包含 Dify 地址/Key 不完整，`AI_PROVIDER_FAILED` 表示上游或网络失败，`AI_OUTPUT_INVALID` 表示 blocking 响应或引用结构不符合内部契约。连接测试由 CRM 将供应商失败落为 `connectionStatus=FAILED` 并返回脱敏视图，不向前端透传上游报文；知识连接测试不自动重试，避免重复费用。
+
+V30–V32 跟进自动化、客诉和客户分级不新增细分错误码：分页、`YYYY-MM`、间隔天数、关键词、规则结构/时区/阈值及必填理由等输入错误使用 `VALIDATION_FAILED`；无功能权限或数据范围操作权限使用 `FORBIDDEN`，资源不存在或按防枚举策略不可见使用 `NOT_FOUND`；非法状态转换、重复关键词、`version` 失配、无 ACTIVE 分级规则、复核失效和同键不同请求使用 `CONFLICT`。写请求 CSRF 失败使用 `CSRF_TOKEN_INVALID`，不得用幂等回放绕过 CSRF、权限、数据范围或审计。客诉策略未初始化使用 `PENDING_BUSINESS_RULE`；Q12 正式分级阈值仍待运营确认，契约不提供生产默认值，也不把配置结构校验失败伪装成新的业务码。

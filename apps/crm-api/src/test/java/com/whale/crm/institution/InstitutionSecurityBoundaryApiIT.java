@@ -155,6 +155,7 @@ class InstitutionSecurityBoundaryApiIT extends AbstractMysqlIT {
         attempts.put("ownershipCode", "PUBLIC");
         attempts.put("gradeCode", "S");
         attempts.put("settlementType", "PER_REDEMPTION");
+        attempts.put("settlementDay", "12");
         attempts.put("onlineRate", new BigDecimal("0.91"));
         attempts.put("offlineRate", new BigDecimal("0.92"));
         attempts.put("platformRate", new BigDecimal("0.93"));
@@ -553,7 +554,7 @@ class InstitutionSecurityBoundaryApiIT extends AbstractMysqlIT {
     }
 
     private Map<String, Object> sensitiveSnapshot(long institutionId) {
-        return jdbcTemplate.queryForMap("SELECT full_name,business_type_code,ownership_code,grade_code,settlement_type,"
+        return jdbcTemplate.queryForMap("SELECT full_name,business_type_code,ownership_code,grade_code,settlement_type,settlement_day,"
                 + "online_rate,offline_rate,platform_rate,other_rate_rule,charges_fee,deposit_fen,guarantee_roi,"
                 + "roi_terms,settlement_name,bank_name_cipher,bank_account_cipher,tax_id_cipher,version "
                 + "FROM crm_institution WHERE tenant_id=1 AND id=?", institutionId);

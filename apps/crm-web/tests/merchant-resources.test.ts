@@ -59,6 +59,7 @@ const profile: InstitutionProfile = {
   contactPhoneMasked: '****0000',
   status: 'ACTIVE',
   settlementType: null,
+  settlementDay: null,
   onlineRate: null,
   offlineRate: null,
   platformRate: null,

@@ -129,4 +129,23 @@ describe('D01 字典历史值与停用边界', () => {
     await flushPromises()
     expect(updateCustomer).toHaveBeenCalledWith(42, expect.objectContaining({ cityCode: 'D01CITY', version: 3 }))
   })
+
+  it('通用客户编辑不提供等级字段，等级只能走专用接口', async () => {
+    const wrapper = mount(CustomerFormDrawer, {
+      props: { modelValue: true, mode: 'create', customerId: null },
+      global: {
+        plugins: [ElementPlus, piniaWithUser()],
+        stubs: { 'el-drawer': { template: '<div><slot /><slot name="footer" /></div>' } },
+      },
+      attachTo: document.body,
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    const labels = wrapper.findAllComponents({ name: 'ElFormItem' }).map((item) => item.props('label'))
+    expect(labels).not.toContain('客户等级')
+    expect(labels).not.toContain('分层 SABC')
+    expect(getDictionaryOptions).not.toHaveBeenCalledWith('customerTiers')
+    expect(wrapper.find('[data-testid="customer-tier-editor"]').exists()).toBe(false)
+  })
 })

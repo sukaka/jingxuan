@@ -109,7 +109,7 @@ textarea:focus-visible,
   font-weight: 600;
 }
 
-.app-content .el-button--primary {
+.app-content .el-button--primary:not(.is-plain):not(.is-text):not(.is-link):not(.is-dashed) {
   --el-button-bg-color: var(--app-primary);
   --el-button-border-color: var(--app-primary);
   --el-button-hover-bg-color: var(--app-primary-dark);

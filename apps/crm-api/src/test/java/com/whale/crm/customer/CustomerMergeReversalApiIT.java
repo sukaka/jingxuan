@@ -63,22 +63,36 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
             return invocation.callRealMethod();
         }).when(tradingRepository).findEntitlementIdsByCustomer(1L, secondary);
         try (var executor = Executors.newSingleThreadExecutor()) {
-            var future = new TransactionTemplate(transactionManager).execute(status -> {
+            java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<org.springframework.test.web.servlet.MvcResult>> future =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            new TransactionTemplate(transactionManager).execute(status -> {
                 jdbcTemplate.queryForObject("SELECT id FROM crm_entitlement WHERE tenant_id=1 AND id=? FOR UPDATE", Long.class, entitlement);
-                var result = executor.submit(() -> {
-                    return mockMvc.perform(admin.withAuth(post("/api/v1/customer-merges/" + caseId + "/confirm"))
-                            .contentType(MediaType.APPLICATION_JSON).content("{\"version\":1,\"reason\":\"测试\"}")).andReturn();
-                });
+                future.set(executor.submit(() -> mockMvc.perform(admin.withAuth(post("/api/v1/customer-merges/" + caseId + "/confirm"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":1,\"reason\":\"测试\"}")).andReturn()));
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
                 try {
-                    if (!started.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("合并未启动");
-                } catch (InterruptedException ex) {
+                    while (!started.await(50, TimeUnit.MILLISECONDS)) {
+                        if (future.get().isDone()) {
+                            try {
+                                throw new IllegalStateException("合并提前完成，HTTP "
+                                        + future.get().get().getResponse().getStatus() + "："
+                                        + future.get().get().getResponse().getContentAsString());
+                            } catch (InterruptedException | java.util.concurrent.ExecutionException | java.io.UnsupportedEncodingException e) {
+                                throw new IllegalStateException("合并线程异常", e);
+                            }
+                        }
+                        if (System.nanoTime() >= deadline) {
+                            throw new IllegalStateException("合并未在20秒内到达权益快照锁");
+                        }
+                    }
+                } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    throw new IllegalStateException(ex);
+                    throw new IllegalStateException("等待合并锁被中断", e);
                 }
                 appointment(secondary, entitlement);
-                return result;
+                return null;
             });
-            assertThat(future.get(20, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(409);
+            assertThat(future.get().get(20, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(409);
         }
         assertThat(ownerOf("crm_entitlement", entitlement)).isEqualTo(secondary);
         assertThat(customerDeleted(secondary)).isZero();
@@ -175,6 +189,16 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
         long task = createTask(admin, secondary);
         long primaryOrder = orderWithEntitlement(primary, "primary-before");
         long secondaryOrder = orderWithEntitlement(secondary, "secondary-before");
+        long automaticFollowupTask = jdbcTemplate.queryForObject(
+                "SELECT id FROM crm_task WHERE tenant_id=1 AND source_type='FOLLOWUP' AND source_ref=?",
+                Long.class, "FOLLOWUP:" + followup);
+        long secondaryOrderItem = jdbcTemplate.queryForObject(
+                "SELECT id FROM crm_order_item WHERE order_id=?", Long.class, secondaryOrder);
+        jdbcTemplate.update("INSERT INTO crm_order_item_selection "
+                        + "(tenant_id,order_item_id,package_version_id,group_code,group_name,min_selections,max_selections,"
+                        + "project_id,project_code_snapshot,project_name_snapshot,grant_count,reference_price_fen,sort_order) "
+                        + "VALUES (1,?,301,'A','A组',1,1,101,'PRJ-WATER','基础水光',2,80000,1)",
+                secondaryOrderItem);
 
         long caseId = createCase(admin, primary, secondary);
         reversalRequest(admin, caseId, "not-confirmed", "尚未合并").andExpect(status().isConflict());
@@ -191,7 +215,11 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
         assertThat(snapshotCount(caseId, "ORDER", secondaryOrder)).isEqualTo(1);
         assertThat(snapshotCount(caseId, "POINTS", pointsId(primary))).isZero();
         assertThat(snapshotCount(caseId, "POINTS", secondaryPoints)).isEqualTo(1);
-        assertThat(count("crm_merge_resource_snapshot", caseId)).isEqualTo(7);
+        assertThat(snapshotCount(caseId, "TASK", task)).isEqualTo(1);
+        assertThat(snapshotCount(caseId, "TASK", automaticFollowupTask)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT order_item_id FROM crm_order_item_selection WHERE order_item_id=?",
+                Long.class, secondaryOrderItem)).isEqualTo(secondaryOrderItem);
+        assertThat(count("crm_merge_resource_snapshot", caseId)).isEqualTo(8);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_merge_resource_snapshot WHERE merge_case_id=? AND resource_type='TAG' AND resource_key='VIP'", Integer.class, caseId)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_merge_resource_snapshot WHERE merge_case_id=? AND resource_type='TAG' AND resource_key='RISK'", Integer.class, caseId)).isEqualTo(1);
 
@@ -231,6 +259,11 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
         assertThat(ownerOf("crm_followup", followup)).isEqualTo(secondary);
         assertThat(ownerOf("crm_followup", postMergeFollowup)).isEqualTo(primary);
         assertThat(ownerOf("crm_task", task)).isEqualTo(secondary);
+        assertThat(ownerOf("crm_task", automaticFollowupTask)).isEqualTo(secondary);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_order_item_selection WHERE order_item_id=?",
+                Integer.class, secondaryOrderItem)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForMap("SELECT group_code,reference_price_fen FROM crm_order_item_selection WHERE order_item_id=?",
+                secondaryOrderItem)).containsEntry("group_code", "A").containsEntry("reference_price_fen", 80000L);
         assertThat(pointsBalance(primary)).isEqualTo(5);
         assertThat(pointsBalance(secondary)).isEqualTo(7);
         assertThat(ownerOf("crm_order", primaryOrder)).isEqualTo(primary);
@@ -402,7 +435,14 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
     }
 
     private long createFollowup(AuthCookies actor, long customerId) throws Exception {
-        return data(actor, post("/api/v1/followups"), "{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\",\"summary\":\"合成更正测试\"}", 201).at("/id").asLong();
+        String body = mockMvc.perform(actor.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "it-reversal-followup-" + java.util.UUID.randomUUID())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + customerId
+                                + ",\"channelCode\":\"WECOM\",\"summary\":\"合成更正测试\"}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).at("/data/id").asLong();
     }
 
     private long createTask(AuthCookies actor, long customerId) throws Exception {

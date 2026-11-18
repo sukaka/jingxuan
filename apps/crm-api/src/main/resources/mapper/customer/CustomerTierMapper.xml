@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.tier.infrastructure.mapper.CustomerTierMapper">
+
+  <sql id="ruleColumns">
+    id, tenant_id AS tenantId, rule_code AS ruleCode, version_no AS versionNo, rule_name AS ruleName,
+    zone_id AS zoneId, status, metric_config_json AS metricConfigJson, created_by AS createdBy,
+    activated_at AS activatedAt, retired_at AS retiredAt, created_at AS createdAt, updated_at AS updatedAt, version
+  </sql>
+
+  <sql id="levelColumns">
+    id, tenant_id AS tenantId, rule_id AS ruleId, tier_code AS tierCode, tier_name AS tierName,
+    sort_no AS sortNo, min_score AS minScore, min_consumption_fen AS minConsumptionFen
+  </sql>
+
+  <sql id="snapshotColumns">
+    id, tenant_id AS tenantId, customer_id AS customerId, rule_id AS ruleId,
+    recalculation_key AS recalculationKey, source_trigger AS sourceTrigger, as_of AS asOf,
+    window_start_inclusive AS windowStartInclusive, window_end_exclusive AS windowEndExclusive,
+    zone_id AS zoneId, payment_amount_fen AS paymentAmountFen, paid_amount_fen AS paidAmountFen,
+    refund_amount_fen AS refundAmountFen, order_count AS orderCount,
+    manual_followup_count AS manualFollowupCount, archived_message_count AS archivedMessageCount,
+    communication_count AS communicationCount, communication_complete AS communicationComplete,
+    actual_consumption_fen AS actualConsumptionFen, score, suggested_tier_code AS suggestedTierCode,
+    created_at AS createdAt
+  </sql>
+
+  <sql id="reviewColumns">
+    id, tenant_id AS tenantId, customer_id AS customerId, rule_id AS ruleId, snapshot_id AS snapshotId,
+    from_tier_code AS fromTierCode, to_tier_code AS toTierCode, base_customer_version AS baseCustomerVersion,
+    status, requested_by AS requestedBy, reviewed_by AS reviewedBy, review_reason AS reviewReason,
+    reviewed_at AS reviewedAt, effective_at AS effectiveAt, created_at AS createdAt,
+    updated_at AS updatedAt, version
+  </sql>
+
+  <sql id="scopedCustomer">
+    c.tenant_id = #{tenantId} AND c.deleted = 0
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">AND c.owner_staff_id = #{selfId}</when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+  </sql>
+
+  <select id="selectRules" resultType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    SELECT <include refid="ruleColumns"/> FROM crm_customer_tier_rule
+    WHERE tenant_id = #{tenantId} ORDER BY rule_code, version_no DESC
+  </select>
+
+  <select id="selectRule" resultType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    SELECT <include refid="ruleColumns"/> FROM crm_customer_tier_rule
+    WHERE tenant_id = #{tenantId} AND id = #{ruleId}
+  </select>
+
+  <select id="selectRuleForUpdate" resultType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    SELECT <include refid="ruleColumns"/> FROM crm_customer_tier_rule
+    WHERE tenant_id = #{tenantId} AND id = #{ruleId} FOR UPDATE
+  </select>
+
+  <select id="selectActiveRule" resultType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    SELECT <include refid="ruleColumns"/> FROM crm_customer_tier_rule
+    WHERE tenant_id = #{tenantId} AND status = 'ACTIVE'
+  </select>
+
+  <select id="selectActiveRuleForUpdate" resultType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    SELECT <include refid="ruleColumns"/> FROM crm_customer_tier_rule
+    WHERE tenant_id = #{tenantId} AND status = 'ACTIVE' FOR UPDATE
+  </select>
+
+  <select id="selectAllActiveRules" resultType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    SELECT <include refid="ruleColumns"/> FROM crm_customer_tier_rule WHERE status = 'ACTIVE' ORDER BY tenant_id, id
+  </select>
+
+  <select id="selectMaxVersionNo" resultType="int">
+    SELECT MAX(version_no) FROM crm_customer_tier_rule WHERE tenant_id = #{tenantId} AND rule_code = #{ruleCode}
+  </select>
+
+  <insert id="insertRule" parameterType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    INSERT INTO crm_customer_tier_rule (tenant_id, rule_code, version_no, rule_name, zone_id, status,
+                                        metric_config_json, created_by)
+    VALUES (#{tenantId}, #{ruleCode}, #{versionNo}, #{ruleName}, #{zoneId}, #{status},
+            #{metricConfigJson}, #{createdBy})
+  </insert>
+
+  <select id="selectRuleByVersion" resultType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    SELECT <include refid="ruleColumns"/> FROM crm_customer_tier_rule
+    WHERE tenant_id = #{tenantId} AND rule_code = #{ruleCode} AND version_no = #{versionNo}
+  </select>
+
+  <update id="updateDraftRule" parameterType="com.whale.crm.customer.tier.domain.CustomerTierRule">
+    UPDATE crm_customer_tier_rule
+    SET rule_name = #{ruleName}, zone_id = #{zoneId}, metric_config_json = #{metricConfigJson}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND status = 'DRAFT'
+  </update>
+
+  <update id="activateRule">
+    UPDATE crm_customer_tier_rule
+    SET status = 'ACTIVE', activated_at = #{activatedAt}, retired_at = NULL, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{ruleId} AND version = #{version} AND status = 'DRAFT'
+  </update>
+
+  <update id="retireRule">
+    UPDATE crm_customer_tier_rule
+    SET status = 'RETIRED', retired_at = #{retiredAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{ruleId} AND version = #{version} AND status = 'ACTIVE'
+  </update>
+
+  <delete id="deleteLevels">
+    DELETE FROM crm_customer_tier_level WHERE tenant_id = #{tenantId} AND rule_id = #{ruleId}
+  </delete>
+
+  <insert id="insertLevel" parameterType="com.whale.crm.customer.tier.domain.CustomerTierLevel">
+    INSERT INTO crm_customer_tier_level (tenant_id, rule_id, tier_code, tier_name, sort_no, min_score,
+                                         min_consumption_fen)
+    VALUES (#{tenantId}, #{ruleId}, #{tierCode}, #{tierName}, #{sortNo}, #{minScore},
+            #{minConsumptionFen})
+  </insert>
+
+  <select id="selectLevels" resultType="com.whale.crm.customer.tier.domain.CustomerTierLevel">
+    SELECT <include refid="levelColumns"/> FROM crm_customer_tier_level
+    WHERE tenant_id = #{tenantId} AND rule_id = #{ruleId} ORDER BY sort_no
+  </select>
+
+  <select id="selectMetrics" resultType="com.whale.crm.customer.tier.domain.CustomerTierMetrics">
+    SELECT
+      (SELECT COALESCE(SUM(p.amount_fen), 0)
+       FROM crm_payment_txn p INNER JOIN crm_order o ON o.tenant_id = p.tenant_id AND o.id = p.order_id
+       WHERE p.tenant_id = #{tenantId} AND o.customer_id = #{customerId} AND p.status = 'CONFIRMED'
+         AND p.confirmed_at &gt;= #{startInclusive} AND p.confirmed_at &lt; #{endExclusive}) AS paymentAmountFen,
+      (SELECT COALESCE(SUM(o.paid_fen), 0) FROM crm_order o
+       WHERE o.tenant_id = #{tenantId} AND o.customer_id = #{customerId}
+         AND o.status NOT IN ('DRAFT', 'CANCELED')
+         AND o.paid_at &gt;= #{startInclusive} AND o.paid_at &lt; #{endExclusive}) AS paidAmountFen,
+      (SELECT COALESCE(SUM(rp.amount_fen), 0)
+       FROM crm_refund_payment rp INNER JOIN crm_refund r ON r.tenant_id = rp.tenant_id AND r.id = rp.refund_id
+       WHERE rp.tenant_id = #{tenantId} AND r.customer_id = #{customerId} AND rp.status = 'SUCCEEDED'
+         AND rp.succeeded_at &gt;= #{startInclusive} AND rp.succeeded_at &lt; #{endExclusive}) AS refundAmountFen,
+      (SELECT COUNT(*) FROM crm_order o
+       WHERE o.tenant_id = #{tenantId} AND o.customer_id = #{customerId}
+         AND o.status NOT IN ('DRAFT', 'CANCELED')
+         AND o.ordered_at &gt;= #{startInclusive} AND o.ordered_at &lt; #{endExclusive}) AS orderCount,
+      (SELECT COUNT(*) FROM crm_followup f
+       WHERE f.tenant_id = #{tenantId} AND f.customer_id = #{customerId} AND f.deleted = 0
+         AND f.contact_at &gt;= #{startInclusive} AND f.contact_at &lt; #{endExclusive}) AS manualFollowupCount,
+      (SELECT COUNT(*) FROM crm_wecom_message m
+       WHERE m.tenant_id = #{tenantId} AND m.customer_id = #{customerId}
+         AND m.status = 'STORED' AND m.consent_snapshot = 'GRANTED'
+         AND m.sent_at &gt;= #{startInclusive} AND m.sent_at &lt; #{endExclusive}) AS archivedMessageCount,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM crm_wecom_contact wc
+        LEFT JOIN crm_wecom_cursor cursor_row ON cursor_row.tenant_id = wc.tenant_id
+          AND cursor_row.corp_id = wc.corp_id AND cursor_row.archive_scope = 'MOCK_ARCHIVE'
+        WHERE wc.tenant_id = #{tenantId} AND wc.customer_id = #{customerId}
+          AND (cursor_row.id IS NULL OR cursor_row.data_gap = 1 OR EXISTS (
+            SELECT 1 FROM crm_wecom_data_gap gap
+            WHERE gap.tenant_id = wc.tenant_id AND gap.corp_id = wc.corp_id
+              AND gap.archive_scope = 'MOCK_ARCHIVE' AND gap.status = 'OPEN'))
+      ) THEN 0 ELSE 1 END AS communicationComplete
+  </select>
+
+  <insert id="insertSnapshot" parameterType="com.whale.crm.customer.tier.domain.CustomerTierMetricSnapshot">
+    INSERT INTO crm_customer_tier_metric_snapshot (
+      tenant_id, customer_id, rule_id, recalculation_key, source_trigger, as_of,
+      window_start_inclusive, window_end_exclusive, zone_id, payment_amount_fen, paid_amount_fen,
+      refund_amount_fen, order_count, manual_followup_count, archived_message_count, communication_count,
+      communication_complete, actual_consumption_fen, score, suggested_tier_code)
+    VALUES (#{tenantId}, #{customerId}, #{ruleId}, #{recalculationKey}, #{sourceTrigger}, #{asOf},
+      #{windowStartInclusive}, #{windowEndExclusive}, #{zoneId}, #{paymentAmountFen}, #{paidAmountFen},
+      #{refundAmountFen}, #{orderCount}, #{manualFollowupCount}, #{archivedMessageCount}, #{communicationCount},
+      #{communicationComplete}, #{actualConsumptionFen}, #{score}, #{suggestedTierCode})
+  </insert>
+
+  <select id="selectSnapshotByKey" resultType="com.whale.crm.customer.tier.domain.CustomerTierMetricSnapshot">
+    SELECT <include refid="snapshotColumns"/> FROM crm_customer_tier_metric_snapshot
+    WHERE tenant_id = #{tenantId} AND recalculation_key = #{recalculationKey}
+    FOR UPDATE
+  </select>
+
+  <select id="selectSnapshot" resultType="com.whale.crm.customer.tier.domain.CustomerTierMetricSnapshot">
+    SELECT <include refid="snapshotColumns"/> FROM crm_customer_tier_metric_snapshot
+    WHERE tenant_id = #{tenantId} AND id = #{snapshotId}
+  </select>
+
+  <select id="selectLatestSnapshot" resultType="com.whale.crm.customer.tier.domain.CustomerTierMetricSnapshot">
+    SELECT <include refid="snapshotColumns"/> FROM crm_customer_tier_metric_snapshot
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} ORDER BY id DESC LIMIT 1
+  </select>
+
+  <select id="selectSnapshots" resultType="com.whale.crm.customer.tier.domain.CustomerTierMetricSnapshot">
+    SELECT <include refid="snapshotColumns"/> FROM crm_customer_tier_metric_snapshot
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} ORDER BY id DESC LIMIT #{limit}
+  </select>
+
+  <select id="selectReview" resultType="com.whale.crm.customer.tier.domain.CustomerTierDowngradeReview">
+    SELECT <include refid="reviewColumns"/> FROM crm_customer_tier_downgrade_review
+    WHERE tenant_id = #{tenantId} AND id = #{reviewId}
+  </select>
+
+  <select id="selectReviewForUpdate" resultType="com.whale.crm.customer.tier.domain.CustomerTierDowngradeReview">
+    SELECT <include refid="reviewColumns"/> FROM crm_customer_tier_downgrade_review
+    WHERE tenant_id = #{tenantId} AND id = #{reviewId} FOR UPDATE
+  </select>
+
+  <select id="selectPendingForUpdate" resultType="com.whale.crm.customer.tier.domain.CustomerTierDowngradeReview">
+    SELECT <include refid="reviewColumns"/> FROM crm_customer_tier_downgrade_review
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} AND status = 'PENDING_REVIEW' FOR UPDATE
+  </select>
+
+  <select id="selectPending" resultType="com.whale.crm.customer.tier.domain.CustomerTierDowngradeReview">
+    SELECT <include refid="reviewColumns"/> FROM crm_customer_tier_downgrade_review
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} AND status = 'PENDING_REVIEW'
+  </select>
+
+  <insert id="insertReview" parameterType="com.whale.crm.customer.tier.domain.CustomerTierDowngradeReview">
+    INSERT INTO crm_customer_tier_downgrade_review (
+      tenant_id, customer_id, rule_id, snapshot_id, from_tier_code, to_tier_code, base_customer_version,
+      status, requested_by)
+    VALUES (#{tenantId}, #{customerId}, #{ruleId}, #{snapshotId}, #{fromTierCode}, #{toTierCode},
+      #{baseCustomerVersion}, #{status}, #{requestedBy})
+  </insert>
+
+  <update id="updateReviewStatus">
+    UPDATE crm_customer_tier_downgrade_review
+    SET status = #{toStatus}, reviewed_by = #{reviewerId}, review_reason = #{reason},
+        reviewed_at = #{reviewedAt}, effective_at = #{effectiveAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{reviewId} AND version = #{version} AND status = #{fromStatus}
+  </update>
+
+  <update id="markPendingStale">
+    UPDATE crm_customer_tier_downgrade_review
+    SET status = 'STALE', review_reason = #{reason}, reviewed_at = #{changedAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} AND status = 'PENDING_REVIEW'
+  </update>
+
+  <update id="markAllPendingStale">
+    UPDATE crm_customer_tier_downgrade_review
+    SET status = 'STALE', review_reason = #{reason}, reviewed_at = #{changedAt}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND status = 'PENDING_REVIEW'
+  </update>
+
+  <select id="searchReviews" resultType="com.whale.crm.customer.tier.domain.CustomerTierDowngradeReview">
+    SELECT r.id, r.tenant_id AS tenantId, r.customer_id AS customerId, r.rule_id AS ruleId,
+           r.snapshot_id AS snapshotId, r.from_tier_code AS fromTierCode, r.to_tier_code AS toTierCode,
+           r.base_customer_version AS baseCustomerVersion, r.status, r.requested_by AS requestedBy,
+           r.reviewed_by AS reviewedBy, r.review_reason AS reviewReason, r.reviewed_at AS reviewedAt,
+           r.effective_at AS effectiveAt, r.created_at AS createdAt, r.updated_at AS updatedAt, r.version
+    FROM crm_customer_tier_downgrade_review r
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id
+    WHERE <include refid="scopedCustomer"/>
+      <if test="status != null and status != ''">AND r.status = #{status}</if>
+    ORDER BY r.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countReviews" resultType="long">
+    SELECT COUNT(*) FROM crm_customer_tier_downgrade_review r
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id
+    WHERE <include refid="scopedCustomer"/>
+      <if test="status != null and status != ''">AND r.status = #{status}</if>
+  </select>
+
+  <insert id="insertHistory" parameterType="com.whale.crm.customer.tier.domain.CustomerTierHistory">
+    INSERT INTO crm_customer_tier_history (
+      tenant_id, customer_id, rule_id, snapshot_id, review_id, from_tier_code, to_tier_code,
+      change_type, actor_user_id, reason, effective_at)
+    VALUES (#{tenantId}, #{customerId}, #{ruleId}, #{snapshotId}, #{reviewId}, #{fromTierCode}, #{toTierCode},
+      #{changeType}, #{actorUserId}, #{reason}, #{effectiveAt})
+  </insert>
+
+  <select id="selectHistory" resultType="com.whale.crm.customer.tier.domain.CustomerTierHistory">
+    SELECT id, tenant_id AS tenantId, customer_id AS customerId, rule_id AS ruleId, snapshot_id AS snapshotId,
+           review_id AS reviewId, from_tier_code AS fromTierCode, to_tier_code AS toTierCode,
+           change_type AS changeType, actor_user_id AS actorUserId, reason, effective_at AS effectiveAt,
+           created_at AS createdAt
+    FROM crm_customer_tier_history
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} ORDER BY id DESC LIMIT #{limit}
+  </select>
+
+  <update id="updateTier">
+    UPDATE crm_customer
+    SET tier_code = #{tierCode}, tier_locked = #{locked}, tier_lock_reason = #{lockReason}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{customerId} AND version = #{expectedVersion} AND deleted = 0
+  </update>
+
+  <select id="selectCustomerIdsAfter" resultType="long">
+    SELECT id FROM crm_customer
+    WHERE tenant_id = #{tenantId} AND deleted = 0 AND id &gt; #{afterId} ORDER BY id LIMIT #{limit}
+  </select>
+
+  <select id="selectScopedCustomerIds" resultType="long">
+    SELECT c.id FROM crm_customer c
+    WHERE <include refid="scopedCustomer"/> ORDER BY c.id LIMIT #{limit}
+  </select>
+
+</mapper>

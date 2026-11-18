@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.ai.infrastructure.mapper.AiChatSendFenceMapper">
+  <sql id="columns">id,tenant_id AS tenantId,run_id AS runId,customer_id AS customerId,blocked,in_flight AS inFlight,started_at AS startedAt,finished_at AS finishedAt,version</sql>
+  <select id="selectForUpdate" resultType="com.whale.crm.ai.domain.AiChatSendFence">
+    SELECT <include refid="columns"/> FROM crm_ai_chat_send_fence
+    WHERE tenant_id=#{tenantId} AND run_id=#{runId} FOR UPDATE
+  </select>
+  <insert id="insert">
+    INSERT INTO crm_ai_chat_send_fence (tenant_id,run_id,customer_id,blocked,in_flight,started_at)
+    VALUES (#{e.tenantId},#{e.runId},#{e.customerId},#{e.blocked},#{e.inFlight},#{e.startedAt})
+  </insert>
+  <update id="markStarted">
+    UPDATE crm_ai_chat_send_fence SET in_flight=1,started_at=#{now},finished_at=NULL,version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND version=#{expectedVersion} AND blocked=0 AND in_flight=0
+  </update>
+  <update id="blockTenant">
+    UPDATE crm_ai_chat_send_fence SET blocked=1,version=version+1,updated_at=#{now} WHERE tenant_id=#{tenantId} AND blocked=0
+  </update>
+  <update id="blockCustomer">
+    UPDATE crm_ai_chat_send_fence SET blocked=1,version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} AND blocked=0
+  </update>
+  <select id="countInFlightForTenant" resultType="long">
+    SELECT COUNT(*) FROM crm_ai_chat_send_fence WHERE tenant_id=#{tenantId} AND in_flight=1
+  </select>
+  <select id="countInFlightForCustomer" resultType="long">
+    SELECT COUNT(*) FROM crm_ai_chat_send_fence WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} AND in_flight=1
+  </select>
+  <update id="finish">
+    UPDATE crm_ai_chat_send_fence SET in_flight=0,finished_at=#{now},version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND in_flight=1
+  </update>
+  <update id="recover">
+    UPDATE crm_ai_chat_send_fence SET in_flight=0,finished_at=#{now},version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND in_flight=1
+  </update>
+</mapper>

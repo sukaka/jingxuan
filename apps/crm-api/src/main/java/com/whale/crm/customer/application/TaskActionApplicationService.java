@@ -150,6 +150,9 @@ public class TaskActionApplicationService {
 
     private void applyClaim(CrmTask task, CurrentUser user, Instant now) {
         requireStatus(task, CrmTask.STATUS_OPEN, "只有OPEN任务可接手");
+        if (task.getAssigneeUserId() != null && !Objects.equals(task.getAssigneeUserId(), user.userId())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "已分配任务只能由负责人开始处理，团队池接手仅限未分配任务");
+        }
         task.setAssigneeUserId(user.userId());
         task.setStatus(CrmTask.STATUS_PROCESSING);
         task.setClaimedAt(now);

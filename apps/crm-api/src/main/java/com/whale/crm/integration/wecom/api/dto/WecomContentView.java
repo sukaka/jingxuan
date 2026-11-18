@@ -1,6 +1,13 @@
 package com.whale.crm.integration.wecom.api.dto;
 
-import java.time.Instant;
+import com.whale.crm.integration.wecom.media.api.dto.WecomMediaAssetView;
 
-public record WecomContentView(Long messageRef, String messageType, Instant sentAt, String content) {
+import java.time.Instant;
+import java.util.List;
+
+public record WecomContentView(Long messageRef, String messageType, Instant sentAt, String content,
+                               List<WecomMediaAssetView> mediaAssets, Instant recalledAt) {
+    public WecomContentView {
+        mediaAssets = mediaAssets == null ? List.of() : List.copyOf(mediaAssets);
+    }
 }

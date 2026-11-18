@@ -42,6 +42,8 @@ describe('列表标签语义配色', () => {
     expect(roleTone('MANAGER')).toBe('teal')
     expect(roleTone('MANAGER_LEAD')).toBe('info')
     expect(roleTone('FINANCE')).toBe('warning')
+    expect(roleTone('OPERATION')).toBe('success')
+    expect(roleTone('OPERATION_LEAD')).toBe('orange')
     expect(userStatusTone('ACTIVE')).toBe('success')
     expect(userStatusTone('DISABLED')).toBe('dark')
     expect(priorityTone('URGENT')).toBe('danger')

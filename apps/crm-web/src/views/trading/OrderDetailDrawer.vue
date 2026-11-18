@@ -13,6 +13,7 @@ import {
   entitlementStatusTone,
   historyTriggerLabel,
   orderItemAllocationStatus,
+  orderItemSelectionSnapshots,
   orderSourceLabel,
   orderStatusLabel,
   orderStatusTone,
@@ -142,7 +143,14 @@ function historyStatusLabel(status: string): string {
         data-testid="q02-allocation-alert"
       />
       <app-table :data="view.order.items" size="small">
-        <el-table-column prop="skuNameSnapshot" label="卡项 / 规格" min-width="200" />
+        <el-table-column label="卡项 / 规格 / 实际选择" min-width="260">
+          <template #default="{ row }">
+            <div>{{ row.skuNameSnapshot }}</div>
+            <div v-for="selection in orderItemSelectionSnapshots(row)" :key="`${selection.groupCode}-${selection.projectId}`" class="selection-snapshot-line">
+              {{ selection.groupName }}（{{ selection.groupCode }}）：{{ selection.projectName }} · {{ selection.grantCount }} 次 · 参考 ¥{{ fenToYuan(selection.referencePriceFen) }}
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="skuCodeSnapshot" label="SKU 编码" min-width="145" />
         <el-table-column prop="purchaseQuantity" label="份数" width="70" align="right" />
         <el-table-column label="原价（元）" width="100" align="right">
@@ -257,5 +265,6 @@ function historyStatusLabel(status: string): string {
 .state-tip { margin-bottom: 16px; }
 .summary { margin-bottom: 20px; }
 .allocation-alert { margin-bottom: 10px; }
+.selection-snapshot-line { margin-top: 5px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.6; }
 .immutable-tip { margin-top: 20px; }
 </style>

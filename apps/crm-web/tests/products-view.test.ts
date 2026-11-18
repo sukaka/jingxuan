@@ -73,6 +73,7 @@ describe('ProductsView 套餐销售规格', () => {
     expect(wrapper.text()).toContain('6次卡')
     expect(wrapper.text()).toContain('399.00')
     expect(wrapper.text()).toContain('从候选子项目中选择，不等于使用次数')
+    expect(wrapper.text()).toContain('套餐价不要求等于单品参考价之和')
     expect(wrapper.text()).not.toContain('选 N 项 3')
     expect(wrapper.text()).not.toContain('点击选择查看')
     expect(listSkus).toHaveBeenCalledWith({ page: 1, size: 100 })

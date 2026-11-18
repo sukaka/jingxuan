@@ -35,13 +35,13 @@ public class MockWecomAdapter implements WecomAdapter {
             throw new IllegalStateException("Mock归档拉取失败");
         }
         List<WecomArchiveMessage> fixtures = List.of(
-                new WecomArchiveMessage("WECOM-MSG-001", 101, "WECOM-EXT-1010", 2,
+                new WecomArchiveMessage("WECOM-MSG-001", 101, "WECOM-EXT-1010", 2L,
                         "MOCK-CONV-1010", "TEXT", "CUSTOMER", Instant.parse("2026-10-25T01:00:00Z"),
                         "虚构Mock客户：想预约基础水光项目"),
-                new WecomArchiveMessage("WECOM-MSG-002", 102, "WECOM-EXT-UNMATCHED", 2,
+                new WecomArchiveMessage("WECOM-MSG-002", 102, "WECOM-EXT-UNMATCHED", 2L,
                         "MOCK-CONV-UNMATCHED", "TEXT", "CUSTOMER", Instant.parse("2026-10-25T01:01:00Z"),
                         "虚构未关联客户：想咨询套餐"),
-                new WecomArchiveMessage("WECOM-MSG-003", 103, "WECOM-EXT-REVOKED", 3,
+                new WecomArchiveMessage("WECOM-MSG-003", 103, "WECOM-EXT-REVOKED", 3L,
                         "MOCK-CONV-REVOKED", "TEXT", "CUSTOMER", Instant.parse("2026-10-25T01:02:00Z"),
                         "虚构撤回同意消息：不得归档"));
         List<WecomArchiveMessage> remaining = fixtures.stream().filter(item -> item.seq() > afterSeq).toList();

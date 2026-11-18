@@ -33,6 +33,7 @@ const profile: InstitutionProfile = {
   contactPhoneMasked: null,
   status: 'ACTIVE',
   settlementType: 'MONTHLY',
+  settlementDay: '8',
   onlineRate: '0.180000',
   offlineRate: '0.120000',
   platformRate: '0.150000',
@@ -132,5 +133,25 @@ describe('SensitiveChangeDrawer 敏感申请与掩码', () => {
     await selectField(wrapper, 'bankAccount')
     expect(wrapper.text()).toContain('****8888')
     expect(wrapper.text()).not.toContain('1234567890')
+  })
+
+  it('结算日显示机构自定义并可通过空选项申请恢复系统默认', async () => {
+    vi.mocked(createInstitutionChange).mockResolvedValue(changeResponse)
+    const wrapper = await mountDrawer()
+    await selectField(wrapper, 'settlementDay')
+
+    expect(wrapper.text()).toContain('每月 8 日（机构自定义）')
+    expect(wrapper.text()).toContain('市场审核 → 另一岗位复核')
+    component(wrapper, 'sensitive-settlement-day').vm.$emit('update:modelValue', '')
+    await flushPromises()
+    await wrapper.get('[data-testid="sensitive-reason"]').setValue('恢复系统默认')
+    await wrapper.get('[data-testid="sensitive-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(createInstitutionChange).toHaveBeenCalledWith(expect.objectContaining({
+      fieldCode: 'settlementDay',
+      newValue: null,
+      baseVersion: 2,
+    }), expect.any(String))
   })
 })

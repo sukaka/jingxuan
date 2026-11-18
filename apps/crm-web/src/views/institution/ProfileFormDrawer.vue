@@ -5,12 +5,13 @@ import type { InstitutionProfile } from '../../api/institution'
 import { createInstitutionProfile, updateInstitutionProfile } from '../../api/institution'
 import { useDictionaries } from '../customer/shared'
 import { tradingErrorText } from '../trading/tradingUi'
-import { createInstitutionKey } from './institutionUi'
+import { createInstitutionKey, SETTLEMENT_DAY_OPTIONS, settlementDayLabel } from './institutionUi'
 import { percentToDecimalRate as percentRate, yuanToFenExact as yuanFen } from './number'
 
 const props = defineProps<{
   modelValue: boolean
   profile?: InstitutionProfile | null
+  defaultSettlementDay?: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -32,6 +33,7 @@ const form = reactive({
   contactName: '',
   contactPhone: '',
   settlementType: '',
+  settlementDay: '',
   onlineRate: '',
   offlineRate: '',
   platformRate: '',
@@ -67,6 +69,7 @@ watch(
       contactName: props.profile?.contactName ?? '',
       contactPhone: '',
       settlementType: '',
+      settlementDay: '',
       onlineRate: '',
       offlineRate: '',
       platformRate: '',
@@ -129,6 +132,7 @@ async function save() {
       contactName: optional(form.contactName),
       contactPhone: optional(form.contactPhone),
       settlementType: form.settlementType,
+      settlementDay: form.settlementType === 'MONTHLY' ? optional(form.settlementDay) : undefined,
       onlineRate: percentRate(form.onlineRate),
       offlineRate: percentRate(form.offlineRate),
       platformRate: percentRate(form.platformRate),
@@ -187,6 +191,12 @@ async function save() {
         <template v-if="!profile">
           <el-form-item label="结算方式" required>
             <el-select v-model="form.settlementType" class="full-width" data-testid="profile-settlement"><el-option v-for="item in options('settlementTypes')" :key="item.code" :label="item.label" :value="item.code" /></el-select>
+          </el-form-item>
+          <el-form-item v-if="form.settlementType === 'MONTHLY'" label="月结结算日">
+            <el-select v-model="form.settlementDay" class="full-width" data-testid="profile-settlement-day">
+              <el-option :label="`跟随系统默认（${settlementDayLabel(defaultSettlementDay ?? 'LAST_DAY')}）`" value="" />
+              <el-option v-for="item in SETTLEMENT_DAY_OPTIONS" :key="item.value" :label="`${item.label}（机构自定义）`" :value="item.value" />
+            </el-select>
           </el-form-item>
           <el-form-item label="线上佣金率（%）" required><el-input v-model="form.onlineRate" placeholder="如 18.25" data-testid="profile-online-rate" /></el-form-item>
           <el-form-item label="线下佣金率（%）" required><el-input v-model="form.offlineRate" placeholder="如 12" data-testid="profile-offline-rate" /></el-form-item>

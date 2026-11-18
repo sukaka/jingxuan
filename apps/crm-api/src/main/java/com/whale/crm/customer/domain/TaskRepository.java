@@ -10,10 +10,10 @@ import java.util.Optional;
 public interface TaskRepository {
 
     List<CrmTask> search(long tenantId, String scopeType, List<Long> teamIds, long selfId,
-                         Long assigneeId, String status, int offset, int size);
+                         Long assigneeId, String status, Long customerId, int offset, int size);
 
     long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId,
-                     Long assigneeId, String status);
+                     Long assigneeId, String status, Long customerId);
 
     TaskDutySummary dutySummary(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                                 Instant now, Instant dayEndExclusive);
@@ -25,6 +25,8 @@ public interface TaskRepository {
     void insert(CrmTask task);
 
     Optional<CrmTask> findBySource(long tenantId, String sourceType, String sourceRef);
+
+    Optional<CrmTask> findOpenAutomaticByCustomer(long tenantId, long customerId);
 
     int insertAutomatic(CrmTask task);
 

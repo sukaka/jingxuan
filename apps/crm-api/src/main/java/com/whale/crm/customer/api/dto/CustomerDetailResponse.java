@@ -6,6 +6,7 @@ import java.util.List;
 
 /**
  * 客户详情 = 列表字段 + 档案字段 + 标签/身份。deleted=true 表示已被合并归档（只读）。
+ * attentionProjects 保留旧文本，attentionProjectIds 才是可用于筛选的正规关注关系。
  */
 public record CustomerDetailResponse(
         Long id,
@@ -36,9 +37,11 @@ public record CustomerDetailResponse(
         Instant firstOrderAt,
         List<String> tagCodes,
         List<CustomerIdentityItemResponse> identities,
-        boolean deleted) {
+        boolean deleted,
+        List<Long> attentionProjectIds) {
     public CustomerDetailResponse {
         tagCodes = tagCodes == null ? null : List.copyOf(tagCodes);
         identities = identities == null ? null : List.copyOf(identities);
+        attentionProjectIds = attentionProjectIds == null ? List.of() : List.copyOf(attentionProjectIds);
     }
 }

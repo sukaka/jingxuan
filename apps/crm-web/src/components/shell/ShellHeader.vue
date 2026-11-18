@@ -44,6 +44,7 @@ defineExpose({ focusMenuButton: () => menuButton.value?.focus() })
         <ShellIcon name="search" :size="15" /><span>搜索客户 / 手机号 / 订单号</span>
       </button>
       <span v-if="showDevelopmentBadge" class="environment-badge"><i />开发环境</span>
+      <slot name="actions" />
       <button type="button" class="role-switch" title="切换登录身份" @click="emit('logout')">
         <span class="header-avatar">{{ displayName.slice(0, 1) || '用' }}</span>
         <span><strong>{{ displayName }}</strong><small>{{ roleLabel }} · 切换身份</small></span>

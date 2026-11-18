@@ -39,7 +39,7 @@ def test_ai01_service_completion_is_only_unverified_proposal():
     assert insight["mentioned_institution"] == "朝阳医院"
     assert "VERIFY_SERVICE_RECORD" in insight["proposed_actions"]
     assert body["provider"] == "mock"
-    assert body["model"] == "mock-rules-v1"
+    assert body["model"] == "mock-rules-v2"
 
 
 def test_ai02_malicious_chat_is_data_not_an_instruction():
@@ -159,3 +159,37 @@ def test_request_id_generated_when_missing():
     parsed = uuid.UUID(resp.json()["requestId"])
     assert str(parsed) == resp.json()["requestId"]
     assert resp.headers["X-Request-Id"] == resp.json()["requestId"]
+
+
+@pytest.mark.parametrize("text,expected_type,required_action,required_risk", [
+    ("我的套餐还剩几次，权益还能用吗？", "PACKAGE_QUERY", "VERIFY_BALANCE", None),
+    ("我明天想到院面诊，方便吗？", "VISIT_INTENT", "CREATE_FOLLOWUP_DRAFT", None),
+    ("术后恢复得怎么样？我想反馈护理感受。", "AFTERCARE_FEEDBACK", "OFFER_HUMAN_SUPPORT", None),
+    ("请先安排回访，之后联系我。", "FOLLOWUP_REQUIRED", "CREATE_FOLLOWUP_DRAFT", None),
+    ("出现严重红肿，我要向监管投诉。", "RISK_EVENT", "OFFER_HUMAN_SUPPORT", "URGENT"),
+])
+def test_documented_intent_types_have_traceable_human_actions(text, expected_type, required_action, required_risk):
+    resp = extract(text)
+    assert resp.status_code == 200
+    insight = resp.json()["insight"]
+    assert insight["insight_type"] == expected_type
+    assert insight["fact_status"] == "UNVERIFIED"
+    assert insight["allow_financial_write"] is False
+    assert required_action in insight["proposed_actions"]
+    if required_risk:
+        assert required_risk in insight["risk_flags"]
+    assert resp.json()["model"] == "mock-rules-v2"
+
+
+def test_mock_uses_actual_supporting_customer_message_as_evidence():
+    from app.schemas import ExtractionRequest
+    from app.services.extractor import MockExtractor
+
+    request = ExtractionRequest.model_validate({**payload("想了解一下"), "messages": [
+        {"id": "staff-note", "sender_type": "EMPLOYEE", "sent_at": "2026-10-26T08:00:00Z", "text": "您好"},
+        {"id": "general-question", "sender_type": "CUSTOMER", "sent_at": "2026-10-26T08:01:00Z", "text": "想了解一下"},
+        {"id": "complaint-evidence", "sender_type": "CUSTOMER", "sent_at": "2026-10-26T08:02:00Z", "text": "我要投诉服务态度"},
+    ]})
+    result, _, _ = MockExtractor().extract(request)
+    assert result.insight_type == "COMPLAINT"
+    assert result.evidence_message_ids == ["complaint-evidence"]

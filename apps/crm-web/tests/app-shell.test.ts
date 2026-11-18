@@ -10,6 +10,7 @@ import { logout } from '../src/api/auth'
 import type { AuthUser } from '../src/api/auth'
 import { listAppointments } from '../src/api/fulfillment'
 import { listTasks } from '../src/api/task'
+import { getNotificationUnreadCount } from '../src/api/notification'
 import { useAuthStore } from '../src/stores/auth'
 
 vi.mock('../src/api/auth', () => ({
@@ -19,14 +20,18 @@ vi.mock('../src/api/auth', () => ({
 }))
 vi.mock('../src/api/task', () => ({ listTasks: vi.fn() }))
 vi.mock('../src/api/fulfillment', () => ({ listAppointments: vi.fn() }))
+vi.mock('../src/api/notification', () => ({ getNotificationUnreadCount: vi.fn() }))
 
 const Page = { template: '<div>业务页面</div>' }
 const LoginPage = { template: '<div>登录页</div>' }
 const ALL_PERMISSIONS = [
   'customer:read',
+  'customer:write',
   'customer:merge',
   'followup:read',
   'task:read',
+  'complaint:read',
+  'complaint:config',
   'user:read',
   'dictionary:read',
   'audit:read',
@@ -49,11 +54,20 @@ function createTestRouter(): Router {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'home', component: Page, meta: { title: '工作台' } },
+      { path: '/notifications', name: 'notifications', component: Page, meta: { title: '通知中心' } },
       { path: '/operations/dashboard', name: 'operations-dashboard', component: Page, meta: { display: true } },
       { path: '/customers', name: 'customers', component: Page },
       { path: '/customers/merge', name: 'customer-merge', component: Page },
+      { path: '/customers/segments', name: 'customer-segments', component: Page },
+      { path: '/customers/tier-reviews', name: 'customer-tier-reviews', component: Page },
+      { path: '/customers/batch-tag-jobs', name: 'batch-tag-jobs', component: Page },
       { path: '/customers/ownership-logs', name: 'ownership-logs', component: Page },
       { path: '/followups', name: 'followups', component: Page },
+      { path: '/followups/monthly-dispatch', name: 'monthly-dispatch', component: Page },
+      { path: '/complaints', name: 'complaints', component: Page },
+      { path: '/settings/customer-tiers', name: 'customer-tier-settings', component: Page },
+      { path: '/settings/followup-automation', name: 'followup-automation-settings', component: Page },
+      { path: '/settings/complaint-automation', name: 'complaint-automation-settings', component: Page },
       { path: '/tasks', name: 'tasks', component: Page },
       { path: '/appointments', name: 'appointments', component: Page },
       { path: '/redemptions', name: 'redemptions', component: Page },
@@ -91,6 +105,7 @@ beforeEach(() => {
   vi.mocked(logout).mockReset().mockResolvedValue(undefined)
   vi.mocked(listTasks).mockReset().mockResolvedValue({ items: [], total: 7, page: 1, size: 1 })
   vi.mocked(listAppointments).mockReset().mockResolvedValue({ items: [], total: 0, page: 1, size: 1 })
+  vi.mocked(getNotificationUnreadCount).mockReset().mockResolvedValue({ unreadCount: 4 })
 })
 
 afterEach(() => {
@@ -113,6 +128,8 @@ describe('共享应用外壳', () => {
     expect(wrapper.find('.shell-header').exists()).toBe(true)
     expect(listTasks).toHaveBeenCalledWith({ page: 1, size: 1, status: 'OPEN' })
     expect(wrapper.findAll('.nav-group-badge').some((badge) => badge.text() === '7')).toBe(true)
+    expect(getNotificationUnreadCount).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-testid="notification-unread-count"]').text()).toBe('4')
   })
 
   it('管家和机构分别使用自己的工作台文案与数据范围', async () => {
@@ -135,6 +152,17 @@ describe('共享应用外壳', () => {
     expect(institution.wrapper.text()).toContain('机构资料')
     expect(institution.wrapper.text()).toContain('核销确认')
     expect(institution.wrapper.text()).not.toContain('客户查重合并')
+  })
+
+  it('运营与运营主管显示中文角色及正确的数据范围', async () => {
+    const operation = await mountApp(makeUser(['OPERATION'], ['report:read']))
+    expect(operation.wrapper.text()).toContain('运营')
+    expect(operation.wrapper.text()).toContain('授权业务数据范围')
+    operation.wrapper.unmount()
+
+    const lead = await mountApp(makeUser(['OPERATION_LEAD'], ['report:read']))
+    expect(lead.wrapper.text()).toContain('运营主管')
+    expect(lead.wrapper.text()).toContain('全局管理视图')
   })
 
   it('导航分组可折叠并同步 aria-expanded', async () => {
@@ -169,6 +197,24 @@ describe('共享应用外壳', () => {
     await flushPromises()
     expect(wrapper.get('.shell-sidebar').classes()).not.toContain('is-open')
     expect(document.activeElement).toBe(toggle.element)
+  })
+
+  it('窄屏抽屉进入新增客诉页面后关闭，通知菜单与铃铛仍保留', async () => {
+    const { wrapper, router } = await mountApp()
+    const toggle = wrapper.get('.menu-button')
+    await toggle.trigger('click')
+    await flushPromises()
+
+    const complaintLink = wrapper.findAll('a.nav-btn').find((item) => item.attributes('href') === '/complaints')
+    expect(complaintLink).toBeDefined()
+    await complaintLink?.trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('complaints')
+    expect(wrapper.get('.shell-sidebar').classes()).not.toContain('is-open')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.findAll('a.nav-btn').some((item) => item.attributes('href') === '/notifications')).toBe(true)
+    expect(wrapper.find('[data-testid="notification-unread-count"]').exists()).toBe(true)
   })
 
   it('取消切换身份时不调用登出接口并保留会话', async () => {

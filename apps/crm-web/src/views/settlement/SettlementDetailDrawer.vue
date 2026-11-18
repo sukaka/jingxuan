@@ -6,6 +6,7 @@ import StatusPill from '../customer/StatusPill.vue'
 import { formatDateTime } from '../customer/shared'
 import FileDownloadButton from '../institution/FileDownloadButton.vue'
 import { amountStatusLabel, settlementAmount, settlementPeriodLabel, settlementStatusLabel, settlementStatusTone, settlementTypeLabel } from '../finance/financeUi'
+import { settlementDayLabel, settlementDaySourceLabel } from '../institution/institutionUi'
 
 const props = defineProps<{
   modelValue: boolean
@@ -38,6 +39,8 @@ const batch = computed(() => props.detail?.batch ?? null)
         <div class="finance-summary-item"><small>剩余待付</small><strong :class="{ pending: batch.amountStatus === 'PENDING_VERIFICATION' }">{{ batch.amountStatus === 'PENDING_VERIFICATION' ? '待核实' : `¥${fenToYuan(Math.max(0, batch.netPayableFen - batch.paidFen))}` }}</strong></div>
       </div>
       <el-descriptions :column="2" border class="trading-descriptions">
+        <el-descriptions-item label="实际结算日快照">{{ batch.settlementType === 'PER_REDEMPTION' ? '次卡次结不适用' : batch.settlementDate || '历史批次未记录' }}</el-descriptions-item>
+        <el-descriptions-item label="结算日规则 / 来源">{{ batch.settlementType === 'PER_REDEMPTION' ? '不适用' : batch.settlementDay ? `${settlementDayLabel(batch.settlementDay)} / ${settlementDaySourceLabel(batch.settlementDaySource)}` : '历史批次未记录' }}</el-descriptions-item>
         <el-descriptions-item label="线下核准规则版本">{{ batch.ruleVersion || '待核准' }}</el-descriptions-item>
         <el-descriptions-item label="核准证据">{{ batch.verificationEvidence || '待核准' }}</el-descriptions-item>
       </el-descriptions>

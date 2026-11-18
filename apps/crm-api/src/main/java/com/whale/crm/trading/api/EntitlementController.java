@@ -36,9 +36,11 @@ public class EntitlementController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) Long customerId,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) java.time.LocalDate validTo,
+            @RequestParam(defaultValue = "false") boolean availableOnly,
             HttpServletRequest request) {
         return ApiResponse.ok(entitlementService.search(TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser(),
-                customerId, status, page, size), requestId(request));
+                customerId, status, validTo, availableOnly, page, size), requestId(request));
     }
 
     @GetMapping("/summary")

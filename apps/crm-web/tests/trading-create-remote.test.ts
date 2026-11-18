@@ -30,6 +30,7 @@ vi.mock('../src/api/customer', () => ({
 }))
 
 vi.mock('../src/api/catalog', () => ({
+  getPackageVersionSnapshot: vi.fn(),
   listSkus: vi.fn(),
 }))
 

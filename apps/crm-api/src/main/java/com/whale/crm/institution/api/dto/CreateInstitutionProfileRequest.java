@@ -23,6 +23,7 @@ public record CreateInstitutionProfileRequest(
         @Size(max = 128) String contactName,
         @Size(max = 32) String contactPhone,
         @NotBlank @Pattern(regexp = "MONTHLY|PER_REDEMPTION") String settlementType,
+        @Size(max = 16) String settlementDay,
         @DecimalMin("0") @DecimalMax("1") BigDecimal onlineRate,
         @DecimalMin("0") @DecimalMax("1") BigDecimal offlineRate,
         @DecimalMin("0") @DecimalMax("1") BigDecimal platformRate,

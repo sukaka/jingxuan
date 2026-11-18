@@ -80,4 +80,24 @@ class OutboxKafkaConfigurationTest {
         assertThat(topic.numPartitions()).isEqualTo(1);
         assertThat(topic.replicationFactor()).isEqualTo((short) 1);
     }
+
+    @Test
+    void declaresNotificationRequestTopic() {
+        NewTopic topic = configuration.notificationRequestTopic(1, (short) 1);
+
+        assertThat(topic.name()).isEqualTo("crm.notification.request.v1");
+        assertThat(topic.numPartitions()).isEqualTo(1);
+        assertThat(topic.replicationFactor()).isEqualTo((short) 1);
+    }
+
+    @Test
+    void declaresFollowupAndCustomerTopics() {
+        NewTopic followup = configuration.followupEventsTopic(1, (short) 1);
+        NewTopic customer = configuration.customerEventsTopic(1, (short) 1);
+
+        assertThat(followup.name()).isEqualTo("crm.followup.events.v1");
+        assertThat(customer.name()).isEqualTo("crm.customer.events.v1");
+        assertThat(followup.numPartitions()).isEqualTo(1);
+        assertThat(customer.replicationFactor()).isEqualTo((short) 1);
+    }
 }

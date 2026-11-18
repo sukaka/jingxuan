@@ -88,7 +88,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/webhooks/youzan", "/api/v1/webhooks/youzan/official").permitAll()
                         .requestMatchers("/api/v1/integrations/wecom/callback").permitAll()
+                        .requestMatchers("/api/v1/wecom/oauth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/integrations/refunds/*/callback").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/public/h5-cards/*").permitAll()
                         .requestMatchers(
                                 "/api/v1/auth/login", "/api/v1/auth/captcha",
                                 "/actuator/health", "/actuator/health/**", "/actuator/info",

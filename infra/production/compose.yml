@@ -112,11 +112,11 @@ services:
     restart: unless-stopped
     read_only: true
     tmpfs:
-      - /tmp:size=256m
+      - /tmp:size=256m,exec
     environment:
       SPRING_PROFILES_ACTIVE: prod
       TZ: UTC
-      DB_JDBC_URL: "${DB_JDBC_URL:-jdbc:mysql://mysql:3306/medical_crm?connectionTimeZone=UTC&useSSL=false&allowPublicKeyRetrieval=true}"
+      DB_JDBC_URL: "${DB_JDBC_URL:-jdbc:mysql://mysql:3306/medical_crm?connectionTimeZone=UTC&useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true}"
       DB_USER: crm
       MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
       REDIS_HOST: redis
@@ -151,6 +151,24 @@ services:
       FEATURE_AI_WRITEBACK: "${FEATURE_AI_WRITEBACK:-false}"
       FEATURE_REAL_DIFY: "${FEATURE_REAL_DIFY:-false}"
       WECOM_OFFICIAL_ENABLED: "${WECOM_OFFICIAL_ENABLED:-false}"
+      WECOM_SIDEBAR_ENABLED: "${WECOM_SIDEBAR_ENABLED:-false}"
+      WECOM_SIDEBAR_AGENT_ID: "${WECOM_SIDEBAR_AGENT_ID:-0}"
+      WECOM_OAUTH_REDIRECT_URI: "${WECOM_OAUTH_REDIRECT_URI:-${PUBLIC_URL}/api/v1/wecom/oauth/callback}"
+      WECOM_SIDEBAR_URL: "${WECOM_SIDEBAR_URL:-${PUBLIC_URL}/wecom/sidebar}"
+      WECOM_SIDEBAR_TRUSTED_ORIGINS: "${WECOM_SIDEBAR_TRUSTED_ORIGINS:-${PUBLIC_URL}}"
+      WECOM_ARCHIVE_ALLOWED_TENANT_ID: "${WECOM_ARCHIVE_ALLOWED_TENANT_ID:-1}"
+      WECOM_ARCHIVE_CORP_ID: "${WECOM_ARCHIVE_CORP_ID:-}"
+      WECOM_ARCHIVE_SECRET: "${WECOM_ARCHIVE_SECRET:-}"
+      WECOM_ARCHIVE_SDK_LIBRARY_PATH: "${WECOM_ARCHIVE_SDK_LIBRARY_PATH:-/opt/wecom-archive/libWeWorkFinanceSdk_C.so}"
+      WECOM_ARCHIVE_PRIVATE_KEY_DIRECTORY: "${WECOM_ARCHIVE_PRIVATE_KEY_DIRECTORY:-/opt/wecom-archive/private}"
+      WECOM_ARCHIVE_PROXY: "${WECOM_ARCHIVE_PROXY:-}"
+      WECOM_ARCHIVE_PROXY_PASSWORD: "${WECOM_ARCHIVE_PROXY_PASSWORD:-}"
+      WECOM_ARCHIVE_TIMEOUT_SECONDS: "${WECOM_ARCHIVE_TIMEOUT_SECONDS:-15}"
+      WECOM_MEDIA_WORKER_ENABLED: "${WECOM_MEDIA_WORKER_ENABLED:-false}"
+      WECOM_MEDIA_MAX_FILE_BYTES: "${WECOM_MEDIA_MAX_FILE_BYTES:-52428800}"
+      WECOM_MEDIA_MAX_CHUNKS: "${WECOM_MEDIA_MAX_CHUNKS:-200}"
+    volumes:
+      - wecom_archive_sdk:/opt/wecom-archive:ro
     depends_on:
       mysql:
         condition: service_healthy
@@ -249,6 +267,7 @@ volumes:
   clamav_data:
   caddy_data:
   caddy_config:
+  wecom_archive_sdk:
 
 networks:
   internal:

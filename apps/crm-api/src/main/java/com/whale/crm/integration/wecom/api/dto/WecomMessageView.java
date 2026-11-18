@@ -5,5 +5,7 @@ import java.time.Instant;
 public record WecomMessageView(Long id, String corpId, String msgId, Long archiveSeq, Long customerId,
                                String externalUserid, Long staffUserId, String conversationId, String messageType,
                                String senderType, Instant sentAt, String contentObjectKey, String consentSnapshot,
-                               String currentConsentStatus, String status) {
+                               String currentConsentStatus, String status, Instant recalledAt, String recallMessageId,
+                               String conversationType, String senderWecomUserid, Long senderStaffUserId,
+                               Long roomRosterVersion) {
 }

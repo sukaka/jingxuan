@@ -3,7 +3,9 @@ package com.whale.crm.trading.application;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.campaign.application.CampaignApplicationService;
 import com.whale.crm.campaign.domain.OrderAttributionSnapshot;
+import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.application.CustomerScopeSupport;
+import com.whale.crm.customer.application.CustomerTimelineCursor;
 import com.whale.crm.customer.domain.Customer;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.dictionary.api.dto.DictionaryOptionResponse;
@@ -15,6 +17,11 @@ import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
 import com.whale.crm.product.application.CatalogApplicationService;
+import com.whale.crm.product.domain.CatalogRules;
+import com.whale.crm.product.domain.PackageOptionSelection;
+import com.whale.crm.product.domain.PackageProject;
+import com.whale.crm.product.domain.PackageSelectionGroup;
+import com.whale.crm.product.domain.PackageSelectionRules;
 import com.whale.crm.product.domain.PackageVersionSnapshot;
 import com.whale.crm.product.domain.Sku;
 import com.whale.crm.trading.api.dto.CreateOrderRequest;
@@ -25,6 +32,7 @@ import com.whale.crm.trading.domain.Order;
 import com.whale.crm.trading.domain.OrderDetail;
 import com.whale.crm.trading.domain.OrderFulfillmentView;
 import com.whale.crm.trading.domain.OrderItem;
+import com.whale.crm.trading.domain.OrderItemSelection;
 import com.whale.crm.trading.domain.OrderStatusHistory;
 import com.whale.crm.trading.domain.TradingRepository;
 import org.springframework.stereotype.Service;
@@ -81,6 +89,34 @@ public class OrderApplicationService {
                 page, size);
     }
 
+    @Transactional(readOnly = true)
+    public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
+                                                        CustomerTimelineCursor cursor) {
+        scopeSupport.requireVisible(tenantId, customerId, user);
+        List<CustomerTimelineItemResponse> events = new ArrayList<>();
+        int page = 1;
+        long total;
+        do {
+            PageResponse<Order> result = search(tenantId, user, customerId, null, page, 100);
+            total = result.total();
+            for (Order order : result.items()) {
+                Map<String, Object> details = new LinkedHashMap<>();
+                details.put("status", order.status());
+                details.put("payableFen", order.payableFen());
+                details.put("paidFen", order.paidFen());
+                details.put("refundedFen", order.refundedFen());
+                Instant occurredAt = order.createdAt() != null ? order.createdAt() : order.orderedAt();
+                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("ORDER", order.id(), "ORDER",
+                        occurredAt, "订单 " + order.orderNo(), "订单状态：" + order.status(), details, order.soldByUserId());
+                if (cursor == null || cursor.allows(event)) {
+                    events.add(event);
+                }
+            }
+            page++;
+        } while ((long) (page - 1) * 100 < total);
+        return events;
+    }
+
     @Transactional
     public OrderFulfillmentView create(long tenantId, CurrentUser user, CreateOrderRequest request) {
         return createInternal(tenantId, user, request, "CRM", null, null);
@@ -123,6 +159,16 @@ public class OrderApplicationService {
         repository.backfillOrderNo(tenantId, created.id(), orderNo);
         for (PreparedItem item : prepared) {
             repository.insertOrderItem(item.toOrderItem(created.id()));
+        }
+        List<OrderItem> persistedItems = repository.findOrderItems(tenantId, created.id());
+        if (persistedItems.size() != prepared.size()) {
+            throw new IllegalStateException("订单行快照保存不完整");
+        }
+        for (int i = 0; i < prepared.size(); i++) {
+            long orderItemId = persistedItems.get(i).id();
+            for (OrderItemSelection selection : prepared.get(i).selections()) {
+                repository.insertOrderItemSelection(selection.withOrderItemId(orderItemId));
+            }
         }
         repository.insertStatusHistory(new OrderStatusHistory(null, created.id(), "NONE", "DRAFT", user.userId(),
                 "CREATE", null, null, null));
@@ -175,21 +221,34 @@ public class OrderApplicationService {
         if (!snapshot.entitlementIssuable()) {
             if ("PENDING_Q01".equals(snapshot.rulesStatus())) {
                 throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "Q01 选择规则未确认，只能保存模板，不能发放权益",
-                        List.of(new ApiResponse.ErrorDetail("Q01", "请业务确认选择组合、重复规则和每项次数后再下单")));
+                        List.of(new ApiResponse.ErrorDetail("Q01", "请配置结构化选项组、选择数和每个项目的次数后再下单")));
             }
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "套餐权益配置不完整，不能创建订单");
         }
+        List<PackageOptionSelection> requestedSelections = request.selections() == null ? List.of()
+                : request.selections().stream()
+                        .map(selection -> new PackageOptionSelection(selection.groupCode(), selection.projectId())).toList();
+        List<PackageProject> selectedProjects = PackageSelectionRules.select(snapshot.selectionMode(), snapshot.groups(),
+                snapshot.projects(), requestedSelections);
+        String allocationStatus = CatalogRules.allocationStatus(selectedProjects);
         int quantity = request.quantity();
         long listAmount = Math.multiplyExact(sku.salePriceFen(), quantity);
-        List<Map<String, Object>> projectSnapshots = snapshot.projects().stream().map(project -> {
+        long referenceAmount = Math.multiplyExact(PackageSelectionRules.referenceAmountFen(selectedProjects), quantity);
+        List<Map<String, Object>> projectSnapshots = selectedProjects.stream().map(project -> {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("projectId", project.projectId());
+            item.put("projectCode", project.projectCode());
             item.put("projectName", project.projectName());
             item.put("grantCount", Math.multiplyExact(project.grantCount(), quantity));
             item.put("allocationPriceFen", project.allocationPriceFen());
             item.put("optionGroup", project.optionGroup());
+            item.put("referencePriceFen", project.referencePriceFen());
+            item.put("referenceAmountFen", Math.multiplyExact(
+                    Math.multiplyExact(project.referencePriceFen(), project.grantCount().longValue()), quantity));
             return item;
         }).toList();
+        List<OrderItemSelection> selections = snapshot.groups().isEmpty() ? List.of() : selectedProjects.stream()
+                .map(project -> selectionSnapshot(snapshot, project, quantity)).toList();
         Map<String, Object> entitlementSnapshot = new LinkedHashMap<>();
         entitlementSnapshot.put("packageVersionId", snapshot.id());
         entitlementSnapshot.put("packageCode", snapshot.packageCode());
@@ -199,19 +258,49 @@ public class OrderApplicationService {
         entitlementSnapshot.put("choiceCount", snapshot.choiceCount());
         entitlementSnapshot.put("selectionRules", snapshot.selectionRules());
         entitlementSnapshot.put("projectSnapshots", projectSnapshots);
+        entitlementSnapshot.put("selectionSnapshots", selections.stream().map(this::selectionSnapshotMap).toList());
+        entitlementSnapshot.put("packageSalePriceFen", sku.salePriceFen());
+        entitlementSnapshot.put("referenceAmountFen", referenceAmount);
+        entitlementSnapshot.put("referenceDiscountAmountFen", Math.max(0L, referenceAmount - listAmount));
         entitlementSnapshot.put("institutionIds", snapshot.institutions().stream().map(item -> item.id()).toList());
         entitlementSnapshot.put("validFrom", LocalDate.now(ZoneOffset.UTC).toString());
         entitlementSnapshot.put("validTo", validTo == null ? null : validTo.toString());
-        entitlementSnapshot.put("allocationStatus", snapshot.allocationStatus());
-        long weight = snapshot.projects().stream().mapToLong(item -> item.allocationPriceFen() == null ? 0L
+        entitlementSnapshot.put("allocationStatus", allocationStatus);
+        long weight = selectedProjects.stream().mapToLong(item -> item.allocationPriceFen() == null ? 0L
                 : Math.multiplyExact(item.allocationPriceFen(), quantity)).sum();
         return new PreparedItem(null, sku.id(), snapshot.id(), sku.skuCode(),
                 snapshot.packageName() + "｜" + sku.specName(), quantity, listAmount, 0L,
-                entitlementSnapshot, weight, snapshot.allocationStatus());
+                entitlementSnapshot, weight, allocationStatus, selections);
+    }
+
+    private OrderItemSelection selectionSnapshot(PackageVersionSnapshot snapshot, PackageProject project, int quantity) {
+        PackageSelectionGroup group = snapshot.groups().stream()
+                .filter(item -> item.groupCode().equals(project.optionGroup())).findFirst()
+                .orElseThrow(() -> new IllegalStateException("选项组快照不完整"));
+        return new OrderItemSelection(null, snapshot.id(), group.groupCode(), group.groupName(),
+                group.minSelections(), group.maxSelections(), project.projectId(), project.projectCode(),
+                project.projectName(), Math.multiplyExact(project.grantCount(), quantity),
+                project.referencePriceFen(), group.sortOrder());
+    }
+
+    private Map<String, Object> selectionSnapshotMap(OrderItemSelection selection) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("groupCode", selection.groupCode());
+        item.put("groupName", selection.groupName());
+        item.put("minSelections", selection.minSelections());
+        item.put("maxSelections", selection.maxSelections());
+        item.put("projectId", selection.projectId());
+        item.put("projectCode", selection.projectCodeSnapshot());
+        item.put("projectName", selection.projectNameSnapshot());
+        item.put("grantCount", selection.grantCount());
+        item.put("referencePriceFen", selection.referencePriceFen());
+        item.put("sortOrder", selection.sortOrder());
+        return item;
     }
 
     private void allocatePayable(long payable, List<PreparedItem> items) {
-        if (items.stream().anyMatch(item -> "PENDING_Q02".equals(item.allocationStatus()))) {
+        boolean missingLineWeight = items.size() > 1 && items.stream().anyMatch(item -> item.weight() <= 0);
+        if (missingLineWeight || items.stream().anyMatch(item -> "PENDING_Q02".equals(item.allocationStatus()))) {
             for (PreparedItem item : items) {
                 item.entitlementSnapshot().put("allocationStatus", "PENDING_Q02");
                 item.entitlementSnapshot().put("paidAllocatedFen", 0L);
@@ -299,7 +388,7 @@ public class OrderApplicationService {
     private record PreparedItem(Long id, Long skuId, Long packageVersionId, String skuCodeSnapshot,
                                 String skuNameSnapshot, Integer purchaseQuantity, Long listAmountFen,
                                 Long paidAllocatedFen, Map<String, Object> entitlementSnapshot,
-                                long weight, String allocationStatus) {
+                                long weight, String allocationStatus, List<OrderItemSelection> selections) {
         OrderItem toOrderItem(long orderId) {
             try {
                 long allocated = ((Number) entitlementSnapshot.get("paidAllocatedFen")).longValue();

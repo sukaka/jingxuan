@@ -58,8 +58,9 @@ class FollowupDraft(StrictModel):
 
 
 InsightType = Literal[
-    "APPOINTMENT_INTENT", "PRICE_INQUIRY", "REFUND_INTENT", "COMPLAINT",
-    "REPURCHASE_INTENT", "SERVICE_EXPERIENCE", "SERVICE_COMPLETION_CLAIM", "GENERAL",
+    "PACKAGE_QUERY", "APPOINTMENT_INTENT", "VISIT_INTENT", "AFTERCARE_FEEDBACK",
+    "PRICE_INQUIRY", "REFUND_INTENT", "COMPLAINT", "REPURCHASE_INTENT",
+    "FOLLOWUP_REQUIRED", "RISK_EVENT", "SERVICE_EXPERIENCE", "SERVICE_COMPLETION_CLAIM", "GENERAL",
 ]
 ProposedAction = Literal[
     "VERIFY_BALANCE", "ASK_PREFERRED_INSTITUTION", "CREATE_FOLLOWUP_DRAFT",
@@ -98,6 +99,64 @@ class ExtractionResponse(StrictModel):
     provider: str
     model: str
     insight: Insight
+
+
+ReplyScene = Literal[
+    "INITIAL", "PACKAGE_REMAINING", "APPOINTMENT", "VISIT", "REDEMPTION", "PROJECT",
+    "PREOPERATIVE", "POSTOPERATIVE", "FOLLOWUP", "REFUND", "REPURCHASE", "COMPLAINT", "CAMPAIGN",
+]
+ReplyFactCode = Literal[
+    "customer_name", "manager_name", "project_name", "total_count", "used_count", "remaining_count",
+    "last_visit_date", "last_writeoff_date", "appointment_date", "appointment_time", "institution_name",
+    "institution_address", "doctor_name", "expire_date", "order_no",
+]
+
+
+class ReplyGenerationRequest(StrictModel):
+    suggestion_id: str = Field(min_length=1, max_length=64)
+    customer_id: str = Field(min_length=1, max_length=64)
+    scene: ReplyScene
+    facts: dict[ReplyFactCode, str | int] = Field(default_factory=dict, max_length=15)
+    instruction: str = Field(default="", max_length=500)
+    provider_config: AiProviderConfig | None = None
+
+    @field_validator("facts")
+    @classmethod
+    def validate_facts(cls, facts: dict[str, str | int]) -> dict[str, str | int]:
+        numeric_codes = {"total_count", "used_count", "remaining_count"}
+        for code, value in facts.items():
+            if code in numeric_codes:
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 1_000_000:
+                    raise ValueError("次数事实必须是非负整数")
+            elif not isinstance(value, str) or not value or len(value) > 256 or any(ord(char) < 32 for char in value):
+                raise ValueError("文本事实不能为空、超长或包含控制字符")
+        return facts
+
+
+class ReplySuggestion(StrictModel):
+    scene: ReplyScene
+    reply: str = Field(min_length=1, max_length=2000)
+    reason: str = Field(min_length=1, max_length=500)
+    confidence: float = Field(ge=0, le=1)
+    used_fact_codes: list[ReplyFactCode] = Field(default_factory=list, max_length=15)
+    fact_status: Literal["UNVERIFIED"]
+    allow_financial_write: Literal[False]
+    requires_human_review: Literal[True]
+
+    @field_validator("used_fact_codes")
+    @classmethod
+    def unique_fact_codes(cls, codes: list[str]) -> list[str]:
+        if len(codes) != len(set(codes)):
+            raise ValueError("引用事实不能重复")
+        return codes
+
+
+class ReplyGenerationResponse(StrictModel):
+    requestId: str
+    provider: str
+    model: str
+    prompt_version: str
+    suggestion: ReplySuggestion
 
 
 class KnowledgeProviderConfig(StrictModel):

@@ -5,7 +5,7 @@
   <sql id="projectColumns">id, project_code AS projectCode, project_name AS projectName, category_code AS categoryCode, list_price_fen AS listPriceFen, status, created_at AS createdAt, version</sql>
   <sql id="packageColumns">id, package_code AS packageCode, package_name AS packageName, status, created_at AS createdAt, version</sql>
   <sql id="versionColumns">id, package_id AS packageId, version_no AS versionNo, selection_mode AS selectionMode, choice_count AS choiceCount, selection_rules AS selectionRules, status, created_at AS createdAt, version</sql>
-  <sql id="projectItemColumns">pp.id, pp.package_version_id AS packageVersionId, pp.project_id AS projectId, p.project_code AS projectCode, p.project_name AS projectName, p.category_code AS categoryCode, p.list_price_fen AS listPriceFen, p.status AS projectStatus, pp.grant_count AS grantCount, pp.selection_weight AS selectionWeight, pp.allocation_price_fen AS allocationPriceFen, pp.option_group AS optionGroup, pp.version</sql>
+  <sql id="projectItemColumns">pp.id, pp.package_version_id AS packageVersionId, pp.project_id AS projectId, p.project_code AS projectCode, p.project_name AS projectName, p.category_code AS categoryCode, p.list_price_fen AS listPriceFen, p.status AS projectStatus, pp.grant_count AS grantCount, pp.selection_weight AS selectionWeight, pp.allocation_price_fen AS allocationPriceFen, pp.option_group AS optionGroup, pp.reference_price_fen AS referencePriceFen, pp.version</sql>
   <sql id="skuColumns">s.id, s.sku_code AS skuCode, s.package_version_id AS packageVersionId, p.id AS packageId, p.package_name AS packageName, pv.version_no AS versionNo, pv.selection_mode AS selectionMode, s.spec_name AS specName, s.sale_price_fen AS salePriceFen, s.status, s.on_sale_at AS onSaleAt, s.off_sale_at AS offSaleAt, s.created_at AS createdAt, s.version</sql>
   <sql id="skuFrom">FROM crm_sku s INNER JOIN crm_package_version pv ON pv.tenant_id=s.tenant_id AND pv.id=s.package_version_id INNER JOIN crm_package p ON p.tenant_id=pv.tenant_id AND p.id=pv.package_id</sql>
   <sql id="institutionColumns">id, institution_no AS institutionNo, full_name AS fullName, short_name AS shortName, city_code AS cityCode, status, version</sql>
@@ -100,8 +100,23 @@
     DELETE FROM crm_package_project WHERE tenant_id=#{tenantId} AND package_version_id=#{packageVersionId}
   </delete>
   <insert id="insertVersionProject">
-    INSERT INTO crm_package_project (tenant_id,package_version_id,project_id,grant_count,selection_weight,allocation_price_fen,option_group)
-    VALUES (#{tenantId},#{entity.packageVersionId},#{entity.projectId},#{entity.grantCount},#{entity.selectionWeight},#{entity.allocationPriceFen},#{entity.optionGroup})
+    INSERT INTO crm_package_project (tenant_id,package_version_id,project_id,grant_count,selection_weight,allocation_price_fen,option_group,reference_price_fen)
+    VALUES (#{tenantId},#{entity.packageVersionId},#{entity.projectId},#{entity.grantCount},#{entity.selectionWeight},#{entity.allocationPriceFen},#{entity.optionGroup},#{entity.referencePriceFen})
+  </insert>
+  <select id="selectSelectionGroups" resultType="com.whale.crm.product.domain.PackageSelectionGroup">
+    SELECT id,package_version_id AS packageVersionId,group_code AS groupCode,group_name AS groupName,
+      min_selections AS minSelections,max_selections AS maxSelections,sort_order AS sortOrder,version
+    FROM crm_package_selection_group
+    WHERE tenant_id=#{tenantId} AND package_version_id=#{packageVersionId}
+    ORDER BY sort_order,id
+  </select>
+  <delete id="deleteSelectionGroups">
+    DELETE FROM crm_package_selection_group WHERE tenant_id=#{tenantId} AND package_version_id=#{packageVersionId}
+  </delete>
+  <insert id="insertSelectionGroup">
+    INSERT INTO crm_package_selection_group
+      (tenant_id,package_version_id,group_code,group_name,min_selections,max_selections,sort_order)
+    VALUES (#{tenantId},#{entity.packageVersionId},#{entity.groupCode},#{entity.groupName},#{entity.minSelections},#{entity.maxSelections},#{entity.sortOrder})
   </insert>
 
   <sql id="skuWhere">

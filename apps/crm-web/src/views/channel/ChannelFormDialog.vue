@@ -71,9 +71,7 @@ const platformOptions = computed(() => {
 const settlementOptions = computed(() => {
   const options = form.channelType === 'BLOGGER'
     ? [{ code: 'MONTHLY', label: '电汇月结' }]
-    : form.channelType === 'DISTRIBUTION'
-      ? [{ code: 'MONTHLY', label: '电汇月结' }, { code: 'TWICE_MONTHLY', label: '电汇每月两次' }]
-      : []
+    : [{ code: 'MONTHLY', label: '电汇月结' }, { code: 'TWICE_MONTHLY', label: '电汇每月两次' }]
   if (form.settlementMethod && !options.some((option) => option.code === form.settlementMethod)) {
     return [...options, { code: form.settlementMethod, label: `${form.settlementMethod}（历史/不适用）` }]
   }
@@ -81,9 +79,8 @@ const settlementOptions = computed(() => {
 })
 
 function handleChannelTypeChange() {
-  if (form.channelType === 'REFERRAL') form.settlementMethod = ''
-  else if (form.channelType === 'BLOGGER' && form.settlementMethod !== 'MONTHLY') form.settlementMethod = 'MONTHLY'
-  else if (form.channelType === 'DISTRIBUTION'
+  if (form.channelType === 'BLOGGER' && form.settlementMethod !== 'MONTHLY') form.settlementMethod = 'MONTHLY'
+  else if ((form.channelType === 'DISTRIBUTION' || form.channelType === 'REFERRAL')
     && !['MONTHLY', 'TWICE_MONTHLY'].includes(form.settlementMethod)) form.settlementMethod = 'MONTHLY'
 }
 
@@ -253,7 +250,7 @@ onMounted(() => {
           <el-input-number v-model="form.commissionPercent" :min="0" :max="100" :precision="2" controls-position="right" class="full-width" placeholder="例如 12.50" data-testid="channel-form-commission" />
         </el-form-item>
         <el-form-item label="结算方式" prop="settlementMethod">
-          <el-select v-model="form.settlementMethod" clearable class="full-width" data-testid="channel-form-settlement" :disabled="form.channelType === 'REFERRAL'" :placeholder="form.channelType === 'REFERRAL' ? '老带新暂无固定结算规则' : '请选择结算方式'">
+          <el-select v-model="form.settlementMethod" clearable class="full-width" data-testid="channel-form-settlement" placeholder="请选择结算方式">
             <el-option v-for="option in settlementOptions" :key="option.code" :label="option.label" :value="option.code" :disabled="option.label.includes('历史')" />
           </el-select>
         </el-form-item>

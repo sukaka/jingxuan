@@ -14,6 +14,8 @@ import com.whale.crm.integration.wecom.domain.WecomCursor;
 import com.whale.crm.integration.wecom.domain.WecomDataGap;
 import com.whale.crm.integration.wecom.domain.WecomMessage;
 import com.whale.crm.integration.wecom.domain.WecomRepository;
+import com.whale.crm.integration.wecom.media.application.WecomMediaRegistrationService;
+import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.crypto.AesGcmCipher;
@@ -38,7 +40,8 @@ import java.util.UUID;
 
 @Service
 public class WecomArchiveService {
-    private static final String ARCHIVE_SCOPE = "MOCK_ARCHIVE";
+    private static final String MOCK_ARCHIVE_SCOPE = "MOCK_ARCHIVE";
+    private static final String OFFICIAL_ARCHIVE_SCOPE = "OFFICIAL_ARCHIVE";
     private static final int MAX_CONTENT_BYTES = 2 * 1024 * 1024;
 
     private final WecomRepository repository;
@@ -48,11 +51,17 @@ public class WecomArchiveService {
     private final OutboxService outboxService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final CustomerScopeSupport scopeSupport;
+    private final WecomMediaRegistrationService mediaService;
+    private final WecomRecallService recallService;
+    private final WecomRoomService roomService;
     private final TransactionTemplate transactions;
 
     public WecomArchiveService(WecomRepository repository, WecomAdapterRouter adapterRouter, AesGcmCipher cipher,
                                ObjectProvider<PrivateObjectStorage> objectStorage, OutboxService outboxService,
                                AuditService auditService, ObjectMapper objectMapper,
+                               CustomerScopeSupport scopeSupport, WecomMediaRegistrationService mediaService,
+                               WecomRecallService recallService, WecomRoomService roomService,
                                PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.adapterRouter = adapterRouter;
@@ -61,19 +70,25 @@ public class WecomArchiveService {
         this.outboxService = outboxService;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.scopeSupport = scopeSupport;
+        this.mediaService = mediaService;
+        this.recallService = recallService;
+        this.roomService = roomService;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
     public WecomSyncResponse sync(CurrentUser user, WecomSyncRequest request) {
+        WecomAdapter adapter = adapterRouter.adapter(user.tenantId());
+        String archiveScope = archiveScope(adapter);
         List<String> newObjects = new ArrayList<>();
         WecomSyncResponse response;
         try {
-            response = transactions.execute(status -> doSync(user.tenantId(), request, newObjects));
+            response = transactions.execute(status -> doSync(user.tenantId(), request, adapter, archiveScope, newObjects));
         } catch (BusinessException ex) {
             throw ex;
         } catch (Exception ex) {
             cleanup(newObjects);
-            recordFailure(user, request.corpId());
+            recordFailure(user, request.corpId(), archiveScope);
             throw new BusinessException(ErrorCode.CONFLICT, "企微归档失败，成功游标未推进，请检查缺口后重试");
         }
         if (response == null) {
@@ -84,19 +99,20 @@ public class WecomArchiveService {
         return response;
     }
 
-    private WecomSyncResponse doSync(long tenantId, WecomSyncRequest request, List<String> newObjects) {
-        WecomCursor cursor = lockCursor(tenantId, request.corpId());
+    private WecomSyncResponse doSync(long tenantId, WecomSyncRequest request, WecomAdapter adapter,
+                                     String archiveScope, List<String> newObjects) {
+        WecomCursor cursor = lockCursor(tenantId, request.corpId(), archiveScope);
         long afterSeq = request.cursor() == null ? cursor.lastSeq() : request.cursor();
         if (afterSeq > cursor.lastSeq()) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "回放游标不能超过已确认的成功位置");
         }
-        WecomAdapter adapter = adapterRouter.adapter(tenantId);
         syncContacts(tenantId, request.corpId(), adapter.pullContacts(request.corpId()));
         WecomArchivePage page = adapter.pullArchive(request.corpId(), afterSeq,
                 request.limit() == null ? 50 : request.limit());
         int stored = 0;
         int duplicates = 0;
         int skipped = 0;
+        int recalled = 0;
         long previousSeq = afterSeq;
         for (WecomArchiveMessage source : page.messages()) {
             if (source.seq() <= previousSeq) {
@@ -107,48 +123,80 @@ public class WecomArchiveService {
                 duplicates++;
                 continue;
             }
-            WecomContact contact = repository.findContact(tenantId, request.corpId(),
+            WecomRoomAuthorization room = null;
+            if (source.room()) {
+                room = roomService.authorize(tenantId, request.corpId(), source.conversationId(), source.senderWecomUserid());
+                if (!room.allowed()) {
+                    recordGap(tenantId, request.corpId(), archiveScope, room.gapType(), source.seq(), room.detail());
+                    skipped++;
+                    continue;
+                }
+            }
+            if (source.previousMessageId() != null) {
+                WecomRecallService.RecallResult recallResult = recallService.process(tenantId, request.corpId(), source);
+                if (recallResult != WecomRecallService.RecallResult.REPLAY) {
+                    recalled++;
+                }
+                if (recallResult == WecomRecallService.RecallResult.PENDING) {
+                    recordGap(tenantId, request.corpId(), archiveScope, "RECALL_ORIGINAL_PENDING", source.seq(),
+                            "已记录撤回控制事件，等待原消息补全");
+                }
+                continue;
+            }
+            if (source.processingBlockReason() != null) {
+                recordGap(tenantId, request.corpId(), archiveScope, source.processingBlockReason(), source.seq(),
+                        "消息类型或动作未纳入当前归档范围，未保存正文");
+                skipped++;
+                continue;
+            }
+            WecomContact contact = source.room() ? null : repository.findContact(tenantId, request.corpId(),
                     source.externalUserid(), source.staffUserId()).orElse(null);
-            if (contact == null || !"GRANTED".equals(contact.consentStatus())) {
-                recordGap(tenantId, request.corpId(), "CONSENT_NOT_GRANTED", source.seq(),
+            if (!source.room() && (contact == null || !"GRANTED".equals(contact.consentStatus()))) {
+                recordGap(tenantId, request.corpId(), archiveScope, "CONSENT_NOT_GRANTED", source.seq(),
                         "同意未确认或已撤回，未归档消息内容");
                 skipped++;
                 continue;
             }
-            if (!repository.archiveMemberEnabled(tenantId, request.corpId(), source.staffUserId())) {
-                recordGap(tenantId, request.corpId(), "MEMBER_NOT_COVERED", source.seq(),
+            if (!source.room() && !repository.archiveMemberEnabled(tenantId, request.corpId(), source.staffUserId())) {
+                recordGap(tenantId, request.corpId(), archiveScope, "MEMBER_NOT_COVERED", source.seq(),
                         "成员不在归档覆盖范围，未归档消息内容");
                 skipped++;
                 continue;
             }
-            archiveMessage(tenantId, request.corpId(), contact, source, newObjects);
+            archiveMessage(tenantId, request.corpId(), contact, source, room, archiveScope, newObjects);
             stored++;
         }
         long committedSeq = Math.max(cursor.lastSeq(), page.nextSeq());
-        repository.resolveCollectorGaps(tenantId, request.corpId(), ARCHIVE_SCOPE, Instant.now());
-        List<WecomDataGap> gaps = repository.findOpenGaps(tenantId, request.corpId(), ARCHIVE_SCOPE);
+        repository.resolveCollectorGaps(tenantId, request.corpId(), archiveScope, Instant.now());
+        List<WecomDataGap> gaps = repository.findOpenGaps(tenantId, request.corpId(), archiveScope);
         boolean dataGap = !gaps.isEmpty() || committedSeq == 0;
         String gapReason = !gaps.isEmpty() ? gaps.get(gaps.size() - 1).detailMasked()
                 : committedSeq == 0 ? "尚无已确认覆盖区间，无法判断沟通情况" : null;
         updateCursor(tenantId, cursor, committedSeq, Instant.now(), Instant.now(), "SUCCESS", 0, null,
                 dataGap, gapReason);
         return new WecomSyncResponse(adapter.name(), page.messages().size(), stored, duplicates, skipped,
-                committedSeq, page.hasMore(), dataGap);
+                committedSeq, page.hasMore(), dataGap, recalled);
     }
 
     private void archiveMessage(long tenantId, String corpId, WecomContact contact,
-                                WecomArchiveMessage source, List<String> newObjects) {
+                                WecomArchiveMessage source, WecomRoomAuthorization room,
+                                String archiveScope, List<String> newObjects) {
         try {
             String objectKey = "wecom/" + tenantId + "/" + corpId + "/" + UUID.randomUUID() + ".json.enc";
             String raw = objectMapper.writeValueAsString(Map.of("messageType", source.messageType(), "text", source.text()));
             byte[] encrypted = cipher.encrypt(raw).getBytes(StandardCharsets.UTF_8);
             storage().putObject(objectKey, encrypted, "application/octet-stream");
             newObjects.add(objectKey);
-            String status = contact.customerId() == null ? "UNMATCHED" : "STORED";
-            WecomMessage message = new WecomMessage(null, corpId, source.msgId(), source.seq(), contact.customerId(),
+            Long customerId = contact == null ? null : contact.customerId();
+            String status = !source.room() && customerId == null ? "UNMATCHED" : "STORED";
+            String consent = contact == null ? "GRANTED" : contact.consentStatus();
+            String evidence = contact == null ? null : contact.consentEvidenceRef();
+            Long rosterVersion = room == null ? null : room.room().version();
+            WecomMessage message = new WecomMessage(null, corpId, source.msgId(), source.seq(), customerId,
                     source.externalUserid(), source.staffUserId(), source.conversationId(), source.messageType(),
-                    source.senderType(), source.sentAt(), objectKey, sha256(encrypted), contact.consentStatus(),
-                    contact.consentEvidenceRef(), status, null, null);
+                    source.senderType(), source.sentAt(), objectKey, sha256(encrypted), consent, evidence, status,
+                    null, null, null, null, source.conversationType(), source.senderWecomUserid(),
+                    source.senderStaffUserId(), rosterVersion);
             repository.insertMessage(tenantId, message);
             WecomMessage persisted = repository.findMessage(tenantId, corpId, source.msgId()).orElseThrow();
             Map<String, Object> payload = new LinkedHashMap<>();
@@ -157,11 +205,26 @@ public class WecomArchiveService {
             payload.put("msgId", source.msgId());
             payload.put("archiveSeq", source.seq());
             payload.put("conversationId", source.conversationId());
-            payload.put("customerId", contact.customerId());
+            payload.put("conversationType", source.conversationType());
+            payload.put("customerId", customerId);
+            payload.put("roomRosterVersion", rosterVersion);
             payload.put("contentObjectKey", objectKey);
             payload.put("sentAt", source.sentAt().toString());
             outboxService.append(tenantId, "wecom.message.archived.v1:" + corpId + ":" + source.msgId(),
                     "wecom.message.archived.v1", "wecom", persisted.id().toString(), payload);
+            mediaService.register(tenantId, persisted.id(), source.media());
+            Long recallSeq = recallService.applyPending(tenantId, corpId, persisted);
+            if (recallSeq != null) {
+                repository.resolveGap(tenantId, corpId, archiveScope, "RECALL_ORIGINAL_PENDING", recallSeq, Instant.now());
+            }
+            if (source.room()) {
+                Instant resolvedAt = Instant.now();
+                for (String gapType : List.of("ROOM_CONTEXT_UNCONFIRMED", "ROOM_ARCHIVING_DISABLED",
+                        "ROOM_SENDER_NOT_CONFIRMED", "ROOM_EXTERNAL_PARTICIPANT_REQUIRED",
+                        "CONSENT_NOT_GRANTED", "MEMBER_NOT_COVERED")) {
+                    repository.resolveGap(tenantId, corpId, archiveScope, gapType, source.seq(), resolvedAt);
+                }
+            }
         } catch (BusinessException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -189,11 +252,15 @@ public class WecomArchiveService {
         }
     }
 
-    private WecomCursor lockCursor(long tenantId, String corpId) {
-        return repository.findCursorForUpdate(tenantId, corpId, ARCHIVE_SCOPE).orElseGet(() -> {
-            repository.insertCursor(tenantId, new WecomCursor(null, corpId, ARCHIVE_SCOPE, 0L, null, null,
+    private String archiveScope(WecomAdapter adapter) {
+        return "OFFICIAL_SDK".equals(adapter.name()) ? OFFICIAL_ARCHIVE_SCOPE : MOCK_ARCHIVE_SCOPE;
+    }
+
+    private WecomCursor lockCursor(long tenantId, String corpId, String archiveScope) {
+        return repository.findCursorForUpdate(tenantId, corpId, archiveScope).orElseGet(() -> {
+            repository.insertCursor(tenantId, new WecomCursor(null, corpId, archiveScope, 0L, null, null,
                     "NEVER_SYNCED", 0, null, true, "尚未采集，无法判断沟通情况", 0L));
-            return repository.findCursorForUpdate(tenantId, corpId, ARCHIVE_SCOPE).orElseThrow();
+            return repository.findCursorForUpdate(tenantId, corpId, archiveScope).orElseThrow();
         });
     }
 
@@ -205,20 +272,20 @@ public class WecomArchiveService {
         }
     }
 
-    private void recordGap(long tenantId, String corpId, String type, long seq, String detail) {
-        repository.recordGap(tenantId, corpId, ARCHIVE_SCOPE, type, seq, seq, detail, Instant.now());
+    private void recordGap(long tenantId, String corpId, String archiveScope, String type, long seq, String detail) {
+        repository.recordGap(tenantId, corpId, archiveScope, type, seq, seq, detail, Instant.now());
         outboxService.append(tenantId, "wecom.archive.gap.v1:" + corpId + ":" + type + ":" + seq,
                 "wecom.archive.gap.v1", "wecom", corpId,
                 Map.of("corpId", corpId, "gapType", type, "fromSeq", seq));
     }
 
-    private void recordFailure(CurrentUser user, String corpId) {
+    private void recordFailure(CurrentUser user, String corpId, String archiveScope) {
         try {
             transactions.execute(status -> {
-                WecomCursor cursor = lockCursor(user.tenantId(), corpId);
+                WecomCursor cursor = lockCursor(user.tenantId(), corpId, archiveScope);
                 Instant now = Instant.now();
                 String detail = "采集失败，成功游标未推进，存在覆盖缺口";
-                repository.recordGap(user.tenantId(), corpId, ARCHIVE_SCOPE, "COLLECTOR_ERROR",
+                repository.recordGap(user.tenantId(), corpId, archiveScope, "COLLECTOR_ERROR",
                         cursor.lastSeq(), null, detail, now);
                 updateCursor(user.tenantId(), cursor, cursor.lastSeq(), cursor.lastSuccessAt(), now,
                         "ERROR", cursor.consecutiveFailures() + 1, detail, true, detail);
@@ -232,6 +299,12 @@ public class WecomArchiveService {
         } catch (Exception ignored) {
             // 原始同步异常仍返回统一错误；缺口监控会在下次可用时重试，不能伪造已记录。
         }
+    }
+
+    public WecomMessage requireVisibleMessage(CurrentUser user, long messageId) {
+        CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scopeSupport.scope(user), user);
+        return repository.findReadableMessage(user.tenantId(), messageId, query.scopeType(), query.teamIds(),
+                query.selfId()).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "消息不存在或不在数据范围内"));
     }
 
     public String readContent(WecomMessage message) {

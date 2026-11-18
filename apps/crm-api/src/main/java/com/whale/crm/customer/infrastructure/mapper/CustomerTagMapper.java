@@ -13,6 +13,9 @@ public interface CustomerTagMapper {
     int insertTag(@Param("tenantId") long tenantId, @Param("customerId") long customerId,
                   @Param("tagCode") String tagCode, @Param("createdBy") Long createdBy);
 
+    int insertTagIfAbsent(@Param("tenantId") long tenantId, @Param("customerId") long customerId,
+                          @Param("tagCode") String tagCode, @Param("createdBy") Long createdBy);
+
     int deleteTag(@Param("tenantId") long tenantId, @Param("customerId") long customerId,
                   @Param("tagCode") String tagCode);
 

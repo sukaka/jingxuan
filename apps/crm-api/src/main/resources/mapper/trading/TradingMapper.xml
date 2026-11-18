@@ -81,6 +81,14 @@
     INSERT INTO crm_order_item (tenant_id,order_id,sku_id,package_version_id,sku_code_snapshot,sku_name_snapshot,purchase_quantity,list_amount_fen,paid_allocated_fen,entitlement_snapshot)
     VALUES (#{tenantId},#{entity.orderId},#{entity.skuId},#{entity.packageVersionId},#{entity.skuCodeSnapshot},#{entity.skuNameSnapshot},#{entity.purchaseQuantity},#{entity.listAmountFen},#{entity.paidAllocatedFen},#{entity.entitlementSnapshot})
   </insert>
+  <insert id="insertOrderItemSelection">
+    INSERT INTO crm_order_item_selection
+      (tenant_id,order_item_id,package_version_id,group_code,group_name,min_selections,max_selections,project_id,
+       project_code_snapshot,project_name_snapshot,grant_count,reference_price_fen,sort_order)
+    VALUES (#{tenantId},#{entity.orderItemId},#{entity.packageVersionId},#{entity.groupCode},#{entity.groupName},
+      #{entity.minSelections},#{entity.maxSelections},#{entity.projectId},#{entity.projectCodeSnapshot},
+      #{entity.projectNameSnapshot},#{entity.grantCount},#{entity.referencePriceFen},#{entity.sortOrder})
+  </insert>
   <select id="selectOrderItem" resultType="com.whale.crm.trading.domain.OrderItem">
     SELECT <include refid="orderItemColumns"/> FROM crm_order_item WHERE tenant_id=#{tenantId} AND id=#{id}
   </select>
@@ -137,6 +145,8 @@
     <include refid="scopeCondition"/>
     <if test="customerId != null">AND e.customer_id=#{customerId}</if>
     <if test="status != null and status != ''">AND e.status=#{status}</if>
+    <if test="validTo != null">AND e.valid_to IS NOT NULL AND e.valid_to &lt;=#{validTo}</if>
+    <if test="availableOnly">AND e.available_count &gt; 0</if>
     ORDER BY e.id DESC LIMIT #{size} OFFSET #{offset}
   </select>
   <select id="countEntitlements" resultType="long">
@@ -145,6 +155,8 @@
     <include refid="scopeCondition"/>
     <if test="customerId != null">AND e.customer_id=#{customerId}</if>
     <if test="status != null and status != ''">AND e.status=#{status}</if>
+    <if test="validTo != null">AND e.valid_to IS NOT NULL AND e.valid_to &lt;=#{validTo}</if>
+    <if test="availableOnly">AND e.available_count &gt; 0</if>
   </select>
   <select id="summarizeEntitlements" resultType="com.whale.crm.trading.domain.EntitlementSummary">
     SELECT COALESCE(SUM(e.available_count),0) AS availableCount,

@@ -41,6 +41,7 @@ export interface CustomerDetail extends CustomerListItem {
   spendingLevel: string | null
   birthday: string | null
   attentionProjects: string | null
+  attentionProjectIds?: number[]
   blockerNote: string | null
   remark: string | null
   remarkName: string | null
@@ -74,11 +75,11 @@ export interface CreateCustomerRequest {
   sourceCode?: string
   channelCode?: string
   customerStatus?: string
-  tierCode?: string
   intentLevel?: string
   spendingLevel?: string
   birthday?: string
   attentionProjects?: string
+  projectIds?: number[]
   blockerNote?: string
   remark?: string
   remarkName?: string
@@ -96,11 +97,11 @@ export interface UpdateCustomerRequest {
   sourceCode?: string
   channelCode?: string
   customerStatus?: string
-  tierCode?: string
   intentLevel?: string
   spendingLevel?: string
   birthday?: string
   attentionProjects?: string
+  projectIds?: number[]
   blockerNote?: string
   remark?: string
   version: number

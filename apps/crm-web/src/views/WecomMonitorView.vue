@@ -10,6 +10,7 @@ import StatCard from '../components/prototype/StatCard.vue'
 import PageCard from '../components/prototype/PageCard.vue'
 import { formatDateTime } from './customer/shared'
 import { useReferenceNames } from './references'
+import { aiIntentLabel } from '../utils/aiIntent'
 
 const auth = useAuthStore()
 const { customerLabel, loadCustomerNames } = useReferenceNames()
@@ -19,7 +20,7 @@ const now = Date.now()
 const latest = computed(() => {
   const groups = new Map<string, WecomMessageView>()
   messages.value.forEach((message) => {
-    const key = message.conversationId || message.externalUserid
+    const key = message.conversationId || message.externalUserid || `message-${message.id}`
     if (!groups.has(key) || message.archiveSeq > groups.get(key)!.archiveSeq) groups.set(key, message)
   })
   return [...groups.values()].filter((message) => !overdueOnly.value || waitHours(message) >= 24)
@@ -29,7 +30,7 @@ const customerLast = computed(() => latest.value.filter((message) => message.sen
 const overdue = computed(() => latest.value.filter((message) => waitHours(message) >= 24).length)
 const risks = computed(() => Object.fromEntries(aiJobs.value.filter((job) => job.status === 'PROPOSED' && job.insight?.riskFlags.length).map((job) => [job.conversationId, job.insight!.riskFlags])))
 function waitHours(message: WecomMessageView) { return Math.max(0, Math.round((now - new Date(message.sentAt).getTime()) / 360000) / 10) }
-function intentLabel(type: string) { return ({ APPOINTMENT_INTENT: '预约意向', PRICE_INQUIRY: '价格咨询', REFUND_INTENT: '退款意向', COMPLAINT: '投诉/不满', REPURCHASE_INTENT: '复购意向', SERVICE_EXPERIENCE: '服务后体验', SERVICE_COMPLETION_CLAIM: '服务完成陈述', GENERAL: '未明确' } as Record<string, string>)[type] || '未知意图' }
+function intentLabel(type: string) { return aiIntentLabel(type) }
 function riskLabel(value: string) { return ({ COMPLAINT: '投诉风险', REFUND_REQUEST: '退款诉求', SERVICE_CLAIM: '服务完成陈述', URGENT: '优先复核' } as Record<string, string>)[value] || '未知风险' }
 function statusLabel(status: string) { return ({ QUEUED: '排队等待', RUNNING: '分析中', RETRY: '等待重试', PROPOSED: '待人工确认', FAILED: '分析失败', CONFIRMED: '已生成待办', REJECTED: '已驳回' } as Record<string, string>)[status] || '未知任务状态' }
 function evidenceLabel(ids: number[]) { return ids.map((id) => `消息 #${id}`).join('、') }
@@ -54,8 +55,8 @@ onMounted(async () => {
     <PageCard>
       <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input v-model="keyword" placeholder="客户 / 管家 / 外部身份" clearable style="width:270px" /><el-select v-model="overdueOnly" style="width:190px"><el-option label="全部会话" :value="false" /><el-option label="超过24小时未回复" :value="true" /></el-select></div><span class="proto-note">未读回执尚未接入；AI 风险仅显示真实任务中的待核实建议</span></div><div class="proto-table-wrap">
         <app-table :data="latest">
-          <el-table-column label="客户" min-width="130"><template #default="{row}">{{ row.customerId ? customerLabel(row.customerId) : `待匹配 · ${row.externalUserid}` }}</template></el-table-column>
-          <el-table-column label="所属管家" width="100"><template #default="{row}">#{{ row.staffUserId }}</template></el-table-column>
+          <el-table-column label="客户 / 群聊" min-width="160"><template #default="{row}">{{ row.conversationType === 'ROOM' ? `群聊 · ${row.conversationId}` : row.customerId ? customerLabel(row.customerId) : `待匹配 · ${row.externalUserid}` }}</template></el-table-column>
+          <el-table-column label="所属管家" width="110"><template #default="{row}">{{ row.conversationType === 'ROOM' ? '群内多成员' : `#${row.staffUserId}` }}</template></el-table-column>
           <el-table-column label="最后沟通" min-width="160"><template #default="{row}">{{ formatDateTime(row.sentAt) }}</template></el-table-column>
           <el-table-column label="最后发言方" width="105"><template #default="{row}">{{ row.senderType === 'CUSTOMER' ? '客户' : '管家' }}</template></el-table-column>
           <el-table-column label="等待回复" width="105"><template #default="{row}">{{ row.senderType === 'CUSTOMER' ? `${waitHours(row)} 小时` : '—' }}</template></el-table-column>

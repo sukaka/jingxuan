@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import health, insights, knowledge
+from app.api import health, insights, knowledge, replies
 from app.core.errors import RequestIdMiddleware, error_response, get_request_id
 
 VERSION = "0.1.0"
@@ -16,6 +16,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(insights.router)
     app.include_router(knowledge.router)
+    app.include_router(replies.router)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):

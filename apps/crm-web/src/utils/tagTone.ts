@@ -45,6 +45,8 @@ export function roleTone(roleCode: string): TagTone {
     MANAGER_LEAD: 'info',
     MANAGER: 'teal',
     BUSINESS: 'info',
+    OPERATION: 'success',
+    OPERATION_LEAD: 'orange',
     FINANCE: 'warning',
     INSTITUTION_STAFF: 'dark',
     INSTITUTION_FINANCE: 'warning',

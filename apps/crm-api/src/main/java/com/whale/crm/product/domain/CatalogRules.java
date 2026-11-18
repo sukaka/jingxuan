@@ -1,5 +1,7 @@
 package com.whale.crm.product.domain;
 
+import com.whale.crm.platform.web.BusinessException;
+
 import java.util.List;
 
 public final class CatalogRules {
@@ -8,7 +10,11 @@ public final class CatalogRules {
     }
 
     public static String rulesStatus(PackageVersion version) {
-        if ("CHOOSE_N".equals(version.selectionMode())) {
+        return rulesStatus(version, List.of());
+    }
+
+    public static String rulesStatus(PackageVersion version, List<PackageSelectionGroup> groups) {
+        if ("CHOOSE_N".equals(version.selectionMode()) && groups.isEmpty()) {
             return "PENDING_Q01";
         }
         return "READY";
@@ -23,23 +29,48 @@ public final class CatalogRules {
     }
 
     public static boolean entitlementIssuable(PackageVersion version, List<PackageProject> projects) {
-        return "ACTIVE".equals(version.status())
-                && "READY".equals(rulesStatus(version))
-                && projects.size() > 0
-                && projects.stream().allMatch(item -> item.grantCount() != null && item.grantCount() > 0)
-                && (!"USE_N".equals(version.selectionMode()) && !"CHOOSE_N".equals(version.selectionMode())
-                || version.choiceCount() != null && version.choiceCount() > 0);
+        return entitlementIssuable(version, projects, List.of());
+    }
+
+    public static boolean entitlementIssuable(PackageVersion version, List<PackageProject> projects,
+                                              List<PackageSelectionGroup> groups) {
+        if (!"ACTIVE".equals(version.status()) || projects.isEmpty()
+                || projects.stream().anyMatch(item -> item.grantCount() == null || item.grantCount() <= 0)) {
+            return false;
+        }
+        if ("CHOOSE_N".equals(version.selectionMode())) {
+            return !groups.isEmpty() && validGroups(groups, projects);
+        }
+        return !groups.isEmpty() ? false
+                : !"USE_N".equals(version.selectionMode()) || version.choiceCount() != null && version.choiceCount() > 0;
     }
 
     public static boolean canActivate(PackageVersion version, List<PackageProject> projects) {
+        return canActivate(version, projects, List.of());
+    }
+
+    public static boolean canActivate(PackageVersion version, List<PackageProject> projects,
+                                      List<PackageSelectionGroup> groups) {
         if (projects.isEmpty() || projects.stream().anyMatch(item ->
                 item.grantCount() == null || item.grantCount() <= 0 || !"ACTIVE".equals(item.projectStatus()))) {
             return false;
         }
-        if ("USE_N".equals(version.selectionMode()) || "CHOOSE_N".equals(version.selectionMode())) {
-            return version.choiceCount() != null && version.choiceCount() > 0;
+        if ("CHOOSE_N".equals(version.selectionMode())) {
+            return groups.isEmpty() ? version.choiceCount() != null && version.choiceCount() > 0
+                    : validGroups(groups, projects);
         }
-        return "FIXED".equals(version.selectionMode());
+        if ("USE_N".equals(version.selectionMode())) {
+            return groups.isEmpty() && version.choiceCount() != null && version.choiceCount() > 0;
+        }
+        return "FIXED".equals(version.selectionMode()) && groups.isEmpty();
     }
 
+    private static boolean validGroups(List<PackageSelectionGroup> groups, List<PackageProject> projects) {
+        try {
+            PackageSelectionRules.validateConfiguration(groups, projects);
+            return true;
+        } catch (BusinessException ex) {
+            return false;
+        }
+    }
 }

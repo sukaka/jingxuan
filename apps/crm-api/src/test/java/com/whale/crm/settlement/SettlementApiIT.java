@@ -37,6 +37,7 @@ class SettlementApiIT extends AbstractMysqlIT {
 
     private AuthCookies finance;
     private AuthCookies institutionFinance;
+    private AuthCookies limitedFinance;
     private long institutionFinanceId;
 
     @BeforeAll
@@ -49,11 +50,22 @@ class SettlementApiIT extends AbstractMysqlIT {
         institutionFinanceId = queryLong("SELECT id FROM sys_user WHERE tenant_id=1 AND username=?", username);
         jdbcTemplate.update("INSERT INTO sys_user_role (tenant_id,user_id,role_id) VALUES (1,?,8)", institutionFinanceId);
         institutionFinance = login(username);
+
+        String limitedUsername = "settlement-limited-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        jdbcTemplate.update("INSERT INTO sys_user (tenant_id,org_id,team_id,username,display_name,password_hash,user_type,status) "
+                        + "VALUES (1,1,NULL,?,?,'$2y$10$bA7nD4dAyv5R2OVlUo69k.mU1UkiSPlZV7jvAKKrPp8IMNAQuA7Ri','EMPLOYEE','ACTIVE')",
+                limitedUsername, "有限范围财务");
+        long limitedId = queryLong("SELECT id FROM sys_user WHERE tenant_id=1 AND username=?", limitedUsername);
+        jdbcTemplate.update("INSERT INTO sys_user_role (tenant_id,user_id,role_id) VALUES (1,?,6)", limitedId);
+        jdbcTemplate.update("INSERT INTO sys_data_scope (tenant_id,user_id,resource,scope_type) VALUES (1,?,'institution','SELF')",
+                limitedId);
+        limitedFinance = login(limitedUsername);
     }
 
     @Test
     void postedRedemptionCreatesPendingMonthlyBatchWithRateSnapshotAndUniqueLine() throws Exception {
         long institutionId = newInstitution("MONTHLY");
+        jdbcTemplate.update("UPDATE crm_institution SET settlement_day='8' WHERE tenant_id=1 AND id=?", institutionId);
         long redemptionId = newRedemption(institutionId, "POSTED", "2026-10-20T08:00:00Z");
         Map<String, Object> body = createBody(institutionId, "MONTHLY", "2026-10", List.of(redemptionId));
         String key = key("monthly");
@@ -65,15 +77,33 @@ class SettlementApiIT extends AbstractMysqlIT {
         assertThat(created.at("/batch/amountStatus").asText()).isEqualTo("PENDING_VERIFICATION");
         assertThat(created.at("/batch/grossFen").asLong()).isZero();
         assertThat(created.at("/batch/netPayableFen").asLong()).isZero();
+        assertThat(created.at("/batch/settlementDay").asText()).isEqualTo("8");
+        assertThat(created.at("/batch/settlementDaySource").asText()).isEqualTo("INSTITUTION");
+        assertThat(created.at("/batch/settlementDate").asText()).isEqualTo("2026-10-08");
         assertThat(created.at("/lines/0/redemptionId").asLong()).isEqualTo(redemptionId);
         String snapshot = queryString("SELECT rate_snapshot FROM crm_settlement_line WHERE tenant_id=1 AND settlement_batch_id=?", batchId);
         assertThat(objectMapper.readTree(snapshot).at("/onlineRate").asDouble()).isEqualTo(0.18);
         assertThat(objectMapper.readTree(snapshot).at("/institutionVersion").asLong()).isZero();
 
+        jdbcTemplate.update("UPDATE crm_institution SET settlement_day='20' WHERE tenant_id=1 AND id=?", institutionId);
         JsonNode replay = data(finance.withAuth(post("/api/v1/settlements/batches"))
                 .header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON).content(json(body)));
         assertThat(replay.at("/batch/id").asLong()).isEqualTo(batchId);
+        assertThat(replay.at("/batch/settlementDate").asText()).isEqualTo("2026-10-08");
+        assertThat(queryString("SELECT settlement_day FROM crm_settlement_batch WHERE tenant_id=1 AND id=?", batchId))
+                .isEqualTo("8");
         assertThat(queryInt("SELECT COUNT(*) FROM crm_settlement_line WHERE tenant_id=1 AND redemption_id=?", redemptionId)).isEqualTo(1);
+
+        String secondKey = key("monthly-existing");
+        JsonNode existing = data(finance.withAuth(post("/api/v1/settlements/batches"))
+                .header("Idempotency-Key", secondKey).contentType(MediaType.APPLICATION_JSON).content(json(body)));
+        assertThat(existing.at("/batch/id").asLong()).isEqualTo(batchId);
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_idempotency_record WHERE tenant_id=1 "
+                + "AND scope_code='settlement.batch.create' AND idempotency_key=?", secondKey)).isEqualTo(1);
+        mockMvc.perform(finance.withAuth(post("/api/v1/settlements/batches"))
+                        .header("Idempotency-Key", secondKey).contentType(MediaType.APPLICATION_JSON)
+                        .content(json(createBody(institutionId, "MONTHLY", "2026-11", List.of(redemptionId)))))
+                .andExpect(status().isConflict());
 
         jdbcTemplate.update("UPDATE crm_institution SET settlement_type='PER_REDEMPTION' WHERE tenant_id=1 AND id=?", institutionId);
         mockMvc.perform(finance.withAuth(post("/api/v1/settlements/batches"))
@@ -93,6 +123,7 @@ class SettlementApiIT extends AbstractMysqlIT {
     @Test
     void perRedemptionCreatesSingleBatchAndRejectsWrongPeriodOrInstitution() throws Exception {
         long institutionId = newInstitution("PER_REDEMPTION");
+        jdbcTemplate.update("UPDATE crm_institution SET settlement_day='8' WHERE tenant_id=1 AND id=?", institutionId);
         long redemptionId = newRedemption(institutionId, "POSTED", "2026-10-20T08:00:00Z");
         JsonNode created = data(finance.withAuth(post("/api/v1/settlements/batches"))
                 .header("Idempotency-Key", key("per-success")).contentType(MediaType.APPLICATION_JSON)
@@ -101,6 +132,9 @@ class SettlementApiIT extends AbstractMysqlIT {
         assertThat(created.at("/batch/settlementType").asText()).isEqualTo("PER_REDEMPTION");
         assertThat(created.at("/batch/periodKey").asText()).isEqualTo("REDEMPTION:" + redemptionId);
         assertThat(created.at("/lines")).hasSize(1);
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_settlement_batch WHERE tenant_id=1 AND id=? "
+                        + "AND settlement_day IS NULL AND settlement_day_source IS NULL AND settlement_date IS NULL",
+                created.at("/batch/id").asLong())).isEqualTo(1);
 
         long otherRedemption = newRedemption(institutionId, "POSTED", "2026-10-21T08:00:00Z");
         mockMvc.perform(finance.withAuth(post("/api/v1/settlements/batches"))
@@ -174,6 +208,41 @@ class SettlementApiIT extends AbstractMysqlIT {
                         .cookie(institutionFinance.cookies()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.issues[?(@.institutionId == " + otherInstitution + ")]").isEmpty());
+    }
+
+    @Test
+    void employeeWithoutInstitutionAllScopeCannotReadWriteOrReconcile() throws Exception {
+        long institutionId = newInstitution("MONTHLY");
+        long batchId = newBatch(institutionId, newRedemption(institutionId, "POSTED", "2026-10-20T08:00:00Z"));
+
+        mockMvc.perform(get("/api/v1/settlements/batches").cookie(limitedFinance.cookies()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+        mockMvc.perform(get("/api/v1/settlements/batches/" + batchId).cookie(limitedFinance.cookies()))
+                .andExpect(status().isNotFound());
+
+        long createInstitution = newInstitution("MONTHLY");
+        long createRedemption = newRedemption(createInstitution, "POSTED", "2026-10-20T08:00:00Z");
+        mockMvc.perform(limitedFinance.withAuth(post("/api/v1/settlements/batches"))
+                        .header("Idempotency-Key", key("limited-create")).contentType(MediaType.APPLICATION_JSON)
+                        .content(json(createBody(createInstitution, "MONTHLY", "2026-10", List.of(createRedemption)))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(limitedFinance.withAuth(post("/api/v1/settlements/batches/" + batchId + "/verification"))
+                        .header("Idempotency-Key", key("limited-verify")).contentType(MediaType.APPLICATION_JSON)
+                        .content(json(verifyBody(0, 1000, 100, 900))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(limitedFinance.withAuth(post("/api/v1/settlements/batches/" + batchId + "/payments"))
+                        .header("Idempotency-Key", key("limited-payment")).contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("version", 0, "amountFen", 100, "bankTradeNo", key("LIMITED-BANK"),
+                                "paidAt", Instant.now().toString(), "voucherFileId", 9001, "evidenceRef", "limited"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/settlements/reconciliation").cookie(limitedFinance.cookies()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.issueCount").value(0))
+                .andExpect(jsonPath("$.data.issues").isEmpty());
+
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_settlement_batch WHERE tenant_id=1 AND institution_id=?",
+                createInstitution)).isZero();
+        assertThat(queryString("SELECT amount_status FROM crm_settlement_batch WHERE tenant_id=1 AND id=?", batchId))
+                .isEqualTo("PENDING_VERIFICATION");
     }
 
     @Test

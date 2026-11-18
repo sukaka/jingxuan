@@ -33,13 +33,25 @@ describe('产品目录 API 契约', () => {
     expect(calls[0]?.params).toMatchObject({ page: 2, size: 20, packageId: 201, status: 'ACTIVE', keyword: '水光' })
   })
 
-  it('版本创建传递选择模式和项目整数次数', async () => {
+  it('版本创建传递结构化分组、项目次数和独立参考价', async () => {
     const { adapter, calls } = capture({ id: 301 })
     http.defaults.adapter = adapter
-    await createPackageVersion(201, { selectionMode: 'USE_N', choiceCount: 6, projects: [{ projectId: 101, grantCount: 6, allocationPriceFen: 181100 }] })
+    await createPackageVersion(201, {
+      selectionMode: 'CHOOSE_N',
+      choiceCount: 2,
+      groups: [{ groupCode: 'A', groupName: 'A 组', minSelections: 2, maxSelections: 2, sortOrder: 1 }],
+      projects: [
+        { projectId: 101, grantCount: 1, optionGroup: 'A', referencePriceFen: 80000 },
+        { projectId: 102, grantCount: 1, optionGroup: 'A', referencePriceFen: 40000 },
+      ],
+    })
     expect(calls[0]?.method).toBe('post')
     expect(calls[0]?.url).toBe('/packages/201/versions')
-    expect(calls[0]?.data).toMatchObject({ selectionMode: 'USE_N', choiceCount: 6, projects: [{ projectId: 101, grantCount: 6, allocationPriceFen: 181100 }] })
+    expect(calls[0]?.data).toMatchObject({
+      selectionMode: 'CHOOSE_N',
+      groups: [{ groupCode: 'A', minSelections: 2, maxSelections: 2 }],
+      projects: [{ referencePriceFen: 80000 }, { referencePriceFen: 40000 }],
+    })
   })
 
   it('项目价格直接使用整数分，上架只携带乐观锁版本', async () => {

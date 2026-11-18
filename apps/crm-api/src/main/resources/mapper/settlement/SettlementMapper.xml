@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.whale.crm.settlement.infrastructure.mapper.SettlementMapper">
-  <sql id="batchColumns">id,institution_id AS institutionId,settlement_type AS settlementType,period_key AS periodKey,status,amount_status AS amountStatus,gross_fen AS grossFen,commission_fen AS commissionFen,net_payable_fen AS netPayableFen,paid_fen AS paidFen,rule_version AS ruleVersion,verification_evidence AS verificationEvidence,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="batchColumns">id,institution_id AS institutionId,settlement_type AS settlementType,period_key AS periodKey,settlement_day AS settlementDay,settlement_day_source AS settlementDaySource,settlement_date AS settlementDate,status,amount_status AS amountStatus,gross_fen AS grossFen,commission_fen AS commissionFen,net_payable_fen AS netPayableFen,paid_fen AS paidFen,rule_version AS ruleVersion,verification_evidence AS verificationEvidence,created_at AS createdAt,updated_at AS updatedAt,version</sql>
   <sql id="lineColumns">id,settlement_batch_id AS settlementBatchId,redemption_id AS redemptionId,amount_status AS amountStatus,gross_fen AS grossFen,commission_fen AS commissionFen,payable_fen AS payableFen,rate_snapshot AS rateSnapshot,pending_reason AS pendingReason,created_at AS createdAt</sql>
   <sql id="paymentColumns">id,settlement_batch_id AS settlementBatchId,amount_fen AS amountFen,bank_trade_no AS bankTradeNo,paid_at AS paidAt,voucher_file_id AS voucherFileId,evidence_ref AS evidenceRef,created_by AS createdBy,created_at AS createdAt</sql>
   <sql id="institutionScope">
@@ -15,8 +15,8 @@
   </sql>
 
   <insert id="insertBatch">
-    INSERT INTO crm_settlement_batch (tenant_id,institution_id,settlement_type,period_key,status,amount_status,gross_fen,commission_fen,net_payable_fen,paid_fen)
-    VALUES (#{tenantId},#{entity.institutionId},#{entity.settlementType},#{entity.periodKey},'DRAFT','PENDING_VERIFICATION',0,0,0,0)
+    INSERT INTO crm_settlement_batch (tenant_id,institution_id,settlement_type,period_key,settlement_day,settlement_day_source,settlement_date,status,amount_status,gross_fen,commission_fen,net_payable_fen,paid_fen)
+    VALUES (#{tenantId},#{entity.institutionId},#{entity.settlementType},#{entity.periodKey},#{entity.settlementDay},#{entity.settlementDaySource},#{entity.settlementDate},'DRAFT','PENDING_VERIFICATION',0,0,0,0)
   </insert>
   <select id="selectBatchByPeriod" resultType="com.whale.crm.settlement.domain.SettlementBatch">
     SELECT <include refid="batchColumns"/> FROM crm_settlement_batch

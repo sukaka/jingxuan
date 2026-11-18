@@ -136,6 +136,30 @@ class AiJobApplicationServiceTest {
         verify(repository, never()).insertInsight(any());
     }
 
+    @Test
+    void unknownIntentTypeIsRejectedBeforePersistingCandidate() {
+        AiJob running = job("RUNNING", 1L);
+        when(repository.findById(1L, 1L)).thenReturn(Optional.of(running));
+        when(repository.findByIdForUpdate(1L, 1L)).thenReturn(Optional.of(running));
+        when(currentUserService.loadById(2)).thenReturn(Optional.of(manager));
+        WecomMessage message = message();
+        when(wecomRepository.findReadableMessage(eq(1L), eq(1L), eq("SELF"), anyList(), eq(2L))).thenReturn(Optional.of(message));
+        when(archiveService.readContent(message)).thenReturn("普通咨询");
+        when(catalogService.projects(eq(1L), any(), eq("ACTIVE"), eq(1), eq(100))).thenReturn(new PageResponse<>(List.of(), 0, 1, 100));
+        when(catalogService.institutions(eq(1L), eq(manager), any(), eq("ACTIVE"), eq(1), eq(100))).thenReturn(new PageResponse<>(List.of(), 0, 1, 100));
+        when(providerConfigService.workerConfig(1L)).thenReturn(new AiWorkerClient.ProviderConfig("mock", null, null, null, 30));
+        AiWorkerClient.InsightData unknown = new AiWorkerClient.InsightData("UNKNOWN_INTENT", List.of(), null,
+                null, null, List.of("1"), new BigDecimal("0.72"), List.of(), "UNVERIFIED",
+                false, "未知意图", "", null, List.of());
+        when(workerClient.extract(anyLong(), anyLong(), anyList(), anyList(), anyList(), any()))
+                .thenReturn(new AiWorkerClient.ExtractionResult("mock", "mock-rules-v2", unknown));
+
+        service.execute(1L, 1L);
+
+        verify(repository, never()).insertInsight(any());
+        verify(repository).markRetry(eq(1L), eq(1L), eq(1L), anyString(), any(), eq(true));
+    }
+
     private AiJob job(String status, long version) {
         return new AiJob(1L, 1L, 1010L, "CONV", 2L, "[1]", "hash", "create-key", status,
                 null, null, 1, null, "mock", "mock-rules-v1", null, null, null, null, null, null,

@@ -42,7 +42,7 @@ class WecomSyncSchedulerTest {
         when(users.loadFirstActiveByRole(2L, "ADMIN")).thenReturn(Optional.of(admin));
         when(contacts.corpId(2L)).thenReturn("corp-2");
         when(contacts.sync(admin, "RECONCILE")).thenThrow(new BusinessException(ErrorCode.CONFLICT, "模拟失败"));
-        when(archive.sync(eq(admin), any())).thenReturn(new WecomSyncResponse("MOCK", 1, 1, 0, 0, 1, false, false));
+        when(archive.sync(eq(admin), any())).thenReturn(new WecomSyncResponse("MOCK", 1, 1, 0, 0, 1, false, false, 0));
 
         scheduler.runDuePolicies();
 

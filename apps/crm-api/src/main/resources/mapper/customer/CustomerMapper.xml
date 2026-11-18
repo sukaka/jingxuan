@@ -18,6 +18,8 @@
     <result property="channelCode" column="channel_code"/>
     <result property="customerStatus" column="customer_status"/>
     <result property="tierCode" column="tier_code"/>
+    <result property="tierLocked" column="tier_locked"/>
+    <result property="tierLockReason" column="tier_lock_reason"/>
     <result property="intentLevel" column="intent_level"/>
     <result property="spendingLevel" column="spending_level"/>
     <result property="birthday" column="birthday"/>
@@ -63,7 +65,8 @@
   <sql id="customerColumns">
     id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname, remark_name,
     mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status, tier_code,
-    intent_level, spending_level, birthday, points_cached, attention_projects, blocker_note, remark,
+    tier_locked, tier_lock_reason, intent_level, spending_level, birthday, points_cached, attention_projects,
+    blocker_note, remark,
     first_added_at, first_order_at, last_followup_at, deleted, created_at, updated_at, version
   </sql>
 

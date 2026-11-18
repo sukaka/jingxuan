@@ -66,9 +66,14 @@ export async function listFollowups(query: FollowupListQuery): Promise<PageResul
   return res.data.data
 }
 
-/** POST /followups(followup:write);创建后客户 last_followup_at 由后端依真实跟进计算 */
-export async function createFollowup(request: CreateFollowupRequest): Promise<FollowupItem> {
-  const res = await http.post<ApiResponse<FollowupItem>>('/followups', request)
+/** POST /followups(followup:write);调用方在重试间复用同一幂等键 */
+export async function createFollowup(
+  request: CreateFollowupRequest,
+  idempotencyKey: string = crypto.randomUUID(),
+): Promise<FollowupItem> {
+  const res = await http.post<ApiResponse<FollowupItem>>('/followups', request, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
   return res.data.data
 }
 

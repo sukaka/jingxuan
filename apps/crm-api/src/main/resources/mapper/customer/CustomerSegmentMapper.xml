@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper">
+  <resultMap id="MemberMap" type="com.whale.crm.customer.domain.CustomerListRow">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="ownerStaffId" column="owner_staff_id"/>
+    <result property="ownerName" column="owner_name"/>
+    <result property="teamId" column="team_id"/>
+    <result property="customerNo" column="customer_no"/>
+    <result property="displayName" column="display_name"/>
+    <result property="nickname" column="nickname"/>
+    <result property="mobileCipher" column="mobile_cipher"/>
+    <result property="cityCode" column="city_code"/>
+    <result property="customerStatus" column="customer_status"/>
+    <result property="tierCode" column="tier_code"/>
+    <result property="intentLevel" column="intent_level"/>
+    <result property="pointsCached" column="points_cached"/>
+    <result property="lastFollowupAt" column="last_followup_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="version" column="version"/>
+    <result property="sourceCode" column="source_code"/>
+    <result property="channelCode" column="channel_code"/>
+    <result property="spendingLevel" column="spending_level"/>
+    <result property="birthday" column="birthday"/>
+    <result property="tagCodes" column="tag_codes"/>
+    <result property="nextFollowupAt" column="next_followup_at"/>
+  </resultMap>
+
+  <sql id="segmentColumns">
+    id,tenant_id AS tenantId,name,filter_json AS filterJson,deleted,created_by AS createdBy,
+    created_at AS createdAt,updated_at AS updatedAt,version
+  </sql>
+  <sql id="searchWhere">
+    FROM crm_customer_segment WHERE tenant_id=#{tenantId} AND deleted=0
+    <if test="keyword != null and keyword != ''">AND name LIKE CONCAT('%',#{keyword},'%')</if>
+  </sql>
+  <select id="search" resultType="com.whale.crm.customer.domain.CustomerSegment">
+    SELECT <include refid="segmentColumns"/> <include refid="searchWhere"/>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="count" resultType="long">SELECT COUNT(*) <include refid="searchWhere"/></select>
+  <select id="selectActiveById" resultType="com.whale.crm.customer.domain.CustomerSegment">
+    SELECT <include refid="segmentColumns"/> FROM crm_customer_segment
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND deleted=0
+  </select>
+  <select id="selectActiveByName" resultType="com.whale.crm.customer.domain.CustomerSegment">
+    SELECT <include refid="segmentColumns"/> FROM crm_customer_segment
+    WHERE tenant_id=#{tenantId} AND name=#{name} AND deleted=0
+  </select>
+  <insert id="insert">
+    INSERT INTO crm_customer_segment (tenant_id,name,filter_json,created_by)
+    VALUES (#{tenantId},#{name},#{filterJson},#{createdBy})
+  </insert>
+  <update id="update">
+    UPDATE crm_customer_segment SET name=#{name},filter_json=#{filterJson},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND deleted=0
+  </update>
+  <update id="softDelete">
+    UPDATE crm_customer_segment SET deleted=1,version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND deleted=0
+  </update>
+
+  <sql id="memberWhere">
+    FROM crm_customer c
+    LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
+    WHERE c.tenant_id=#{tenantId} AND c.deleted=0
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id=#{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">AND c.owner_staff_id=#{selfId}</when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+    <if test="filters.cityCodes.size() > 0">
+      AND c.city_code IN <foreach collection="filters.cityCodes" item="code" open="(" separator="," close=")">#{code}</foreach>
+    </if>
+    <if test="filters.tierCodes.size() > 0">
+      AND c.tier_code IN <foreach collection="filters.tierCodes" item="code" open="(" separator="," close=")">#{code}</foreach>
+    </if>
+    <if test="filters.attentionProjectIds.size() > 0">
+      AND EXISTS (SELECT 1 FROM crm_customer_attention_project ap
+                  WHERE ap.tenant_id=c.tenant_id AND ap.customer_id=c.id
+                    AND ap.project_id IN <foreach collection="filters.attentionProjectIds" item="projectId" open="(" separator="," close=")">#{projectId}</foreach>)
+    </if>
+    <if test="filters.purchasedProjectIds.size() > 0">
+      AND EXISTS (SELECT 1 FROM crm_entitlement pe
+                  INNER JOIN crm_entitlement_ledger pl ON pl.tenant_id=pe.tenant_id AND pl.entitlement_id=pe.id
+                  WHERE pe.tenant_id=c.tenant_id AND pe.customer_id=c.id
+                    AND pe.project_id IN <foreach collection="filters.purchasedProjectIds" item="projectId" open="(" separator="," close=")">#{projectId}</foreach>
+                    AND pl.txn_type='GRANT' AND pl.delta_count &gt; 0)
+    </if>
+    <if test="filters.redeemedProjectIds.size() > 0">
+      AND EXISTS (SELECT re.project_id FROM crm_entitlement re
+                  INNER JOIN crm_entitlement_ledger rl ON rl.tenant_id=re.tenant_id AND rl.entitlement_id=re.id
+                  WHERE re.tenant_id=c.tenant_id AND re.customer_id=c.id
+                    AND re.project_id IN <foreach collection="filters.redeemedProjectIds" item="projectId" open="(" separator="," close=")">#{projectId}</foreach>
+                    AND rl.txn_type IN ('REDEEM','CORRECTION_IN')
+                  GROUP BY re.project_id
+                  HAVING SUM(CASE
+                    WHEN rl.txn_type='REDEEM' THEN -rl.delta_count
+                    WHEN rl.txn_type='CORRECTION_IN' AND rl.source_type='REDEMPTION_REVERSAL' THEN -rl.delta_count
+                    ELSE 0 END) &gt;= #{filters.redeemedMinCount})
+    </if>
+  </sql>
+  <sql id="memberColumns">
+    c.id,c.tenant_id,c.owner_staff_id,o.display_name AS owner_name,c.team_id,c.customer_no,
+    c.display_name,c.nickname,c.mobile_cipher,c.city_code,c.customer_status,c.tier_code,c.intent_level,
+    c.points_cached,c.last_followup_at,c.created_at,c.version,c.source_code,c.channel_code,c.spending_level,c.birthday,
+    (SELECT GROUP_CONCAT(ct.tag_code) FROM crm_customer_tag ct
+     WHERE ct.tenant_id=c.tenant_id AND ct.customer_id=c.id) AS tag_codes,
+    (SELECT MAX(f.next_followup_at) FROM crm_followup f
+     WHERE f.tenant_id=c.tenant_id AND f.customer_id=c.id AND f.deleted=0) AS next_followup_at
+  </sql>
+  <select id="searchMembers" resultMap="MemberMap">
+    SELECT <include refid="memberColumns"/> <include refid="memberWhere"/>
+    ORDER BY c.id ASC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countMembers" resultType="long">
+    SELECT COUNT(*) <include refid="memberWhere"/>
+  </select>
+
+  <sql id="batchColumns">
+    id,tenant_id AS tenantId,segment_id AS segmentId,batch_no AS batchNo,operation_type AS operationType,
+    filter_json AS filterJson,member_count AS memberCount,created_by AS createdBy,created_at AS createdAt
+  </sql>
+  <insert id="insertBatch">
+    INSERT INTO crm_customer_segment_batch (tenant_id,segment_id,batch_no,operation_type,filter_json,member_count,created_by)
+    VALUES (#{tenantId},#{segmentId},#{batchNo},#{operationType},#{filterJson},#{memberCount},#{createdBy})
+  </insert>
+  <select id="selectBatchById" resultType="com.whale.crm.customer.domain.CustomerSegmentBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_customer_segment_batch WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectBatchByNo" resultType="com.whale.crm.customer.domain.CustomerSegmentBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_customer_segment_batch WHERE tenant_id=#{tenantId} AND batch_no=#{batchNo}
+  </select>
+  <insert id="insertBatchMember">
+    INSERT INTO crm_customer_segment_batch_member (tenant_id,batch_id,customer_id)
+    VALUES (#{tenantId},#{batchId},#{customerId})
+  </insert>
+</mapper>

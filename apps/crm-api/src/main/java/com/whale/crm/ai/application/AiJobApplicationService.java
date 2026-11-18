@@ -39,6 +39,9 @@ import java.util.Set;
 @Service
 public class AiJobApplicationService {
     private static final Set<String> ACTIONS = Set.of("VERIFY_BALANCE", "ASK_PREFERRED_INSTITUTION", "CREATE_FOLLOWUP_DRAFT", "VERIFY_SERVICE_RECORD", "OFFER_HUMAN_SUPPORT", "VERIFY_PAYMENT_RECORD");
+    private static final Set<String> INTENT_TYPES = Set.of("PACKAGE_QUERY", "APPOINTMENT_INTENT", "VISIT_INTENT",
+            "AFTERCARE_FEEDBACK", "PRICE_INQUIRY", "REFUND_INTENT", "COMPLAINT", "REPURCHASE_INTENT",
+            "FOLLOWUP_REQUIRED", "RISK_EVENT", "SERVICE_EXPERIENCE", "SERVICE_COMPLETION_CLAIM", "GENERAL");
     private final AiJobRepository repository;
     private final WecomRepository wecomRepository;
     private final WecomArchiveService archiveService;
@@ -227,7 +230,8 @@ public class AiJobApplicationService {
         AiWorkerClient.InsightData value = result.insight();
         if (value == null || !"UNVERIFIED".equals(value.factStatus()) || !Boolean.FALSE.equals(value.allowFinancialWrite())
                 || value.evidenceMessageIds() == null || value.evidenceMessageIds().isEmpty()
-                || value.proposedActions() == null || !ACTIONS.containsAll(value.proposedActions())) {
+                || value.proposedActions() == null || !ACTIONS.containsAll(value.proposedActions())
+                || !INTENT_TYPES.contains(value.insightType())) {
             throw new AiWorkerException("AI 输出未通过安全校验", true);
         }
         Set<String> messageIds = context.messages().stream().map(AiWorkerClient.MessageInput::id).collect(java.util.stream.Collectors.toSet());

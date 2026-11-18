@@ -25,13 +25,13 @@ describe('P0-3 订单与权益导航权限', () => {
 
   it('管家订单读取权限只开放我的订单，不隐式开放权益或有赞同步', () => {
     const items = visibleMenuItems(permissions(['order:read']), ['MANAGER'])
-    expect(flatten(items).map((item) => item.path)).toEqual(['/', '/orders'])
+    expect(flatten(items).map((item) => item.path)).toEqual(['/', '/notifications', '/orders'])
   })
 
   it('权益读取权限只开放权益入口，支付确认权限不代替读取权限', () => {
     const entitlementOnly = visibleMenuItems(permissions(['entitlement:read']))
     const confirmOnly = visibleMenuItems(permissions(['order:confirm_payment']))
-    expect(flatten(entitlementOnly).map((item) => item.path)).toEqual(['/', '/entitlements'])
-    expect(flatten(confirmOnly).map((item) => item.path)).toEqual(['/'])
+    expect(flatten(entitlementOnly).map((item) => item.path)).toEqual(['/', '/notifications', '/entitlements'])
+    expect(flatten(confirmOnly).map((item) => item.path)).toEqual(['/', '/notifications'])
   })
 })

@@ -35,6 +35,8 @@ public interface TradingMapper {
                      @Param("customerId") Long customerId, @Param("status") String status);
 
     void insertOrderItem(@Param("tenantId") long tenantId, @Param("entity") OrderItem item);
+    void insertOrderItemSelection(@Param("tenantId") long tenantId,
+                                  @Param("entity") com.whale.crm.trading.domain.OrderItemSelection selection);
     OrderItem selectOrderItem(@Param("tenantId") long tenantId, @Param("id") long id);
     List<OrderItem> selectOrderItems(@Param("tenantId") long tenantId, @Param("orderId") long orderId);
     void insertPayment(@Param("tenantId") long tenantId, @Param("entity") PaymentTxn payment);
@@ -54,10 +56,14 @@ public interface TradingMapper {
     List<Entitlement> searchEntitlements(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
                                          @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
                                          @Param("customerId") Long customerId, @Param("status") String status,
+                                         @Param("validTo") java.time.LocalDate validTo,
+                                         @Param("availableOnly") boolean availableOnly,
                                          @Param("offset") int offset, @Param("size") int size);
     long countEntitlements(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
                            @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
-                           @Param("customerId") Long customerId, @Param("status") String status);
+                           @Param("customerId") Long customerId, @Param("status") String status,
+                           @Param("validTo") java.time.LocalDate validTo,
+                           @Param("availableOnly") boolean availableOnly);
     com.whale.crm.trading.domain.EntitlementSummary summarizeEntitlements(
             @Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
             @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,

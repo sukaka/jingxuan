@@ -6,11 +6,13 @@ import com.whale.crm.customer.api.dto.CustomerDetailResponse;
 import com.whale.crm.customer.api.dto.CustomerIdentityItemResponse;
 import com.whale.crm.customer.api.dto.CustomerListItemResponse;
 import com.whale.crm.customer.api.dto.CustomerPointsResponse;
+import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.api.dto.OwnershipHistoryItemResponse;
 import com.whale.crm.customer.api.dto.PointsAdjustmentRequest;
 import com.whale.crm.customer.api.dto.PointsLedgerItemResponse;
 import com.whale.crm.customer.api.dto.UpdateCustomerRequest;
 import com.whale.crm.customer.domain.Customer;
+import com.whale.crm.customer.domain.CustomerAttentionProjectRepository;
 import com.whale.crm.customer.domain.CustomerIdentity;
 import com.whale.crm.customer.domain.CustomerIdentityRepository;
 import com.whale.crm.customer.domain.CustomerListRow;
@@ -19,6 +21,7 @@ import com.whale.crm.customer.domain.CustomerRepository;
 import com.whale.crm.customer.domain.CustomerTagRepository;
 import com.whale.crm.customer.domain.PointsLedgerEntry;
 import com.whale.crm.customer.domain.PointsLedgerRepository;
+import com.whale.crm.customer.tier.application.CustomerTierReviewService;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.dictionary.application.DictionaryApplicationService;
 import com.whale.crm.platform.idempotency.IdempotencyRecord;
@@ -68,6 +71,9 @@ public class CustomerApplicationService {
     private final IdempotencyService idempotencyService;
     private final ObjectMapper objectMapper;
     private final StewardDirectory stewardDirectory;
+    private final CustomerTierReviewService tierReviewService;
+    private final CustomerAttentionProjectRepository attentionProjectRepository;
+    private final CustomerProjectSupport projectSupport;
 
     public CustomerApplicationService(CustomerRepository customerRepository,
                                       CustomerIdentityRepository identityRepository,
@@ -81,7 +87,10 @@ public class CustomerApplicationService {
                                       DictionaryApplicationService dictionaryService,
                                       IdempotencyService idempotencyService,
                                       ObjectMapper objectMapper,
-                                      StewardDirectory stewardDirectory) {
+                                      StewardDirectory stewardDirectory,
+                                      CustomerTierReviewService tierReviewService,
+                                      CustomerAttentionProjectRepository attentionProjectRepository,
+                                      CustomerProjectSupport projectSupport) {
         this.customerRepository = customerRepository;
         this.identityRepository = identityRepository;
         this.tagRepository = tagRepository;
@@ -95,6 +104,9 @@ public class CustomerApplicationService {
         this.idempotencyService = idempotencyService;
         this.objectMapper = objectMapper;
         this.stewardDirectory = stewardDirectory;
+        this.tierReviewService = tierReviewService;
+        this.attentionProjectRepository = attentionProjectRepository;
+        this.projectSupport = projectSupport;
     }
 
     @Transactional(readOnly = true)
@@ -131,6 +143,9 @@ public class CustomerApplicationService {
             return detail(tenantId, user, originalId);
         }
 
+        if (request.tierCode() != null) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "客户等级只能通过自动分级或专用人工调整接口设置");
+        }
         boolean hasNickname = request.nickname() != null && !request.nickname().isBlank();
         boolean hasDisplayName = request.displayName() != null && !request.displayName().isBlank();
         if (!hasNickname && !hasDisplayName) {
@@ -151,6 +166,8 @@ public class CustomerApplicationService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "所属管家超出当前数据范围");
         }
         validateNewCustomerDictionaryOptions(tenantId, request);
+        List<Long> projectIds = normalizeProjectIds(request.projectIds());
+        projectSupport.requireExisting(tenantId, projectIds);
 
         Customer customer = new Customer();
         customer.setTenantId(tenantId);
@@ -166,7 +183,7 @@ public class CustomerApplicationService {
         customer.setSourceCode(blankToNull(request.sourceCode()));
         customer.setChannelCode(blankToNull(request.channelCode()));
         customer.setCustomerStatus(blankToNull(request.customerStatus()));
-        customer.setTierCode(blankToNull(request.tierCode()));
+        customer.setTierCode(null);
         customer.setIntentLevel(blankToNull(request.intentLevel()));
         customer.setSpendingLevel(blankToNull(request.spendingLevel()));
         customer.setBirthday(request.birthday());
@@ -177,6 +194,9 @@ public class CustomerApplicationService {
         customerRepository.insert(customer);
         String customerNo = String.format("C%010d", customer.getId());
         customerRepository.backfillCustomerNo(tenantId, customer.getId(), customerNo);
+        for (Long projectId : projectIds) {
+            attentionProjectRepository.insert(tenantId, customer.getId(), projectId, user.userId());
+        }
 
         idempotencyService.recordSuccess(tenantId, IDEMPOTENCY_SCOPE_CREATE, idempotencyKey,
                 "CUSTOMER", Long.toString(customer.getId()), payload);
@@ -198,6 +218,14 @@ public class CustomerApplicationService {
     public CustomerDetailResponse update(long tenantId, CurrentUser user, long customerId,
                                          UpdateCustomerRequest request) {
         Customer existing = scopeSupport.requireVisible(tenantId, customerId, user);
+        if (request.tierCode() != null) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "客户等级只能通过自动分级或专用人工调整接口设置");
+        }
+        if (request.attentionProjects() != null && !java.util.Objects.equals(
+                blankToNull(request.attentionProjects()), existing.getAttentionProjects())) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED,
+                    "旧关注项目文本仅作 legacy 保留，请使用 projectIds 维护，系统不会猜测映射");
+        }
         validateChangedCustomerDictionaryOptions(tenantId, request, existing);
         Map<String, Object> beforeSnapshot = customerSnapshot(existing);
 
@@ -221,11 +249,11 @@ public class CustomerApplicationService {
         updated.setSourceCode(request.sourceCode() != null ? blankToNull(request.sourceCode()) : existing.getSourceCode());
         updated.setChannelCode(request.channelCode() != null ? blankToNull(request.channelCode()) : existing.getChannelCode());
         updated.setCustomerStatus(request.customerStatus() != null ? blankToNull(request.customerStatus()) : existing.getCustomerStatus());
-        updated.setTierCode(request.tierCode() != null ? blankToNull(request.tierCode()) : existing.getTierCode());
+        updated.setTierCode(existing.getTierCode());
         updated.setIntentLevel(request.intentLevel() != null ? blankToNull(request.intentLevel()) : existing.getIntentLevel());
         updated.setSpendingLevel(request.spendingLevel() != null ? blankToNull(request.spendingLevel()) : existing.getSpendingLevel());
         updated.setBirthday(request.birthday() != null ? request.birthday() : existing.getBirthday());
-        updated.setAttentionProjects(request.attentionProjects() != null ? blankToNull(request.attentionProjects()) : existing.getAttentionProjects());
+        updated.setAttentionProjects(existing.getAttentionProjects());
         updated.setBlockerNote(request.blockerNote() != null ? blankToNull(request.blockerNote()) : existing.getBlockerNote());
         updated.setRemark(request.remark() != null ? blankToNull(request.remark()) : existing.getRemark());
         updated.setFirstAddedAt(existing.getFirstAddedAt());
@@ -237,7 +265,16 @@ public class CustomerApplicationService {
         if (rows == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
         }
+        if (request.projectIds() != null) {
+            List<Long> projectIds = normalizeProjectIds(request.projectIds());
+            projectSupport.requireExisting(tenantId, projectIds);
+            attentionProjectRepository.deleteByCustomerId(tenantId, customerId);
+            for (Long projectId : projectIds) {
+                attentionProjectRepository.insert(tenantId, customerId, projectId, user.userId());
+            }
+        }
         Customer after = customerRepository.findById(tenantId, customerId).orElseThrow();
+        tierReviewService.markCustomerChanged(tenantId, customerId, user.userId());
         auditService.record(tenantId, user.userId(), AuditService.ACTION_CUSTOMER_UPDATE, "CUSTOMER",
                 Long.toString(customerId), beforeSnapshot, customerSnapshot(after), null);
         return toDetail(after, ownerNameOf(tenantId, after),
@@ -256,6 +293,11 @@ public class CustomerApplicationService {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签代码不能为空");
             }
             target.add(code.strip());
+        }
+        for (String code : target) {
+            if (!before.contains(code)) {
+                dictionaryService.requireActiveOption(tenantId, "customerTags", code);
+            }
         }
         for (String code : before) {
             if (!target.contains(code)) {
@@ -345,6 +387,21 @@ public class CustomerApplicationService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<CustomerTimelineItemResponse> timelineOwnership(long tenantId, CurrentUser user, long customerId,
+                                                                 CustomerTimelineCursor cursor) {
+        return ownershipHistory(tenantId, user, customerId).stream().map(item -> {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("oldOwnerId", item.oldOwnerId());
+            details.put("oldOwnerName", item.oldOwnerName());
+            details.put("newOwnerId", item.newOwnerId());
+            details.put("newOwnerName", item.newOwnerName());
+            Instant occurredAt = item.effectiveAt() != null ? item.effectiveAt() : item.createdAt();
+            return CustomerTimelineItemResponse.of("OWNERSHIP", item.id(), "OWNERSHIP", occurredAt,
+                    "客户归属变更", item.reason(), details, item.changedBy());
+        }).filter(item -> cursor == null || cursor.allows(item)).toList();
+    }
+
     // ========== 内部 ==========
 
     private String ownerNameOf(long tenantId, Customer customer) {
@@ -378,7 +435,8 @@ public class CustomerApplicationService {
                 customer.getSpendingLevel(), customer.getBirthday(), customer.getAttentionProjects(),
                 customer.getBlockerNote(), customer.getRemark(), customer.getRemarkName(),
                 customer.getFirstAddedAt(), customer.getFirstOrderAt(),
-                tagCodes == null ? List.of() : new ArrayList<>(tagCodes), identityItems, customer.isDeleted());
+                tagCodes == null ? List.of() : new ArrayList<>(tagCodes), identityItems, customer.isDeleted(),
+                attentionProjectRepository.findProjectIds(customer.getTenantId(), customer.getId()));
     }
 
     /**
@@ -402,6 +460,9 @@ public class CustomerApplicationService {
         snapshot.put("spendingLevel", customer.getSpendingLevel());
         snapshot.put("ownerStaffId", customer.getOwnerStaffId());
         snapshot.put("teamId", customer.getTeamId());
+        snapshot.put("legacyAttentionProjects", customer.getAttentionProjects());
+        snapshot.put("attentionProjectIds",
+                attentionProjectRepository.findProjectIds(customer.getTenantId(), customer.getId()));
         snapshot.put("deleted", customer.isDeleted());
         return snapshot;
     }
@@ -434,7 +495,6 @@ public class CustomerApplicationService {
         requireActiveDictionaryOption(tenantId, "customerSources", request.sourceCode());
         requireActiveDictionaryOption(tenantId, "customerChannels", request.channelCode());
         requireActiveDictionaryOption(tenantId, "customerStatuses", request.customerStatus());
-        requireActiveDictionaryOption(tenantId, "customerTiers", request.tierCode());
     }
 
     private void validateChangedCustomerDictionaryOptions(long tenantId, UpdateCustomerRequest request,
@@ -444,7 +504,6 @@ public class CustomerApplicationService {
         validateChangedDictionaryOption(tenantId, "customerChannels", request.channelCode(), existing.getChannelCode());
         validateChangedDictionaryOption(tenantId, "customerStatuses", request.customerStatus(),
                 existing.getCustomerStatus());
-        validateChangedDictionaryOption(tenantId, "customerTiers", request.tierCode(), existing.getTierCode());
     }
 
     private void validateChangedDictionaryOption(long tenantId, String dictCode, String requestedCode,
@@ -463,6 +522,20 @@ public class CustomerApplicationService {
         if (normalized != null) {
             dictionaryService.requireActiveOption(tenantId, dictCode, normalized);
         }
+    }
+
+    private List<Long> normalizeProjectIds(List<Long> input) {
+        if (input == null) {
+            return List.of();
+        }
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
+        for (Long id : input) {
+            if (id == null || id <= 0) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "关注项目ID必须为正整数");
+            }
+            ids.add(id);
+        }
+        return ids.stream().sorted().toList();
     }
 
     private static String blankToNull(String value) {

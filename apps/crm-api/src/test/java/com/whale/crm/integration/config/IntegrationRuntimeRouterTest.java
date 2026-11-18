@@ -50,10 +50,18 @@ class IntegrationRuntimeRouterTest {
 
         DisabledWecomAdapter disabled = mock(DisabledWecomAdapter.class);
         MockWecomAdapter mockArchive = mock(MockWecomAdapter.class);
+        com.whale.crm.integration.wecom.adapter.OfficialWecomArchiveAdapter officialArchive =
+                mock(com.whale.crm.integration.wecom.adapter.OfficialWecomArchiveAdapter.class);
+        com.whale.crm.integration.wecom.adapter.WecomArchiveOfficialProperties archiveProperties =
+                new com.whale.crm.integration.wecom.adapter.WecomArchiveOfficialProperties(1L, "corp", "secret",
+                        "sdk", "keys", "", "", 15);
         when(runtime.wecomArchiveRealEnabled(1L)).thenReturn(false, true);
-        WecomAdapterRouter archive = new WecomAdapterRouter(provider(mockArchive), disabled, runtime);
+        when(runtime.wecomArchiveRealEnabled(2L)).thenReturn(true);
+        WecomAdapterRouter archive = new WecomAdapterRouter(provider(mockArchive), disabled, officialArchive,
+                archiveProperties, runtime);
         assertThat(archive.adapter(1L)).isSameAs(mockArchive);
-        assertThat(archive.adapter(1L)).isSameAs(disabled);
+        assertThat(archive.adapter(1L)).isSameAs(officialArchive);
+        assertThat(archive.adapter(2L)).isSameAs(disabled);
     }
 
     private static <T> ObjectProvider<T> provider(T value) {

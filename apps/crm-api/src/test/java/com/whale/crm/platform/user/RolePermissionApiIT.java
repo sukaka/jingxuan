@@ -20,7 +20,7 @@ class RolePermissionApiIT extends AbstractMysqlIT {
         AuthCookies admin = login("admin");
         mockMvc.perform(get("/api/v1/permissions").cookie(admin.cookies()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(63))
+                .andExpect(jsonPath("$.data.length()").value(73))
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'customer:merge_reverse')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'ai:knowledge:config')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'ai:knowledge:publish')]").isNotEmpty())
@@ -38,53 +38,71 @@ class RolePermissionApiIT extends AbstractMysqlIT {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         var roles = objectMapper.readTree(body).at("/data");
-        org.assertj.core.api.Assertions.assertThat(roles).hasSize(8);
+        org.assertj.core.api.Assertions.assertThat(roles).hasSize(10);
         for (var role : roles) {
             switch (role.get("roleCode").asText()) {
                 case "ADMIN" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(63);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(73);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
                             .contains("redemption:approve", "customer:merge_reverse", "integration:runtime:manage");
                 }
                 case "OWNER" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(23);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(29);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
-                            .contains("ai:knowledge:read")
+                            .contains("ai:knowledge:read", "complaint:read", "wecom:sidebar:view", "quickreply:view",
+                                    "quickreply:manage")
                             .doesNotContain("ai:knowledge:publish");
                 }
                 case "MANAGER_LEAD" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(31);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(36);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
-                            .contains("redemption:read", "redemption:submit", "redemption:reverse", "ai:write", "ai:confirm")
+                            .contains("redemption:read", "redemption:submit", "redemption:reverse", "ai:write", "ai:confirm",
+                                    "complaint:read", "complaint:write", "wecom:sidebar:view", "quickreply:view")
                             .doesNotContain("redemption:approve");
                 }
                 case "MANAGER" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(25);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(30);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
-                            .contains("redemption:read", "redemption:submit", "redemption:reverse", "ai:write")
+                            .contains("redemption:read", "redemption:submit", "redemption:reverse", "ai:write",
+                                    "complaint:read", "complaint:write", "wecom:sidebar:view", "quickreply:view")
                             .doesNotContain("redemption:approve");
                 }
-                case "BUSINESS" -> org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(16);
+                case "BUSINESS" -> org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(20);
+                case "OPERATION" -> {
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(19);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).extracting(node -> node.asText())
+                            .contains("campaign:write", "material:write", "risk:write", "complaint:read",
+                                    "wecom:sidebar:view", "quickreply:view")
+                            .doesNotContain("campaign:review", "material:review", "order:confirm_payment",
+                                    "export:create", "user:write");
+                }
+                case "OPERATION_LEAD" -> {
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(24);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).extracting(node -> node.asText())
+                            .contains("campaign:review", "material:review", "risk:write", "complaint:read",
+                                    "complaint:write", "complaint:config", "wecom:sidebar:view", "quickreply:manage")
+                            .doesNotContain("order:confirm_payment", "export:create", "user:write");
+                }
                 case "FINANCE" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(15);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(16);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
                             .contains("redemption:approve", "redemption:read")
                             .doesNotContain("redemption:reverse");
                 }
                 case "INSTITUTION_STAFF" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(9);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(10);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
                             .contains("redemption:post", "redemption:reverse", "institution:change_request")
                             .doesNotContain("redemption:approve");
                 }
                 case "INSTITUTION_FINANCE" ->
-                        org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(4);
+                        org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(5);
                 default -> throw new AssertionError("未知角色: " + role.get("roleCode").asText());
             }
         }

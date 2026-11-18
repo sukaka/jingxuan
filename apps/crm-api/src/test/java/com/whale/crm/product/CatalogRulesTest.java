@@ -47,6 +47,6 @@ class CatalogRulesTest {
 
     private PackageProject project(int grantCount) {
         return new PackageProject(null, 1L, 101L, "PRJ", "项目", "TEST", 100L, "ACTIVE",
-                grantCount, 1, 0L, "MAIN", 0L);
+                grantCount, 1, 0L, "MAIN", 100L, 0L);
     }
 }

@@ -18,6 +18,9 @@ public class OutboxKafkaConfiguration {
     public static final String YOUZAN_EVENTS_TOPIC = "crm.youzan.events.v1";
     public static final String WECOM_EVENTS_TOPIC = "crm.wecom.events.v1";
     public static final String KNOWLEDGE_SYNC_TOPIC = "crm.knowledge.sync.v1";
+    public static final String NOTIFICATION_REQUEST_TOPIC = "crm.notification.request.v1";
+    public static final String FOLLOWUP_EVENTS_TOPIC = "crm.followup.events.v1";
+    public static final String CUSTOMER_EVENTS_TOPIC = "crm.customer.events.v1";
 
     @Bean
     public NewTopic orderEventsTopic(
@@ -114,6 +117,36 @@ public class OutboxKafkaConfiguration {
             @Value("${app.outbox.kafka.partitions:1}") int partitions,
             @Value("${app.outbox.kafka.replication-factor:1}") short replicationFactor) {
         return TopicBuilder.name(KNOWLEDGE_SYNC_TOPIC)
+                .partitions(partitions)
+                .replicas(replicationFactor)
+                .build();
+    }
+
+    @Bean
+    public NewTopic notificationRequestTopic(
+            @Value("${app.outbox.kafka.partitions:1}") int partitions,
+            @Value("${app.outbox.kafka.replication-factor:1}") short replicationFactor) {
+        return TopicBuilder.name(NOTIFICATION_REQUEST_TOPIC)
+                .partitions(partitions)
+                .replicas(replicationFactor)
+                .build();
+    }
+
+    @Bean
+    public NewTopic followupEventsTopic(
+            @Value("${app.outbox.kafka.partitions:1}") int partitions,
+            @Value("${app.outbox.kafka.replication-factor:1}") short replicationFactor) {
+        return TopicBuilder.name(FOLLOWUP_EVENTS_TOPIC)
+                .partitions(partitions)
+                .replicas(replicationFactor)
+                .build();
+    }
+
+    @Bean
+    public NewTopic customerEventsTopic(
+            @Value("${app.outbox.kafka.partitions:1}") int partitions,
+            @Value("${app.outbox.kafka.replication-factor:1}") short replicationFactor) {
+        return TopicBuilder.name(CUSTOMER_EVENTS_TOPIC)
                 .partitions(partitions)
                 .replicas(replicationFactor)
                 .build();

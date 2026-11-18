@@ -4,17 +4,28 @@ import StatusPill from '../customer/StatusPill.vue'
 import { fenToYuan } from '../../utils/money'
 import { optionGroupLabel, selectionModeLabel, skuStatusLabel, versionStatusLabel } from './catalogUi'
 
-defineProps<{
+const props = defineProps<{
   modelValue: boolean
   snapshot: PackageVersionSnapshot | null
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; createSku: [] }>()
+
+function groupSummary(snapshot: PackageVersionSnapshot): string {
+  return (snapshot.groups ?? [])
+    .map((group) => `${group.groupName}：选 ${group.minSelections === group.maxSelections ? group.minSelections : `${group.minSelections}-${group.maxSelections}`} 项`)
+    .join(' · ')
+}
+
+function groupName(groupCode: string): string {
+  const group = props.snapshot?.groups.find((item) => item.groupCode === groupCode)
+  return group ? `${group.groupName}（${group.groupCode}）` : optionGroupLabel(groupCode)
+}
 </script>
 
 <template>
   <el-drawer
     :model-value="modelValue"
-    size="min(900px, 96vw)"
+    size="min(960px, 96vw)"
     :title="snapshot ? `${snapshot.packageName} · V${snapshot.versionNo}` : '版本快照'"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -22,7 +33,8 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; createSku: [] 
       <div class="snapshot-head">
         <div>
           <div class="crm-muted">{{ snapshot.packageCode }} · 快照版本 {{ snapshot.version }}</div>
-          <h3>{{ snapshot.selectionMode === 'CHOOSE_N' ? `可从候选子项目中选择 ${snapshot.choiceCount || '待定'} 项（不是使用次数）` : `${selectionModeLabel(snapshot.selectionMode)} / ${snapshot.choiceCount || '-'}` }}</h3>
+          <h3 v-if="snapshot.groups.length">{{ groupSummary(snapshot) }}</h3>
+          <h3 v-else>{{ snapshot.selectionMode === 'CHOOSE_N' ? `可从候选子项目中选择 ${snapshot.choiceCount || '待定'} 项（不是使用次数）` : `${selectionModeLabel(snapshot.selectionMode)} / ${snapshot.choiceCount || '-'}` }}</h3>
         </div>
         <StatusPill :text="versionStatusLabel(snapshot.status)" :tone="snapshot.status === 'ACTIVE' ? 'success' : snapshot.status === 'DRAFT' ? 'warning' : 'dark'" />
       </div>
@@ -37,7 +49,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; createSku: [] 
         v-if="snapshot.allocationStatus === 'PENDING_Q02'"
         type="info"
         :closable="false"
-        title="Q02 多项目金额分摊未配置：不会计算机构应结金额"
+        title="Q02 多项目金额分摊未配置：不会计算机构应结金额，也不按单品参考价自动分摊退款"
         class="block-gap"
       />
       <el-descriptions :column="2" border class="block-gap">
@@ -47,22 +59,36 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; createSku: [] 
           <StatusPill :text="snapshot.entitlementIssuable ? '配置完整' : '不可发放'" :tone="snapshot.entitlementIssuable ? 'success' : 'warning'" />
         </el-descriptions-item>
         <el-descriptions-item label="分摊状态">{{ snapshot.allocationStatus === 'PENDING_Q02' ? 'Q02 待确认' : '已配置' }}</el-descriptions-item>
-        <el-descriptions-item label="选择规则" :span="2">{{ snapshot.selectionRules || '未填写；按待确认处理' }}</el-descriptions-item>
+        <el-descriptions-item label="选择规则" :span="2">{{ snapshot.selectionRules || '未填写补充说明' }}</el-descriptions-item>
       </el-descriptions>
+
+      <template v-if="snapshot.groups.length">
+        <h4 class="section-title">分组选择规则</h4>
+        <app-table :data="snapshot.groups" size="small" class="block-gap">
+          <el-table-column prop="groupCode" label="组编码" width="90" />
+          <el-table-column prop="groupName" label="组名称" min-width="140" />
+          <el-table-column label="最少选择" width="100" align="right"><template #default="{ row }">{{ row.minSelections }}</template></el-table-column>
+          <el-table-column label="最多选择" width="100" align="right"><template #default="{ row }">{{ row.maxSelections }}</template></el-table-column>
+          <el-table-column prop="sortOrder" label="顺序" width="80" align="right" />
+        </app-table>
+      </template>
 
       <h4 class="section-title">子项目与权益模板</h4>
       <app-table :data="snapshot.projects" size="small" class="block-gap">
-        <el-table-column prop="projectName" label="子项目" min-width="170" />
-        <el-table-column prop="grantCount" label="次数 / 上限" width="110" align="right" />
-        <el-table-column label="选项组" width="100">
-          <template #default="{ row }">{{ optionGroupLabel(row.optionGroup) }}</template>
+        <el-table-column prop="projectName" label="子项目" min-width="160" />
+        <el-table-column prop="grantCount" label="次数" width="80" align="right" />
+        <el-table-column label="选项组" min-width="130">
+          <template #default="{ row }">{{ groupName(row.optionGroup) }}</template>
         </el-table-column>
-        <el-table-column label="分摊基准（元）" width="130" align="right">
+        <el-table-column label="单品参考价（元）" width="135" align="right">
+          <template #default="{ row }">{{ fenToYuan(row.referencePriceFen) }}</template>
+        </el-table-column>
+        <el-table-column label="分摊基准（元）" width="125" align="right">
           <template #default="{ row }">{{ fenToYuan(row.allocationPriceFen) }}</template>
         </el-table-column>
       </app-table>
 
-      <h4 class="section-title">关联 SKU</h4>
+      <h4 class="section-title">关联 SKU（独立售价）</h4>
       <app-table :data="snapshot.skus" size="small" class="block-gap">
         <el-table-column prop="skuCode" label="SKU 编码" min-width="170" />
         <el-table-column prop="specName" label="规格" min-width="100" />
@@ -81,7 +107,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; createSku: [] 
         </el-tag>
         <span v-if="snapshot.institutions.length === 0" class="crm-muted">尚未配置机构，不能上架</span>
       </div>
-      <div class="snapshot-note">已激活版本只能创建新版本，不能覆盖本快照。订单阶段将另行保存成交时快照。</div>
+      <div class="snapshot-note">已激活版本只能创建新版本，不能覆盖本快照。订单保存实际组与项目、次数和参考价，套餐售价不要求等于参考价合计。</div>
     </template>
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">关闭</el-button>

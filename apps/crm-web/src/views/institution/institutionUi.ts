@@ -6,10 +6,15 @@ export type InstitutionTone = 'success' | 'warning' | 'info' | 'dark' | 'danger'
 export interface SensitiveFieldMeta {
   code: string
   label: string
-  kind: 'text' | 'textarea' | 'rate' | 'fen' | 'boolean' | 'businessType' | 'ownership' | 'grade' | 'settlementType'
+  kind: 'text' | 'textarea' | 'rate' | 'fen' | 'boolean' | 'businessType' | 'ownership' | 'grade' | 'settlementType' | 'settlementDay'
 }
 
 const SINGLE_REVIEW_FIELDS = new Set(['bankName', 'bankAccount', 'taxId', 'settlementName', 'fullName', 'businessTypeCode', 'ownershipCode', 'gradeCode'])
+
+export const SETTLEMENT_DAY_OPTIONS = [
+  { value: 'LAST_DAY', label: '每月最后一天' },
+  ...Array.from({ length: 28 }, (_, index) => ({ value: String(index + 1), label: `每月 ${index + 1} 日` })),
+]
 
 export const SENSITIVE_FIELDS: SensitiveFieldMeta[] = [
   { code: 'fullName', label: '机构全称', kind: 'text' },
@@ -17,6 +22,7 @@ export const SENSITIVE_FIELDS: SensitiveFieldMeta[] = [
   { code: 'ownershipCode', label: '机构性质', kind: 'ownership' },
   { code: 'gradeCode', label: '机构等级', kind: 'grade' },
   { code: 'settlementType', label: '结算方式', kind: 'settlementType' },
+  { code: 'settlementDay', label: '月结结算日', kind: 'settlementDay' },
   { code: 'onlineRate', label: '线上佣金率', kind: 'rate' },
   { code: 'offlineRate', label: '线下佣金率', kind: 'rate' },
   { code: 'platformRate', label: '点评等平台佣金率', kind: 'rate' },
@@ -98,6 +104,20 @@ export function settlementTypeLabel(value: string | null | undefined): string {
   return { MONTHLY: '月结', PER_REDEMPTION: '次卡次结' }[value] ?? customTextLabel(value, '其他结算方式')
 }
 
+export function settlementDayLabel(value: string | null | undefined): string {
+  if (value === 'LAST_DAY') return '每月最后一天'
+  if (value && /^([1-9]|1[0-9]|2[0-8])$/.test(value)) return `每月 ${Number(value)} 日`
+  return '未设置'
+}
+
+export function institutionSettlementDayLabel(override: string | null | undefined, defaultDay: string): string {
+  return `${settlementDayLabel(override ?? defaultDay)}（${override ? '机构自定义' : '系统默认'}）`
+}
+
+export function settlementDaySourceLabel(value: string | null | undefined): string {
+  return { DEFAULT: '系统默认', INSTITUTION: '机构自定义' }[value ?? ''] ?? '未记录来源'
+}
+
 export function cityLabel(value: string | null | undefined): string {
   if (!value) return '未设城市'
   return { BJ: '北京', SH: '上海', GZ: '广州', SZ: '深圳', HZ: '杭州', CD: '成都', CQ: '重庆', NJ: '南京', WH: '武汉', SUZ: '苏州', TJ: '天津', XA: '西安', QD: '青岛' }[value] ?? customTextLabel(value, '其他城市')
@@ -128,6 +148,7 @@ export function reviewStatusLabel(value: string | null | undefined): string {
 
 export function changeValueLabel(fieldCode: string | null, value: unknown): string {
   const display = maskedDisplay(value)
+  if (fieldCode === 'settlementDay') return display === '-' ? '跟随系统默认' : settlementDayLabel(display)
   if (display === '-') return display
   if (!fieldCode) return reviewStatusLabel(display)
   if (fieldCode === 'businessTypeCode') return institutionBusinessTypeLabel(display)

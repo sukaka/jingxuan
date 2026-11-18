@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.batchtag.infrastructure.mapper.BatchTagJobMapper">
+  <sql id="previewColumns">
+    id,tenant_id AS tenantId,requested_by AS requestedBy,operation,tag_codes_json AS tagCodesJson,
+    tag_snapshot_json AS tagSnapshotJson,source_type AS sourceType,source_id AS sourceId,
+    source_snapshot_json AS sourceSnapshotJson,scope_snapshot_json AS scopeSnapshotJson,
+    idempotency_key AS idempotencyKey,member_count AS memberCount,created_at AS createdAt
+  </sql>
+  <sql id="previewMemberColumns">
+    id,tenant_id AS tenantId,preview_id AS previewId,customer_id AS customerId,customer_no AS customerNo,
+    customer_name AS customerName,owner_staff_id AS ownerStaffId,team_id AS teamId,tag_codes_json AS tagCodesJson
+  </sql>
+  <sql id="jobColumns">
+    id,tenant_id AS tenantId,job_no AS jobNo,preview_id AS previewId,requested_by AS requestedBy,operation,
+    tag_codes_json AS tagCodesJson,tag_snapshot_json AS tagSnapshotJson,source_type AS sourceType,
+    source_id AS sourceId,source_snapshot_json AS sourceSnapshotJson,scope_snapshot_json AS scopeSnapshotJson,
+    idempotency_key AS idempotencyKey,rollback_of_job_id AS rollbackOfJobId,status,total_count AS totalCount,
+    succeeded_count AS succeededCount,no_change_count AS noChangeCount,skipped_count AS skippedCount,
+    failed_count AS failedCount,attempt_count AS attemptCount,lease_owner AS leaseOwner,
+    lease_expires_at AS leaseExpiresAt,last_error_masked AS lastErrorMasked,created_at AS createdAt,
+    started_at AS startedAt,finished_at AS finishedAt,version
+  </sql>
+  <sql id="itemColumns">
+    id,tenant_id AS tenantId,job_id AS jobId,customer_id AS customerId,customer_no AS customerNo,
+    customer_name AS customerName,owner_staff_id AS ownerStaffId,team_id AS teamId,tag_codes_json AS tagCodesJson,
+    status,failure_code AS failureCode,reason,before_tag_codes_json AS beforeTagCodesJson,
+    after_tag_codes_json AS afterTagCodesJson,changed_tag_codes_json AS changedTagCodesJson,
+    attempt_count AS attemptCount,processed_at AS processedAt,version
+  </sql>
+
+  <insert id="insertPreview">
+    INSERT INTO crm_batch_tag_preview (id,tenant_id,requested_by,operation,tag_codes_json,tag_snapshot_json,
+      source_type,source_id,source_snapshot_json,scope_snapshot_json,idempotency_key,member_count)
+    VALUES (#{id},#{tenantId},#{requestedBy},#{operation},#{tagCodesJson},#{tagSnapshotJson},
+      #{sourceType},#{sourceId},#{sourceSnapshotJson},#{scopeSnapshotJson},#{idempotencyKey},#{memberCount})
+  </insert>
+  <select id="selectPreviewById" resultType="com.whale.crm.customer.batchtag.domain.BatchTagPreview">
+    SELECT <include refid="previewColumns"/> FROM crm_batch_tag_preview WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <insert id="insertPreviewMember">
+    INSERT INTO crm_batch_tag_preview_member (tenant_id,preview_id,customer_id,customer_no,customer_name,
+      owner_staff_id,team_id,tag_codes_json)
+    VALUES (#{tenantId},#{previewId},#{customerId},#{customerNo},#{customerName},#{ownerStaffId},#{teamId},
+      #{tagCodesJson})
+  </insert>
+  <select id="selectPreviewMembers" resultType="com.whale.crm.customer.batchtag.domain.BatchTagPreviewMember">
+    SELECT <include refid="previewMemberColumns"/> FROM crm_batch_tag_preview_member
+    WHERE tenant_id=#{tenantId} AND preview_id=#{previewId} ORDER BY customer_id
+    <if test="offset != null and size != null">LIMIT #{size} OFFSET #{offset}</if>
+  </select>
+
+  <insert id="insertJob">
+    INSERT INTO crm_batch_tag_job (tenant_id,job_no,preview_id,requested_by,operation,tag_codes_json,
+      tag_snapshot_json,source_type,source_id,source_snapshot_json,scope_snapshot_json,idempotency_key,
+      rollback_of_job_id,status,total_count)
+    VALUES (#{tenantId},#{jobNo},#{previewId},#{requestedBy},#{operation},#{tagCodesJson},#{tagSnapshotJson},
+      #{sourceType},#{sourceId},#{sourceSnapshotJson},#{scopeSnapshotJson},#{idempotencyKey},
+      #{rollbackOfJobId},#{status},#{totalCount})
+  </insert>
+  <select id="selectJobById" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJob">
+    SELECT <include refid="jobColumns"/> FROM crm_batch_tag_job WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectJobByNo" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJob">
+    SELECT <include refid="jobColumns"/> FROM crm_batch_tag_job WHERE tenant_id=#{tenantId} AND job_no=#{jobNo}
+  </select>
+  <select id="selectJobByPreviewId" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJob">
+    SELECT <include refid="jobColumns"/> FROM crm_batch_tag_job WHERE tenant_id=#{tenantId} AND preview_id=#{previewId}
+  </select>
+  <select id="selectJobByRollbackOf" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJob">
+    SELECT <include refid="jobColumns"/> FROM crm_batch_tag_job
+    WHERE tenant_id=#{tenantId} AND rollback_of_job_id=#{rollbackOfJobId}
+  </select>
+  <sql id="jobSearchWhere">
+    FROM crm_batch_tag_job WHERE tenant_id=#{tenantId}
+    AND (#{scopeType}='ALL' OR requested_by=#{requestedBy})
+    <if test="status != null and status != ''">AND status=#{status}</if>
+  </sql>
+  <select id="searchJobs" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJob">
+    SELECT <include refid="jobColumns"/> <include refid="jobSearchWhere"/>
+    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countJobs" resultType="long">SELECT COUNT(*) <include refid="jobSearchWhere"/></select>
+  <update id="claimJob">
+    UPDATE crm_batch_tag_job
+    SET status='RUNNING',lease_owner=#{leaseOwner},lease_expires_at=#{leaseExpiresAt},started_at=#{now},
+        finished_at=NULL,last_error_masked=NULL,version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status=#{expectedStatus}
+      AND ((#{expectedStatus}='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at&lt;=#{now})
+        OR (#{expectedStatus}!='RUNNING' AND (lease_expires_at IS NULL OR lease_expires_at&lt;=#{now})))
+  </update>
+  <update id="renewLease">
+    UPDATE crm_batch_tag_job SET lease_expires_at=#{leaseExpiresAt}
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND status='RUNNING' AND lease_owner=#{leaseOwner}
+  </update>
+  <update id="finishJob">
+    UPDATE crm_batch_tag_job
+    SET status=#{status},succeeded_count=#{counts.succeededCount},no_change_count=#{counts.noChangeCount},
+        skipped_count=#{counts.skippedCount},failed_count=#{counts.failedCount},attempt_count=attempt_count+1,
+        lease_owner=NULL,lease_expires_at=NULL,last_error_masked=#{errorMasked},finished_at=#{finishedAt},
+        version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND status='RUNNING' AND lease_owner=#{leaseOwner}
+  </update>
+  <select id="selectExpiredJobTenantIds" resultType="long">
+    SELECT DISTINCT tenant_id FROM crm_batch_tag_job
+    WHERE status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at&lt;=#{now}
+  </select>
+  <select id="selectExpiredJobs" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJob">
+    SELECT <include refid="jobColumns"/> FROM crm_batch_tag_job
+    WHERE tenant_id=#{tenantId} AND status='RUNNING' AND lease_expires_at IS NOT NULL
+      AND lease_expires_at&lt;=#{now} ORDER BY id LIMIT #{limit}
+  </select>
+  <insert id="insertJobAttempt">
+    INSERT INTO crm_batch_tag_job_attempt (tenant_id,job_id,attempt_no,status,trigger_type,actor_user_id,error_masked)
+    VALUES (#{tenantId},#{jobId},#{attemptNo},#{status},#{triggerType},#{actorUserId},#{errorMasked})
+  </insert>
+
+  <insert id="insertItem">
+    INSERT INTO crm_batch_tag_job_item (tenant_id,job_id,customer_id,customer_no,customer_name,owner_staff_id,
+      team_id,tag_codes_json,status)
+    VALUES (#{tenantId},#{jobId},#{customerId},#{customerNo},#{customerName},#{ownerStaffId},#{teamId},
+      #{tagCodesJson},#{status})
+  </insert>
+  <select id="selectWorkItems" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJobItem">
+    SELECT <include refid="itemColumns"/> FROM crm_batch_tag_job_item
+    WHERE tenant_id=#{tenantId} AND job_id=#{jobId} AND status IN ('PENDING','FAILED') ORDER BY id
+  </select>
+  <select id="selectItemsPage" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJobItem">
+    SELECT <include refid="itemColumns"/> FROM crm_batch_tag_job_item
+    WHERE tenant_id=#{tenantId} AND job_id=#{jobId} ORDER BY id LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countItems" resultType="long">
+    SELECT COUNT(*) FROM crm_batch_tag_job_item WHERE tenant_id=#{tenantId} AND job_id=#{jobId}
+  </select>
+  <select id="selectItemForUpdate" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJobItem">
+    SELECT <include refid="itemColumns"/> FROM crm_batch_tag_job_item
+    WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="selectRollbackCandidates" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJobItem">
+    SELECT <include refid="itemColumns"/> FROM crm_batch_tag_job_item
+    WHERE tenant_id=#{tenantId} AND job_id=#{originalJobId} AND status='SUCCEEDED'
+      AND changed_tag_codes_json IS NOT NULL AND JSON_LENGTH(changed_tag_codes_json)&gt;0 ORDER BY id
+  </select>
+  <update id="updateItemResult">
+    UPDATE crm_batch_tag_job_item
+    SET status=#{status},failure_code=#{failureCode},reason=#{reason},before_tag_codes_json=#{beforeTagCodesJson},
+        after_tag_codes_json=#{afterTagCodesJson},changed_tag_codes_json=#{changedTagCodesJson},
+        attempt_count=attempt_count+1,processed_at=#{processedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status IN ('PENDING','FAILED')
+  </update>
+  <insert id="insertItemAttempt">
+    INSERT INTO crm_batch_tag_item_attempt (tenant_id,job_id,item_id,attempt_no,status,failure_code,reason,
+      before_tag_codes_json,after_tag_codes_json,changed_tag_codes_json,actor_user_id)
+    VALUES (#{tenantId},#{jobId},#{itemId},#{attemptNo},#{status},#{failureCode},#{reason},
+      #{beforeTagCodesJson},#{afterTagCodesJson},#{changedTagCodesJson},#{actorUserId})
+  </insert>
+  <select id="countItemResults" resultType="com.whale.crm.customer.batchtag.domain.BatchTagJobCounts">
+    SELECT COALESCE(SUM(CASE WHEN status='SUCCEEDED' THEN 1 ELSE 0 END),0) AS succeededCount,
+      COALESCE(SUM(CASE WHEN status='NO_CHANGE' THEN 1 ELSE 0 END),0) AS noChangeCount,
+      COALESCE(SUM(CASE WHEN status='SKIPPED' THEN 1 ELSE 0 END),0) AS skippedCount,
+      COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0) AS failedCount
+    FROM crm_batch_tag_job_item WHERE tenant_id=#{tenantId} AND job_id=#{jobId}
+  </select>
+  <select id="selectConfirmedMergeTarget" resultType="long">
+    SELECT primary_customer_id FROM crm_merge_case
+    WHERE tenant_id=#{tenantId} AND secondary_customer_id=#{secondaryCustomerId} AND status='CONFIRMED'
+    ORDER BY id DESC LIMIT 1 FOR UPDATE
+  </select>
+
+  <resultMap id="OperationMemberMap" type="com.whale.crm.customer.domain.CustomerListRow">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="customerNo" column="customer_no"/>
+    <result property="displayName" column="display_name"/>
+    <result property="nickname" column="nickname"/>
+    <result property="ownerStaffId" column="owner_staff_id"/>
+    <result property="teamId" column="team_id"/>
+  </resultMap>
+  <sql id="operationMemberWhere">
+    FROM crm_customer_segment_batch_member bm
+    INNER JOIN crm_customer c ON c.tenant_id=bm.tenant_id AND c.id=bm.customer_id
+    WHERE bm.tenant_id=#{tenantId} AND bm.batch_id=#{batchId} AND c.deleted=0
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id=#{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">AND c.owner_staff_id=#{selfId}</when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+  </sql>
+  <select id="selectOperationBatchMembers" resultMap="OperationMemberMap">
+    SELECT c.id,c.tenant_id,c.customer_no,c.display_name,c.nickname,c.owner_staff_id,c.team_id
+    <include refid="operationMemberWhere"/> ORDER BY c.id
+    <if test="offset != null and size != null">LIMIT #{size} OFFSET #{offset}</if>
+  </select>
+  <select id="countOperationBatchMembers" resultType="long">
+    SELECT COUNT(*) <include refid="operationMemberWhere"/>
+  </select>
+</mapper>

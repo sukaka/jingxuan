@@ -15,6 +15,7 @@ export interface InstitutionProfile {
   contactPhoneMasked: string | null
   status: string
   settlementType: string | null
+  settlementDay: string | null
   onlineRate: number | string | null
   offlineRate: number | string | null
   platformRate: number | string | null
@@ -32,6 +33,13 @@ export interface InstitutionProfile {
   version: number
 }
 
+export interface InstitutionSettlementDefault {
+  defaultSettlementDay: string
+  version: number
+  configured: boolean
+  updatedAt: string | null
+}
+
 export interface CreateInstitutionProfileInput {
   institutionNo: string
   fullName: string
@@ -44,6 +52,7 @@ export interface CreateInstitutionProfileInput {
   contactName?: string
   contactPhone?: string
   settlementType: string
+  settlementDay?: string
   onlineRate?: string
   offlineRate?: string
   platformRate?: string
@@ -202,6 +211,21 @@ export async function listInstitutionProfiles(query: {
 
 export async function getInstitutionProfile(id: number): Promise<InstitutionProfile> {
   const res = await http.get<ApiResponse<InstitutionProfile>>(`/institution-profiles/${id}`)
+  return res.data.data
+}
+
+export async function getInstitutionSettlementDefault(): Promise<InstitutionSettlementDefault> {
+  const res = await http.get<ApiResponse<InstitutionSettlementDefault>>('/institution-settlement-default')
+  return res.data.data
+}
+
+export async function updateInstitutionSettlementDefault(
+  body: { defaultSettlementDay: string; version: number },
+  key: string,
+): Promise<InstitutionSettlementDefault> {
+  const res = await http.put<ApiResponse<InstitutionSettlementDefault>>('/institution-settlement-default', body, {
+    headers: { 'Idempotency-Key': key },
+  })
   return res.data.data
 }
 

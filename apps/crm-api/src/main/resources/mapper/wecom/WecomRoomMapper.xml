@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.integration.wecom.infrastructure.mapper.WecomRoomMapper">
+  <sql id="roomColumns">id,tenant_id AS tenantId,corp_id AS corpId,room_id AS roomId,display_name AS displayName,status,source_evidence_ref AS sourceEvidenceRef,membership_confirmed_at AS membershipConfirmedAt,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="participantColumns">id,corp_id AS corpId,room_id AS roomId,wecom_userid AS wecomUserid,participant_type AS participantType,staff_user_id AS staffUserId,external_userid AS externalUserid,status,confirmed_at AS confirmedAt,removed_at AS removedAt,version</sql>
+  <sql id="coveredStaff">
+    SELECT 1 FROM crm_wecom_room_participant covered
+    JOIN crm_wecom_staff_account sa ON sa.tenant_id=covered.tenant_id AND sa.corp_id=covered.corp_id AND sa.wecom_userid=covered.wecom_userid AND sa.staff_user_id=covered.staff_user_id AND sa.enabled=1
+    JOIN crm_wecom_archive_member am ON am.tenant_id=covered.tenant_id AND am.corp_id=covered.corp_id AND am.staff_user_id=covered.staff_user_id AND am.enabled=1
+    JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.status='ACTIVE'
+    WHERE covered.tenant_id=#{tenantId} AND covered.corp_id=#{corpId} AND covered.room_id=#{roomId} AND covered.status='ACTIVE' AND covered.participant_type='STAFF'
+  </sql>
+  <select id="findRoom" resultType="com.whale.crm.integration.wecom.domain.WecomRoom">SELECT <include refid="roomColumns"/> FROM crm_wecom_room WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND room_id=#{roomId}</select>
+  <select id="findRoomForUpdate" resultType="com.whale.crm.integration.wecom.domain.WecomRoom">SELECT <include refid="roomColumns"/> FROM crm_wecom_room WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND room_id=#{roomId} FOR UPDATE</select>
+  <select id="listRooms" resultType="com.whale.crm.integration.wecom.domain.WecomRoom">
+    SELECT <include refid="roomColumns"/> FROM crm_wecom_room r
+    WHERE r.tenant_id=#{tenantId} AND r.corp_id=#{corpId}
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM' or scopeType == 'SELF'">
+        AND EXISTS (SELECT 1 FROM crm_wecom_room_participant rp
+          JOIN crm_wecom_staff_account sa ON sa.tenant_id=rp.tenant_id AND sa.corp_id=rp.corp_id AND sa.wecom_userid=rp.wecom_userid AND sa.staff_user_id=rp.staff_user_id AND sa.enabled=1
+          JOIN crm_wecom_archive_member am ON am.tenant_id=rp.tenant_id AND am.corp_id=rp.corp_id AND am.staff_user_id=rp.staff_user_id AND am.enabled=1
+          JOIN sys_user su ON su.tenant_id=rp.tenant_id AND su.id=rp.staff_user_id AND su.status='ACTIVE'
+          WHERE rp.tenant_id=r.tenant_id AND rp.corp_id=r.corp_id AND rp.room_id=r.room_id AND rp.participant_type='STAFF' AND rp.status='ACTIVE'
+          <choose>
+            <when test="scopeType == 'TEAM'">AND (su.id=#{selfId} OR su.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)</when>
+            <otherwise>AND su.id=#{selfId}</otherwise>
+          </choose>)
+      </when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+    ORDER BY r.updated_at DESC,r.id DESC LIMIT 200
+  </select>
+  <select id="findParticipants" resultType="com.whale.crm.integration.wecom.domain.WecomRoomParticipant">SELECT <include refid="participantColumns"/> FROM crm_wecom_room_participant WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND room_id=#{roomId} ORDER BY participant_type,id</select>
+  <select id="findParticipant" resultType="com.whale.crm.integration.wecom.domain.WecomRoomParticipant">SELECT <include refid="participantColumns"/> FROM crm_wecom_room_participant WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND room_id=#{roomId} AND wecom_userid=#{wecomUserid}</select>
+  <insert id="insertRoom">INSERT INTO crm_wecom_room (tenant_id,corp_id,room_id,display_name,status,source_evidence_ref,membership_confirmed_at,created_by) VALUES (#{tenantId},#{room.corpId},#{room.roomId},#{room.displayName},#{room.status},#{room.sourceEvidenceRef},#{now},#{actorUserId})</insert>
+  <update id="updateRoom">UPDATE crm_wecom_room SET display_name=#{room.displayName},status=#{room.status},source_evidence_ref=#{room.sourceEvidenceRef},membership_confirmed_at=#{now},created_by=#{actorUserId},version=version+1 WHERE tenant_id=#{tenantId} AND corp_id=#{room.corpId} AND room_id=#{room.roomId} AND version=#{room.version}</update>
+  <insert id="insertParticipant">INSERT INTO crm_wecom_room_participant (tenant_id,corp_id,room_id,wecom_userid,participant_type,staff_user_id,external_userid,status,confirmed_at,removed_at) VALUES (#{tenantId},#{participant.corpId},#{participant.roomId},#{participant.wecomUserid},#{participant.participantType},#{participant.staffUserId},#{participant.externalUserid},'ACTIVE',#{now},NULL)</insert>
+  <update id="updateParticipant">UPDATE crm_wecom_room_participant SET participant_type=#{participant.participantType},staff_user_id=#{participant.staffUserId},external_userid=#{participant.externalUserid},status=#{participant.status},confirmed_at=#{now},removed_at=#{participant.removedAt},version=version+1 WHERE tenant_id=#{tenantId} AND corp_id=#{participant.corpId} AND room_id=#{participant.roomId} AND wecom_userid=#{participant.wecomUserid} AND version=#{participant.version}</update>
+  <select id="countCoveredStaff" resultType="int">SELECT COUNT(DISTINCT covered.staff_user_id) FROM crm_wecom_room_participant covered
+    JOIN crm_wecom_staff_account sa ON sa.tenant_id=covered.tenant_id AND sa.corp_id=covered.corp_id AND sa.wecom_userid=covered.wecom_userid AND sa.staff_user_id=covered.staff_user_id AND sa.enabled=1
+    JOIN crm_wecom_archive_member am ON am.tenant_id=covered.tenant_id AND am.corp_id=covered.corp_id AND am.staff_user_id=covered.staff_user_id AND am.enabled=1
+    JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.status='ACTIVE'
+    WHERE covered.tenant_id=#{tenantId} AND covered.corp_id=#{corpId} AND covered.room_id=#{roomId} AND covered.status='ACTIVE' AND covered.participant_type='STAFF'</select>
+  <select id="senderCoveredStaff" resultType="boolean">SELECT EXISTS (SELECT 1 FROM crm_wecom_room_participant sender
+    JOIN crm_wecom_staff_account sa ON sa.tenant_id=sender.tenant_id AND sa.corp_id=sender.corp_id AND sa.wecom_userid=sender.wecom_userid AND sa.staff_user_id=sender.staff_user_id AND sa.enabled=1
+    JOIN crm_wecom_archive_member am ON am.tenant_id=sender.tenant_id AND am.corp_id=sender.corp_id AND am.staff_user_id=sender.staff_user_id AND am.enabled=1
+    JOIN sys_user su ON su.tenant_id=sender.tenant_id AND su.id=sender.staff_user_id AND su.status='ACTIVE'
+    WHERE sender.tenant_id=#{tenantId} AND sender.corp_id=#{corpId} AND sender.room_id=#{roomId} AND sender.wecom_userid=#{wecomUserid} AND sender.participant_type='STAFF' AND sender.status='ACTIVE')</select>
+  <select id="allExternalConsentGranted" resultType="boolean">SELECT NOT EXISTS (SELECT 1 FROM crm_wecom_room_participant external
+    WHERE external.tenant_id=#{tenantId} AND external.corp_id=#{corpId} AND external.room_id=#{roomId} AND external.status='ACTIVE' AND external.participant_type='EXTERNAL'
+      AND NOT EXISTS (SELECT 1 FROM crm_wecom_contact contact
+        WHERE contact.tenant_id=external.tenant_id AND contact.corp_id=external.corp_id AND contact.external_userid=external.external_userid AND contact.consent_status='GRANTED'
+          AND EXISTS (<include refid="coveredStaff"/> AND covered.staff_user_id=contact.staff_user_id)))</select>
+</mapper>

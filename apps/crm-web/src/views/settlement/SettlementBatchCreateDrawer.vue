@@ -91,7 +91,7 @@ async function save() {
 
 <template>
   <el-drawer :model-value="modelValue" title="创建机构结算批次" size="min(820px, 100vw)" @update:model-value="updateVisible">
-    <el-alert type="warning" :closable="false" title="仅选择真实正式核销。创建批次不会自动应用机构费率，金额仍需人工核准。" class="finance-action-note" />
+    <el-alert type="warning" :closable="false" title="仅选择真实正式核销。创建批次不会自动应用机构费率，金额仍需人工核准。月结按 Asia/Shanghai 归属月份并在创建时冻结实际结算日；次卡次结不使用结算日。" class="finance-action-note" />
     <el-form label-position="top" @submit.prevent>
       <div class="finance-form-grid">
         <el-form-item label="机构 ID" required><el-input-number v-model="form.institutionId" :min="1" :precision="0" :controls="false" class="finance-field" data-testid="settlement-institution-id" /></el-form-item>

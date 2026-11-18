@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "CRM Domain Event Envelope v1",
-  "description": "发布侧 Outbox relay 契约，覆盖 order.paid.v1、entitlement.redeemed.v1、refund.succeeded.v1、entitlement.refund_revoked.v1、settlement.payment.recorded.v1、appointment.created.v1、appointment.status.changed.v1、redemption.posted.v1、redemption.reversal.requested.v1、redemption.reversal.approved.v1、redemption.reversal.rejected.v1、institution.profile.created.v1、institution.profile.updated.v1、institution.change.requested.v1、institution.change.reviewed.v1、institution.change.revalidated.v1、institution.contract.created.v1、institution.qualification.created.v1、youzan.order.processed.v1、youzan.sync.issue.v1、youzan.sync.completed.v1、wecom.message.archived.v1、wecom.archive.gap.v1、knowledge.sync.requested.v1。topic 映射：order=crm.order.events.v1，entitlement=crm.entitlement.events.v1，refund=crm.refund.events.v1，settlement/settlement_batch/settlement_payment=crm.settlement.events.v1，appointment=crm.appointment.events.v1，redemption/redemption_reversal=crm.redemption.events.v1，institution/institution_file=crm.institution.events.v1，youzan/youzan_order/youzan_sync_issue=crm.youzan.events.v1，wecom=crm.wecom.events.v1，knowledge_document=crm.knowledge.sync.v1。不包含外部供应商回调；仅 knowledge.sync.requested.v1 声明 knowledge-sync consumer/Inbox，不表示其他业务 consumer、入账或 Inbox 去重已实现。",
+  "description": "发布侧 Outbox relay 契约，覆盖 order.paid.v1、entitlement.redeemed.v1、refund.succeeded.v1、entitlement.refund_revoked.v1、settlement.payment.recorded.v1、appointment.created.v1、appointment.status.changed.v1、redemption.posted.v1、redemption.reversal.requested.v1、redemption.reversal.approved.v1、redemption.reversal.rejected.v1、institution.profile.created.v1、institution.profile.updated.v1、institution.change.requested.v1、institution.change.reviewed.v1、institution.change.revalidated.v1、institution.contract.created.v1、institution.qualification.created.v1、youzan.order.processed.v1、youzan.sync.issue.v1、youzan.sync.completed.v1、wecom.message.archived.v1、wecom.message.recalled.v1、wecom.archive.gap.v1、knowledge.sync.requested.v1、notification.requested.v1、followup.recorded.v1。topic 映射：order=crm.order.events.v1，entitlement=crm.entitlement.events.v1，refund=crm.refund.events.v1，settlement/settlement_batch/settlement_payment=crm.settlement.events.v1，appointment=crm.appointment.events.v1，redemption/redemption_reversal=crm.redemption.events.v1，institution/institution_file=crm.institution.events.v1，youzan/youzan_order/youzan_sync_issue=crm.youzan.events.v1，wecom=crm.wecom.events.v1，knowledge_document=crm.knowledge.sync.v1，notification=crm.notification.request.v1，followup=crm.followup.events.v1。不包含外部供应商回调；knowledge.sync.requested.v1 与 notification.requested.v1 分别声明 knowledge-sync、notifier consumer/Inbox 契约，不表示通知已由真实企微发送。V31 客诉实际消费 wecom.message.archived.v1 与 followup.recorded.v1，V32 分级实际消费 order.paid.v1、refund.succeeded.v1 与 followup.recorded.v1；这些 consumer/Inbox 边界不代表存在独立 complaint.* 或 customer.tier.* 发布事件。消费者兼容的 payment.confirmed.v1、followup.created.v1、followup.updated.v1、followup.deleted.v1 当前没有对应发布侧实现，不属于本发布契约。",
   "type": "object",
   "required": ["event_id", "event_type", "event_version", "tenant_id", "aggregate_type", "aggregate_id", "occurred_at", "correlation_id", "payload"],
   "additionalProperties": false,
@@ -37,13 +37,16 @@
         "youzan.sync.issue.v1",
         "youzan.sync.completed.v1",
         "wecom.message.archived.v1",
+        "wecom.message.recalled.v1",
         "wecom.archive.gap.v1",
-        "knowledge.sync.requested.v1"
+        "knowledge.sync.requested.v1",
+        "notification.requested.v1",
+        "followup.recorded.v1"
       ]
     },
     "event_version": {"const": 1},
     "tenant_id": {"type": "integer", "minimum": 1},
-    "aggregate_type": {"type": "string", "enum": ["order", "entitlement", "refund", "settlement", "settlement_batch", "settlement_payment", "appointment", "redemption", "redemption_reversal", "institution", "institution_file", "youzan", "youzan_order", "youzan_sync_issue", "wecom", "knowledge_document"]},
+    "aggregate_type": {"type": "string", "enum": ["order", "entitlement", "refund", "settlement", "settlement_batch", "settlement_payment", "appointment", "redemption", "redemption_reversal", "institution", "institution_file", "youzan", "youzan_order", "youzan_sync_issue", "wecom", "knowledge_document", "notification", "followup"]},
     "aggregate_id": {"type": "string", "minLength": 1},
     "occurred_at": {"type": "string", "format": "date-time"},
     "correlation_id": {"type": "string", "minLength": 1, "maxLength": 192, "description": "当前发布侧与 event_id 相同。"},
@@ -161,6 +164,20 @@
           "event_id": {"pattern": "^wecom\\.message\\.archived\\.v1:.+"},
           "aggregate_type": {"const": "wecom"},
           "payload": {"$ref": "#/$defs/WecomMessageArchivedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "wecom.message.recalled.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.wecom.events.v1；官方撤回控制事件已补全，只含消息引用与撤回元数据，不含正文。",
+        "properties": {
+          "event_id": {"pattern": "^wecom\\.message\\.recalled\\.v1:.+"},
+          "aggregate_type": {"const": "wecom"},
+          "payload": {"$ref": "#/$defs/WecomMessageRecalledPayload"}
         }
       }
     },
@@ -387,6 +404,34 @@
           "payload": {"$ref": "#/$defs/KnowledgeSyncRequestedPayload"}
         }
       }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "followup.recorded.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.followup.events.v1；创建跟进与 Outbox 同事务写入，aggregate_id 为 followupId 的字符串形式。V31 客诉与 V32 分级均可消费；payload 不含跟进摘要、聊天正文或客户联系方式。",
+        "properties": {
+          "event_id": {"pattern": "^followup\\.recorded\\.v1:.+"},
+          "aggregate_type": {"const": "followup"},
+          "payload": {"$ref": "#/$defs/FollowupRecordedPayload"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"event_type": {"const": "notification.requested.v1"}},
+        "required": ["event_type"]
+      },
+      "then": {
+        "description": "topic=crm.notification.request.v1；aggregate_id 为 notificationId 的字符串形式。仅请求通知投递，不表示真实企微已发送。",
+        "properties": {
+          "event_id": {"pattern": "^notification\\.requested\\.v1:.+"},
+          "aggregate_type": {"const": "notification"},
+          "payload": {"$ref": "#/$defs/NotificationRequestedPayload"}
+        }
+      }
     }
   ],
   "$defs": {
@@ -479,17 +524,30 @@
     "WecomMessageArchivedPayload": {
       "type": "object",
       "description": "合法归档消息的 metadata 与私有加密对象引用，不包含消息正文。",
-      "required": ["messageRef", "corpId", "msgId", "archiveSeq", "conversationId", "customerId", "contentObjectKey", "sentAt"],
+      "required": ["messageRef", "corpId", "msgId", "archiveSeq", "conversationId", "conversationType", "customerId", "roomRosterVersion", "contentObjectKey", "sentAt"],
       "additionalProperties": false,
       "properties": {
         "messageRef": {"type": "integer", "format": "int64", "minimum": 1},
         "corpId": {"type": "string", "minLength": 1, "maxLength": 96},
         "msgId": {"type": "string", "minLength": 1, "maxLength": 192},
         "archiveSeq": {"type": "integer", "format": "int64", "minimum": 1},
-        "conversationId": {"type": ["string", "null"], "maxLength": 128},
-        "customerId": {"type": ["integer", "null"], "format": "int64", "minimum": 1, "description": "未人工匹配时为 null。"},
+        "conversationId": {"type": ["string", "null"], "maxLength": 192},
+        "conversationType": {"type": "string", "enum": ["DIRECT", "ROOM"]},
+        "customerId": {"type": ["integer", "null"], "format": "int64", "minimum": 1, "description": "单聊未人工匹配或群聊时为 null；群聊不能任选成员作为客户。"},
+        "roomRosterVersion": {"type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "群消息采集时确认的完整成员清单版本；单聊为 null。"},
         "contentObjectKey": {"type": "string", "minLength": 1, "maxLength": 255, "description": "私有 AES+MinIO 对象引用，不是公开 URL。"},
         "sentAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "WecomMessageRecalledPayload": {
+      "type": "object",
+      "description": "撤回控制事件补全后的最小事实；不包含消息正文或客户联系方式。",
+      "required": ["messageRef", "recalledAt", "recallMessageId"],
+      "additionalProperties": false,
+      "properties": {
+        "messageRef": {"type": "integer", "format": "int64", "minimum": 1},
+        "recalledAt": {"type": "string", "format": "date-time"},
+        "recallMessageId": {"type": "string", "minLength": 1, "maxLength": 192}
       }
     },
     "WecomArchiveGapPayload": {
@@ -499,7 +557,7 @@
       "additionalProperties": false,
       "properties": {
         "corpId": {"type": "string", "minLength": 1, "maxLength": 96},
-        "gapType": {"type": "string", "enum": ["CONSENT_NOT_GRANTED", "MEMBER_NOT_COVERED", "COLLECTOR_ERROR"]},
+        "gapType": {"type": "string", "enum": ["CONSENT_NOT_GRANTED", "MEMBER_NOT_COVERED", "COLLECTOR_ERROR", "ROOM_CONTEXT_UNSUPPORTED", "ROOM_CONTEXT_UNCONFIRMED", "ROOM_SENDER_NOT_CONFIRMED", "ROOM_ARCHIVING_DISABLED", "ROOM_EXTERNAL_PARTICIPANT_REQUIRED", "IDENTITY_UNRESOLVED", "ACTION_NOT_SUPPORTED", "MEDIA_OR_TYPE_PENDING", "RECALL_ORIGINAL_PENDING"]},
         "fromSeq": {"type": "integer", "format": "int64", "minimum": 0}
       }
     },
@@ -693,6 +751,28 @@
       "properties": {
         "jobId": {"type": "integer", "format": "int64", "minimum": 1},
         "documentId": {"type": "integer", "format": "int64", "minimum": 1}
+      }
+    },
+    "FollowupRecordedPayload": {
+      "type": "object",
+      "description": "新跟进的最小来源事实。sourceVersion 是创建时的跟进版本；staffUserId 是客户专属管家快照。客诉消费者按 followupId 重新读取并脱敏摘要，分级消费者只按 customerId 触发滚动重算。",
+      "required": ["followupId", "customerId", "sourceVersion", "staffUserId", "contactAt"],
+      "additionalProperties": false,
+      "properties": {
+        "followupId": {"type": "integer", "format": "int64", "minimum": 1},
+        "customerId": {"type": "integer", "format": "int64", "minimum": 1, "description": "CRM 客户唯一 ID，不是手机号或微信昵称。"},
+        "sourceVersion": {"type": "integer", "format": "int64", "minimum": 0},
+        "staffUserId": {"type": "integer", "format": "int64", "minimum": 1},
+        "contactAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "NotificationRequestedPayload": {
+      "type": "object",
+      "description": "仅含通知逻辑对象 ID；收件人、标题、脱敏内容、来源、去重键和跳转均由消费方按 tenant_id 从通知表读取，渠道由投递记录决定。",
+      "required": ["notificationId"],
+      "additionalProperties": false,
+      "properties": {
+        "notificationId": {"type": "integer", "format": "int64", "minimum": 1}
       }
     }
   }

@@ -9,6 +9,8 @@ import FollowupPanel from './FollowupPanel.vue'
 import OwnershipPanel from './OwnershipPanel.vue'
 import PointsPanel from './PointsPanel.vue'
 import CustomerBusinessPanel from './CustomerBusinessPanel.vue'
+import CustomerTierPanel from './CustomerTierPanel.vue'
+import CustomerTimelinePanel from './CustomerTimelinePanel.vue'
 import StatusPill from './StatusPill.vue'
 import TagsIdentityPanel from './TagsIdentityPanel.vue'
 import { formatDate, formatDateTime, levelLabel, useDictionaries } from './shared'
@@ -164,7 +166,7 @@ defineExpose({ reload: load })
                 :text="dicts.label('customerStatuses', detail.customerStatus)"
                 tone="info"
               />
-              <StatusPill v-if="detail.tierCode" :text="`${detail.tierCode} 层`" tone="dark" />
+              <StatusPill v-if="detail.tierCode" :text="dicts.label('customerTiers', detail.tierCode)" tone="dark" />
             </div>
             <div class="crm-muted">
               编号 {{ detail.customerNo }} · 管家 {{ detail.ownerName ?? `#${detail.ownerStaffId}` }} ·
@@ -204,6 +206,12 @@ defineExpose({ reload: load })
                 <PointsPanel :customer-id="detail.id" :birthday="detail.birthday" @changed="handleChildChanged" />
               </el-collapse-item>
             </el-collapse>
+          </el-tab-pane>
+          <el-tab-pane label="统一时间线" name="timeline" lazy>
+            <CustomerTimelinePanel :customer-id="detail.id" />
+          </el-tab-pane>
+          <el-tab-pane label="客户分级" name="tier" lazy>
+            <CustomerTierPanel :customer-id="detail.id" @changed="handleChildChanged" />
           </el-tab-pane>
           <el-tab-pane label="会员权益" name="entitlements"><CustomerBusinessPanel :customer-id="detail.id" type="entitlements" /></el-tab-pane>
           <el-tab-pane label="核销记录" name="redemptions"><CustomerBusinessPanel :customer-id="detail.id" type="redemptions" /></el-tab-pane>

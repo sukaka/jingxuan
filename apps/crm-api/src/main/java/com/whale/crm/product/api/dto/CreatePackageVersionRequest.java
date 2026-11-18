@@ -14,8 +14,10 @@ public record CreatePackageVersionRequest(
         @NotBlank @Pattern(regexp = "FIXED|CHOOSE_N|USE_N") String selectionMode,
         @NotNull @Min(0) Integer choiceCount,
         @Size(max = 4000) String selectionRules,
-        @NotEmpty List<@Valid PackageProjectItemRequest> projects) {
+        @NotEmpty List<@Valid PackageProjectItemRequest> projects,
+        @Valid List<PackageSelectionGroupRequest> groups) {
     public CreatePackageVersionRequest {
         projects = projects == null ? null : List.copyOf(projects);
+        groups = groups == null ? null : List.copyOf(groups);
     }
 }

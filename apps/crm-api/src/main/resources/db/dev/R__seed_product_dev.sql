@@ -20,14 +20,14 @@ INSERT INTO crm_package_version (id,tenant_id,package_id,version_no,selection_mo
  (303,1,201,3,'USE_N',10,NULL,'DRAFT'),
  (311,1,202,1,'CHOOSE_N',3,NULL,'DRAFT')
  ON DUPLICATE KEY UPDATE selection_mode=VALUES(selection_mode),choice_count=VALUES(choice_count),status=VALUES(status);
-INSERT INTO crm_package_project (id,tenant_id,package_version_id,project_id,grant_count,selection_weight,allocation_price_fen,option_group) VALUES
- (301,1,301,101,3,1,0,'MAIN'),
- (302,1,302,101,6,1,0,'MAIN'),
- (303,1,303,101,10,1,0,'MAIN'),
- (311,1,311,101,1,1,0,'MAIN'),
- (312,1,311,102,1,1,0,'MAIN'),
- (313,1,311,103,1,1,0,'MAIN')
- ON DUPLICATE KEY UPDATE grant_count=VALUES(grant_count),selection_weight=VALUES(selection_weight);
+INSERT INTO crm_package_project (id,tenant_id,package_version_id,project_id,grant_count,selection_weight,allocation_price_fen,option_group,reference_price_fen) VALUES
+ (301,1,301,101,3,1,0,'MAIN',39900),
+ (302,1,302,101,6,1,0,'MAIN',39900),
+ (303,1,303,101,10,1,0,'MAIN',39900),
+ (311,1,311,101,1,1,0,'MAIN',39900),
+ (312,1,311,102,1,1,0,'MAIN',21900),
+ (313,1,311,103,1,1,0,'MAIN',26000)
+ ON DUPLICATE KEY UPDATE grant_count=VALUES(grant_count),selection_weight=VALUES(selection_weight),reference_price_fen=VALUES(reference_price_fen);
 INSERT INTO crm_sku (id,tenant_id,sku_code,package_version_id,spec_name,sale_price_fen,status,on_sale_at,off_sale_at) VALUES
  (301,1,'SKU-WG-001-03',301,'3次',181100,'ACTIVE',NOW(3),NULL),
  (302,1,'SKU-WG-001-06',302,'6次',331100,'ACTIVE',NOW(3),NULL),

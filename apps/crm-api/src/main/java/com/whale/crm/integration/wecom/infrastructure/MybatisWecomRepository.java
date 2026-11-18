@@ -21,7 +21,10 @@ public class MybatisWecomRepository implements WecomRepository {
     }
 
     public Optional<WecomContact> findContact(long t, String c, String e, long s) { return Optional.ofNullable(mapper.selectContact(t, c, e, s)); }
+    public Optional<WecomContact> findContactForUpdate(long t, String c, String e, long s) { return Optional.ofNullable(mapper.selectContactForUpdate(t, c, e, s)); }
     public Optional<WecomContact> findContactById(long t, long id) { return Optional.ofNullable(mapper.selectContactById(t, id)); }
+    public List<WecomContact> findContactsByExternalUserid(long t, String c, String e) { return mapper.selectContactsByExternalUserid(t, c, e); }
+    public boolean contactMapped(long t, String e, long customer) { return mapper.countContactMapping(t, e, customer) == 1; }
     public void insertContact(long t, WecomContact e) { mapper.insertContact(t, e); }
     public int updateContactConsent(long t, long id, long v, String s, String e, Instant at) { return mapper.updateContactConsent(t, id, v, s, e, at); }
     public int linkContact(long t, long id, long v, long c, String r, long u) { return mapper.linkContact(t, id, v, c, r, u); }
@@ -32,9 +35,10 @@ public class MybatisWecomRepository implements WecomRepository {
     public Optional<WecomMessage> findMessageById(long t, long id) { return Optional.ofNullable(mapper.selectMessageById(t, id)); }
     public Optional<WecomMessage> findReadableMessage(long t, long id, String s, List<Long> ids, long u) { return Optional.ofNullable(mapper.selectReadableMessage(t, id, s, ids, u)); }
     public void insertMessage(long t, WecomMessage e) { mapper.insertMessage(t, e); }
+    public int markMessageRecalled(long t, String c, String m, long v, Instant at, String recall) { return mapper.markMessageRecalled(t, c, m, v, at, recall); }
     public int linkMessages(long t, String c, String e, long s, long customer) { return mapper.linkMessages(t, c, e, s, customer); }
-    public List<WecomMessage> listMessages(long t, Long c, String s, List<Long> ids, long u, int o, int z) { return mapper.selectMessages(t, c, s, ids, u, o, z); }
-    public long countMessages(long t, Long c, String s, List<Long> ids, long u) { return mapper.countScopedMessages(t, c, s, ids, u); }
+    public List<WecomMessage> listMessages(long t, Long c, String conversationId, String corpId, String s, List<Long> ids, long u, int o, int z) { return mapper.selectMessages(t, c, conversationId, corpId, s, ids, u, o, z); }
+    public long countMessages(long t, Long c, String conversationId, String corpId, String s, List<Long> ids, long u) { return mapper.countScopedMessages(t, c, conversationId, corpId, s, ids, u); }
     public long countAllMessages(long t, String c) { return mapper.countAllMessages(t, c); }
     public Optional<WecomCursor> findCursorForUpdate(long t, String c, String s) { return Optional.ofNullable(mapper.selectCursorForUpdate(t, c, s)); }
     public Optional<WecomCursor> findCursor(long t, String c, String s) { return Optional.ofNullable(mapper.selectCursor(t, c, s)); }
@@ -42,6 +46,7 @@ public class MybatisWecomRepository implements WecomRepository {
     public int updateCursor(long t, long id, long v, long seq, Instant success, Instant attempt, String status, int failures, String error, boolean gap, String reason) { return mapper.updateCursor(t, id, v, seq, success, attempt, status, failures, error, gap, reason); }
     public void recordGap(long t, String c, String s, String type, Long from, Long to, String detail, Instant now) { mapper.insertGap(t, c, s, type, from, to, detail, now); }
     public int resolveCollectorGaps(long t, String c, String s, Instant at) { return mapper.resolveCollectorGaps(t, c, s, at); }
+    public int resolveGap(long t, String c, String s, String type, long from, Instant at) { return mapper.resolveGap(t, c, s, type, from, at); }
     public List<WecomDataGap> findOpenGaps(long t, String c, String s) { return mapper.selectOpenGaps(t, c, s); }
     public long countResolvedGaps(long t, String c, String s) { return mapper.countResolvedGaps(t, c, s); }
 }

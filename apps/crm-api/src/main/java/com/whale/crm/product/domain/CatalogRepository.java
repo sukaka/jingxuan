@@ -33,6 +33,9 @@ public interface CatalogRepository {
     List<PackageProject> findVersionProjects(long tenantId, long packageVersionId);
     void deleteVersionProjects(long tenantId, long packageVersionId);
     void insertVersionProject(PackageProject item);
+    List<PackageSelectionGroup> findSelectionGroups(long tenantId, long packageVersionId);
+    void deleteSelectionGroups(long tenantId, long packageVersionId);
+    void insertSelectionGroup(PackageSelectionGroup group);
 
     List<Sku> searchSkus(long tenantId, String keyword, String status, Long packageId,
                          Set<Long> institutionIds, int offset, int size);

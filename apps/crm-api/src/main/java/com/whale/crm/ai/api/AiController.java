@@ -2,9 +2,13 @@ package com.whale.crm.ai.api;
 
 import com.whale.crm.ai.api.dto.AiJobResponse;
 import com.whale.crm.ai.api.dto.AiQualitySummaryResponse;
+import com.whale.crm.ai.api.dto.AiReplyDecisionRequest;
+import com.whale.crm.ai.api.dto.AiReplySuggestionResponse;
 import com.whale.crm.ai.api.dto.ConfirmAiJobRequest;
 import com.whale.crm.ai.api.dto.CreateAiJobRequest;
+import com.whale.crm.ai.api.dto.GenerateAiReplyRequest;
 import com.whale.crm.ai.application.AiJobApplicationService;
+import com.whale.crm.ai.application.AiReplySuggestionService;
 import com.whale.crm.platform.security.SecuritySupport;
 import com.whale.crm.platform.web.ApiResponse;
 import com.whale.crm.platform.web.PageResponse;
@@ -14,6 +18,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -28,14 +33,18 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @Validated
 @RestController
 @RequestMapping("/api/v1/ai")
 public class AiController {
     private final AiJobApplicationService service;
+    private final AiReplySuggestionService replyService;
 
-    public AiController(AiJobApplicationService service) {
+    public AiController(AiJobApplicationService service, AiReplySuggestionService replyService) {
         this.service = service;
+        this.replyService = replyService;
     }
 
     @PostMapping("/jobs")
@@ -71,6 +80,38 @@ public class AiController {
     @PreAuthorize("hasAuthority('wecom:monitor') and hasAuthority('ai:read')")
     public ApiResponse<AiQualitySummaryResponse> quality(HttpServletRequest request) {
         return ApiResponse.ok(service.quality(SecuritySupport.requireCurrentUser()), requestId(request));
+    }
+
+    @PostMapping("/replies/generate")
+    @PreAuthorize("hasAuthority('ai:write') and hasAuthority('quickreply:view')")
+    public ResponseEntity<ApiResponse<AiReplySuggestionResponse>> generateReply(
+            @Valid @RequestBody GenerateAiReplyRequest body,
+            @RequestHeader(name = "Idempotency-Key") @Size(min = 1, max = 128) String key,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(
+                replyService.generate(SecuritySupport.requireCurrentUser(), body, key), requestId(request)));
+    }
+
+    @GetMapping("/replies/{id}")
+    @PreAuthorize("hasAuthority('ai:read') and hasAuthority('quickreply:view')")
+    public ApiResponse<AiReplySuggestionResponse> getReply(@PathVariable @Positive long id, HttpServletRequest request) {
+        return ApiResponse.ok(replyService.get(SecuritySupport.requireCurrentUser(), id), requestId(request));
+    }
+
+    @GetMapping("/replies")
+    @PreAuthorize("hasAuthority('ai:read') and hasAuthority('quickreply:view')")
+    public ApiResponse<List<AiReplySuggestionResponse>> replyHistory(@RequestParam @Positive long customerId,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(50) int size, HttpServletRequest request) {
+        return ApiResponse.ok(replyService.history(SecuritySupport.requireCurrentUser(), customerId, size), requestId(request));
+    }
+
+    @PostMapping("/replies/{id}/decision")
+    @PreAuthorize("hasAuthority('ai:write') and hasAuthority('quickreply:view')")
+    public ApiResponse<AiReplySuggestionResponse> decideReply(@PathVariable @Positive long id,
+            @Valid @RequestBody AiReplyDecisionRequest body,
+            @RequestHeader(name = "Idempotency-Key") @Size(min = 1, max = 128) String key,
+            HttpServletRequest request) {
+        return ApiResponse.ok(replyService.decide(SecuritySupport.requireCurrentUser(), id, body, key), requestId(request));
     }
 
     private String requestId(HttpServletRequest request) {

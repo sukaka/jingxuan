@@ -26,7 +26,7 @@ public class EntitlementApplicationService {
 
     @Transactional(readOnly = true)
     public PageResponse<Entitlement> search(long tenantId, CurrentUser user, Long customerId, String status,
-                                            int page, int size) {
+                                            java.time.LocalDate validTo, boolean availableOnly, int page, int size) {
         DataScope scope = scopeSupport.scope(user);
         if (scopeSupport.isEmptyScope(scope)) {
             return new PageResponse<>(List.of(), 0, page, size);
@@ -34,9 +34,9 @@ public class EntitlementApplicationService {
         CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
         int offset = (page - 1) * size;
         return new PageResponse<>(repository.searchEntitlements(tenantId, query.scopeType(), query.teamIds(), query.selfId(),
-                        customerId, status, offset, size),
-                repository.countEntitlements(tenantId, query.scopeType(), query.teamIds(), query.selfId(), customerId, status),
-                page, size);
+                        customerId, status, validTo, availableOnly, offset, size),
+                repository.countEntitlements(tenantId, query.scopeType(), query.teamIds(), query.selfId(),
+                        customerId, status, validTo, availableOnly), page, size);
     }
 
     @Transactional(readOnly = true)

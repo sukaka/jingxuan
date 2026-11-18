@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.notification.infrastructure.mapper.NotificationMapper">
+  <sql id="notificationColumns">
+    id,tenant_id AS tenantId,recipient_user_id AS recipientUserId,notification_type AS notificationType,
+    title,content_masked AS contentMasked,source_type AS sourceType,source_id AS sourceId,dedupe_key AS dedupeKey,
+    deep_link AS deepLink,channels,created_at AS createdAt,read_at AS readAt,version
+  </sql>
+  <sql id="deliveryColumns">
+    id,tenant_id AS tenantId,notification_id AS notificationId,recipient_user_id AS recipientUserId,
+    channel,status,attempt_count AS attemptCount,automatic_retry_count AS automaticRetryCount,
+    next_attempt_at AS nextAttemptAt,claim_owner AS claimOwner,claim_expires_at AS claimExpiresAt,
+    last_started_at AS lastStartedAt,trigger_type AS triggerType,trigger_actor_user_id AS triggerActorUserId,
+    provider,provider_message_id AS providerMessageId,
+    last_error_masked AS lastErrorMasked,created_at AS createdAt,updated_at AS updatedAt,version
+  </sql>
+  <sql id="ownFilter">
+    tenant_id=#{tenantId} AND recipient_user_id=#{recipientUserId}
+    <if test="unreadOnly != null and unreadOnly">AND read_at IS NULL</if>
+    <if test="notificationType != null">AND notification_type=#{notificationType}</if>
+  </sql>
+  <sql id="deliveryFilter">
+    tenant_id=#{tenantId}
+    <if test="notificationId != null">AND notification_id=#{notificationId}</if>
+    <if test="recipientUserId != null">AND recipient_user_id=#{recipientUserId}</if>
+    <if test="channel != null">AND channel=#{channel}</if>
+    <if test="status != null">AND status=#{status}</if>
+  </sql>
+
+  <select id="recipientActive" resultType="int">
+    SELECT COUNT(*) FROM sys_user WHERE tenant_id=#{tenantId} AND id=#{recipientUserId} AND status='ACTIVE'
+  </select>
+  <select id="selectByDedupeKey" resultType="com.whale.crm.notification.domain.Notification">
+    SELECT <include refid="notificationColumns"/> FROM crm_notification
+    WHERE tenant_id=#{tenantId} AND recipient_user_id=#{recipientUserId} AND dedupe_key=#{dedupeKey}
+  </select>
+  <select id="selectById" resultType="com.whale.crm.notification.domain.Notification">
+    SELECT <include refid="notificationColumns"/> FROM crm_notification WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectByIdForUpdate" resultType="com.whale.crm.notification.domain.Notification">
+    SELECT <include refid="notificationColumns"/> FROM crm_notification WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <insert id="insertNotification" parameterType="com.whale.crm.notification.domain.Notification">
+    INSERT INTO crm_notification (tenant_id,recipient_user_id,notification_type,title,content_masked,
+      source_type,source_id,dedupe_key,deep_link,channels,created_at,version)
+    VALUES (#{tenantId},#{recipientUserId},#{notificationType},#{title},#{contentMasked},#{sourceType},#{sourceId},
+      #{dedupeKey},#{deepLink},#{channels},#{createdAt},0)
+    ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)
+  </insert>
+  <insert id="insertDelivery">
+    INSERT IGNORE INTO crm_notification_delivery (tenant_id,notification_id,recipient_user_id,channel,status,created_at,version)
+    VALUES (#{tenantId},#{notificationId},#{recipientUserId},#{channel},'REQUESTED',#{createdAt},0)
+  </insert>
+  <select id="searchOwn" resultType="com.whale.crm.notification.domain.Notification">
+    SELECT <include refid="notificationColumns"/> FROM crm_notification WHERE <include refid="ownFilter"/>
+    ORDER BY created_at DESC,id DESC LIMIT #{offset},#{size}
+  </select>
+  <select id="countOwn" resultType="long">
+    SELECT COUNT(*) FROM crm_notification WHERE <include refid="ownFilter"/>
+  </select>
+  <select id="unreadCount" resultType="long">
+    SELECT COUNT(*) FROM crm_notification WHERE tenant_id=#{tenantId} AND recipient_user_id=#{recipientUserId} AND read_at IS NULL
+  </select>
+  <select id="selectOwnDeliveries" resultType="com.whale.crm.notification.domain.NotificationDelivery">
+    SELECT <include refid="deliveryColumns"/> FROM crm_notification_delivery
+    WHERE tenant_id=#{tenantId} AND recipient_user_id=#{recipientUserId}
+      AND notification_id IN <foreach item="id" collection="notificationIds" open="(" close=")" separator=",">#{id}</foreach>
+    ORDER BY notification_id,id
+  </select>
+  <update id="markRead">
+    UPDATE crm_notification SET read_at=#{readAt},updated_at=#{readAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND recipient_user_id=#{recipientUserId}
+      AND version=#{expectedVersion} AND read_at IS NULL
+  </update>
+  <update id="activateDeliveries">
+    UPDATE crm_notification_delivery SET status='PENDING',next_attempt_at=CURRENT_TIMESTAMP(3),
+      updated_at=CURRENT_TIMESTAMP(3),version=version+1
+    WHERE tenant_id=#{tenantId} AND notification_id=#{notificationId} AND status='REQUESTED'
+  </update>
+  <select id="selectDeliveryTenantIds" resultType="long">
+    SELECT DISTINCT tenant_id FROM crm_notification_delivery
+    WHERE (status IN ('PENDING','RETRY_WAIT') AND (next_attempt_at IS NULL OR next_attempt_at&lt;=#{now}))
+       OR (status='SENDING' AND claim_expires_at&lt;#{now})
+    ORDER BY tenant_id
+  </select>
+  <select id="selectClaimableDeliveries" resultType="com.whale.crm.notification.domain.NotificationDelivery">
+    SELECT <include refid="deliveryColumns"/> FROM crm_notification_delivery
+    WHERE tenant_id=#{tenantId} AND status IN ('PENDING','RETRY_WAIT')
+      AND (next_attempt_at IS NULL OR next_attempt_at&lt;=#{now})
+    ORDER BY id LIMIT #{limit}
+  </select>
+  <select id="selectExpiredDeliveries" resultType="com.whale.crm.notification.domain.NotificationDelivery">
+    SELECT <include refid="deliveryColumns"/> FROM crm_notification_delivery
+    WHERE status='SENDING' AND claim_expires_at&lt;#{now} ORDER BY tenant_id,id LIMIT #{limit}
+  </select>
+  <select id="selectDeliveryById" resultType="com.whale.crm.notification.domain.NotificationDelivery">
+    SELECT <include refid="deliveryColumns"/> FROM crm_notification_delivery WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectDeliveryForUpdate" resultType="com.whale.crm.notification.domain.NotificationDelivery">
+    SELECT <include refid="deliveryColumns"/> FROM crm_notification_delivery WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <update id="claimDelivery">
+    UPDATE crm_notification_delivery SET status='SENDING',attempt_count=attempt_count+1,
+      claim_owner=#{owner},claim_expires_at=#{claimExpiresAt},last_started_at=#{startedAt},
+      updated_at=#{startedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND status IN ('PENDING','RETRY_WAIT') AND (next_attempt_at IS NULL OR next_attempt_at&lt;=#{startedAt})
+  </update>
+  <update id="completeDelivery">
+    UPDATE crm_notification_delivery SET status=#{status},provider=#{provider},provider_message_id=#{providerMessageId},
+      last_error_masked=#{errorMasked},next_attempt_at=#{nextAttemptAt},automatic_retry_count=#{automaticRetryCount},
+      trigger_type=IF(#{status}='RETRY_WAIT','AUTOMATIC',trigger_type),
+      trigger_actor_user_id=IF(#{status}='RETRY_WAIT',NULL,trigger_actor_user_id),
+      claim_owner=NULL,claim_expires_at=NULL,updated_at=#{finishedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND status='SENDING' AND claim_owner=#{owner}
+  </update>
+  <update id="recoverExpiredDelivery">
+    UPDATE crm_notification_delivery SET status='UNKNOWN',provider=NULL,provider_message_id=NULL,
+      last_error_masked=#{errorMasked},next_attempt_at=NULL,claim_owner=NULL,claim_expires_at=NULL,
+      updated_at=#{finishedAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND status='SENDING' AND claim_owner=#{owner} AND claim_expires_at&lt;#{finishedAt}
+  </update>
+  <update id="retryDelivery">
+    UPDATE crm_notification_delivery SET status='PENDING',automatic_retry_count=0,next_attempt_at=#{nextAttemptAt},
+      trigger_type='MANUAL',trigger_actor_user_id=#{actorUserId},
+      claim_owner=NULL,claim_expires_at=NULL,provider=NULL,provider_message_id=NULL,last_error_masked=NULL,
+      updated_at=#{nextAttemptAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status IN ('FAILED','UNKNOWN','DISABLED')
+  </update>
+  <insert id="insertAttempt" parameterType="com.whale.crm.notification.domain.NotificationAttempt">
+    INSERT INTO crm_notification_attempt (tenant_id,delivery_id,notification_id,attempt_no,channel,status,
+      provider,provider_message_id,error_masked,trigger_type,actor_user_id,created_at)
+    VALUES (#{tenantId},#{deliveryId},#{notificationId},#{attemptNo},#{channel},#{status},#{provider},
+      #{providerMessageId},#{errorMasked},#{triggerType},#{actorUserId},#{createdAt})
+  </insert>
+  <select id="searchDeliveries" resultType="com.whale.crm.notification.domain.NotificationDelivery">
+    SELECT <include refid="deliveryColumns"/> FROM crm_notification_delivery WHERE <include refid="deliveryFilter"/>
+    ORDER BY id DESC LIMIT #{offset},#{size}
+  </select>
+  <select id="countDeliveries" resultType="long">
+    SELECT COUNT(*) FROM crm_notification_delivery WHERE <include refid="deliveryFilter"/>
+  </select>
+  <select id="selectWecomUserIds" resultType="string">
+    SELECT wecom_userid FROM crm_wecom_staff_account
+    WHERE tenant_id=#{tenantId} AND staff_user_id=#{recipientUserId} AND message_enabled=1
+    <if test="corpId != null and corpId != ''">AND corp_id=#{corpId}</if>
+    ORDER BY id
+  </select>
+  <select id="selectWecomMappings" resultType="com.whale.crm.notification.domain.WecomMapping">
+    SELECT id,tenant_id AS tenantId,corp_id AS corpId,wecom_userid AS wecomUserid,
+      staff_user_id AS staffUserId,enabled AS archiveEnabled,message_enabled AS messageEnabled,version
+    FROM crm_wecom_staff_account WHERE tenant_id=#{tenantId} ORDER BY id
+  </select>
+  <select id="selectWecomMapping" resultType="com.whale.crm.notification.domain.WecomMapping">
+    SELECT id,tenant_id AS tenantId,corp_id AS corpId,wecom_userid AS wecomUserid,
+      staff_user_id AS staffUserId,enabled AS archiveEnabled,message_enabled AS messageEnabled,version
+    FROM crm_wecom_staff_account WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectWecomMappingForUpdate" resultType="com.whale.crm.notification.domain.WecomMapping">
+    SELECT id,tenant_id AS tenantId,corp_id AS corpId,wecom_userid AS wecomUserid,
+      staff_user_id AS staffUserId,enabled AS archiveEnabled,message_enabled AS messageEnabled,version
+    FROM crm_wecom_staff_account WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <insert id="insertWecomMapping" parameterType="com.whale.crm.notification.domain.WecomMapping">
+    INSERT INTO crm_wecom_staff_account (tenant_id,corp_id,wecom_userid,staff_user_id,enabled,message_enabled)
+    VALUES (#{tenantId},#{corpId},#{wecomUserid},#{staffUserId},0,#{messageEnabled})
+  </insert>
+  <select id="lastInsertId" resultType="long">SELECT LAST_INSERT_ID()</select>
+  <update id="updateWecomMapping" parameterType="com.whale.crm.notification.domain.WecomMapping">
+    UPDATE crm_wecom_staff_account SET corp_id=#{corpId},wecom_userid=#{wecomUserid},
+      staff_user_id=#{staffUserId},message_enabled=#{messageEnabled},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+</mapper>

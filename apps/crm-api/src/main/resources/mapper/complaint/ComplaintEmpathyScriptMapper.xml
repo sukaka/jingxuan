@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.complaint.infrastructure.mapper.ComplaintEmpathyScriptMapper">
+  <sql id="scriptColumns">id,tenant_id AS tenantId,title,script,status,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+
+  <select id="findScripts" resultType="com.whale.crm.complaint.domain.ComplaintEmpathyScript">
+    SELECT <include refid="scriptColumns"/> FROM crm_complaint_empathy_script WHERE tenant_id=#{tenantId}
+    ORDER BY status='ACTIVE' DESC,created_at,id
+  </select>
+  <select id="findActiveScripts" resultType="com.whale.crm.complaint.domain.ComplaintEmpathyScript">
+    SELECT <include refid="scriptColumns"/> FROM crm_complaint_empathy_script
+    WHERE tenant_id=#{tenantId} AND status='ACTIVE' ORDER BY created_at,id
+  </select>
+  <select id="findScriptById" resultType="com.whale.crm.complaint.domain.ComplaintEmpathyScript">
+    SELECT <include refid="scriptColumns"/> FROM crm_complaint_empathy_script
+    WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="findScriptByIdForUpdate" resultType="com.whale.crm.complaint.domain.ComplaintEmpathyScript">
+    SELECT <include refid="scriptColumns"/> FROM crm_complaint_empathy_script
+    WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE
+  </select>
+  <select id="findScriptByTitle" resultType="com.whale.crm.complaint.domain.ComplaintEmpathyScript">
+    SELECT <include refid="scriptColumns"/> FROM crm_complaint_empathy_script
+    WHERE tenant_id=#{tenantId} AND title=#{title}
+  </select>
+  <insert id="insertScript">
+    INSERT INTO crm_complaint_empathy_script (tenant_id,title,script,status,created_by)
+    VALUES (#{e.tenantId},#{e.title},#{e.script},'ACTIVE',#{e.createdBy,jdbcType=BIGINT})
+  </insert>
+  <update id="updateScript">
+    UPDATE crm_complaint_empathy_script SET title=#{title},script=#{script},
+      updated_at=CURRENT_TIMESTAMP(3),version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status='ACTIVE'
+  </update>
+  <update id="disableScript">
+    UPDATE crm_complaint_empathy_script SET status='DISABLED',updated_at=CURRENT_TIMESTAMP(3),version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status='ACTIVE'
+  </update>
+</mapper>

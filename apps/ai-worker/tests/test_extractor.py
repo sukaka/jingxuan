@@ -120,3 +120,29 @@ def test_evidence_requires_at_least_one_message():
     with pytest.raises(ValidationError):
         Insight.model_validate(data)
     validate_evidence(Insight.model_validate(insight()), request())
+
+
+@pytest.mark.parametrize("intent_type", ["RISK_EVENT", "REFUND_INTENT", "COMPLAINT", "SERVICE_COMPLETION_CLAIM"])
+def test_real_adapter_rejects_high_risk_classification_without_review_evidence(intent_type):
+    unsafe = insight()
+    unsafe["insight_type"] = intent_type
+    unsafe["risk_flags"] = []
+    unsafe["proposed_actions"] = []
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={
+        "choices": [{"message": {"content": json.dumps(unsafe)}}],
+    }))
+    extractor = OpenAICompatibleExtractor("http://model.local/v1", "test-key", "test-model", transport=transport)
+    with pytest.raises(AiExtractionError, match="结构或证据校验"):
+        extractor.extract(request())
+
+
+def test_real_model_prompt_contains_complete_intent_contract():
+    from app.services.prompt import SYSTEM_PROMPT
+
+    for intent_type in (
+        "PACKAGE_QUERY", "APPOINTMENT_INTENT", "VISIT_INTENT", "AFTERCARE_FEEDBACK",
+        "REFUND_INTENT", "COMPLAINT", "REPURCHASE_INTENT", "FOLLOWUP_REQUIRED", "RISK_EVENT",
+        "PRICE_INQUIRY", "SERVICE_EXPERIENCE", "SERVICE_COMPLETION_CLAIM", "GENERAL",
+    ):
+        assert intent_type in SYSTEM_PROMPT
+    assert "高风险" in SYSTEM_PROMPT

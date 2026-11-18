@@ -206,10 +206,13 @@ class CampaignApiIT extends AbstractMysqlIT {
         mismatched.put("settlementMethod", "TWICE_MONTHLY");
         mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
                 .content(json(mismatched))).andExpect(status().isBadRequest());
-        mismatched = channelProfileBody("P2-CHANNEL-REFERRAL-UNCONFIRMED");
-        mismatched.put("channelType", "REFERRAL");
-        mockMvc.perform(admin.withAuth(post("/api/v1/channels")).contentType(MediaType.APPLICATION_JSON)
-                .content(json(mismatched))).andExpect(status().isBadRequest());
+        Map<String, Object> referral = channelProfileBody("P2-CHANNEL-REFERRAL-TWICE");
+        referral.put("channelType", "REFERRAL");
+        referral.put("settlementMethod", "TWICE_MONTHLY");
+        JsonNode referralChannel = data(postJson("/api/v1/channels", admin, referral));
+        org.assertj.core.api.Assertions.assertThat(referralChannel.at("/channelType").asText()).isEqualTo("REFERRAL");
+        org.assertj.core.api.Assertions.assertThat(referralChannel.at("/settlementMethod").asText())
+                .isEqualTo("TWICE_MONTHLY");
 
         for (String column : new String[]{"contact_phone_cipher", "id_card_number_cipher",
                 "payment_account_name_cipher", "payment_account_no_cipher"}) {
@@ -265,6 +268,40 @@ class CampaignApiIT extends AbstractMysqlIT {
         body.put("paymentBankName", "合成测试开户行");
         body.put("remarks", "仅用于集成测试的合成渠道资料");
         return body;
+    }
+
+    @Test
+    void operationCanMaintainDraftButOnlyOperationLeadCanPublish() throws Exception {
+        AuthCookies operation = login("operation1");
+        AuthCookies lead = login("operationlead1");
+        Map<String, Object> draft = campaignBody("P2-OPERATION-DRAFT", "运营草稿活动");
+        draft.put("status", "DRAFT");
+        long id = data(postJson("/api/v1/campaigns", operation, draft)).at("/id").asLong();
+
+        Map<String, Object> publish = campaignBody("P2-OPERATION-DRAFT", "运营草稿活动");
+        publish.put("status", "ACTIVE");
+        publish.put("version", 0);
+        mockMvc.perform(operation.withAuth(patch("/api/v1/campaigns/" + id))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(publish)))
+                .andExpect(status().isForbidden());
+        Map<String, Object> directActive = campaignBody("P2-OPERATION-DIRECT-ACTIVE", "普通运营直接发布");
+        directActive.put("status", "ACTIVE");
+        mockMvc.perform(operation.withAuth(post("/api/v1/campaigns"))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(directActive)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(lead.withAuth(patch("/api/v1/campaigns/" + id))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(publish)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"));
+        mockMvc.perform(get("/api/v1/users").cookie(operation.cookies()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(operation.withAuth(post("/api/v1/orders/1/payment-confirmations"))
+                        .header("Idempotency-Key", "IT-OPERATION-PAYMENT-DENIED")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"externalTradeNo\":\"IT-DENIED\",\"paymentChannel\":\"OFFLINE\","
+                                + "\"amountFen\":1,\"paidAt\":\"2026-11-01T00:00:00Z\",\"evidenceRef\":\"IT-DENIED\"}"))
+                .andExpect(status().isForbidden());
     }
 
     private Map<String, Object> campaignBody(String code, String name) {

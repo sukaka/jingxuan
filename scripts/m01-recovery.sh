@@ -199,7 +199,7 @@ if [ ! -f "$JAR" ]; then
   exit 1
 fi
 export SERVER_PORT=18081
-export DB_JDBC_URL="jdbc:mysql://127.0.0.1:$TARGET_DB_PORT/medical_crm?connectionTimeZone=UTC"
+export DB_JDBC_URL="jdbc:mysql://127.0.0.1:$TARGET_DB_PORT/medical_crm?connectionTimeZone=UTC&useUnicode=true&characterEncoding=UTF-8"
 export DB_USER=m01_app
 export MYSQL_PASSWORD="$DB_SECRET"
 export AI_WORKER_ENABLED=false

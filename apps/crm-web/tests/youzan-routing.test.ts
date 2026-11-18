@@ -18,7 +18,7 @@ describe('有赞同步路由与菜单权限', () => {
   it('campaign:write 不替代 order:read，读取权限才显示同步菜单', () => {
     const writeOnly = visibleMenuItems((code) => code === 'campaign:write')
     const readOnly = visibleMenuItems((code) => code === 'order:read')
-    expect(flatten(writeOnly).map((item) => item.path)).toEqual(['/'])
-    expect(flatten(readOnly).map((item) => item.path)).toEqual(['/', '/orders', '/integrations/youzan'])
+    expect(flatten(writeOnly).map((item) => item.path)).toEqual(['/', '/notifications'])
+    expect(flatten(readOnly).map((item) => item.path)).toEqual(['/', '/notifications', '/orders', '/integrations/youzan'])
   })
 })

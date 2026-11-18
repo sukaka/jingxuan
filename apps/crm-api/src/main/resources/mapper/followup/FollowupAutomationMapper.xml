@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.followup.infrastructure.mapper.FollowupAutomationMapper">
+
+  <sql id="batchColumns">id,tenant_id AS tenantId,order_month AS orderMonth,status,created_by AS createdBy,
+    retry_count AS retryCount,next_retry_at AS nextRetryAt,lease_owner AS leaseOwner,
+    lease_expires_at AS leaseExpiresAt,last_error_masked AS lastErrorMasked,version</sql>
+  <sql id="itemColumns">i.id,i.tenant_id AS tenantId,i.batch_id AS batchId,i.customer_id AS customerId,
+    COALESCE(c.display_name,c.nickname,c.customer_no) AS customerName,i.owner_staff_id AS ownerStaffId,
+    i.team_id AS teamId,i.due_at AS dueAt,i.task_id AS taskId,i.status,i.reason,i.version</sql>
+  <sql id="candidateScope">
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id=#{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">AND c.owner_staff_id=#{selfId}</when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+  </sql>
+  <sql id="candidateFrom">
+    FROM crm_order o
+    INNER JOIN crm_customer c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id AND c.deleted=0
+    WHERE o.tenant_id=#{tenantId} AND o.ordered_at&gt;=#{from} AND o.ordered_at&lt;#{toExclusive}
+      AND o.status NOT IN ('DRAFT','CANCELED')
+    <include refid="candidateScope"/>
+  </sql>
+
+  <select id="selectPolicy" resultType="com.whale.crm.followup.domain.FollowupAutomationRepository$PolicyRow">
+    SELECT tenant_id AS tenantId,default_interval_days AS defaultIntervalDays,version
+    FROM crm_followup_policy WHERE tenant_id=#{tenantId}
+  </select>
+  <select id="selectIntentOverrides" resultType="com.whale.crm.followup.domain.FollowupPolicy$IntentOverride">
+    SELECT intent_level AS intentLevel,interval_days AS intervalDays
+    FROM crm_followup_intent_policy WHERE tenant_id=#{tenantId} ORDER BY intent_level
+  </select>
+  <insert id="insertPolicy">
+    INSERT INTO crm_followup_policy (tenant_id,default_interval_days,updated_by)
+    VALUES (#{tenantId},#{defaultIntervalDays},#{actorUserId})
+  </insert>
+  <update id="updatePolicy">
+    UPDATE crm_followup_policy SET default_interval_days=#{defaultIntervalDays},updated_by=#{actorUserId},version=version+1
+    WHERE tenant_id=#{tenantId} AND version=#{expectedVersion}
+  </update>
+  <delete id="deleteIntentOverrides">DELETE FROM crm_followup_intent_policy WHERE tenant_id=#{tenantId}</delete>
+  <insert id="insertIntentOverride">
+    INSERT INTO crm_followup_intent_policy (tenant_id,intent_level,interval_days)
+    VALUES (#{tenantId},#{override.intentLevel},#{override.intervalDays})
+  </insert>
+
+  <select id="selectCandidates" resultType="com.whale.crm.followup.domain.FollowupAutomationRepository$CandidateRow">
+    SELECT c.id AS customerId,COALESCE(c.display_name,c.nickname,c.customer_no) AS customerName,
+      c.owner_staff_id AS ownerStaffId,c.team_id AS teamId,MIN(o.ordered_at) AS firstOrderedAt,
+      GROUP_CONCAT(o.id ORDER BY o.id) AS orderIds
+    <include refid="candidateFrom"/>
+    GROUP BY c.id
+    ORDER BY c.id
+    <if test="size != null">LIMIT #{size} OFFSET #{offset}</if>
+  </select>
+  <select id="countCandidates" resultType="long">
+    SELECT COUNT(*) FROM (
+      SELECT c.id <include refid="candidateFrom"/> GROUP BY c.id
+    ) candidate_count
+  </select>
+
+  <select id="selectBatchById" resultType="com.whale.crm.followup.domain.FollowupBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_followup_batch WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+  <select id="selectBatchByMonth" resultType="com.whale.crm.followup.domain.FollowupBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_followup_batch WHERE tenant_id=#{tenantId} AND order_month=#{orderMonth}
+  </select>
+  <insert id="insertBatch">
+    INSERT INTO crm_followup_batch (tenant_id,order_month,created_by,status)
+    VALUES (#{tenantId},#{orderMonth},#{actorUserId},'READY')
+  </insert>
+  <select id="selectRetryableBatchTenantIds" resultType="long">
+    SELECT DISTINCT tenant_id FROM crm_followup_batch
+    WHERE (status='FAILED' AND next_retry_at IS NOT NULL AND next_retry_at&lt;=#{now})
+      OR (status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at&lt;=#{now})
+  </select>
+  <select id="selectRetryableBatches" resultType="com.whale.crm.followup.domain.FollowupBatch">
+    SELECT <include refid="batchColumns"/> FROM crm_followup_batch
+    WHERE tenant_id=#{tenantId}
+      AND ((status='FAILED' AND next_retry_at IS NOT NULL AND next_retry_at&lt;=#{now})
+        OR (status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at&lt;=#{now}))
+    ORDER BY id LIMIT #{limit}
+  </select>
+  <update id="claimBatch">
+    UPDATE crm_followup_batch
+    SET status='RUNNING',lease_owner=#{leaseOwner},lease_expires_at=#{leaseExpiresAt},started_at=#{now},
+        finished_at=NULL,last_error_masked=NULL,version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status=#{expectedStatus}
+      AND (lease_expires_at IS NULL OR lease_expires_at&lt;=#{now})
+  </update>
+  <update id="finishBatch">
+    UPDATE crm_followup_batch
+    SET status=#{status},retry_count=retry_count+#{failureIncrement},next_retry_at=#{nextRetryAt},
+        lease_owner=NULL,lease_expires_at=NULL,last_error_masked=#{errorMasked},finished_at=#{finishedAt},
+        version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND status='RUNNING' AND lease_owner=#{leaseOwner}
+  </update>
+  <insert id="insertAttempt">
+    INSERT INTO crm_followup_batch_attempt (tenant_id,batch_id,attempt_no,status,actor_user_id,error_masked)
+    VALUES (#{tenantId},#{batchId},#{attemptNo},#{status},#{actorUserId},#{errorMasked})
+  </insert>
+
+  <insert id="insertItem">
+    INSERT INTO crm_followup_batch_item (tenant_id,batch_id,customer_id,owner_staff_id,team_id,due_at,status)
+    VALUES (#{tenantId},#{batchId},#{candidate.customerId},#{candidate.ownerStaffId},#{candidate.teamId},
+      #{candidate.dueAt},'PENDING')
+  </insert>
+  <select id="selectItemByCustomer" resultType="com.whale.crm.followup.domain.FollowupBatchItem">
+    SELECT <include refid="itemColumns"/> FROM crm_followup_batch_item i
+    INNER JOIN crm_customer c ON c.tenant_id=i.tenant_id AND c.id=i.customer_id
+    WHERE i.tenant_id=#{tenantId} AND i.batch_id=#{batchId} AND i.customer_id=#{customerId}
+  </select>
+  <select id="selectItemForUpdate" resultType="com.whale.crm.followup.domain.FollowupBatchItem">
+    SELECT <include refid="itemColumns"/> FROM crm_followup_batch_item i
+    INNER JOIN crm_customer c ON c.tenant_id=i.tenant_id AND c.id=i.customer_id
+    WHERE i.tenant_id=#{tenantId} AND i.id=#{id} FOR UPDATE
+  </select>
+  <select id="selectItems" resultType="com.whale.crm.followup.domain.FollowupBatchItem">
+    SELECT <include refid="itemColumns"/> FROM crm_followup_batch_item i
+    INNER JOIN crm_customer c ON c.tenant_id=i.tenant_id AND c.id=i.customer_id
+    WHERE i.tenant_id=#{tenantId} AND i.batch_id=#{batchId} ORDER BY i.id
+  </select>
+  <update id="updateItemStatus">
+    UPDATE crm_followup_batch_item
+    SET status=#{status},task_id=COALESCE(#{taskId},task_id),reason=#{reason},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status IN ('PENDING','FAILED')
+  </update>
+  <insert id="insertBatchOrder">
+    INSERT INTO crm_followup_batch_order (tenant_id,batch_id,item_id,order_id)
+    VALUES (#{tenantId},#{batchId},#{itemId},#{orderId})
+  </insert>
+  <select id="selectOrderIds" resultType="long">
+    SELECT order_id FROM crm_followup_batch_order
+    WHERE tenant_id=#{tenantId} AND batch_id=#{batchId} AND item_id=#{itemId} ORDER BY order_id
+  </select>
+
+  <select id="selectDueTaskTenantIds" resultType="long">
+    SELECT DISTINCT tenant_id FROM crm_task
+    WHERE status IN ('OPEN','PROCESSING') AND source_type IN ('FOLLOWUP','MONTHLY_BATCH')
+      AND assignee_user_id IS NOT NULL AND due_at IS NOT NULL AND due_at&lt;=#{now}
+  </select>
+  <select id="selectDueTasks" resultType="com.whale.crm.followup.domain.DueFollowupTask">
+    SELECT id,tenant_id AS tenantId,customer_id AS customerId,assignee_user_id AS assigneeUserId,due_at AS dueAt
+    FROM crm_task
+    WHERE tenant_id=#{tenantId} AND status IN ('OPEN','PROCESSING') AND source_type IN ('FOLLOWUP','MONTHLY_BATCH')
+      AND assignee_user_id IS NOT NULL AND due_at IS NOT NULL AND due_at&lt;=#{now}
+    ORDER BY id LIMIT #{limit}
+  </select>
+  <insert id="insertScheduleJobIgnore">
+    INSERT IGNORE INTO crm_followup_schedule_job (tenant_id,job_type,job_key,status)
+    VALUES (#{tenantId},#{jobType},#{jobKey},'READY')
+  </insert>
+  <select id="selectScheduleJob" resultType="com.whale.crm.followup.domain.FollowupScheduleJob">
+    SELECT id,tenant_id AS tenantId,job_type AS jobType,job_key AS jobKey,status,retry_count AS retryCount,version
+    FROM crm_followup_schedule_job WHERE tenant_id=#{tenantId} AND job_type=#{jobType} AND job_key=#{jobKey}
+  </select>
+  <update id="claimScheduleJob">
+    UPDATE crm_followup_schedule_job
+    SET status='RUNNING',lease_owner=#{leaseOwner},lease_expires_at=#{leaseExpiresAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND (status='READY' OR (status='FAILED' AND (next_retry_at IS NULL OR next_retry_at&lt;=#{now}))
+        OR (status='RUNNING' AND lease_expires_at IS NOT NULL AND lease_expires_at&lt;=#{now}))
+  </update>
+  <update id="finishScheduleJob">
+    UPDATE crm_followup_schedule_job
+    SET status=#{status},retry_count=retry_count+#{failureIncrement},next_retry_at=#{nextRetryAt},
+        lease_owner=NULL,lease_expires_at=NULL,last_error_masked=#{errorMasked},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND status='RUNNING' AND lease_owner=#{leaseOwner}
+  </update>
+</mapper>

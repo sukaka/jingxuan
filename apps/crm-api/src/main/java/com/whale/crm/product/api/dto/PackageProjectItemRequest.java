@@ -9,5 +9,6 @@ public record PackageProjectItemRequest(
         @NotNull @Min(1) Integer grantCount,
         @Min(0) Integer selectionWeight,
         @Min(0) Long allocationPriceFen,
-        @Size(max = 48) String optionGroup) {
+        @Size(max = 48) String optionGroup,
+        @Min(0) Long referencePriceFen) {
 }

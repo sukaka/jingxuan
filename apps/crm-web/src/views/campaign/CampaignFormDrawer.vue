@@ -16,7 +16,10 @@ import {
   updateCampaignBatch,
 } from '../../api/campaign'
 import { campaignErrorText } from '../reporting/reportUi'
+import { useAuthStore } from '../../stores/auth'
 import { instantToShanghaiInput, shanghaiInputToInstant } from './campaignTime'
+
+const auth = useAuthStore()
 
 const props = defineProps<{
   modelValue: boolean
@@ -260,7 +263,7 @@ async function save() {
         <el-form-item label="活动状态" required>
           <el-select v-model="form.status" class="campaign-full-width" @change="campaignNeedsSave = true">
             <el-option label="草稿" value="DRAFT" :disabled="form.id !== null && form.status !== 'DRAFT'" />
-            <el-option label="进行中" value="ACTIVE" /><el-option label="已停用" value="INACTIVE" />
+            <el-option label="进行中" value="ACTIVE" :disabled="!auth.hasPermission('campaign:review') && form.status !== 'ACTIVE'" /><el-option label="已停用" value="INACTIVE" />
             <el-option v-if="form.id !== null" label="已归档（只读）" value="ARCHIVED" />
           </el-select>
         </el-form-item>

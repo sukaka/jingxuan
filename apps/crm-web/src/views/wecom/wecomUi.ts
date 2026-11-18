@@ -1,19 +1,19 @@
 export type WecomTone = 'success' | 'warning' | 'info' | 'danger'
 
 const CONSENT_LABELS: Record<string, string> = {
-  PENDING: '模拟待确认',
-  GRANTED: '模拟同意',
-  REVOKED: '模拟撤回',
+  PENDING: '待确认',
+  GRANTED: '已同意',
+  REVOKED: '已撤回',
 }
 
 const MESSAGE_STATUS_LABELS: Record<string, string> = {
-  STORED: '模拟已归档',
+  STORED: '已归档',
   UNMATCHED: '待人工匹配',
 }
 
 const MONITOR_STATUS_LABELS: Record<string, string> = {
   NEVER_SYNCED: '尚未同步',
-  SUCCESS: '最近同步成功（模拟）',
+  SUCCESS: '最近同步成功',
   ERROR: '采集失败',
 }
 

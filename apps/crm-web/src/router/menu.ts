@@ -3,6 +3,7 @@ export interface MenuItem {
   title: string
   managerTitle?: string
   permission?: string | string[]
+  requiredRoles?: string[]
   excludedUserTypes?: string[]
   icon: string
   badgeKey?: string
@@ -27,13 +28,22 @@ const item = (path: string, title: string, icon: string, permission?: string | s
 const group = (key: string, title: string, icon: string, children: MenuItem[]): MenuGroup => ({ key, title, icon, children })
 
 const ADMIN_MENU: MenuEntry[] = [
-  group('home', '首页总览', 'grid', [item('/', '工作台', 'grid')]),
+  group('home', '首页总览', 'grid', [
+    item('/', '工作台', 'grid'),
+    item('/notifications', '通知中心', 'bell'),
+  ]),
   group('customer', '客户管理', 'users', [
     item('/customers', '客户中心', 'users', 'customer:read'),
     item('/customers/merge', '客户查重合并', 'users', 'customer:merge'),
+    item('/customers/segments', '客户分组', 'users', 'customer:read'),
+    item('/customers/tier-reviews', '等级复核', 'shield', 'customer:read'),
+    item('/customers/batch-tag-jobs', '批量标签', 'clipboard', 'customer:read'),
     item('/followups', '每日跟进台账', 'chat', 'followup:read'),
+    item('/followups/monthly-dispatch', '月度派单', 'calendar', 'followup:read'),
+    item('/complaints', '客诉', 'chat', 'complaint:read'),
     item('/tasks', '回访任务', 'clipboard', 'task:read', { badgeKey: 'tasks' }),
     item('/integrations/wecom', '企业微信 · AI', 'spark', 'wecom:read'),
+    item('/ai/chat-delegation', 'AI 聊天托管', 'spark', 'ai:read'),
     item('/integrations/wecom/monitor', '会话监管', 'chat', 'wecom:read'),
     item('/customers/ownership-logs', '客户归属日志', 'users', 'customer:read'),
   ]),
@@ -63,6 +73,7 @@ const ADMIN_MENU: MenuEntry[] = [
   group('analytics', '数据经营', 'chart', [
     item('/operations/dashboard', '运营数据大屏', 'chart', 'report:read'),
     item('/operations', '运营数据中心', 'chart', 'report:read'),
+    item('/operations/wecom-analytics', '企微运营分析', 'chart', 'report:read'),
     item('/performance', '管家 / 商务业绩', 'chart', 'report:read'),
     item('/exports', '数据导出中心', 'download', 'export:read'),
   ]),
@@ -70,6 +81,10 @@ const ADMIN_MENU: MenuEntry[] = [
     item('/dictionaries', '基础字典 / 列表配置', 'settings', 'dictionary:read'),
     item('/users', '用户管理', 'users', 'user:read'),
     item('/roles', '角色权限', 'shield', 'user:read'),
+    item('/settings/customer-tiers', '分级规则', 'activity', 'customer:write', { requiredRoles: ['ADMIN'] }),
+    item('/settings/followup-automation', '跟进提醒', 'bell', 'followup:read'),
+    item('/settings/complaint-automation', '客诉关键词', 'settings', 'complaint:config'),
+    item('/settings/quick-replies', '快捷话术库', 'chat', 'quickreply:manage'),
     item('/settings/ai', '大模型配置', 'spark', 'ai:config'),
     item('/settings/ai/knowledge', '知识库配置', 'file', 'ai:knowledge:config'),
     item('/knowledge/documents', '知识资料', 'clipboard', ['ai:knowledge:read', 'ai:knowledge:publish']),
@@ -80,12 +95,19 @@ const ADMIN_MENU: MenuEntry[] = [
 const MANAGER_MENU: MenuEntry[] = [
   group('work', '我的工作', 'grid', [
     item('/', '我的工作台', 'grid'),
+    item('/notifications', '通知中心', 'bell'),
     item('/tasks', '今日待办', 'clipboard', 'task:read', { badgeKey: 'tasks' }),
     item('/followups', '客户跟进', 'chat', 'followup:read'),
+    item('/followups/monthly-dispatch', '月度派单', 'calendar', 'followup:read'),
+    item('/complaints', '客诉', 'chat', 'complaint:read'),
   ]),
   group('customers', '客户管理', 'users', [
     item('/customers', '我的客户', 'users', 'customer:read'),
+    item('/customers/segments', '客户分组', 'users', 'customer:read'),
+    item('/customers/tier-reviews', '等级复核', 'shield', 'customer:read'),
+    item('/customers/batch-tag-jobs', '批量标签', 'clipboard', 'customer:read'),
     item('/integrations/wecom', '企微 AI 助手', 'spark', 'wecom:read'),
+    item('/ai/chat-delegation', 'AI 聊天托管', 'spark', 'ai:read'),
   ]),
   group('service', '服务履约', 'calendar', [
     item('/appointments', '预约管理', 'calendar', 'appointment:read', { badgeKey: 'appointments' }),
@@ -94,12 +116,16 @@ const MANAGER_MENU: MenuEntry[] = [
     item('/refunds', '退款申请', 'wallet', 'refund:read'),
   ]),
   group('catalog', '产品运营', 'file', [item('/materials', '素材库', 'file', 'material:read')]),
-  group('performance', '数据业绩', 'chart', [item('/performance', '我的业绩', 'chart', 'report:read')]),
+  group('performance', '数据业绩', 'chart', [
+    item('/performance', '我的业绩', 'chart', 'report:read'),
+    item('/operations/wecom-analytics', '企微运营分析', 'chart', 'report:read'),
+  ]),
 ]
 
 const INSTITUTION_MENU: MenuEntry[] = [
   group('institution-work', '机构工作', 'grid', [
     item('/', '机构工作台', 'grid'),
+    item('/notifications', '通知中心', 'bell'),
     item('/institutions', '机构资料', 'hospital', 'institution:read'),
     item('/institutions/change-approvals', '资料变更申请', 'clipboard', 'institution:read'),
   ]),
@@ -120,6 +146,7 @@ export function visibleMenuItems(
     ? INSTITUTION_MENU
     : roles.includes('MANAGER') && !roles.includes('ADMIN') ? MANAGER_MENU : ADMIN_MENU
   const allowed = (entry: MenuItem) => {
+    if (entry.requiredRoles && !entry.requiredRoles.some((role) => roles.includes(role))) return false
     if (!entry.permission) return !entry.disabled
     return Array.isArray(entry.permission)
       ? entry.permission.some(hasPermission)

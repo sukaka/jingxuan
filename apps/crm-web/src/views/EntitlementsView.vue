@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { getEntitlement, listEntitlements } from '../api/trading'
-import type { Entitlement, EntitlementDetail } from '../api/trading'
+import type { Entitlement, EntitlementDetail, EntitlementListQuery } from '../api/trading'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import StatCard from '../components/prototype/StatCard.vue'
 import PageCard from '../components/prototype/PageCard.vue'
@@ -12,6 +12,7 @@ const { loadCustomerNames, customerLabel } = useReferenceNames()
 
 const entitlements = ref<Entitlement[]>([]), details = ref<Record<number, EntitlementDetail>>({})
 const loading = ref(false), errorMessage = ref(''), keyword = ref('')
+const status = ref(''), validTo = ref(''), availableOnly = ref(false)
 const detailVisible = ref(false), selected = ref<EntitlementDetail | null>(null)
 const filtered = computed(() => entitlements.value.filter((item) => !keyword.value || `${item.projectName} ${item.customerId} ${item.orderItemId}`.toLowerCase().includes(keyword.value.toLowerCase())))
 const totalAvailable = computed(() => entitlements.value.reduce((sum, item) => sum + item.availableCount, 0))
@@ -27,7 +28,11 @@ function progress(item: Entitlement) { return item.grantedCount ? Math.round(red
 async function load() {
   loading.value = true
   try {
-    const result = await listEntitlements({ page: 1, size: 100 })
+    const query: EntitlementListQuery = { page: 1, size: 100 }
+    if (status.value) query.status = status.value
+    if (validTo.value) query.validTo = validTo.value
+    if (availableOnly.value) query.availableOnly = true
+    const result = await listEntitlements(query)
     entitlements.value = result.items
     const detailsResult = await Promise.allSettled(result.items.map((item) => getEntitlement(item.id)))
     const map: Record<number, EntitlementDetail> = {}
@@ -46,7 +51,7 @@ onMounted(load)
     <PageHeader title="会员权益" description="按订单和子项目独立计算剩余次数；选 N 项不等于 N 次，每次核销必须经机构确认"><template #actions><RouterLink to="/orders?create=1" class="el-button el-button--primary">＋ 新增权益订单</RouterLink></template></PageHeader>
     <div class="proto-stat-grid"><StatCard label="全部剩余次数" :value="`${totalAvailable} 次`" sub="当前真实权益余额" icon="heart" /><StatCard label="有可用权益的客户" :value="`${customerCount} 位`" sub="按客户去重" icon="users" /><StatCard label="临近到期（30天）" :value="`${expiringCount} 项`" sub="按权益有效期计算" icon="calendar" /><StatCard label="已正式核销" :value="`${redeemedCount} 次`" sub="仅统计正式核销流水" icon="check" /></div>
     <PageCard>
-      <div class="proto-toolbar"><el-input v-model="keyword" placeholder="搜索客户、项目、订单" clearable style="width:290px" /><span class="proto-note">机构确认核销后才扣减次数，退款回收按实际流水展示</span></div><el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" /><div class="proto-table-wrap">
+      <div class="proto-toolbar"><el-input v-model="keyword" placeholder="搜索客户、项目、订单" clearable style="width:250px" /><el-select v-model="status" placeholder="权益状态" clearable style="width:130px" data-testid="entitlement-status"><el-option label="可用" value="AVAILABLE" /></el-select><el-date-picker v-model="validTo" type="date" value-format="YYYY-MM-DD" placeholder="到期日截至" style="width:160px" data-testid="entitlement-valid-to" /><el-checkbox v-model="availableOnly" data-testid="entitlement-available-only">余额 &gt; 0</el-checkbox><el-button data-testid="apply-entitlement-filters" @click="load">查询</el-button><span class="proto-note">筛选与分页在后端执行</span></div><el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" /><div class="proto-table-wrap">
         <app-table v-loading="loading" :data="filtered">
           <el-table-column label="客户 / 订单" min-width="125"><template #default="{row}">{{ customerLabel(row.customerId) }}<div class="proto-subcell">订单行 #{{ row.orderItemId }}</div></template></el-table-column>
           <el-table-column label="购买卡项" min-width="160"><template #default="{row}">{{ row.projectName || `项目 #${row.projectId}` }}<div class="proto-subcell">V{{ row.versionNo }}</div></template></el-table-column>

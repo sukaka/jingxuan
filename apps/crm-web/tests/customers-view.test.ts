@@ -115,7 +115,7 @@ describe('CustomersView 客户中心', () => {
     const headers = wrapper.findAll('.el-table__header-wrapper th').map((header) => header.text())
     expect(headers).toEqual([
       '客户',
-      '分层',
+      '客户等级',
       '意向 / 消费能力',
       '标签',
       '生日 / 积分',
@@ -209,5 +209,22 @@ describe('CustomersView 客户中心', () => {
     expect(listCustomers).toHaveBeenCalledWith(
       expect.objectContaining({ page: 1, keyword: '小鱼' }),
     )
+  })
+
+  it('客户等级提供 S/A/B/C/D 并支持 D 级筛选', async () => {
+    vi.mocked(listCustomers).mockResolvedValue(samplePage)
+    const wrapper = mountView(managerUser)
+    await flushPromises()
+    vi.mocked(listCustomers).mockClear()
+
+    const headers = wrapper.findAll('.el-table__header-wrapper th').map((header) => header.text())
+    expect(headers[1]).toBe('客户等级')
+    const options = wrapper.findAllComponents({ name: 'ElOption' }).map((option) => option.props('value'))
+    expect(options).toEqual(expect.arrayContaining(['S', 'A', 'B', 'C', 'D']))
+    const tierSelect = wrapper.findComponent({ name: 'ElSelect' })
+    await tierSelect.vm.$emit('change', 'D')
+    await flushPromises()
+
+    expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({ page: 1, tierCode: 'D' }))
   })
 })

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.quickreply.infrastructure.mapper.QuickReplyMapper">
+  <sql id="categoryColumns">id,tenant_id AS tenantId,parent_id AS parentId,name,code,scope_type AS scopeType,scope_id AS scopeId,sort_no AS sortNo,status,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="templateColumns">id,tenant_id AS tenantId,category_id AS categoryId,name,code,message_type AS messageType,content,scene,scope_type AS scopeType,scope_id AS scopeId,allow_edit AS allowEdit,require_preview AS requirePreview,ai_enabled AS aiEnabled,featured,status,sort_no AS sortNo,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="usageColumns">id,tenant_id AS tenantId,template_id AS templateId,employee_id AS employeeId,customer_id AS customerId,external_userid AS externalUserid,scene,original_content AS originalContent,final_content AS finalContent,edited,send_status AS sendStatus,client_result AS clientResult,ai_suggestion_id AS aiSuggestionId,send_time AS sendTime,idempotency_key AS idempotencyKey,created_at AS createdAt</sql>
+
+  <select id="findCategories" resultType="com.whale.crm.quickreply.domain.QuickReplyCategory">SELECT <include refid="categoryColumns"/> FROM crm_quick_reply_category WHERE tenant_id=#{tenantId} ORDER BY status='ACTIVE' DESC,sort_no,id</select>
+  <select id="findCategoryById" resultType="com.whale.crm.quickreply.domain.QuickReplyCategory">SELECT <include refid="categoryColumns"/> FROM crm_quick_reply_category WHERE tenant_id=#{tenantId} AND id=#{id}</select>
+  <select id="findCategoryByIdForUpdate" resultType="com.whale.crm.quickreply.domain.QuickReplyCategory">SELECT <include refid="categoryColumns"/> FROM crm_quick_reply_category WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE</select>
+  <select id="findCategoryByCode" resultType="com.whale.crm.quickreply.domain.QuickReplyCategory">SELECT <include refid="categoryColumns"/> FROM crm_quick_reply_category WHERE tenant_id=#{tenantId} AND code=#{code}</select>
+  <insert id="insertCategory">INSERT INTO crm_quick_reply_category (tenant_id,parent_id,name,code,scope_type,scope_id,sort_no,created_by) VALUES (#{e.tenantId},#{e.parentId,jdbcType=BIGINT},#{e.name},#{e.code},#{e.scopeType},#{e.scopeId,jdbcType=BIGINT},#{e.sortNo},#{e.createdBy,jdbcType=BIGINT})</insert>
+  <update id="updateCategory">UPDATE crm_quick_reply_category SET parent_id=#{e.parentId,jdbcType=BIGINT},name=#{e.name},scope_type=#{e.scopeType},scope_id=#{e.scopeId,jdbcType=BIGINT},sort_no=#{e.sortNo},updated_at=CURRENT_TIMESTAMP(3),version=version+1 WHERE tenant_id=#{e.tenantId} AND id=#{e.id} AND version=#{e.version}</update>
+  <update id="disableCategory">UPDATE crm_quick_reply_category SET status='DISABLED',updated_at=CURRENT_TIMESTAMP(3),version=version+1 WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status='ACTIVE'</update>
+
+  <select id="findTemplates" resultType="com.whale.crm.quickreply.domain.QuickReplyTemplate">SELECT <include refid="templateColumns"/> FROM crm_quick_reply_template WHERE tenant_id=#{tenantId} ORDER BY status='ACTIVE' DESC,sort_no,id</select>
+  <select id="findTemplateById" resultType="com.whale.crm.quickreply.domain.QuickReplyTemplate">SELECT <include refid="templateColumns"/> FROM crm_quick_reply_template WHERE tenant_id=#{tenantId} AND id=#{id}</select>
+  <select id="findTemplateByIdForUpdate" resultType="com.whale.crm.quickreply.domain.QuickReplyTemplate">SELECT <include refid="templateColumns"/> FROM crm_quick_reply_template WHERE tenant_id=#{tenantId} AND id=#{id} FOR UPDATE</select>
+  <select id="findTemplateByCode" resultType="com.whale.crm.quickreply.domain.QuickReplyTemplate">SELECT <include refid="templateColumns"/> FROM crm_quick_reply_template WHERE tenant_id=#{tenantId} AND code=#{code}</select>
+  <insert id="insertTemplate">INSERT INTO crm_quick_reply_template (tenant_id,category_id,name,code,message_type,content,scene,scope_type,scope_id,allow_edit,require_preview,ai_enabled,featured,sort_no,created_by) VALUES (#{e.tenantId},#{e.categoryId},#{e.name},#{e.code},#{e.messageType},#{e.content},#{e.scene},#{e.scopeType},#{e.scopeId,jdbcType=BIGINT},#{e.allowEdit},#{e.requirePreview},#{e.aiEnabled},#{e.featured},#{e.sortNo},#{e.createdBy,jdbcType=BIGINT})</insert>
+  <update id="updateTemplate">UPDATE crm_quick_reply_template SET category_id=#{e.categoryId},name=#{e.name},content=#{e.content},scene=#{e.scene},scope_type=#{e.scopeType},scope_id=#{e.scopeId,jdbcType=BIGINT},allow_edit=#{e.allowEdit},require_preview=#{e.requirePreview},ai_enabled=#{e.aiEnabled},featured=#{e.featured},sort_no=#{e.sortNo},updated_at=CURRENT_TIMESTAMP(3),version=version+1 WHERE tenant_id=#{e.tenantId} AND id=#{e.id} AND version=#{e.version}</update>
+  <update id="disableTemplate">UPDATE crm_quick_reply_template SET status='DISABLED',updated_at=CURRENT_TIMESTAMP(3),version=version+1 WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status='ACTIVE'</update>
+
+  <select id="findVariables" resultType="com.whale.crm.quickreply.domain.QuickReplyVariable">SELECT id,variable_code AS variableCode,variable_name AS variableName,data_source AS dataSource,resolver_type AS resolverType,resolver_key AS resolverKey,data_type AS dataType,required,description,status FROM crm_quick_reply_variable ORDER BY id</select>
+
+  <insert id="insertUsage">INSERT INTO crm_quick_reply_usage (tenant_id,template_id,employee_id,customer_id,external_userid,scene,original_content,final_content,edited,send_status,client_result,ai_suggestion_id,send_time,idempotency_key) VALUES (#{e.tenantId},#{e.templateId},#{e.employeeId},#{e.customerId},#{e.externalUserid},#{e.scene},#{e.originalContent},#{e.finalContent},#{e.edited},#{e.sendStatus},#{e.clientResult,jdbcType=VARCHAR},#{e.aiSuggestionId,jdbcType=BIGINT},#{e.sendTime},#{e.idempotencyKey})</insert>
+  <select id="findUsageByKey" resultType="com.whale.crm.quickreply.domain.QuickReplyUsage">SELECT <include refid="usageColumns"/> FROM crm_quick_reply_usage WHERE tenant_id=#{tenantId} AND idempotency_key=#{idempotencyKey}</select>
+  <select id="findUsages" resultType="com.whale.crm.quickreply.domain.QuickReplyUsage">SELECT <include refid="usageColumns"/> FROM crm_quick_reply_usage WHERE tenant_id=#{tenantId}<if test="templateId != null"> AND template_id=#{templateId}</if><if test="employeeId != null"> AND employee_id=#{employeeId}</if> ORDER BY id DESC LIMIT #{size} OFFSET #{offset}</select>
+  <select id="countUsages" resultType="long">SELECT COUNT(*) FROM crm_quick_reply_usage WHERE tenant_id=#{tenantId}<if test="templateId != null"> AND template_id=#{templateId}</if><if test="employeeId != null"> AND employee_id=#{employeeId}</if></select>
+
+  <select id="findFavoriteTemplateIds" resultType="long">SELECT template_id FROM crm_quick_reply_favorite WHERE tenant_id=#{tenantId} AND employee_id=#{employeeId}</select>
+  <insert id="insertFavorite">INSERT IGNORE INTO crm_quick_reply_favorite (tenant_id,template_id,employee_id) VALUES (#{tenantId},#{templateId},#{employeeId})</insert>
+  <delete id="deleteFavorite">DELETE FROM crm_quick_reply_favorite WHERE tenant_id=#{tenantId} AND template_id=#{templateId} AND employee_id=#{employeeId}</delete>
+  <select id="aggregateUsageStats" resultType="com.whale.crm.quickreply.domain.QuickReplyUsageStat">
+    SELECT template_id AS templateId,COUNT(*) AS totalCount,
+      COALESCE(SUM(send_status='COPIED'),0) AS copiedCount,
+      COALESCE(SUM(send_status='SDK_SUCCESS'),0) AS successCount,
+      COALESCE(SUM(send_status='SDK_FAILED'),0) AS failedCount,
+      COALESCE(SUM(send_status='SDK_UNKNOWN'),0) AS unknownCount,
+      COALESCE(SUM(edited=1),0) AS editedCount,
+      COUNT(DISTINCT employee_id) AS employeeCount,MAX(send_time) AS lastUsedAt
+    FROM crm_quick_reply_usage
+    WHERE tenant_id=#{tenantId}
+    <if test="employeeId != null"> AND employee_id=#{employeeId}</if>
+    <if test="from != null"> AND send_time &gt;=#{from,jdbcType=TIMESTAMP}</if>
+    <if test="to != null"> AND send_time &lt;#{to,jdbcType=TIMESTAMP}</if>
+    GROUP BY template_id
+  </select>
+</mapper>

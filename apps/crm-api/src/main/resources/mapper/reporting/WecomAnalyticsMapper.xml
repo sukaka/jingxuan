@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.reporting.infrastructure.mapper.WecomAnalyticsMapper">
+  <sql id="customerScope">
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id = #{selfId}
+        <if test="teamIds.size() > 0">OR c.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach></if>)
+      </when>
+      <when test="scopeType == 'SELF'">AND c.owner_staff_id = #{selfId}</when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+  </sql>
+
+  <select id="quickReplyFacts" resultType="com.whale.crm.reporting.domain.WecomAnalyticsRepository$QuickReplyFacts">
+    SELECT COUNT(*) AS usageCount,
+           COALESCE(SUM(CASE WHEN u.send_status = 'COPIED' THEN 1 ELSE 0 END), 0) AS copiedCount,
+           COALESCE(SUM(CASE WHEN u.send_status = 'SDK_SUCCESS' THEN 1 ELSE 0 END), 0) AS sdkSuccessCount,
+           COALESCE(SUM(CASE WHEN u.send_status = 'SDK_FAILED' THEN 1 ELSE 0 END), 0) AS sdkFailedCount,
+           COALESCE(SUM(CASE WHEN u.send_status = 'SDK_UNKNOWN' THEN 1 ELSE 0 END), 0) AS sdkUnknownCount,
+           COALESCE(SUM(CASE WHEN u.edited = 1 THEN 1 ELSE 0 END), 0) AS editedCount,
+           COALESCE(SUM(CASE WHEN u.ai_suggestion_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS aiLinkedUsageCount
+    FROM crm_quick_reply_usage u
+    JOIN crm_customer c ON c.tenant_id = u.tenant_id AND c.id = u.customer_id AND c.deleted = 0
+    WHERE u.tenant_id = #{tenantId}
+      AND u.created_at &gt;= #{fromUtc} AND u.created_at &lt; #{toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="employeeId != null">AND u.employee_id = #{employeeId}</if>
+  </select>
+
+  <select id="aiSuggestionFacts" resultType="com.whale.crm.reporting.domain.WecomAnalyticsRepository$AiSuggestionFacts">
+    SELECT COUNT(*) AS generatedCount,
+           COALESCE(SUM(CASE WHEN s.status = 'ACCEPTED' AND s.accepted = 1 THEN 1 ELSE 0 END), 0) AS acceptedCount,
+           COALESCE(SUM(CASE WHEN s.status = 'REJECTED' THEN 1 ELSE 0 END), 0) AS rejectedCount,
+           COALESCE(SUM(CASE WHEN s.status = 'PROPOSED' THEN 1 ELSE 0 END), 0) AS pendingCount,
+           COALESCE(SUM(CASE WHEN s.status = 'ACCEPTED' AND s.accepted = 1 AND s.edited = 1 THEN 1 ELSE 0 END), 0) AS editedAcceptedCount,
+           COALESCE(SUM(CASE WHEN s.provider = 'mock' THEN 1 ELSE 0 END), 0) AS mockGeneratedCount
+    FROM crm_ai_reply_suggestion s
+    JOIN crm_customer c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id AND c.deleted = 0
+    WHERE s.tenant_id = #{tenantId}
+      AND s.created_at &gt;= #{fromUtc} AND s.created_at &lt; #{toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="employeeId != null">AND s.employee_id = #{employeeId}</if>
+  </select>
+
+  <select id="aiUsageFacts" resultType="com.whale.crm.reporting.domain.WecomAnalyticsRepository$AiUsageFacts">
+    SELECT COALESCE(SUM(CASE WHEN u.send_status = 'COPIED' THEN 1 ELSE 0 END), 0) AS copiedCount,
+           COALESCE(SUM(CASE WHEN u.send_status = 'SDK_SUCCESS' THEN 1 ELSE 0 END), 0) AS sdkSuccessCount,
+           COALESCE(SUM(CASE WHEN u.send_status = 'SDK_FAILED' THEN 1 ELSE 0 END), 0) AS sdkFailedCount,
+           COALESCE(SUM(CASE WHEN u.send_status = 'SDK_UNKNOWN' THEN 1 ELSE 0 END), 0) AS sdkUnknownCount
+    FROM crm_quick_reply_usage u
+    JOIN crm_customer c ON c.tenant_id = u.tenant_id AND c.id = u.customer_id AND c.deleted = 0
+    WHERE u.tenant_id = #{tenantId} AND u.ai_suggestion_id IS NOT NULL
+      AND u.created_at &gt;= #{fromUtc} AND u.created_at &lt; #{toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="employeeId != null">AND u.employee_id = #{employeeId}</if>
+  </select>
+
+  <select id="appointmentFacts" resultType="com.whale.crm.reporting.domain.WecomAnalyticsRepository$AppointmentFacts">
+    WITH appointment_events AS (
+      SELECT h.tenant_id, h.appointment_id,
+             MIN(CASE WHEN h.to_status = 'CONFIRMED' THEN h.created_at END) AS confirmed_at,
+             MIN(CASE WHEN h.to_status = 'CHECKED_IN' THEN h.created_at END) AS checked_in_at
+      FROM crm_appointment_history h
+      WHERE h.tenant_id = #{tenantId}
+      GROUP BY h.tenant_id, h.appointment_id
+    )
+    SELECT COUNT(*) AS confirmedCount,
+           COALESCE(SUM(CASE WHEN e.checked_in_at IS NOT NULL AND e.checked_in_at &gt;= e.confirmed_at
+                                  AND e.checked_in_at &lt; #{toUtcExclusive} THEN 1 ELSE 0 END), 0) AS checkedInCount
+    FROM appointment_events e
+    JOIN crm_appointment a ON a.tenant_id = e.tenant_id AND a.id = e.appointment_id
+    JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
+    WHERE e.confirmed_at IS NOT NULL
+      AND e.confirmed_at &gt;= #{fromUtc} AND e.confirmed_at &lt; #{toUtcExclusive}
+      <include refid="customerScope"/>
+      <if test="employeeId != null">AND a.owner_staff_id = #{employeeId}</if>
+  </select>
+
+  <select id="paymentFacts" resultType="com.whale.crm.reporting.domain.WecomAnalyticsRepository$PaymentFacts">
+    WITH order_facts AS (
+      SELECT o.id, o.customer_id, MIN(p.confirmed_at) AS first_confirmed_at
+      FROM crm_payment_txn p
+      JOIN crm_order o ON o.tenant_id = p.tenant_id AND o.id = p.order_id
+        AND o.status IN ('PAID', 'PARTIALLY_REDEEMED', 'FULFILLED')
+      JOIN crm_customer c ON c.tenant_id = o.tenant_id AND c.id = o.customer_id AND c.deleted = 0
+      WHERE p.tenant_id = #{tenantId} AND p.status = 'CONFIRMED' AND p.confirmed_at IS NOT NULL
+        AND p.confirmed_at &gt;= #{fromUtc} AND p.confirmed_at &lt; #{toUtcExclusive}
+        <include refid="customerScope"/>
+        <if test="employeeId != null">AND o.owner_at_sale_id = #{employeeId}</if>
+      GROUP BY o.id, o.customer_id
+    ), customer_facts AS (
+      SELECT customer_id, COUNT(*) AS paid_orders FROM order_facts GROUP BY customer_id
+    )
+    SELECT COALESCE(SUM(f.paid_orders), 0) AS paidOrderCount,
+           COUNT(*) AS paidCustomerCount,
+           COALESCE(SUM(CASE WHEN f.paid_orders &gt; 1 THEN 1 ELSE 0 END), 0) AS repeatCustomerCount
+    FROM customer_facts f
+  </select>
+</mapper>

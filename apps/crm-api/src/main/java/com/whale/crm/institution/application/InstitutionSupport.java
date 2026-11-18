@@ -94,7 +94,7 @@ public class InstitutionSupport {
         return new InstitutionProfileResponse(profile.id(), profile.institutionNo(), profile.fullName(),
                 profile.shortName(), profile.cityCode(), profile.businessTypeCode(), profile.ownershipCode(),
                 profile.gradeCode(), profile.address(), profile.contactName(), mask(profile.contactPhoneCipher()),
-                profile.status(), managerOnly ? null : profile.settlementType(),
+                profile.status(), managerOnly ? null : profile.settlementType(), profile.settlementDay(),
                 managerOnly ? null : profile.onlineRate(), managerOnly ? null : profile.offlineRate(),
                 managerOnly ? null : profile.platformRate(), managerOnly ? null : profile.otherRateRule(),
                 managerOnly ? null : profile.chargesFee(), managerOnly ? null : profile.depositFen(),

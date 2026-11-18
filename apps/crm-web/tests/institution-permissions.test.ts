@@ -42,6 +42,7 @@ const profile: InstitutionProfile = {
   contactPhoneMasked: '****0000',
   status: 'PENDING',
   settlementType: 'MONTHLY',
+  settlementDay: null,
   onlineRate: '0.180000',
   offlineRate: '0.120000',
   platformRate: '0.150000',

@@ -34,6 +34,9 @@ vi.mock('../src/api/wecom', () => ({
   linkWecomContact: vi.fn(),
 }))
 vi.mock('../src/api/customer', () => ({ listCustomers: vi.fn(), getCustomer: vi.fn() }))
+vi.mock('../src/api/wecomRoom', () => ({
+  listWecomRooms: vi.fn().mockResolvedValue([{ corpId: 'MOCK-CORP-001', roomId: 'wr-synthetic', displayName: '开发群聊', enabled: true, archivable: true, membershipConfirmedAt: '2026-11-13T08:00:00Z', version: 0, participants: [] }]),
+}))
 vi.mock('vue-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-router')>()),
   useRoute: () => ({ query: {} }),
@@ -55,6 +58,12 @@ const message: WecomMessageView = {
   consentSnapshot: 'GRANTED',
   currentConsentStatus: 'GRANTED',
   status: 'STORED',
+  recalledAt: null,
+  recallMessageId: null,
+  conversationType: 'DIRECT',
+  senderWecomUserid: 'WECOM-EXT-1010',
+  senderStaffUserId: null,
+  roomRosterVersion: null,
 }
 
 const contact: WecomContact = {
@@ -209,7 +218,7 @@ describe('WecomArchiveAdminView 合规归档与 W02', () => {
     vi.mocked(syncWecomContacts).mockResolvedValue({ id: 1, corpId: contact.corpId, runType: 'FULL', status: 'SUCCESS', cursorValue: null, receivedCount: 1, upsertedCount: 1, deactivatedCount: 0, errorMasked: null, startedAt: '2026-10-25T01:00:00Z', finishedAt: '2026-10-25T01:00:00Z' })
     vi.mocked(getWecomMonitor).mockResolvedValue(monitor)
     vi.mocked(getWecomMessageContent).mockResolvedValue({ messageRef: 901, messageType: 'TEXT', sentAt: message.sentAt, content: 'Mock 授权归档文本' })
-    vi.mocked(syncWecomArchive).mockResolvedValue({ adapter: 'MOCK_DEV_ONLY', received: 2, stored: 1, duplicates: 0, skipped: 1, lastSeq: 102, hasMore: false, dataGap: true })
+    vi.mocked(syncWecomArchive).mockResolvedValue({ adapter: 'MOCK_DEV_ONLY', received: 2, stored: 1, duplicates: 0, skipped: 1, lastSeq: 102, hasMore: false, dataGap: true, recalled: 0 })
     vi.mocked(linkWecomContact).mockResolvedValue({ ...contact, customerId: 42, linkType: 'MANUAL', linkReason: '人工核对外部身份与CRM档案', createdBy: 1, version: 4 })
     vi.mocked(listCustomers).mockResolvedValue({ items: [customer], total: 1, page: 1, size: 20 })
     vi.mocked(getCustomer).mockResolvedValue(customerDetail)
@@ -219,9 +228,8 @@ describe('WecomArchiveAdminView 合规归档与 W02', () => {
     const wrapper = mountView(['wecom:read'])
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="wecom-mock-banner"]').text()).toContain('模拟')
-    expect(wrapper.text()).toContain('Q10 未确认')
-    expect(wrapper.text()).toContain('官方 SDK 禁用')
+    expect(wrapper.get('[data-testid="wecom-mock-banner"]').text()).toContain('模式受控')
+    expect(wrapper.text()).toContain('官方 SDK 按授权与运行开关启用')
     expect(wrapper.text()).toContain('不接个人微信')
     expect(wrapper.get('[data-testid="wecom-data-gap"]').text()).toContain('采集覆盖缺口')
     expect(wrapper.text()).toContain('无法判断沟通情况')
@@ -328,7 +336,7 @@ describe('WecomArchiveAdminView 合规归档与 W02', () => {
     const error = vi.spyOn(ElMessage, 'error')
     vi.mocked(syncWecomArchive)
       .mockRejectedValueOnce(new ApiError({ status: 409, code: 'CONFLICT', message: 'Mock 归档失败' }))
-      .mockResolvedValueOnce({ adapter: 'MOCK_DEV_ONLY', received: 2, stored: 1, duplicates: 0, skipped: 1, lastSeq: 102, hasMore: false, dataGap: true })
+      .mockResolvedValueOnce({ adapter: 'MOCK_DEV_ONLY', received: 2, stored: 1, duplicates: 0, skipped: 1, lastSeq: 102, hasMore: false, dataGap: true, recalled: 0 })
     const wrapper = mountView(['wecom:read', 'wecom:monitor'])
     await flushPromises()
 
@@ -411,6 +419,27 @@ describe('WecomArchiveView 三栏会话工作区', () => {
     expect(listCustomers).not.toHaveBeenCalled()
   })
 
+  it('媒体按状态展示授权下载入口与处理提示', async () => {
+    vi.mocked(listWecomMessages).mockResolvedValue({ items: [message], total: 1, page: 1, size: 100 })
+    vi.mocked(getWecomMessageContent).mockResolvedValue({
+      messageRef: 901, messageType: 'FILE', sentAt: message.sentAt, content: '服务资料.txt',
+      mediaAssets: [
+        { id: 81, mediaKind: 'file', fileName: '服务资料.txt', contentType: 'text/plain', fileSize: 14, status: 'STORED', available: true },
+        { id: 82, mediaKind: 'image', fileName: null, contentType: 'application/octet-stream', fileSize: null, status: 'RETRY', available: false },
+      ],
+      recalledAt: '2026-11-13T08:00:00Z',
+    })
+    const wrapper = mountWorkspace(['wecom:read'])
+    await flushPromises()
+
+    expect(wrapper.get('.media-download').attributes('href')).toBe('/api/v1/integrations/wecom/media/81/content')
+    expect(wrapper.get('.media-download').text()).toContain('服务资料.txt')
+    expect(wrapper.text()).toContain('媒体 82')
+    expect(wrapper.text()).toContain('等待重试')
+    expect(wrapper.text()).toContain('此消息已撤回')
+    expect(wrapper.findAll('.media-download')).toHaveLength(1)
+  })
+
   it('会话元数据读取失败展示真实错误，不伪造会话内容', async () => {
     vi.mocked(listWecomMessages).mockRejectedValue(new ApiError({ status: 0, code: 'NETWORK_ERROR', message: '会话元数据不可用' }))
     const wrapper = mountWorkspace(['wecom:read'])
@@ -454,6 +483,28 @@ describe('WecomArchiveView 三栏会话工作区', () => {
     expect(wrapper.text()).toContain('部分内容未获授权或暂不可读取，未展示旧全文')
     expect(wrapper.text()).not.toContain('第一会话授权全文')
     expect(wrapper.text()).not.toContain('wecom/mock-private-object-b')
+  })
+
+  it('群聊显示实际发送人和多客户上下文，不创建单聊 AI 任务', async () => {
+    const roomMessage: WecomMessageView = {
+      ...message, id: 903, msgId: 'ROOM-SYNTHETIC-MSG', customerId: null, externalUserid: null,
+      staffUserId: null, conversationId: 'wr-synthetic', conversationType: 'ROOM',
+      senderWecomUserid: 'wm-room-member', senderStaffUserId: null, roomRosterVersion: 0,
+    }
+    const { listWecomRooms } = await import('../src/api/wecomRoom')
+    vi.mocked(listWecomRooms).mockResolvedValue([{ corpId: 'MOCK-CORP-001', roomId: 'wr-synthetic', displayName: '开发群聊', enabled: true, archivable: true, membershipConfirmedAt: '2026-11-13T08:00:00Z', version: 0, participants: [] }])
+    vi.mocked(listWecomMessages).mockResolvedValue({ items: [roomMessage], total: 1, page: 1, size: 100 })
+    const wrapper = mountWorkspace(['wecom:read', 'wecom:monitor', 'ai:read', 'ai:write'])
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('开发群聊')
+    expect(wrapper.text()).toContain('多客户群聊')
+    expect(wrapper.text()).toContain('不归因于单一客户')
+    expect(wrapper.text()).toContain('外部参与人 · wm-room-member')
+    expect(wrapper.get('[data-testid="ai-analyze"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('群聊不生成单聊客户归因或 AI 任务')
+    expect(wrapper.text()).not.toContain('待匹配 · null')
+    expect(getCustomer).not.toHaveBeenCalled()
   })
 
   it('AI 操作按钮清除相邻左边距，保持全宽左右对齐', () => {

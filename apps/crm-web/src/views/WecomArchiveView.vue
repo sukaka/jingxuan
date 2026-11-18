@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getWecomMessageContent, listWecomContacts, listWecomMessages } from '../api/wecom'
-import type { WecomContact, WecomMessageView } from '../api/wecom'
+import type { WecomContact, WecomMessageView, WecomMediaAssetView } from '../api/wecom'
+import { listWecomRooms } from '../api/wecomRoom'
 import { confirmAiJob, createAiJob, getAiJob, listAiJobs } from '../api/ai'
 import type { AiJob } from '../api/ai'
 import { getCustomer } from '../api/customer'
@@ -13,8 +14,10 @@ import PageCard from '../components/prototype/PageCard.vue'
 import CustomerAvatar from './customer/CustomerAvatar.vue'
 import { formatDateTime } from './customer/shared'
 import { useReferenceNames } from './references'
+import { aiIntentLabel } from '../utils/aiIntent'
 
-interface Conversation { id: string; customerId: number | null; externalUserid: string; staffUserId: number; messages: WecomMessageView[] }
+interface Conversation { id: string; customerId: number | null; externalUserid: string | null; staffUserId: number | null; conversationType: 'DIRECT' | 'ROOM'; messages: WecomMessageView[] }
+interface ConversationMessage { id: number; senderType: string; senderWecomUserid: string | null; sentAt: string; content: string; mediaAssets?: WecomMediaAssetView[]; recalledAt?: string | null }
 const route = useRoute()
 const auth = useAuthStore()
 const { projectCodeLabel } = useReferenceNames()
@@ -22,8 +25,9 @@ const canRead = computed(() => auth.user?.userType !== 'INSTITUTION' && auth.has
 const canAnalyze = computed(() => auth.hasPermission('ai:write'))
 const canConfirm = computed(() => auth.hasPermission('ai:confirm') && auth.hasPermission('task:write'))
 const conversations = ref<Conversation[]>([]), contacts = ref<WecomContact[]>([])
-const selectedId = ref(''), messages = ref<{ id: number; senderType: string; sentAt: string; content: string }[]>([])
+const selectedId = ref(''), messages = ref<ConversationMessage[]>([])
 const customerNames = ref<Record<number, string>>({})
+const roomNames = ref<Record<string, string>>({})
 const loading = ref(false), contentLoading = ref(false), errorMessage = ref(''), contentError = ref('')
 const activeJob = ref<AiJob | null>(null), aiLoading = ref(false), aiError = ref('')
 const confirmVisible = ref(false), confirming = ref(false)
@@ -31,11 +35,16 @@ const confirmForm = reactive({ title: '', description: '', dueAt: '', reason: ''
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 const selected = computed(() => conversations.value.find((item) => item.id === selectedId.value) || null)
 const hasInsight = computed(() => activeJob.value?.status === 'PROPOSED' && activeJob.value.insight)
-function conversationName(item: Conversation) { return item.customerId ? customerNames.value[item.customerId] || `客户 #${item.customerId}` : `待匹配 · ${item.externalUserid}` }
+function conversationName(item: Conversation) { return item.conversationType === 'ROOM' ? roomNames.value[item.id] || `群聊 · ${item.id}` : item.customerId ? customerNames.value[item.customerId] || `客户 #${item.customerId}` : `待匹配 · ${item.externalUserid}` }
+function conversationMeta(item: Conversation) { return item.conversationType === 'ROOM' ? `多客户群聊 · ${item.messages.length} 条归档` : `管家 #${item.staffUserId} · ${item.messages.length} 条归档` }
+function senderLabel(message: ConversationMessage) {
+  if (selected.value?.conversationType === 'ROOM') return `${message.senderType === 'EMPLOYEE' ? '员工' : '外部参与人'} · ${message.senderWecomUserid || '身份未显示'}`
+  return message.senderType === 'EMPLOYEE' ? '管家' : '客户'
+}
 function time(value: string) { return value.slice(11, 16) }
 function errorText(error: unknown) { return error instanceof Error ? error.message : '操作失败，请稍后重试' }
 function statusLabel(status: string) { return ({ QUEUED: '排队等待', RUNNING: '分析中', RETRY: '等待重试', PROPOSED: '待人工确认', FAILED: '分析失败', CONFIRMED: '已生成待办', REJECTED: '已驳回' } as Record<string, string>)[status] || '未知任务状态' }
-function intentLabel(type: string) { return ({ APPOINTMENT_INTENT: '预约意向', PRICE_INQUIRY: '价格咨询', REFUND_INTENT: '退款意向', COMPLAINT: '投诉/不满', REPURCHASE_INTENT: '复购意向', SERVICE_EXPERIENCE: '服务后体验', SERVICE_COMPLETION_CLAIM: '已完成服务陈述（待核实）', GENERAL: '未明确意图' } as Record<string, string>)[type] || '未知意图' }
+function intentLabel(type: string) { return aiIntentLabel(type) }
 function riskLabel(value: string) { return ({ COMPLAINT: '投诉风险', REFUND_REQUEST: '退款诉求', SERVICE_CLAIM: '服务完成陈述', URGENT: '需优先复核' } as Record<string, string>)[value] || '未知风险' }
 function actionLabel(value: string) { return ({ VERIFY_BALANCE: '核实剩余权益', ASK_PREFERRED_INSTITUTION: '确认意向机构', CREATE_FOLLOWUP_DRAFT: '生成回访草稿', VERIFY_SERVICE_RECORD: '核实服务记录', OFFER_HUMAN_SUPPORT: '转人工支持', VERIFY_PAYMENT_RECORD: '核实支付记录' } as Record<string, string>)[value] || '未知操作' }
 function stopPolling() { if (pollTimer) clearTimeout(pollTimer); pollTimer = undefined }
@@ -59,13 +68,22 @@ async function selectConversation(id: string) {
   contentLoading.value = true
   try {
     const results = await Promise.allSettled(conversation.messages.map((message) => getWecomMessageContent(message.id)))
-    messages.value = results.flatMap((result, index) => result.status === 'fulfilled' ? [{ id: conversation.messages[index].id, senderType: conversation.messages[index].senderType, sentAt: conversation.messages[index].sentAt, content: result.value.content }] : [])
+    messages.value = results.flatMap((result, index) => result.status === 'fulfilled' ? [{
+      id: conversation.messages[index].id,
+      senderType: conversation.messages[index].senderType,
+      senderWecomUserid: conversation.messages[index].senderWecomUserid,
+      sentAt: conversation.messages[index].sentAt,
+      content: result.value.content,
+      mediaAssets: result.value.mediaAssets ?? [],
+      recalledAt: result.value.recalledAt ?? null,
+    }] : [])
     if (results.some((result) => result.status === 'rejected')) contentError.value = '部分内容未获授权或暂不可读取，未展示旧全文'
-    await loadLatest(id)
+    if (conversation.conversationType !== 'ROOM') await loadLatest(id)
   } finally { contentLoading.value = false }
 }
 async function analyze() {
   const conversation = selected.value
+  if (conversation?.conversationType === 'ROOM') { aiError.value = '群聊含多个参与人，不生成单聊客户归因或 AI 任务'; return }
   if (!conversation?.customerId) { aiError.value = '客户身份尚未人工匹配，不能生成 AI 分析'; return }
   const ids = conversation.messages.filter((item) => item.messageType === 'TEXT').map((item) => item.id)
   if (!ids.length) { aiError.value = '当前会话没有可分析的授权文本'; return }
@@ -126,14 +144,19 @@ onMounted(async () => {
     contacts.value = contactRows
     const groups = new Map<string, Conversation>()
     messagePage.items.forEach((message) => {
-      const key = message.conversationId || message.externalUserid
-      const group = groups.get(key) || { id: key, customerId: message.customerId, externalUserid: message.externalUserid, staffUserId: message.staffUserId, messages: [] }
+      const key = message.conversationId || message.externalUserid || `message-${message.id}`
+      const group = groups.get(key) || { id: key, customerId: message.customerId, externalUserid: message.externalUserid, staffUserId: message.staffUserId, conversationType: message.conversationType, messages: [] }
       group.customerId = message.customerId
       group.messages.push(message)
       groups.set(key, group)
     })
     conversations.value = [...groups.values()].map((group) => ({ ...group, messages: group.messages.sort((a, b) => a.archiveSeq - b.archiveSeq) }))
       .sort((a, b) => (b.messages.at(-1)?.archiveSeq || 0) - (a.messages.at(-1)?.archiveSeq || 0))
+    const roomCorpIds = [...new Set(messagePage.items.filter((item) => item.conversationType === 'ROOM').map((item) => item.corpId))]
+    const roomResults = await Promise.allSettled(roomCorpIds.map(listWecomRooms))
+    roomResults.forEach((result) => {
+      if (result.status === 'fulfilled') result.value.forEach((room) => { roomNames.value[room.roomId] = room.displayName || `群聊 · ${room.roomId}` })
+    })
     const ids = [...new Set(messagePage.items.flatMap((item) => item.customerId ? [item.customerId] : []))]
     const names = await Promise.allSettled(ids.map((id) => getCustomer(id)))
     names.forEach((result, index) => { if (result.status === 'fulfilled') customerNames.value[ids[index]] = result.value.displayName || result.value.nickname || `客户 #${ids[index]}` })
@@ -149,15 +172,31 @@ onMounted(async () => {
 <template>
   <div class="proto-page wecom-page">
     <PageHeader title="企业微信 · AI 管家" description="官方客户联系与会话归档；AI 只提供证据建议，不能自动执行交易或发送消息">
-      <template #actions><span class="proto-pill warning">模拟 · 未连接真实企业微信</span><RouterLink to="/integrations/wecom/archive" class="el-button">接入状态 / 归档管理</RouterLink></template>
+      <template #actions><span class="proto-pill info">归档只读 · 权限受控</span><RouterLink to="/integrations/wecom/archive" class="el-button">接入状态 / 归档管理</RouterLink></template>
     </PageHeader>
-    <div v-if="canRead" class="proto-callout">Q10 未确认，官方 SDK 保持禁用，不接个人微信。AI 识别不等于自动执行，全文仅在成员、同意与客户数据范围均满足时读取。</div>
+    <div v-if="canRead" class="proto-callout">官方采集需完成企业授权与 SDK 配置，不接个人微信。AI 识别不等于自动执行，全文与媒体仅在成员、同意与客户数据范围均满足时读取。</div>
     <el-alert v-if="!canRead" type="error" :title="auth.user?.userType === 'INSTITUTION' ? '机构用户无企业微信归档访问入口' : '缺少 wecom:read 权限'" :closable="false" />
     <el-alert v-else-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
     <PageCard v-if="canRead">
       <div v-loading="loading" class="chat-layout">
-        <aside class="chat-contacts"><div v-for="item in conversations" :key="item.id" class="chat-contact" :class="{active:selectedId===item.id}" @click="selectConversation(item.id)"><CustomerAvatar :name="conversationName(item)" :size="36" /><div><strong>{{ conversationName(item) }}</strong><p>管家 #{{ item.staffUserId }} · {{ item.messages.length }} 条归档</p><small>选择后按权限读取消息</small></div></div><div v-if="!conversations.length && !loading" class="proto-empty">暂无授权会话</div></aside>
-        <section class="chat-panel"><header class="chat-head"><strong>{{ selected ? conversationName(selected) : '选择会话' }}</strong><span v-if="selected" class="proto-muted">专属管家 #{{ selected.staffUserId }}</span></header><div v-loading="contentLoading" class="chat-messages"><el-alert v-if="contentError" type="warning" :title="contentError" :closable="false" /><div v-for="message in messages" :key="message.id" class="bubble-row" :class="{right:message.senderType==='EMPLOYEE'}"><div class="bubble">{{ message.content }}<small>{{ message.senderType === 'EMPLOYEE' ? '管家' : '客户' }} · {{ time(message.sentAt) }}</small></div></div><div v-if="!messages.length && !contentLoading" class="proto-empty">选择会话查看授权内容</div></div><div class="chat-input"><el-input disabled placeholder="正式系统不直接发送企微消息" /><el-button disabled>发送</el-button></div></section>
+        <aside class="chat-contacts">
+          <button v-for="item in conversations" :key="item.id" type="button" class="chat-contact" :class="{active:selectedId===item.id}" @click="selectConversation(item.id)">
+            <CustomerAvatar :name="conversationName(item)" :size="36" />
+            <div><strong>{{ conversationName(item) }}</strong><p>{{ conversationMeta(item) }}</p><small>选择后按权限读取消息</small></div>
+          </button>
+          <div v-if="!conversations.length && !loading" class="proto-empty">暂无授权会话</div>
+        </aside>
+        <section class="chat-panel">
+          <header class="chat-head"><strong>{{ selected ? conversationName(selected) : '选择会话' }}</strong><span v-if="selected" class="proto-muted">{{ selected.conversationType === 'ROOM' ? '群聊 · 不归因于单一客户' : `专属管家 #${selected.staffUserId}` }}</span></header>
+          <div v-loading="contentLoading" class="chat-messages">
+            <el-alert v-if="contentError" type="warning" :title="contentError" :closable="false" />
+            <div v-for="message in messages" :key="message.id" class="bubble-row" :class="{right:message.senderType==='EMPLOYEE'}">
+              <div class="bubble"><span class="message-text">{{ message.content }}</span><div v-if="message.recalledAt" class="recalled-note">此消息已撤回；原文仅在当前授权范围内保留审计</div><div v-if="message.mediaAssets?.length" class="media-assets"><template v-for="asset in message.mediaAssets" :key="asset.id"><a v-if="asset.available" class="media-download" :href="`/api/v1/integrations/wecom/media/${asset.id}/content`" :download="asset.fileName || undefined" target="_blank" rel="noopener">{{ asset.fileName || `媒体 ${asset.id}` }}<span>下载</span></a><span v-else class="media-pending">{{ asset.fileName || `媒体 ${asset.id}` }} · {{ asset.status === 'FAILED' ? '下载失败' : asset.status === 'RETRY' ? '等待重试' : '处理中' }}</span></template></div><small>{{ senderLabel(message) }} · {{ time(message.sentAt) }}</small></div>
+            </div>
+            <div v-if="!messages.length && !contentLoading" class="proto-empty">选择会话查看授权内容</div>
+          </div>
+          <div class="chat-input"><el-input disabled placeholder="正式系统不直接发送企微消息" /><el-button disabled>发送</el-button></div>
+        </section>
         <aside class="ai-panel">
           <h3>AI 智能洞察</h3>
           <p class="proto-note">只依据授权证据生成待核实建议；置信度不是校准概率，人工确认前不改变业务事实。</p>
@@ -170,7 +209,7 @@ onMounted(async () => {
             <div class="ai-suggestion"><strong>沟通摘要 / 建议下一步</strong>{{ activeJob.insight.reasoningSummary }}<div class="proto-subcell">{{ activeJob.insight.proposedActions.map(actionLabel).join(' · ') }}</div></div>
             <div class="ai-suggestion"><strong>建议回复草稿</strong>{{ activeJob.insight.replyDraft || '暂无话术草稿' }}</div>
           </template>
-          <div v-else-if="!activeJob" class="ai-suggestion"><strong>证据状态</strong>{{ selected?.customerId ? '尚未生成本次会话的 AI 分析' : '客户身份待人工匹配' }}</div>
+          <div v-else-if="!activeJob" class="ai-suggestion"><strong>证据状态</strong>{{ selected?.conversationType === 'ROOM' ? '群聊不生成单聊客户归因或 AI 任务' : selected?.customerId ? '尚未生成本次会话的 AI 分析' : '客户身份待人工匹配' }}</div>
           <div v-if="activeJob?.taskId" class="ai-suggestion"><strong>人工处理结果</strong>已生成普通回访待办 #{{ activeJob.taskId }}<RouterLink to="/tasks" class="el-button is-text">查看待办 →</RouterLink></div>
           <el-button v-if="canAnalyze" type="primary" :loading="aiLoading" :disabled="!selected?.customerId" data-testid="ai-analyze" @click="analyze">{{ activeJob ? '重新生成 AI 分析' : '生成 AI 分析' }}</el-button>
           <template v-if="hasInsight">
@@ -191,6 +230,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.chat-layout{display:grid;grid-template-columns:250px minmax(0,1fr) 320px;min-height:620px}.chat-contacts{border-right:1px solid #e8eff2}.chat-contact{display:flex;gap:10px;align-items:center;padding:16px 15px;border-bottom:1px solid #f1f4f5;cursor:pointer}.chat-contact.active,.chat-contact:hover{background:#eff9f7}.chat-contact strong{display:block;font-size:12px}.chat-contact p,.chat-contact small{margin:4px 0 0;color:#93a5af;font-size:10px}.chat-panel{display:flex;min-width:0;flex-direction:column}.chat-head{display:flex;justify-content:space-between;padding:20px;border-bottom:1px solid #edf2f4}.chat-messages{flex:1;min-height:450px;padding:22px;background:#fbfcfd}.bubble-row{display:flex;margin:14px 0}.bubble-row.right{justify-content:flex-end}.bubble{max-width:86%;padding:13px 15px;border:1px solid #e6eef1;border-radius:12px 12px 12px 3px;color:#42606e;background:#fff;font-size:12px;line-height:1.85;box-shadow:0 4px 16px rgb(26 73 83 / 4%)}.bubble-row.right .bubble{border-color:#c5ead9;border-radius:12px 12px 3px 12px;background:#dff5eb}.bubble small{display:block;margin-top:5px;color:#93a5af;font-size:10px}.chat-input{display:flex;gap:10px;padding:16px 20px;border-top:1px solid #edf2f4}.ai-panel{padding:22px 19px;border-left:1px solid #e6eff0;background:#f8fcfb}.ai-panel h3{margin:2px 0 7px;font-size:14px}.ai-suggestion{margin-top:14px;padding:13px;border:1px solid #e4f1ef;border-radius:11px;color:#567887;background:#fff;font-size:11px;line-height:1.7}.ai-suggestion strong{display:block;margin-bottom:6px;color:#237f76}.ai-panel .el-button{width:100%;margin-top:10px}.ai-panel .el-button + .el-button{margin-left:0}
+.chat-layout{display:grid;grid-template-columns:250px minmax(0,1fr) 320px;min-height:620px}.chat-contacts{border-right:1px solid #e8eff2}.chat-contact{display:flex;width:100%;gap:10px;align-items:center;padding:16px 15px;border:0;border-bottom:1px solid #f1f4f5;color:inherit;background:transparent;font:inherit;text-align:left;cursor:pointer}.chat-contact>div{min-width:0;flex:1;overflow-wrap:anywhere}.chat-contact.active,.chat-contact:hover{background:#eff9f7}.chat-contact strong{display:block;font-size:12px}.chat-contact p,.chat-contact small{margin:4px 0 0;color:#93a5af;font-size:10px}.chat-panel{display:flex;min-width:0;flex-direction:column}.chat-head{display:flex;justify-content:space-between;padding:20px;border-bottom:1px solid #edf2f4}.chat-messages{flex:1;min-height:450px;padding:22px;background:#fbfcfd}.bubble-row{display:flex;margin:14px 0}.bubble-row.right{justify-content:flex-end}.bubble{max-width:86%;padding:13px 15px;border:1px solid #e6eef1;border-radius:12px 12px 12px 3px;color:#42606e;background:#fff;font-size:12px;line-height:1.85;box-shadow:0 4px 16px rgb(26 73 83 / 4%)}.bubble-row.right .bubble{border-color:#c5ead9;border-radius:12px 12px 3px 12px;background:#dff5eb}.bubble small{display:block;margin-top:5px;color:#93a5af;font-size:10px}.chat-input{display:flex;gap:10px;padding:16px 20px;border-top:1px solid #edf2f4}.ai-panel{padding:22px 19px;border-left:1px solid #e6eff0;background:#f8fcfb}.ai-panel h3{margin:2px 0 7px;font-size:14px}.ai-suggestion{margin-top:14px;padding:13px;border:1px solid #e4f1ef;border-radius:11px;color:#567887;background:#fff;font-size:11px;line-height:1.7}.ai-suggestion strong{display:block;margin-bottom:6px;color:#237f76}.ai-panel .el-button{width:100%;margin-top:10px}.ai-panel .el-button + .el-button{margin-left:0}
+.message-text{display:block;white-space:pre-wrap;overflow-wrap:anywhere}.recalled-note{margin:7px 0;color:#9a7055;font-size:10px;line-height:1.7}.media-assets{display:grid;gap:6px;margin-top:10px}.media-download{display:flex;justify-content:space-between;gap:12px;padding:7px 9px;border:1px solid #c5dfd2;border-radius:7px;color:#27705b;background:#f3faf6;font-size:11px;text-decoration:none}.media-download span{color:#608579;font-size:10px}.media-pending{display:block;padding:7px 9px;border-radius:7px;color:#869b91;background:#f0f4f2;font-size:10px}
 @media(max-width:1300px){.chat-layout{grid-template-columns:200px minmax(0,1fr)}.ai-panel{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;border-top:1px solid #e6eff0;border-left:0}.ai-panel h3,.ai-panel>p{grid-column:1/-1}.ai-suggestion{margin-top:0}}@media(max-width:760px){.chat-layout{grid-template-columns:1fr}.chat-contacts{display:flex;overflow-x:auto}.chat-contact{min-width:170px}.ai-panel{grid-template-columns:1fr}}
 </style>

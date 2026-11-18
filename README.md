@@ -40,7 +40,9 @@
 ./scripts/dev-up.sh
 
 # 2. 后端（默认 local profile，端口 8080，Flyway 自动迁移+开发字典种子）
-./mvnw -pl apps/crm-api spring-boot:run
+./scripts/dev-api.sh
+# 可追加 Spring 参数，例如 ./scripts/dev-api.sh --app.outbox.relay.enabled=true
+# 健康检查：./scripts/dev-api.sh status；停止：./scripts/dev-api.sh stop
 
 # 3. 前端（端口 5173，代理 /api 与 /actuator 到 8080）
 npm --prefix apps/crm-web install
@@ -51,6 +53,8 @@ python3 -m venv apps/ai-worker/.venv
 apps/ai-worker/.venv/bin/pip install -r apps/ai-worker/requirements.txt
 apps/ai-worker/.venv/bin/uvicorn app.main:create_app --factory --app-dir apps/ai-worker --port 8090
 ```
+
+后端启动脚本每次构建并使用带时间戳的独立 JAR，不在运行中覆盖旧文件。它只停止自己启动且校验过的进程；若 8080 被其他进程占用会拒绝启动，避免误杀。日志与 PID 文件位于 `apps/crm-api/target/runtime/`。`API_SKIP_BUILD=1 ./scripts/dev-api.sh` 可跳过 Maven 构建并复用最新构建产物。
 
 ClamAV 原生明文 TCP 仅允许本机地址；远程扫描应通过本机安全代理，不要将 `CLAMAV_HOST` 直接指向未保护的远程服务。
 

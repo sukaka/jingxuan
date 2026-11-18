@@ -1,6 +1,7 @@
 package com.whale.crm.settlement.application;
 
 import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.DataScopeService;
 import com.whale.crm.platform.security.InstitutionAccessSupport;
 import com.whale.crm.settlement.api.dto.ReconciliationResponse;
 import com.whale.crm.settlement.domain.ReconciliationIssue;
@@ -17,17 +18,20 @@ import java.util.List;
 public class ReconciliationService {
     private final SettlementRepository repository;
     private final InstitutionAccessSupport institutionAccess;
+    private final DataScopeService dataScopeService;
 
-    public ReconciliationService(SettlementRepository repository, InstitutionAccessSupport institutionAccess) {
+    public ReconciliationService(SettlementRepository repository, InstitutionAccessSupport institutionAccess,
+                                 DataScopeService dataScopeService) {
         this.repository = repository;
         this.institutionAccess = institutionAccess;
+        this.dataScopeService = dataScopeService;
     }
 
     @Transactional(readOnly = true)
     public ReconciliationResponse reconcile(long tenantId, CurrentUser user, Long institutionId) {
-        SettlementScope scope = SettlementAccess.scope(tenantId, user, institutionId, institutionAccess);
+        SettlementScope scope = SettlementAccess.scope(tenantId, user, institutionId, institutionAccess, dataScopeService);
         List<ReconciliationIssue> issues = new ArrayList<>();
-        if (!user.isInstitutionUser()) {
+        if (!user.isInstitutionUser() && scope.institutionIds() == null) {
             issues.addAll(repository.entitlementLedgerIssues(tenantId));
             issues.addAll(repository.orderCashIssues(tenantId));
             issues.addAll(repository.refundAllocationIssues(tenantId));

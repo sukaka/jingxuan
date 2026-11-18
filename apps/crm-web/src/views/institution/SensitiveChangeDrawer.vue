@@ -6,12 +6,13 @@ import { createInstitutionChange } from '../../api/institution'
 import { useDictionaries } from '../customer/shared'
 import { tradingErrorText } from '../trading/tradingUi'
 import FileUploadField from './FileUploadField.vue'
-import { changeValueLabel, createInstitutionKey, rateDisplay, requiresBothSteps, SENSITIVE_FIELDS } from './institutionUi'
+import { changeValueLabel, createInstitutionKey, institutionSettlementDayLabel, rateDisplay, requiresBothSteps, SENSITIVE_FIELDS, SETTLEMENT_DAY_OPTIONS, settlementDayLabel } from './institutionUi'
 import { fenToYuanExact, percentToDecimalRate, yuanToFenExact } from './number'
 
 const props = defineProps<{
   modelValue: boolean
   profile: InstitutionProfile
+  defaultSettlementDay?: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -61,6 +62,7 @@ function currentMasked(): string {
     case 'ownershipCode': return changeValueLabel('ownershipCode', profile.ownershipCode)
     case 'gradeCode': return changeValueLabel('gradeCode', profile.gradeCode)
     case 'settlementType': return changeValueLabel('settlementType', profile.settlementType)
+    case 'settlementDay': return institutionSettlementDayLabel(profile.settlementDay, props.defaultSettlementDay ?? 'LAST_DAY')
     case 'onlineRate': return rateDisplay(profile.onlineRate)
     case 'offlineRate': return rateDisplay(profile.offlineRate)
     case 'platformRate': return rateDisplay(profile.platformRate)
@@ -82,6 +84,7 @@ function newValue(): unknown {
   if (kind === 'rate') return Number(percentToDecimalRate(form.newText))
   if (kind === 'fen') return yuanToFenExact(form.newText)
   if (kind === 'boolean') return form.newBoolean
+  if (kind === 'settlementDay') return form.newText.trim() || null
   return form.newText.trim()
 }
 
@@ -90,7 +93,7 @@ async function save() {
     ElMessage.warning('请选择允许变更的敏感字段')
     return
   }
-  if (meta.value.kind !== 'boolean' && meta.value.kind !== 'textarea' && !form.newText.trim()) {
+  if (!['boolean', 'textarea', 'settlementDay'].includes(meta.value.kind) && !form.newText.trim()) {
     ElMessage.warning('请填写申请新值')
     return
   }
@@ -138,6 +141,10 @@ async function save() {
         <el-select v-else-if="meta.kind === 'ownership'" v-model="form.newText" class="full-width"><el-option v-for="item in options('institutionOwnerships')" :key="item.code" :label="item.label" :value="item.code" /></el-select>
         <el-select v-else-if="meta.kind === 'grade'" v-model="form.newText" class="full-width"><el-option v-for="item in options('merchantGrades')" :key="item.code" :label="item.label" :value="item.code" /></el-select>
         <el-select v-else-if="meta.kind === 'settlementType'" v-model="form.newText" class="full-width"><el-option v-for="item in options('settlementTypes')" :key="item.code" :label="item.label" :value="item.code" /></el-select>
+        <el-select v-else-if="meta.kind === 'settlementDay'" v-model="form.newText" class="full-width" data-testid="sensitive-settlement-day">
+          <el-option :label="`跟随系统默认（${settlementDayLabel(defaultSettlementDay ?? 'LAST_DAY')}）`" value="" />
+          <el-option v-for="item in SETTLEMENT_DAY_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
         <el-checkbox v-else-if="meta.kind === 'boolean'" v-model="form.newBoolean">{{ meta.label }}</el-checkbox>
         <el-input v-else-if="meta.kind === 'rate'" v-model="form.newText" placeholder="输入百分比，如 18.25" data-testid="sensitive-rate-value" />
         <el-input v-else-if="meta.kind === 'fen'" v-model="form.newText" placeholder="输入元，如 30000.00" data-testid="sensitive-fen-value" />

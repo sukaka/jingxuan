@@ -13,6 +13,7 @@ import java.util.Set;
  * 数据范围服务：供各领域 Application Service 在拼 SQL/校验前调用。
  * 语义（docs/01_需求与产品/12 第 2 节）：
  * - INSTITUTION 用户：只看 crm_institution_user 映射的本机构（忽略 sys_data_scope）。
+ * - 运营主管（OPERATION_LEAD）：按已确认规则固定为全公司 ALL，无需依赖本地种子行。
  * - 其余用户：sys_data_scope 有效授权 ALL &gt; TEAM &gt; SELF；TEAM 范围 = 本人团队 + scope_ref_id 授权团队。
  * - 无任何授权返回 NONE，调用方必须按“不可见”处理。
  */
@@ -32,6 +33,9 @@ public class DataScopeService {
     public DataScope scopeFor(CurrentUser user, String resource) {
         if (user.isInstitutionUser()) {
             return user.institutionIds().isEmpty() ? DataScope.none() : DataScope.institution(user.institutionIds());
+        }
+        if (user.roles().contains("OPERATION_LEAD")) {
+            return DataScope.all();
         }
         List<DataScopeRow> rows = dataScopeRepository.findActiveScopes(user.tenantId(), user.userId(), resource);
         boolean hasAll = rows.stream().anyMatch(row -> "ALL".equals(row.getScopeType()));

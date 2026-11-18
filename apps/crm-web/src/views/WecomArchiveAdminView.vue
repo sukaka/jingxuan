@@ -17,6 +17,7 @@ import { tradingErrorText } from './trading/tradingUi'
 import WecomContactPanel from './wecom/WecomContactPanel.vue'
 import WecomContentDrawer from './wecom/WecomContentDrawer.vue'
 import WecomSyncPolicyPanel from './wecom/WecomSyncPolicyPanel.vue'
+import WecomRoomPanel from './wecom/WecomRoomPanel.vue'
 import IntegrationRuntimeSettings from '../components/IntegrationRuntimeSettings.vue'
 import {
   consentStatusLabel,
@@ -65,6 +66,7 @@ async function loadMessages() {
   try {
     const result = await listWecomMessages({
       customerId: customerFilter.value,
+      corpId: corpId.value.trim() || undefined,
       page: messageQuery.page,
       size: messageQuery.size,
     })
@@ -254,14 +256,14 @@ onMounted(() => {
     <div class="trading-page-head">
       <div>
         <h2>企业微信会话归档中心</h2>
-        <p>合规同意与成员覆盖 → 模拟增量归档 → 私有内容按需授权读取 → 人工客户匹配与缺口监控。</p>
+        <p>合规同意与成员覆盖 → 合规增量归档 → 私有内容按需授权读取 → 人工客户匹配与缺口监控。</p>
       </div>
     </div>
 
     <div class="wecom-mock-banner" data-testid="wecom-mock-banner">
-      <span class="wecom-mock-badge">模拟</span>
-      <strong>Q10 未确认 · 官方 SDK 禁用 · 不接个人微信</strong>
-      <p>当前仅验证企业微信官方归档模型的本地模拟流程。没有真实企业授权、成员覆盖与客户同意，不宣称已采集真实客户聊天；不使用个人微信、非官方钩子或模拟登录。</p>
+      <span class="wecom-mock-badge">模式受控</span>
+      <strong>官方 SDK 按授权与运行开关启用 · 不接个人微信</strong>
+      <p>Mock 仅用于本地验证；真实采集需企业授权、SDK、成员覆盖与客户同意。不使用个人微信、非官方钩子或模拟登录，页面按当前运行范围展示真实游标与缺口。</p>
     </div>
 
     <el-alert v-if="isInstitution" type="error" :closable="false" title="机构用户无企业微信归档访问入口" data-testid="wecom-forbidden" />
@@ -296,7 +298,7 @@ onMounted(() => {
             />
             <el-alert v-else type="info" :closable="false" title="当前模拟游标未报告覆盖缺口；不代表真实企业微信已接入或沟通完整" class="wecom-monitor-alert" />
             <dl class="wecom-monitor-facts">
-              <div><dt>归档范围</dt><dd>{{ ({ MOCK_ARCHIVE: '模拟归档' } as Record<string, string>)[monitor.archiveScope] || '未知归档范围' }}</dd></div>
+              <div><dt>归档范围</dt><dd>{{ ({ MOCK_ARCHIVE: '模拟归档', OFFICIAL_ARCHIVE: '官方归档' } as Record<string, string>)[monitor.archiveScope] || '未知归档范围' }}</dd></div>
               <div><dt>最后完整成功的归档序号</dt><dd>{{ monitor.lastSeq }}</dd></div>
               <div><dt>最近成功 / 最近尝试</dt><dd>{{ formatDateTime(monitor.lastSuccessAt) }} / {{ formatDateTime(monitor.lastAttemptAt) }}</dd></div>
               <div><dt>可见消息元数据</dt><dd>{{ monitor.messageCount }} 条（不等于沟通总量）</dd></div>
@@ -326,6 +328,7 @@ onMounted(() => {
         <el-tabs v-model="activeTab" class="wecom-tabs">
           <el-tab-pane label="消息元数据" name="messages" />
           <el-tab-pane label="联系人与人工匹配" name="contacts" />
+          <el-tab-pane label="群聊授权" name="rooms" />
           <el-tab-pane v-if="canMonitor" label="同步设置" name="policy" />
         </el-tabs>
         <template v-if="activeTab === 'messages'">
@@ -338,11 +341,11 @@ onMounted(() => {
           <app-table v-loading="messageLoading" :data="messages" row-key="id">
             <el-table-column prop="msgId" label="消息 ID" min-width="175" />
             <el-table-column prop="archiveSeq" label="归档序号" width="80" />
-            <el-table-column label="会话 / 发送方" min-width="180">
-              <template #default="{ row }">{{ row.conversationId || '-' }}<div class="wecom-cell-sub">{{ senderTypeLabel(row.senderType) }} · 员工 #{{ row.staffUserId }}</div></template>
+            <el-table-column label="会话 / 实际发送方" min-width="215">
+              <template #default="{ row }">{{ row.conversationId || '-' }}<div class="wecom-cell-sub">{{ row.conversationType === 'ROOM' ? '群聊' : '单聊' }} · {{ senderTypeLabel(row.senderType) }} · {{ row.senderWecomUserid || `员工 #${row.staffUserId}` }}</div></template>
             </el-table-column>
-            <el-table-column prop="externalUserid" label="外部身份" min-width="180" />
-            <el-table-column label="CRM 客户" width="130"><template #default="{ row }">{{ row.customerId === null ? '未关联' : customerLabel(row.customerId) }}</template></el-table-column>
+            <el-table-column label="单聊外部身份" min-width="180"><template #default="{ row }">{{ row.externalUserid || '群聊不指定单一外部身份' }}</template></el-table-column>
+            <el-table-column label="CRM 客户" width="145"><template #default="{ row }">{{ row.conversationType === 'ROOM' ? '多客户群聊，不归因' : row.customerId === null ? '未关联' : customerLabel(row.customerId) }}</template></el-table-column>
             <el-table-column label="类型" width="80"><template #default="{ row }">{{ ({ TEXT: '文本', IMAGE: '图片', FILE: '文件', LINK: '链接', VIDEO: '视频', VOICE: '语音' } as Record<string, string>)[row.messageType] || '其他类型' }}</template></el-table-column>
             <el-table-column label="发送时间" min-width="170"><template #default="{ row }">{{ formatDateTime(row.sentAt) }}</template></el-table-column>
             <el-table-column label="采集同意快照" width="140"><template #default="{ row }"><StatusPill :text="consentStatusLabel(row.consentSnapshot)" :tone="consentStatusTone(row.consentSnapshot)" /></template></el-table-column>
@@ -362,7 +365,10 @@ onMounted(() => {
           <el-alert v-if="contactsError" type="error" :closable="false" :title="`联系人加载失败：${contactsError}`" class="wecom-table-alert" />
           <WecomContactPanel :contacts="contacts" :sync-runs="contactSyncRuns" :loading="contactsLoading" :can-monitor="canMonitor" @saved="handleLinked" />
         </template>
-        <template v-else>
+        <template v-else-if="activeTab === 'rooms'">
+          <WecomRoomPanel :corp-id="corpId.trim()" :can-write="canMonitor" @saved="handleLinked" />
+        </template>
+        <template v-else-if="activeTab === 'policy'">
           <WecomSyncPolicyPanel :corp-id="corpId.trim()" :can-write="canMonitor" />
         </template>
       </el-card>

@@ -3,11 +3,15 @@ package com.whale.crm.settlement;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.file.application.FileApplicationService;
 import com.whale.crm.file.domain.FileClassification;
+import com.whale.crm.institution.application.InstitutionSettlementDayService;
 import com.whale.crm.institution.domain.InstitutionProfile;
 import com.whale.crm.institution.domain.InstitutionRepository;
+import com.whale.crm.institution.domain.SettlementDayRule;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.idempotency.IdempotencyService;
 import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.DataScope;
+import com.whale.crm.platform.security.DataScopeService;
 import com.whale.crm.platform.security.InstitutionAccessSupport;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.settlement.api.dto.CreateSettlementBatchRequest;
@@ -46,6 +50,7 @@ class SettlementApplicationServiceTest {
     private SettlementRepository repository;
     private InstitutionRepository institutionRepository;
     private FileApplicationService fileOperations;
+    private IdempotencyService idempotencyService;
     private SettlementApplicationService service;
 
     @BeforeEach
@@ -53,12 +58,19 @@ class SettlementApplicationServiceTest {
         repository = mock(SettlementRepository.class);
         institutionRepository = mock(InstitutionRepository.class);
         fileOperations = mock(FileApplicationService.class);
+        idempotencyService = mock(IdempotencyService.class);
+        InstitutionSettlementDayService settlementDays = mock(InstitutionSettlementDayService.class);
+        when(settlementDays.monthlySnapshot(eq(1L), any(), any())).thenAnswer(invocation ->
+                SettlementDayRule.monthlySnapshot(invocation.getArgument(2), "LAST_DAY",
+                        ((InstitutionProfile) invocation.getArgument(1)).settlementDay()));
+        DataScopeService dataScopeService = mock(DataScopeService.class);
+        when(dataScopeService.scopeFor(any(), eq(DataScopeService.RESOURCE_INSTITUTION))).thenReturn(DataScope.all());
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
         service = new SettlementApplicationService(repository, institutionRepository,
-                mock(InstitutionAccessSupport.class), fileOperations, mock(IdempotencyService.class),
+                mock(InstitutionAccessSupport.class), fileOperations, idempotencyService,
                 mock(AuditService.class), mock(com.whale.crm.trading.application.OutboxService.class),
-                new ObjectMapper().findAndRegisterModules(), transactionManager);
+                new ObjectMapper().findAndRegisterModules(), transactionManager, settlementDays, dataScopeService);
         when(institutionRepository.findProfile(1, 1)).thenReturn(Optional.of(profile()));
     }
 
@@ -82,6 +94,28 @@ class SettlementApplicationServiceTest {
     }
 
     @Test
+    void duplicateKeyRecoveryRecordsCurrentKeyForIdenticalBusinessRequest() {
+        SettlementBatch existing = batch("PENDING_VERIFICATION", 0, 0);
+        com.whale.crm.settlement.domain.SettlementLine line =
+                mock(com.whale.crm.settlement.domain.SettlementLine.class);
+        when(line.redemptionId()).thenReturn(91L);
+        when(repository.findBatchByPeriod(1, 1, "MONTHLY", "2026-10"))
+                .thenReturn(Optional.empty()).thenReturn(Optional.of(existing));
+        when(repository.lockRedemptions(1, List.of(91L))).thenReturn(List.of(
+                new SettlementRedemption(91L, 1L, "POSTED", Instant.parse("2026-10-20T08:00:00Z"))));
+        when(repository.findLines(1, 10)).thenReturn(List.of(line));
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DuplicateKeyException("race"))
+                .when(repository).insertBatch(eq(1L), any());
+
+        var detail = service.create(1, FINANCE,
+                new CreateSettlementBatchRequest(1L, "MONTHLY", "2026-10", List.of(91L)), "recovery-key");
+
+        assertThat(detail.batch().id()).isEqualTo(10);
+        verify(idempotencyService).recordSuccess(eq(1L), eq("settlement.batch.create"), eq("recovery-key"),
+                eq("SETTLEMENT_BATCH"), eq("10"), any());
+    }
+
+    @Test
     void rejectsUnpostedRedemptions() {
         when(repository.findBatchByPeriod(1, 1, "MONTHLY", "2026-10")).thenReturn(Optional.empty());
         when(repository.lockRedemptions(1, List.of(91L))).thenReturn(List.of(
@@ -97,7 +131,7 @@ class SettlementApplicationServiceTest {
     void rejectsRedemptionOutsideMonthlyPeriod() {
         when(repository.findBatchByPeriod(1, 1, "MONTHLY", "2026-10")).thenReturn(Optional.empty());
         when(repository.lockRedemptions(1, List.of(91L))).thenReturn(List.of(
-                new SettlementRedemption(91L, 1L, "POSTED", Instant.parse("2026-09-30T23:59:59Z"))));
+                new SettlementRedemption(91L, 1L, "POSTED", Instant.parse("2026-09-30T15:59:59Z"))));
 
         assertThatThrownBy(() -> service.create(1, FINANCE,
                 new CreateSettlementBatchRequest(1L, "MONTHLY", "2026-10", List.of(91L)), "create-wrong-month"))
@@ -130,7 +164,8 @@ class SettlementApplicationServiceTest {
     @Test
     void cleanVoucherAllowsInstallmentsButNeverAboveNet() {
         SettlementBatch confirmed = batch("VERIFIED", 0, 1000);
-        SettlementBatch partiallyPaid = new SettlementBatch(10L, 1L, "MONTHLY", "2026-10", "PARTIALLY_PAID", "VERIFIED",
+        SettlementBatch partiallyPaid = new SettlementBatch(10L, 1L, "MONTHLY", "2026-10",
+                "LAST_DAY", "DEFAULT", java.time.LocalDate.of(2026, 10, 31), "PARTIALLY_PAID", "VERIFIED",
                 1200L, 200L, 1000L, 400L, "RULE-1", "approved", null, null, 1L);
         when(repository.findBatchForUpdate(1, 10)).thenReturn(Optional.of(confirmed))
                 .thenReturn(Optional.of(partiallyPaid));
@@ -153,13 +188,14 @@ class SettlementApplicationServiceTest {
 
     private InstitutionProfile profile() {
         return new InstitutionProfile(1L, "INST-1", "合成机构", null, null, null, null, null, null, null, null,
-                "ACTIVE", "MONTHLY", new BigDecimal("0.18"), new BigDecimal("0.12"), new BigDecimal("0.15"),
+                "ACTIVE", "MONTHLY", null, new BigDecimal("0.18"), new BigDecimal("0.12"), new BigDecimal("0.15"),
                 "manual", false, 0L, false, null, null, null, null, null, null, null, 7L);
     }
 
     private SettlementBatch batch(String amountStatus, long paid, long net) {
         String status = "VERIFIED".equals(amountStatus) ? "CONFIRMED" : "DRAFT";
-        return new SettlementBatch(10L, 1L, "MONTHLY", "2026-10", status, amountStatus,
+        return new SettlementBatch(10L, 1L, "MONTHLY", "2026-10", "LAST_DAY", "DEFAULT",
+                java.time.LocalDate.of(2026, 10, 31), status, amountStatus,
                 0L, 0L, net, paid, null, null, null, null, 0L);
     }
 }

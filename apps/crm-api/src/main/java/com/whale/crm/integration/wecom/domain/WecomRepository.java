@@ -6,7 +6,10 @@ import java.util.Optional;
 
 public interface WecomRepository {
     Optional<WecomContact> findContact(long tenantId, String corpId, String externalUserid, long staffUserId);
+    Optional<WecomContact> findContactForUpdate(long tenantId, String corpId, String externalUserid, long staffUserId);
     Optional<WecomContact> findContactById(long tenantId, long id);
+    List<WecomContact> findContactsByExternalUserid(long tenantId, String corpId, String externalUserid);
+    boolean contactMapped(long tenantId, String externalUserid, long customerId);
     void insertContact(long tenantId, WecomContact contact);
     int updateContactConsent(long tenantId, long id, long version, String status, String evidenceRef, Instant syncedAt);
     int linkContact(long tenantId, long id, long version, long customerId, String reason, long actorUserId);
@@ -18,9 +21,11 @@ public interface WecomRepository {
     Optional<WecomMessage> findMessageById(long tenantId, long id);
     Optional<WecomMessage> findReadableMessage(long tenantId, long id, String scopeType, List<Long> teamIds, long selfId);
     void insertMessage(long tenantId, WecomMessage message);
+    int markMessageRecalled(long tenantId, String corpId, String msgId, long version, Instant recalledAt,
+                            String recallMessageId);
     int linkMessages(long tenantId, String corpId, String externalUserid, long staffUserId, long customerId);
-    List<WecomMessage> listMessages(long tenantId, Long customerId, String scopeType, List<Long> teamIds, long selfId, int offset, int size);
-    long countMessages(long tenantId, Long customerId, String scopeType, List<Long> teamIds, long selfId);
+    List<WecomMessage> listMessages(long tenantId, Long customerId, String conversationId, String corpId, String scopeType, List<Long> teamIds, long selfId, int offset, int size);
+    long countMessages(long tenantId, Long customerId, String conversationId, String corpId, String scopeType, List<Long> teamIds, long selfId);
     long countAllMessages(long tenantId, String corpId);
 
     Optional<WecomCursor> findCursorForUpdate(long tenantId, String corpId, String archiveScope);
@@ -32,6 +37,7 @@ public interface WecomRepository {
     void recordGap(long tenantId, String corpId, String archiveScope, String gapType, Long fromSeq, Long toSeq,
                    String detail, Instant now);
     int resolveCollectorGaps(long tenantId, String corpId, String archiveScope, Instant resolvedAt);
+    int resolveGap(long tenantId, String corpId, String archiveScope, String gapType, long fromSeq, Instant resolvedAt);
     List<WecomDataGap> findOpenGaps(long tenantId, String corpId, String archiveScope);
     long countResolvedGaps(long tenantId, String corpId, String archiveScope);
 }

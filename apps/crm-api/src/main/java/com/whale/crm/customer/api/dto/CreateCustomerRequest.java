@@ -4,12 +4,15 @@ import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * 新建客户。nickname/displayName 至少其一（Service 校验）；mobile 可空（C01）；
  * customerNo 由服务端生成，客户端传入一律忽略。
  * ownerStaffId 可选：MANAGER/MANAGER_LEAD 缺省默认本人；其他角色缺省 400 必须显式选择；
  * 显式时校验目标为在职管家/主管且在当前用户可分配范围内。
+ * tierCode 仅为识别旧客户端请求而保留，非 null 一律拒绝；等级走专用分级接口。
+ * attentionProjects 仅供历史文本补录；正规关注关系使用 projectIds，不按文本猜测映射。
  */
 public record CreateCustomerRequest(
         @Size(max = 96, message = "客户姓名最长 96 字符") String displayName,
@@ -28,5 +31,9 @@ public record CreateCustomerRequest(
         @Size(max = 2000) String blockerNote,
         @Size(max = 2000) String remark,
         @Size(max = 128) String remarkName,
-        Instant firstAddedAt) {
+        Instant firstAddedAt,
+        @Size(max = 100) List<Long> projectIds) {
+    public CreateCustomerRequest {
+        projectIds = projectIds == null ? null : List.copyOf(projectIds);
+    }
 }

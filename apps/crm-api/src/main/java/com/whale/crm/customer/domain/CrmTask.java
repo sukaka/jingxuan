@@ -20,6 +20,7 @@ public class CrmTask {
 
     public static final String SOURCE_MANUAL = "MANUAL";
     public static final String SOURCE_FOLLOWUP = "FOLLOWUP";
+    public static final String SOURCE_MONTHLY_BATCH = "MONTHLY_BATCH";
 
     private Long id;
     private Long tenantId;

@@ -13,6 +13,11 @@
     VALUES (#{tenantId}, #{customerId}, #{tagCode}, #{createdBy})
   </insert>
 
+  <insert id="insertTagIfAbsent">
+    INSERT IGNORE INTO crm_customer_tag (tenant_id, customer_id, tag_code, created_by)
+    VALUES (#{tenantId}, #{customerId}, #{tagCode}, #{createdBy})
+  </insert>
+
   <delete id="deleteTag">
     DELETE FROM crm_customer_tag
     WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} AND tag_code = #{tagCode}

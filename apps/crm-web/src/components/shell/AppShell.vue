@@ -9,6 +9,7 @@ import { listTasks } from '../../api/task'
 import { listAppointments } from '../../api/fulfillment'
 import ShellHeader from './ShellHeader.vue'
 import ShellSidebar from './ShellSidebar.vue'
+import NotificationBell from '../NotificationBell.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,11 +19,13 @@ const navigationOpen = ref(false)
 const badgeValues = ref<Record<string, number>>({})
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: '运营管理员', OWNER: '经营负责人', MANAGER: '管家', MANAGER_LEAD: '管家主管', BUSINESS: '商务运营', FINANCE: '财务',
+  OPERATION: '运营', OPERATION_LEAD: '运营主管',
   INSTITUTION: '合作机构用户', INSTITUTION_OPERATOR: '机构操作员', INSTITUTION_STAFF: '机构操作员', INSTITUTION_FINANCE: '机构财务',
 }
 const isInstitution = computed(() => auth.user?.userType === 'INSTITUTION')
 const isManager = computed(() => auth.hasRole('MANAGER') && !auth.hasRole('ADMIN'))
 const isAdmin = computed(() => auth.hasRole('ADMIN'))
+const isOperationLead = computed(() => auth.hasRole('OPERATION_LEAD'))
 const menuItems = computed(() => visibleMenuItems((code) => auth.hasPermission(code), auth.user?.roles ?? [], auth.user?.userType))
 const roleLabel = computed(() => (auth.user?.roles ?? []).map((role) => ROLE_LABELS[role] ?? '未识别角色').join(' / ') || '已登录用户')
 const displayName = computed(() => auth.user?.displayName || auth.user?.username || '当前用户')
@@ -36,7 +39,8 @@ const pageTitle = computed(() => {
   return route.meta.title ?? '工作台'
 })
 const pageSection = computed(() => isInstitution.value ? '合作机构工作台' : isManager.value ? '管家工作台' : '运营管理')
-const scopeLabel = computed(() => isInstitution.value ? '仅本机构授权数据' : isManager.value ? '仅本人负责客户' : isAdmin.value ? '全局管理视图' : '本组及授权团队')
+const scopeLabel = computed(() => isInstitution.value ? '仅本机构授权数据' : isManager.value ? '仅本人负责客户'
+  : isAdmin.value || isOperationLead.value ? '全局管理视图' : '授权业务数据范围')
 
 function openNavigation() { navigationOpen.value = true }
 async function closeNavigation() {
@@ -94,7 +98,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleDocumentKeyd
         ref="header" :section="pageSection" :title="pageTitle" :display-name="displayName" :role-label="roleLabel"
         :navigation-open="navigationOpen" :is-admin="isAdmin" :can-export="isAdmin && auth.hasPermission('export:read')" @toggle-navigation="toggleNavigation"
         @logout="handleLogout" @search="globalSearch" @refresh="router.go(0)" @export="router.push({ name: 'exports' })"
-      />
+      >
+        <template #actions><NotificationBell /></template>
+      </ShellHeader>
       <main id="main-content" class="app-content" tabindex="-1"><slot /></main>
     </div>
   </div>

@@ -43,6 +43,7 @@ public class MybatisTradingRepository implements TradingRepository {
     }
 
     public void insertOrderItem(OrderItem item) { mapper.insertOrderItem(com.whale.crm.platform.context.TenantContext.currentTenantId(), item); }
+    public void insertOrderItemSelection(com.whale.crm.trading.domain.OrderItemSelection selection) { mapper.insertOrderItemSelection(com.whale.crm.platform.context.TenantContext.currentTenantId(), selection); }
     public Optional<OrderItem> findOrderItem(long tenantId, long id) { return Optional.ofNullable(mapper.selectOrderItem(tenantId, id)); }
     public List<OrderItem> findOrderItems(long tenantId, long orderId) { return mapper.selectOrderItems(tenantId, orderId); }
     public void insertPayment(PaymentTxn payment) { mapper.insertPayment(com.whale.crm.platform.context.TenantContext.currentTenantId(), payment); }
@@ -58,11 +59,15 @@ public class MybatisTradingRepository implements TradingRepository {
     public int updateEntitlementBalance(long tenantId, long id, long expectedVersion, int availableCount, String status, int versionNo) {
         return mapper.updateEntitlementBalance(tenantId, id, expectedVersion, availableCount, status, versionNo);
     }
-    public List<Entitlement> searchEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId, Long customerId, String status, int offset, int size) {
-        return mapper.searchEntitlements(tenantId, scopeType, teamIds, selfId, customerId, status, offset, size);
+    public List<Entitlement> searchEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                                Long customerId, String status, java.time.LocalDate validTo,
+                                                boolean availableOnly, int offset, int size) {
+        return mapper.searchEntitlements(tenantId, scopeType, teamIds, selfId, customerId, status,
+                validTo, availableOnly, offset, size);
     }
-    public long countEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId, Long customerId, String status) {
-        return mapper.countEntitlements(tenantId, scopeType, teamIds, selfId, customerId, status);
+    public long countEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                  Long customerId, String status, java.time.LocalDate validTo, boolean availableOnly) {
+        return mapper.countEntitlements(tenantId, scopeType, teamIds, selfId, customerId, status, validTo, availableOnly);
     }
     public com.whale.crm.trading.domain.EntitlementSummary summarizeEntitlements(
             long tenantId, String scopeType, List<Long> teamIds, long selfId, Long customerId, java.time.LocalDate today) {

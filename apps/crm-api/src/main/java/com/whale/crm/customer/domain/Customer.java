@@ -25,6 +25,8 @@ public class Customer {
     private String channelCode;
     private String customerStatus;
     private String tierCode;
+    private boolean tierLocked;
+    private String tierLockReason;
     private String intentLevel;
     private String spendingLevel;
     private LocalDate birthday;
@@ -158,6 +160,22 @@ public class Customer {
 
     public void setTierCode(String tierCode) {
         this.tierCode = tierCode;
+    }
+
+    public boolean isTierLocked() {
+        return tierLocked;
+    }
+
+    public void setTierLocked(boolean tierLocked) {
+        this.tierLocked = tierLocked;
+    }
+
+    public String getTierLockReason() {
+        return tierLockReason;
+    }
+
+    public void setTierLockReason(String tierLockReason) {
+        this.tierLockReason = tierLockReason;
     }
 
     public String getIntentLevel() {

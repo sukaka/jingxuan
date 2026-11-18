@@ -5,12 +5,13 @@ import { formatDateTime } from '../customer/shared'
 import StatusPill from '../customer/StatusPill.vue'
 import FileDownloadButton from './FileDownloadButton.vue'
 import MerchantResourcePanel from './MerchantResourcePanel.vue'
-import { cityLabel, contractTypeLabel, documentStatusLabel, institutionBusinessTypeLabel, institutionGradeLabel, institutionOwnershipLabel, profileStatusLabel, qualificationTypeLabel, rateDisplay, settlementTypeLabel } from './institutionUi'
+import { cityLabel, contractTypeLabel, documentStatusLabel, institutionBusinessTypeLabel, institutionGradeLabel, institutionOwnershipLabel, institutionSettlementDayLabel, profileStatusLabel, qualificationTypeLabel, rateDisplay, settlementTypeLabel } from './institutionUi'
 import { fenToYuanExact } from './number'
 
 defineProps<{
   modelValue: boolean
   profile: InstitutionProfile
+  defaultSettlementDay?: string
   contracts: InstitutionContract[]
   qualifications: InstitutionQualification[]
   contractTotal: number
@@ -58,10 +59,11 @@ const activeTab = ref('profile')
           <el-descriptions-item label="详细地址" :span="3">{{ profile.address || '-' }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatDateTime(profile.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="当前版本">{{ profile.version }}</el-descriptions-item>
+          <el-descriptions-item label="月结结算日">{{ profile.settlementType === 'PER_REDEMPTION' ? '次卡次结不适用' : institutionSettlementDayLabel(profile.settlementDay, defaultSettlementDay ?? 'LAST_DAY') }}</el-descriptions-item>
           <el-descriptions-item label="机构简介" :span="3">{{ profile.introduction || '-' }}</el-descriptions-item>
         </el-descriptions>
         <template v-if="!canViewFinance">
-          <el-alert type="info" :closable="false" title="当前账号没有财务敏感字段查看权限，结算、佣金与银行税务信息不展示。" class="finance-tip" />
+          <el-alert type="info" :closable="false" title="当前账号没有财务敏感字段查看权限，佣金与银行税务等敏感信息不展示。" class="finance-tip" />
         </template>
         <template v-else>
           <h4 class="trading-section-title">结算与财务敏感信息（掩码）</h4>

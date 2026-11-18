@@ -7,7 +7,7 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
   datasource:
-    url: ${DB_JDBC_URL:jdbc:mysql://localhost:3307/medical_crm?connectionTimeZone=UTC}
+    url: ${DB_JDBC_URL:jdbc:mysql://localhost:3307/medical_crm?connectionTimeZone=UTC&useUnicode=true&characterEncoding=UTF-8}
     username: ${DB_USER:crm}
     password: ${MYSQL_PASSWORD:dev_crm_CHANGE_ME}
   flyway:
@@ -71,6 +71,17 @@ app:
     relay:
       enabled: ${OUTBOX_RELAY_ENABLED:false}
       delay-ms: 1000
+  notification:
+    kafka:
+      enabled: ${NOTIFICATION_KAFKA_ENABLED:false}
+    delivery:
+      worker-enabled: ${NOTIFICATION_WORKER_ENABLED:false}
+      delay-ms: 1000
+      batch-size: 20
+      lease-ms: 30000
+      max-retries: 5
+      retry-initial-delay-ms: 1000
+      retry-max-delay-ms: 60000
   refunds:
     mock:
       enabled: ${REFUND_MOCK_ENABLED:false}
@@ -110,6 +121,42 @@ app:
       read-timeout-ms: 10000
       page-size: 100
       max-pages: 10000
+    archive:
+      allowed-tenant-id: ${WECOM_ARCHIVE_ALLOWED_TENANT_ID:1}
+      corp-id: ${WECOM_ARCHIVE_CORP_ID:}
+      secret: ${WECOM_ARCHIVE_SECRET:}
+      sdk-library-path: ${WECOM_ARCHIVE_SDK_LIBRARY_PATH:}
+      private-key-directory: ${WECOM_ARCHIVE_PRIVATE_KEY_DIRECTORY:}
+      proxy: ${WECOM_ARCHIVE_PROXY:}
+      proxy-password: ${WECOM_ARCHIVE_PROXY_PASSWORD:}
+      timeout-seconds: ${WECOM_ARCHIVE_TIMEOUT_SECONDS:15}
+    media:
+      worker-enabled: ${WECOM_MEDIA_WORKER_ENABLED:false}
+      batch-size: ${WECOM_MEDIA_BATCH_SIZE:10}
+      lease-ms: ${WECOM_MEDIA_LEASE_MS:30000}
+      max-attempts: ${WECOM_MEDIA_MAX_ATTEMPTS:5}
+      max-file-bytes: ${WECOM_MEDIA_MAX_FILE_BYTES:52428800}
+      max-chunks: ${WECOM_MEDIA_MAX_CHUNKS:200}
+      delay-ms: ${WECOM_MEDIA_DELAY_MS:5000}
+    sidebar:
+      enabled: ${WECOM_SIDEBAR_ENABLED:false}
+      agent-id: ${WECOM_SIDEBAR_AGENT_ID:0}
+      oauth-authorize-url: ${WECOM_OAUTH_AUTHORIZE_URL:https://open.weixin.qq.com/connect/oauth2/authorize}
+      oauth-redirect-uri: ${WECOM_OAUTH_REDIRECT_URI:http://localhost:8080/api/v1/wecom/oauth/callback}
+      sidebar-url: ${WECOM_SIDEBAR_URL:http://localhost:5173/wecom/sidebar}
+      trusted-origins: ${WECOM_SIDEBAR_TRUSTED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+      oauth-state-ttl-seconds: 300
+      ticket-refresh-skew-seconds: 60
+    message:
+      # 应用消息与会话归档完全独立；默认 DISABLED，MOCK 也不会记为官方发送成功。
+      mode: ${WECOM_MESSAGE_MODE:DISABLED}
+      corp-id: ${WECOM_MESSAGE_CORP_ID:}
+      secret: ${WECOM_MESSAGE_SECRET:}
+      agent-id: ${WECOM_MESSAGE_AGENT_ID:0}
+      api-base-url: ${WECOM_MESSAGE_API_BASE_URL:https://qyapi.weixin.qq.com}
+      connect-timeout-ms: 3000
+      read-timeout-ms: 10000
+      token-refresh-skew-seconds: 60
 
 springdoc:
   swagger-ui:

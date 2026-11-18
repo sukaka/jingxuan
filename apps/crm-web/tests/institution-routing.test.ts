@@ -17,12 +17,13 @@ describe('P0-5 机构路由与菜单', () => {
 
   it('读取权限控制菜单，写和审核权限不替代读取', () => {
     const has = (code: string) => code === 'institution:write'
-    expect(flatten(visibleMenuItems(has)).map((item) => item.path)).toEqual(['/'])
+    expect(flatten(visibleMenuItems(has)).map((item) => item.path)).toEqual(['/', '/notifications'])
     const approve = (code: string) => ['institution:approve_market', 'institution:approve_finance'].includes(code)
-    expect(flatten(visibleMenuItems(approve)).map((item) => item.path)).toEqual(['/'])
+    expect(flatten(visibleMenuItems(approve)).map((item) => item.path)).toEqual(['/', '/notifications'])
     const read = (code: string) => code === 'institution:read'
     expect(flatten(visibleMenuItems(read)).map((item) => item.path)).toEqual([
       '/',
+      '/notifications',
       '/institutions',
       '/institutions/change-approvals',
       '/institutions/renewals',

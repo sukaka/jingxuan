@@ -33,6 +33,7 @@ describe('PackageSnapshotDrawer 规则提示', () => {
         selectionWeight: 1,
         allocationPriceFen: 0,
         optionGroup: 'MAIN',
+        referencePriceFen: 19900,
         version: 0,
       }],
       skus: [{
@@ -52,6 +53,7 @@ describe('PackageSnapshotDrawer 规则提示', () => {
         version: 0,
       }],
       institutions: [],
+      groups: [],
     }
     const wrapper = mount(PackageSnapshotDrawer, {
       props: { modelValue: true, snapshot },

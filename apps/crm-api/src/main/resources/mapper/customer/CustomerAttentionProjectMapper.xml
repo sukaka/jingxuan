@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.infrastructure.mapper.CustomerAttentionProjectMapper">
+  <select id="selectProjectIds" resultType="long">
+    SELECT project_id FROM crm_customer_attention_project
+    WHERE tenant_id=#{tenantId} AND customer_id=#{customerId}
+    ORDER BY project_id
+  </select>
+  <delete id="deleteByCustomerId">
+    DELETE FROM crm_customer_attention_project WHERE tenant_id=#{tenantId} AND customer_id=#{customerId}
+  </delete>
+  <insert id="insert">
+    INSERT INTO crm_customer_attention_project (tenant_id,customer_id,project_id,created_by)
+    VALUES (#{tenantId},#{customerId},#{projectId},#{actorUserId})
+  </insert>
+</mapper>

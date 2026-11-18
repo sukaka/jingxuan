@@ -171,3 +171,62 @@ describe('P2 导航路由契约', () => {
     expect(testRouter.currentRoute.value.name).toBe('forbidden')
   })
 })
+
+describe('V30-V33 页面路由与后端权限契约', () => {
+  const pageRoutes = [
+    ['/settings/customer-tiers', 'customer-tier-settings', '分级规则', '系统管理', 'customer:write'],
+    ['/settings/followup-automation', 'followup-automation-settings', '跟进提醒', '系统管理', 'followup:read'],
+    ['/settings/complaint-automation', 'complaint-automation-settings', '客诉关键词', '系统管理', 'complaint:config'],
+    ['/customers/segments', 'customer-segments', '客户分组', '客户管理', 'customer:read'],
+    ['/followups/monthly-dispatch', 'monthly-dispatch', '月度派单', '客户管理', 'followup:read'],
+    ['/customers/tier-reviews', 'customer-tier-reviews', '等级复核', '客户管理', 'customer:read'],
+    ['/complaints', 'complaints', '客诉', '客户管理', 'complaint:read'],
+    ['/customers/batch-tag-jobs', 'batch-tag-jobs', '批量标签', '客户管理', 'customer:read'],
+  ] as const
+
+  it.each(pageRoutes)('%s 注册真实页面及读取权限', (path, name, title, section, permission) => {
+    const route = routes.find((item) => item.path === path)
+
+    expect(route).toBeDefined()
+    expect(route?.name).toBe(name)
+    expect(route?.meta).toMatchObject({ title, section, permission })
+    expect(route?.component).toBeTypeOf('function')
+  })
+
+  it.each(pageRoutes)('具备后端要求的读取权限可进入 %s', async (path, name, _title, _section, permission) => {
+    const roles = path === '/settings/customer-tiers' ? ['ADMIN'] : ['MANAGER_LEAD']
+    vi.mocked(fetchMe).mockResolvedValue({ ...managerUser, roles, permissions: [permission] })
+    const testRouter = createTestRouter()
+
+    await testRouter.push(path)
+
+    expect(testRouter.currentRoute.value.name).toBe(name)
+  })
+
+  it.each([
+    ['/settings/customer-tiers', 'customer:read'],
+    ['/settings/followup-automation', 'followup:write'],
+    ['/settings/complaint-automation', 'complaint:write'],
+    ['/customers/segments', 'customer:write'],
+    ['/followups/monthly-dispatch', 'followup:write'],
+    ['/customers/tier-reviews', 'customer:write'],
+    ['/complaints', 'complaint:write'],
+    ['/customers/batch-tag-jobs', 'customer:write'],
+  ])('%s 不以其他写权限代替页面读取权限', async (path, permission) => {
+    vi.mocked(fetchMe).mockResolvedValue({ ...managerUser, roles: ['ADMIN'], permissions: [permission] })
+    const testRouter = createTestRouter()
+
+    await testRouter.push(path)
+
+    expect(testRouter.currentRoute.value.name).toBe('forbidden')
+  })
+
+  it('分级规则同时要求 ADMIN，主管仅有 customer:write 也不能直输地址进入', async () => {
+    vi.mocked(fetchMe).mockResolvedValue({ ...managerUser, roles: ['MANAGER_LEAD'], permissions: ['customer:write'] })
+    const testRouter = createTestRouter()
+
+    await testRouter.push('/settings/customer-tiers')
+
+    expect(testRouter.currentRoute.value.name).toBe('forbidden')
+  })
+})

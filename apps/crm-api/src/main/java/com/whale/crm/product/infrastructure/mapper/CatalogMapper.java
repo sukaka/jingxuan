@@ -46,6 +46,11 @@ public interface CatalogMapper {
                                                @Param("packageVersionId") long packageVersionId);
     void deleteVersionProjects(@Param("tenantId") long tenantId, @Param("packageVersionId") long packageVersionId);
     void insertVersionProject(@Param("tenantId") long tenantId, @Param("entity") PackageProject item);
+    List<com.whale.crm.product.domain.PackageSelectionGroup> selectSelectionGroups(@Param("tenantId") long tenantId,
+                                               @Param("packageVersionId") long packageVersionId);
+    void deleteSelectionGroups(@Param("tenantId") long tenantId, @Param("packageVersionId") long packageVersionId);
+    void insertSelectionGroup(@Param("tenantId") long tenantId,
+                              @Param("entity") com.whale.crm.product.domain.PackageSelectionGroup group);
 
     List<Sku> searchSkus(@Param("tenantId") long tenantId, @Param("keyword") String keyword,
                          @Param("status") String status, @Param("packageId") Long packageId,

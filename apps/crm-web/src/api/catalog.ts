@@ -46,6 +46,7 @@ export interface PackageProject {
   selectionWeight: number
   allocationPriceFen: number
   optionGroup: string
+  referencePriceFen: number
   version: number | null
 }
 
@@ -76,6 +77,17 @@ export interface Institution {
   version: number
 }
 
+export interface PackageSelectionGroup {
+  id: number | null
+  packageVersionId: number | null
+  groupCode: string
+  groupName: string
+  minSelections: number
+  maxSelections: number
+  sortOrder: number
+  version: number | null
+}
+
 export interface PackageVersionSnapshot {
   id: number
   packageId: number
@@ -93,6 +105,7 @@ export interface PackageVersionSnapshot {
   projects: PackageProject[]
   skus: Sku[]
   institutions: Institution[]
+  groups: PackageSelectionGroup[]
 }
 
 export interface PackageProjectInput {
@@ -101,6 +114,15 @@ export interface PackageProjectInput {
   selectionWeight?: number
   allocationPriceFen?: number
   optionGroup?: string
+  referencePriceFen?: number
+}
+
+export interface PackageSelectionGroupInput {
+  groupCode: string
+  groupName: string
+  minSelections: number
+  maxSelections: number
+  sortOrder: number
 }
 
 export interface SkuQualityQuery {
@@ -320,7 +342,7 @@ export async function listPackageVersions(packageId: number): Promise<PackageVer
   return res.data.data
 }
 
-export async function createPackageVersion(packageId: number, body: { selectionMode: string; choiceCount: number; selectionRules?: string; projects: PackageProjectInput[] }) {
+export async function createPackageVersion(packageId: number, body: { selectionMode: string; choiceCount: number; selectionRules?: string; projects: PackageProjectInput[]; groups?: PackageSelectionGroupInput[] }) {
   const res = await http.post<ApiResponse<PackageVersionSnapshot>>(`/packages/${packageId}/versions`, body)
   return res.data.data
 }
@@ -335,7 +357,7 @@ export async function updatePackageVersion(id: number, body: { selectionMode: st
   return res.data.data
 }
 
-export async function replaceVersionProjects(id: number, body: { version: number; projects: PackageProjectInput[] }) {
+export async function replaceVersionProjects(id: number, body: { version: number; projects: PackageProjectInput[]; groups?: PackageSelectionGroupInput[] }) {
   const res = await http.put<ApiResponse<PackageVersionSnapshot>>(`/package-versions/${id}/projects`, body)
   return res.data.data
 }

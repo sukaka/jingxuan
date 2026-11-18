@@ -26,8 +26,8 @@ describe('P0-4 履约路由与菜单权限', () => {
   it('预约权限不隐式开放核销，操作权限不代替读取权限', () => {
     const appointmentOnly = visibleMenuItems(permissions(['appointment:read', 'redemption:post']), ['FRONTDESK'])
     const redemptionOnly = visibleMenuItems(permissions(['redemption:read', 'redemption:approve']))
-    expect(flatten(appointmentOnly).map((item) => item.path)).toEqual(['/', '/appointments'])
-    expect(flatten(redemptionOnly).map((item) => item.path)).toEqual(['/', '/redemptions'])
+    expect(flatten(appointmentOnly).map((item) => item.path)).toEqual(['/', '/notifications', '/appointments'])
+    expect(flatten(redemptionOnly).map((item) => item.path)).toEqual(['/', '/notifications', '/redemptions'])
   })
 
   it('管家看到服务履约中的预约管理入口', () => {

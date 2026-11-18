@@ -78,6 +78,9 @@ class OutboxRelayServiceTest {
         assertTopic("institution_file", "institution.file.cleaned.v1", "crm.institution.events.v1");
         assertTopic("youzan_order", "youzan.order.paid.v1", "crm.youzan.events.v1");
         assertTopic("youzan_sync_issue", "youzan.sync.mapping_failed.v1", "crm.youzan.events.v1");
+        assertTopic("notification", "notification.requested.v1", "crm.notification.request.v1");
+        assertTopic("followup", "followup.recorded.v1", "crm.followup.events.v1");
+        assertTopic("customer", "customer.tier.changed.v1", "crm.customer.events.v1");
     }
 
     private void assertTopic(String aggregateType, String eventType, String expectedTopic) {

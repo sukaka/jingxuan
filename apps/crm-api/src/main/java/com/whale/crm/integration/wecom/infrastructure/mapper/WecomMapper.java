@@ -16,14 +16,26 @@ import java.util.List;
 @Mapper
 public interface WecomMapper {
     String CONTACT_COLUMNS = "id,corp_id AS corpId,external_userid AS externalUserid,staff_user_id AS staffUserId,name,avatar,contact_type AS contactType,gender,unionid,remark,description,add_way AS addWay,channel_state AS channelState,follow_created_at AS followCreatedAt,tag_snapshot_json AS tagSnapshotJson,follow_status AS followStatus,customer_id AS customerId,consent_status AS consentStatus,consent_evidence_ref AS consentEvidenceRef,link_type AS linkType,link_reason AS linkReason,created_by AS createdBy,last_synced_at AS lastSyncedAt,version";
-    String MESSAGE_COLUMNS = "m.id,m.corp_id AS corpId,m.msg_id AS msgId,m.archive_seq AS archiveSeq,m.customer_id AS customerId,m.external_userid AS externalUserid,m.staff_user_id AS staffUserId,m.conversation_id AS conversationId,m.message_type AS messageType,m.sender_type AS senderType,m.sent_at AS sentAt,m.content_object_key AS contentObjectKey,m.content_sha256 AS contentSha256,m.consent_snapshot AS consentSnapshot,m.consent_evidence_ref AS consentEvidenceRef,m.status,c.consent_status AS currentConsentStatus,m.version";
-    String MESSAGE_JOINS = " FROM crm_wecom_message m JOIN crm_wecom_contact c ON c.tenant_id=m.tenant_id AND c.corp_id=m.corp_id AND c.external_userid=m.external_userid AND c.staff_user_id=m.staff_user_id ";
-    String CURRENTLY_READABLE = " m.consent_snapshot='GRANTED' AND c.consent_status='GRANTED' AND EXISTS (SELECT 1 FROM crm_wecom_archive_member am WHERE am.tenant_id=m.tenant_id AND am.corp_id=m.corp_id AND am.staff_user_id=m.staff_user_id AND am.enabled=1) ";
+    String ROOM_COVERED_STAFF = " SELECT 1 FROM crm_wecom_room_participant covered "
+            + "JOIN crm_wecom_staff_account sa ON sa.tenant_id=covered.tenant_id AND sa.corp_id=covered.corp_id AND sa.wecom_userid=covered.wecom_userid AND sa.staff_user_id=covered.staff_user_id AND sa.enabled=1 "
+            + "JOIN crm_wecom_archive_member am ON am.tenant_id=covered.tenant_id AND am.corp_id=covered.corp_id AND am.staff_user_id=covered.staff_user_id AND am.enabled=1 "
+            + "JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.status='ACTIVE' "
+            + "WHERE covered.tenant_id=m.tenant_id AND covered.corp_id=m.corp_id AND covered.room_id=m.conversation_id AND covered.participant_type='STAFF' AND covered.status='ACTIVE' ";
+    String ROOM_CURRENT_CONSENT = " NOT EXISTS (SELECT 1 FROM crm_wecom_room_participant rpe "
+            + "WHERE rpe.tenant_id=m.tenant_id AND rpe.corp_id=m.corp_id AND rpe.room_id=m.conversation_id AND rpe.participant_type='EXTERNAL' "
+            + "AND NOT EXISTS (SELECT 1 FROM crm_wecom_contact rc WHERE rc.tenant_id=rpe.tenant_id AND rc.corp_id=rpe.corp_id "
+            + "AND rc.external_userid=rpe.external_userid AND rc.consent_status='GRANTED' AND EXISTS ("
+            + ROOM_COVERED_STAFF + "AND covered.staff_user_id=rc.staff_user_id))) ";
+    String MESSAGE_COLUMNS = "m.id,m.corp_id AS corpId,m.msg_id AS msgId,m.archive_seq AS archiveSeq,m.customer_id AS customerId,m.external_userid AS externalUserid,m.staff_user_id AS staffUserId,m.conversation_id AS conversationId,m.message_type AS messageType,m.sender_type AS senderType,m.sent_at AS sentAt,m.content_object_key AS contentObjectKey,m.content_sha256 AS contentSha256,m.consent_snapshot AS consentSnapshot,m.consent_evidence_ref AS consentEvidenceRef,m.status,m.recalled_at AS recalledAt,m.recall_message_id AS recallMessageId,"
+            + "CASE WHEN m.conversation_type='DIRECT' THEN c.consent_status WHEN " + ROOM_CURRENT_CONSENT + " THEN 'GRANTED' ELSE 'REVOKED' END AS currentConsentStatus,"
+            + "m.version,m.conversation_type AS conversationType,m.sender_wecom_userid AS senderWecomUserid,m.sender_staff_user_id AS senderStaffUserId,m.room_roster_version AS roomRosterVersion";
+    String MESSAGE_JOINS = " FROM crm_wecom_message m LEFT JOIN crm_wecom_contact c ON c.tenant_id=m.tenant_id AND c.corp_id=m.corp_id AND c.external_userid=m.external_userid AND c.staff_user_id=m.staff_user_id AND m.conversation_type='DIRECT' ";
+    String CURRENTLY_READABLE = " m.consent_snapshot='GRANTED' AND ((m.conversation_type='DIRECT' AND c.consent_status='GRANTED' AND EXISTS (SELECT 1 FROM crm_wecom_archive_member am WHERE am.tenant_id=m.tenant_id AND am.corp_id=m.corp_id AND am.staff_user_id=m.staff_user_id AND am.enabled=1)) OR (m.conversation_type='ROOM' AND EXISTS (" + ROOM_COVERED_STAFF + ") AND " + ROOM_CURRENT_CONSENT + ")) ";
     String CUSTOMER_STAFF_SCOPE = """
             <choose>
               <when test="scopeType == 'ALL'">1=1</when>
               <when test="scopeType == 'TEAM' or scopeType == 'SELF'">
-                m.customer_id IS NOT NULL
+                ((m.conversation_type='DIRECT' AND m.customer_id IS NOT NULL
                 AND EXISTS (SELECT 1 FROM crm_customer cu WHERE cu.tenant_id=m.tenant_id AND cu.id=m.customer_id AND cu.deleted=0
                   <choose>
                     <when test="scopeType == 'TEAM'">AND (cu.owner_staff_id=#{selfId} OR cu.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)</when>
@@ -33,7 +45,12 @@ public interface WecomMapper {
                   <choose>
                     <when test="scopeType == 'TEAM'">AND (su.id=#{selfId} OR su.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)</when>
                     <otherwise>AND su.id=#{selfId}</otherwise>
-                  </choose>)
+                  </choose>))
+                OR (m.conversation_type='ROOM' AND EXISTS (""" + ROOM_COVERED_STAFF + """
+                  <choose>
+                    <when test="scopeType == 'TEAM'">AND (su.id=#{selfId} OR su.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)</when>
+                    <otherwise>AND su.id=#{selfId}</otherwise>
+                  </choose>)))
               </when>
               <otherwise>1=0</otherwise>
             </choose>
@@ -43,8 +60,20 @@ public interface WecomMapper {
     WecomContact selectContact(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
                                @Param("externalUserid") String externalUserid, @Param("staffUserId") long staffUserId);
 
+    @Select("SELECT " + CONTACT_COLUMNS + " FROM crm_wecom_contact WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND external_userid=#{externalUserid} AND staff_user_id=#{staffUserId} FOR UPDATE")
+    WecomContact selectContactForUpdate(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
+                                        @Param("externalUserid") String externalUserid, @Param("staffUserId") long staffUserId);
+
     @Select("SELECT " + CONTACT_COLUMNS + " FROM crm_wecom_contact WHERE tenant_id=#{tenantId} AND id=#{id}")
     WecomContact selectContactById(@Param("tenantId") long tenantId, @Param("id") long id);
+
+    @Select("SELECT " + CONTACT_COLUMNS + " FROM crm_wecom_contact WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND external_userid=#{externalUserid} ORDER BY id")
+    List<WecomContact> selectContactsByExternalUserid(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
+                                                      @Param("externalUserid") String externalUserid);
+
+    @Select("SELECT COUNT(*) FROM crm_wecom_contact WHERE tenant_id=#{tenantId} AND external_userid=#{externalUserid} AND customer_id=#{customerId} AND follow_status='ACTIVE'")
+    int countContactMapping(@Param("tenantId") long tenantId, @Param("externalUserid") String externalUserid,
+                            @Param("customerId") long customerId);
 
     @Insert("INSERT INTO crm_wecom_contact (tenant_id,corp_id,external_userid,staff_user_id,customer_id,consent_status,consent_evidence_ref,link_type,link_reason,created_by,last_synced_at) VALUES (#{tenantId},#{e.corpId},#{e.externalUserid},#{e.staffUserId},#{e.customerId},#{e.consentStatus},#{e.consentEvidenceRef},#{e.linkType},#{e.linkReason},#{e.createdBy},#{e.lastSyncedAt})")
     void insertContact(@Param("tenantId") long tenantId, @Param("e") WecomContact contact);
@@ -88,24 +117,35 @@ public interface WecomMapper {
                                        @Param("scopeType") String scopeType, @Param("teamIds") List<Long> teamIds,
                                        @Param("selfId") long selfId);
 
-    @Insert("INSERT INTO crm_wecom_message (tenant_id,corp_id,msg_id,archive_seq,customer_id,external_userid,staff_user_id,conversation_id,message_type,sender_type,sent_at,content_object_key,content_sha256,consent_snapshot,consent_evidence_ref,status) VALUES (#{tenantId},#{e.corpId},#{e.msgId},#{e.archiveSeq},#{e.customerId},#{e.externalUserid},#{e.staffUserId},#{e.conversationId},#{e.messageType},#{e.senderType},#{e.sentAt},#{e.contentObjectKey},#{e.contentSha256},#{e.consentSnapshot},#{e.consentEvidenceRef},#{e.status})")
+    @Insert("INSERT INTO crm_wecom_message (tenant_id,corp_id,msg_id,archive_seq,customer_id,external_userid,staff_user_id,conversation_type,conversation_id,message_type,sender_type,sender_wecom_userid,sender_staff_user_id,sent_at,content_object_key,content_sha256,consent_snapshot,consent_evidence_ref,room_roster_version,status) VALUES (#{tenantId},#{e.corpId},#{e.msgId},#{e.archiveSeq},#{e.customerId},#{e.externalUserid},#{e.staffUserId},#{e.conversationType},#{e.conversationId},#{e.messageType},#{e.senderType},#{e.senderWecomUserid},#{e.senderStaffUserId},#{e.sentAt},#{e.contentObjectKey},#{e.contentSha256},#{e.consentSnapshot},#{e.consentEvidenceRef},#{e.roomRosterVersion},#{e.status})")
     void insertMessage(@Param("tenantId") long tenantId, @Param("e") WecomMessage message);
 
-    @Update("UPDATE crm_wecom_message SET customer_id=#{customerId},status='STORED',version=version+1 WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND external_userid=#{externalUserid} AND staff_user_id=#{staffUserId} AND customer_id IS NULL")
+    @Update("UPDATE crm_wecom_message SET recalled_at=#{recalledAt},recall_message_id=#{recallMessageId},version=version+1 WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND msg_id=#{msgId} AND version=#{version} AND recalled_at IS NULL")
+    int markMessageRecalled(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
+                            @Param("msgId") String msgId, @Param("version") long version,
+                            @Param("recalledAt") Instant recalledAt, @Param("recallMessageId") String recallMessageId);
+
+    @Update("UPDATE crm_wecom_message SET customer_id=#{customerId},status='STORED',version=version+1 WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND conversation_type='DIRECT' AND external_userid=#{externalUserid} AND staff_user_id=#{staffUserId} AND customer_id IS NULL")
     int linkMessages(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
                      @Param("externalUserid") String externalUserid, @Param("staffUserId") long staffUserId,
                      @Param("customerId") long customerId);
 
     @Select("<script>SELECT " + MESSAGE_COLUMNS + MESSAGE_JOINS + "WHERE m.tenant_id=#{tenantId} AND " + CURRENTLY_READABLE +
-            "<if test=\"customerId != null\"> AND m.customer_id=#{customerId}</if> AND " + CUSTOMER_STAFF_SCOPE +
+            "<if test=\"customerId != null\"> AND m.customer_id=#{customerId}</if>" +
+            "<if test=\"conversationId != null\"> AND m.conversation_id=#{conversationId}</if>" +
+            "<if test=\"corpId != null\"> AND m.corp_id=#{corpId}</if> AND " + CUSTOMER_STAFF_SCOPE +
             " ORDER BY m.sent_at DESC,m.id DESC LIMIT #{size} OFFSET #{offset}</script>")
     List<WecomMessage> selectMessages(@Param("tenantId") long tenantId, @Param("customerId") Long customerId,
+                                      @Param("conversationId") String conversationId, @Param("corpId") String corpId,
                                       @Param("scopeType") String scopeType, @Param("teamIds") List<Long> teamIds,
                                       @Param("selfId") long selfId, @Param("offset") int offset, @Param("size") int size);
 
     @Select("<script>SELECT COUNT(*)" + MESSAGE_JOINS + "WHERE m.tenant_id=#{tenantId} AND " + CURRENTLY_READABLE +
-            "<if test=\"customerId != null\"> AND m.customer_id=#{customerId}</if> AND " + CUSTOMER_STAFF_SCOPE + "</script>")
+            "<if test=\"customerId != null\"> AND m.customer_id=#{customerId}</if>" +
+            "<if test=\"conversationId != null\"> AND m.conversation_id=#{conversationId}</if>" +
+            "<if test=\"corpId != null\"> AND m.corp_id=#{corpId}</if> AND " + CUSTOMER_STAFF_SCOPE + "</script>")
     long countScopedMessages(@Param("tenantId") long tenantId, @Param("customerId") Long customerId,
+                             @Param("conversationId") String conversationId, @Param("corpId") String corpId,
                              @Param("scopeType") String scopeType, @Param("teamIds") List<Long> teamIds,
                              @Param("selfId") long selfId);
 
@@ -135,6 +175,11 @@ public interface WecomMapper {
     @Update("UPDATE crm_wecom_data_gap SET status='RESOLVED',resolved_at=#{resolvedAt},version=version+1 WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND archive_scope=#{archiveScope} AND gap_type='COLLECTOR_ERROR' AND status='OPEN'")
     int resolveCollectorGaps(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
                              @Param("archiveScope") String archiveScope, @Param("resolvedAt") Instant resolvedAt);
+
+    @Update("UPDATE crm_wecom_data_gap SET status='RESOLVED',resolved_at=#{resolvedAt},version=version+1 WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND archive_scope=#{archiveScope} AND gap_type=#{gapType} AND from_seq=#{fromSeq} AND status='OPEN'")
+    int resolveGap(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
+                   @Param("archiveScope") String archiveScope, @Param("gapType") String gapType,
+                   @Param("fromSeq") long fromSeq, @Param("resolvedAt") Instant resolvedAt);
 
     @Select("SELECT id,corp_id AS corpId,archive_scope AS archiveScope,gap_type AS gapType,status,from_seq AS fromSeq,to_seq AS toSeq,detail_masked AS detailMasked,first_seen_at AS firstSeenAt,last_seen_at AS lastSeenAt,resolved_at AS resolvedAt FROM crm_wecom_data_gap WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND archive_scope=#{archiveScope} AND status='OPEN' ORDER BY id")
     List<WecomDataGap> selectOpenGaps(@Param("tenantId") long tenantId, @Param("corpId") String corpId, @Param("archiveScope") String archiveScope);

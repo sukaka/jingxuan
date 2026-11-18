@@ -450,6 +450,62 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
     }
 
     @Test
+    void multipleSingleProjectLinesWithZeroWeightsUsePendingAllocationWithoutReferenceFallback() throws Exception {
+        AuthCookies admin = login("admin");
+        long customerId = createCustomer(admin, "IT-Q02-两个单行零权重");
+        List<Map<String, Object>> items = List.of(Map.of("skuId", 301, "quantity", 1),
+                Map.of("skuId", 301, "quantity", 1));
+        long orderId = createOrderWithItems(admin, customerId, 362200, items);
+
+        List<JsonNode> snapshots = orderSnapshots(orderId);
+        assertThat(snapshots).hasSize(2);
+        for (JsonNode snapshot : snapshots) {
+            assertThat(snapshot.path("allocationStatus").asText()).isEqualTo("PENDING_Q02");
+            assertThat(snapshot.path("paidAllocatedFen").asLong()).isZero();
+            assertThat(snapshot.path("referenceAmountFen").asLong()).isGreaterThan(0L);
+            snapshot.path("projectSnapshots").forEach(project ->
+                    assertThat(project.path("paidAllocatedFen").asLong()).isZero());
+        }
+        assertThat(jdbcTemplate.queryForList("SELECT paid_allocated_fen FROM crm_order_item WHERE order_id=?",
+                Long.class, orderId)).containsExactly(0L, 0L);
+    }
+
+    @Test
+    void mixedSingleProjectZeroWeightAndConfiguredLinesMakeWholeOrderPending() throws Exception {
+        AuthCookies admin = login("admin");
+        long configuredSku = createTwoProjectSku(admin, "IT-Q02-MIXED", 100L, 200L);
+        long customerId = createCustomer(admin, "IT-Q02-混合行零权重");
+        List<Map<String, Object>> items = List.of(Map.of("skuId", 301, "quantity", 1),
+                Map.of("skuId", configuredSku, "quantity", 1));
+        long orderId = createOrderWithItems(admin, customerId, 182100, items);
+
+        List<JsonNode> snapshots = orderSnapshots(orderId);
+        assertThat(snapshots).hasSize(2);
+        for (JsonNode snapshot : snapshots) {
+            assertThat(snapshot.path("allocationStatus").asText()).isEqualTo("PENDING_Q02");
+            assertThat(snapshot.path("paidAllocatedFen").asLong()).isZero();
+            snapshot.path("projectSnapshots").forEach(project ->
+                    assertThat(project.path("paidAllocatedFen").asLong()).isZero());
+        }
+        assertThat(jdbcTemplate.queryForList("SELECT paid_allocated_fen FROM crm_order_item WHERE order_id=?",
+                Long.class, orderId)).containsExactly(0L, 0L);
+    }
+
+    @Test
+    void singleProjectZeroWeightLineKeepsLegacyFullAllocation() throws Exception {
+        AuthCookies admin = login("admin");
+        long customerId = createCustomer(admin, "IT-Q02-旧单行兼容");
+        long orderId = createOrder(admin, customerId, 301, 1, 181100);
+
+        JsonNode snapshot = orderSnapshot(orderId);
+        assertThat(snapshot.path("allocationStatus").asText()).isEqualTo("CONFIGURED");
+        assertThat(snapshot.path("paidAllocatedFen").asLong()).isEqualTo(181100);
+        assertThat(snapshot.at("/projectSnapshots/0/paidAllocatedFen").asLong()).isEqualTo(181100);
+        assertThat(jdbcTemplate.queryForObject("SELECT paid_allocated_fen FROM crm_order_item WHERE order_id=?",
+                Long.class, orderId)).isEqualTo(181100);
+    }
+
+    @Test
     void financeCanConfirmButCannotWriteOrdersAndCustomerMobileStaysMasked() throws Exception {
         AuthCookies manager = login("manager1");
         AuthCookies finance = login("finance1");
@@ -540,6 +596,99 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM crm_audit_log WHERE action_code='PAYMENT_CONFIRM' AND target_id=?",
                 Integer.class, Long.toString(orderId))).isZero();
+    }
+
+    @Test
+    void groupedPackageSavesSelectionsAndGrantsOnlyActualProjectsAtIndependentPrice() throws Exception {
+        AuthCookies admin = login("admin");
+        long fourthA = createSelectionProject(admin, "IT-V34-A4", 20000);
+        long firstB = createSelectionProject(admin, "IT-V34-B1", 10000);
+        long secondB = createSelectionProject(admin, "IT-V34-B2", 15000);
+        List<Map<String, Object>> projects = List.of(
+                selectionProject(101, "A", 1, 80000), selectionProject(102, "A", 1, 40000),
+                selectionProject(103, "A", 1, 30000), selectionProject(fourthA, "A", 1, 20000),
+                selectionProject(firstB, "B", 2, 10000), selectionProject(secondB, "B", 1, 15000));
+        List<Map<String, Object>> groups = List.of(
+                selectionGroup("A", "A 焕肤组", 2, 2, 1), selectionGroup("B", "B 修护组", 1, 1, 2));
+        JsonNode version = data(admin.withAuth(post("/api/v1/packages/201/versions"))
+                .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("selectionMode", "CHOOSE_N",
+                        "choiceCount", 3, "projects", projects, "groups", groups))));
+        long versionId = version.at("/id").asLong();
+        assertThat(version.at("/rulesStatus").asText()).isEqualTo("READY");
+        assertThat(version.at("/groups")).hasSize(2);
+        mockMvc.perform(admin.withAuth(post("/api/v1/package-versions/" + versionId + "/activate"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isOk());
+        JsonNode sku = data(admin.withAuth(post("/api/v1/skus"))
+                .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("skuCode",
+                        "IT-V34-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12),
+                        "packageVersionId", versionId, "specName", "A组4选2+B组2选1",
+                        "salePriceFen", 100000, "institutionIds", List.of(1)))));
+        long skuId = sku.at("/id").asLong();
+        mockMvc.perform(admin.withAuth(post("/api/v1/skus/" + skuId + "/activate"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isOk());
+
+        long customerId = createCustomer(admin, "IT-V34-分组自选");
+        List<Map<String, Object>> selections = List.of(
+                Map.of("groupCode", "A", "projectId", 101), Map.of("groupCode", "A", "projectId", 102),
+                Map.of("groupCode", "B", "projectId", firstB));
+        Map<String, Object> body = Map.of("customerId", customerId, "receiverType", "PLATFORM",
+                "orderTypeCode", "REGULAR", "campaignId", 1, "campaignBatchId", 1,
+                "payableFen", 100000, "validTo", "2027-12-31", "items",
+                List.of(Map.of("skuId", skuId, "quantity", 1, "selections", selections)));
+        long orderId = data(admin.withAuth(post("/api/v1/orders"))
+                .contentType(MediaType.APPLICATION_JSON).content(json(body))).at("/order/order/id").asLong();
+
+        JsonNode snapshot = orderSnapshot(orderId);
+        assertThat(snapshot.path("packageSalePriceFen").asLong()).isEqualTo(100000);
+        assertThat(snapshot.path("referenceAmountFen").asLong()).isEqualTo(140000);
+        assertThat(snapshot.path("referenceDiscountAmountFen").asLong()).isEqualTo(40000);
+        assertThat(snapshot.path("projectSnapshots")).hasSize(3);
+        assertThat(snapshot.path("selectionSnapshots")).hasSize(3);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_order_item_selection WHERE order_item_id IN (SELECT id FROM crm_order_item WHERE order_id=?)", Integer.class, orderId)).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForObject("SELECT grant_count FROM crm_order_item_selection WHERE project_id=? AND order_item_id IN (SELECT id FROM crm_order_item WHERE order_id=?)", Integer.class, firstB, orderId)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_entitlement WHERE order_item_id IN (SELECT id FROM crm_order_item WHERE order_id=?)", Integer.class, orderId)).isZero();
+
+        submitOrder(admin, orderId);
+        confirmPayment(admin, orderId, "IT-V34-PAY", 100000);
+        assertThat(jdbcTemplate.queryForList("SELECT project_id FROM crm_entitlement WHERE order_item_id IN (SELECT id FROM crm_order_item WHERE order_id=?) ORDER BY project_id", Long.class, orderId))
+                .containsExactly(101L, 102L, firstB);
+        assertThat(jdbcTemplate.queryForObject("SELECT granted_count FROM crm_entitlement WHERE project_id=? AND order_item_id IN (SELECT id FROM crm_order_item WHERE order_id=?)", Integer.class, firstB, orderId)).isEqualTo(2);
+
+        List<Map<String, Object>> tooFew = List.of(Map.of("groupCode", "A", "projectId", 101),
+                Map.of("groupCode", "B", "projectId", firstB));
+        Map<String, Object> invalidBody = new java.util.LinkedHashMap<>(body);
+        invalidBody.put("items", List.of(Map.of("skuId", skuId, "quantity", 1, "selections", tooFew)));
+        mockMvc.perform(admin.withAuth(post("/api/v1/orders"))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(invalidBody)))
+                .andExpect(status().isBadRequest());
+        List<Map<String, Object>> duplicate = List.of(Map.of("groupCode", "A", "projectId", 101),
+                Map.of("groupCode", "A", "projectId", 101), Map.of("groupCode", "B", "projectId", firstB));
+        invalidBody.put("items", List.of(Map.of("skuId", skuId, "quantity", 1, "selections", duplicate)));
+        mockMvc.perform(admin.withAuth(post("/api/v1/orders"))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(invalidBody)))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_order WHERE customer_id=?", Integer.class, customerId)).isEqualTo(1);
+    }
+
+    private Map<String, Object> selectionGroup(String code, String name, int min, int max, int sortOrder) {
+        return Map.of("groupCode", code, "groupName", name, "minSelections", min,
+                "maxSelections", max, "sortOrder", sortOrder);
+    }
+
+    private Map<String, Object> selectionProject(long projectId, String group, int grantCount, long referencePrice) {
+        return Map.of("projectId", projectId, "grantCount", grantCount, "optionGroup", group,
+                "referencePriceFen", referencePrice);
+    }
+
+    private long createSelectionProject(AuthCookies admin, String codePrefix, long listPrice) throws Exception {
+        String code = codePrefix + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        JsonNode project = data(admin.withAuth(post("/api/v1/projects"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("projectCode", code, "projectName", codePrefix + "虚构项目",
+                        "listPriceFen", listPrice))));
+        return project.at("/id").asLong();
     }
 
     private PreparedRedemption prepareRedemption(AuthCookies admin, AuthCookies operator, long customerId,
@@ -675,6 +824,15 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
         return objectMapper.readTree(snapshot);
     }
 
+    private List<JsonNode> orderSnapshots(long orderId) throws Exception {
+        List<JsonNode> snapshots = new ArrayList<>();
+        for (String value : jdbcTemplate.queryForList(
+                "SELECT entitlement_snapshot FROM crm_order_item WHERE order_id=? ORDER BY id", String.class, orderId)) {
+            snapshots.add(objectMapper.readTree(value));
+        }
+        return snapshots;
+    }
+
     private Map<String, Object> orderPaymentFact(long orderId) {
         return jdbcTemplate.queryForMap(
                 "SELECT paid_fen,DATE_FORMAT(paid_at,'%Y-%m-%dT%H:%i:%sZ') AS paid_at FROM crm_order WHERE id=?", orderId);
@@ -701,9 +859,15 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
     }
 
     private long createOrder(AuthCookies actor, long customerId, long skuId, int quantity, long payableFen) throws Exception {
+        return createOrderWithItems(actor, customerId, payableFen,
+                List.of(Map.of("skuId", skuId, "quantity", quantity)));
+    }
+
+    private long createOrderWithItems(AuthCookies actor, long customerId, long payableFen,
+                                      List<Map<String, Object>> items) throws Exception {
         Map<String, Object> body = Map.of("customerId", customerId, "receiverType", "PLATFORM", "orderTypeCode", "REGULAR",
                 "campaignId", 1, "campaignBatchId", 1, "payableFen", payableFen, "validTo", "2027-12-31",
-                "items", List.of(Map.of("skuId", skuId, "quantity", quantity)));
+                "items", items);
         String response = mockMvc.perform(actor.withAuth(post("/api/v1/orders"))
                         .contentType(MediaType.APPLICATION_JSON).content(json(body)))
                 .andExpect(status().isCreated())

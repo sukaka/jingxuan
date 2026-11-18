@@ -25,6 +25,6 @@ public class DisabledWecomAdapter implements WecomAdapter {
 
     private BusinessException disabled() {
         return new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
-                "企业微信官方能力未获Q10授权，真实SDK与采集保持禁用");
+                "企微会话归档未启用，或当前租户未获官方采集授权");
     }
 }

@@ -57,7 +57,14 @@ function makeView(status: CrmOrder['status'], allocationStatus = 'CONFIGURED'): 
         purchaseQuantity: 1,
         listAmountFen: 19900,
         paidAllocatedFen: allocationStatus === 'PENDING_Q02' ? 0 : 19900,
-        entitlementSnapshot: JSON.stringify({ allocationStatus }),
+        entitlementSnapshot: JSON.stringify({
+          allocationStatus,
+          selectionSnapshots: [{
+            groupCode: 'A', groupName: '焕肤组', minSelections: 2, maxSelections: 2,
+            projectId: 101, projectCode: 'PRJ-TEST', projectName: '实际所选项目', grantCount: 10,
+            referencePriceFen: 80000, sortOrder: 1,
+          }],
+        }),
         version: 0,
       }],
       payments: paid ? [{
@@ -168,6 +175,7 @@ describe('OrderDetailDrawer 订单事实与快照', () => {
     expect(document.body.textContent).toContain('BANK-TEST-001')
     expect(document.body.textContent).toContain('EVIDENCE-TEST-001')
     expect(document.body.textContent).toContain('人工凭证复核')
+    expect(document.body.textContent).toContain('焕肤组（A）：实际所选项目 · 10 次 · 参考 ¥800.00')
     expect(document.body.textContent).toContain('未创建 → 草稿')
     expect(document.body.textContent).toContain('支付事实已冻结')
   })

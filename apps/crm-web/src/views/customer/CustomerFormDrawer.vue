@@ -3,6 +3,8 @@ import { reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { CreateCustomerRequest, CustomerOwnerOption } from '../../api/customer'
 import { createCustomer, getCustomer, listCustomerOwnerOptions, updateCustomer } from '../../api/customer'
+import type { Project } from '../../api/catalog'
+import { listProjects } from '../../api/catalog'
 import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../types/api'
 import { useDictionaries } from './shared'
@@ -19,13 +21,16 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 const dicts = useDictionaries()
-void dicts.load('cities', 'customerSources', 'customerChannels', 'customerStatuses', 'customerTiers')
+void dicts.load('cities', 'customerSources', 'customerChannels', 'customerStatuses')
 
 // 所属管家:管理员建档必须显式选择;MANAGER/MANAGER_LEAD 默认本人(缺省由后端归属当前登录人)
 const isAdmin = auth.hasRole('ADMIN')
 const ownerOptions = ref<CustomerOwnerOption[]>([])
 const ownerOptionsError = ref('')
 const formOwnerId = ref<number | undefined>(undefined)
+const projectOptions = ref<Project[]>([])
+const projectOptionsError = ref('')
+const legacyAttentionProjects = ref('')
 
 // 意向/消费能力未入字典(口径待确认),暂用静态选项并允许自定义
 const LEVEL_OPTIONS = [
@@ -43,11 +48,10 @@ interface FormState {
   sourceCode: string
   channelCode: string
   customerStatus: string
-  tierCode: string
   intentLevel: string
   spendingLevel: string
   birthday: string
-  attentionProjects: string
+  projectIds: number[]
   blockerNote: string
   remark: string
   firstAddedAt: string
@@ -63,11 +67,10 @@ function emptyForm(): FormState {
     sourceCode: '',
     channelCode: '',
     customerStatus: '',
-    tierCode: '',
     intentLevel: '',
     spendingLevel: '',
     birthday: '',
-    attentionProjects: '',
+    projectIds: [],
     blockerNote: '',
     remark: '',
     firstAddedAt: '',
@@ -89,12 +92,25 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : '未知错误'
 }
 
+async function loadProjectOptions() {
+  projectOptionsError.value = ''
+  try {
+    const result = await listProjects({ page: 1, size: 100 })
+    projectOptions.value = result.items
+  } catch (error) {
+    projectOptions.value = []
+    projectOptionsError.value = errorText(error)
+  }
+}
+
 watch(
   () => props.modelValue,
   async (visible) => {
     if (!visible) return
+    void loadProjectOptions()
     if (props.mode === 'create') {
       Object.assign(form, emptyForm())
+      legacyAttentionProjects.value = ''
       idempotencyKey = crypto.randomUUID()
       formOwnerId.value = isAdmin ? undefined : (auth.user?.userId ?? undefined)
       ownerOptionsError.value = ''
@@ -113,6 +129,7 @@ watch(
     try {
       const detail = await getCustomer(props.customerId)
       version.value = detail.version
+      legacyAttentionProjects.value = detail.attentionProjects ?? ''
       Object.assign(form, {
         displayName: detail.displayName ?? '',
         nickname: detail.nickname ?? '',
@@ -122,11 +139,10 @@ watch(
         sourceCode: detail.sourceCode ?? '',
         channelCode: detail.channelCode ?? '',
         customerStatus: detail.customerStatus ?? '',
-        tierCode: detail.tierCode ?? '',
         intentLevel: detail.intentLevel ?? '',
         spendingLevel: detail.spendingLevel ?? '',
         birthday: detail.birthday ?? '',
-        attentionProjects: detail.attentionProjects ?? '',
+        projectIds: [...(detail.attentionProjectIds ?? [])],
         blockerNote: detail.blockerNote ?? '',
         remark: detail.remark ?? '',
         firstAddedAt: detail.firstAddedAt ?? '',
@@ -142,12 +158,13 @@ watch(
 
 /** 空字符串不上送,可空列保持 NULL(尤其 mobile 不能写成空串) */
 function buildPayload(): CreateCustomerRequest {
-  const payload: Record<string, string | number> = {}
-  const entries = Object.entries(form) as [keyof FormState, string][]
-  for (const [key, value] of entries) {
-    if (value) payload[key] = value
+  const payload: Record<string, string | number | number[]> = {}
+  for (const [key, value] of Object.entries(form)) {
+    if (key === 'projectIds') continue
+    if (value) payload[key] = value as string
   }
-  return payload
+  payload.projectIds = [...form.projectIds]
+  return payload as CreateCustomerRequest
 }
 
 async function submit() {
@@ -277,17 +294,6 @@ async function submit() {
               />
             </el-select>
           </el-form-item>
-          <el-form-item label="分层 SABC">
-            <el-select v-model="form.tierCode" clearable>
-              <el-option
-                v-for="option in dicts.optionsWithHistory('customerTiers', form.tierCode)"
-                :key="option.code"
-                :label="option.label"
-                :value="option.code"
-                :disabled="option.disabled"
-              />
-            </el-select>
-          </el-form-item>
           <el-form-item label="意向级别">
             <el-select v-model="form.intentLevel" clearable filterable allow-create default-first-option>
               <el-option
@@ -320,7 +326,21 @@ async function submit() {
             />
           </el-form-item>
           <el-form-item label="关注项目" class="form-grid-full">
-            <el-input v-model="form.attentionProjects" placeholder="多个项目用逗号分隔" />
+            <el-select
+              v-model="form.projectIds" multiple filterable clearable
+              data-testid="attention-project-select" placeholder="选择正规产品子项目"
+            >
+              <el-option
+                v-for="project in projectOptions" :key="project.id"
+                :label="project.status === 'ACTIVE' ? project.projectName : `${project.projectName}（停用）`"
+                :value="project.id"
+                :disabled="project.status !== 'ACTIVE' && !form.projectIds.includes(project.id)"
+              />
+            </el-select>
+            <div v-if="projectOptionsError" class="owner-error">项目选项加载失败:{{ projectOptionsError }}</div>
+            <div v-if="legacyAttentionProjects" class="legacy-attention">
+              旧文本（legacy，不自动匹配）：{{ legacyAttentionProjects }}
+            </div>
           </el-form-item>
           <el-form-item label="卡点情况" class="form-grid-full">
             <el-input v-model="form.blockerNote" type="textarea" :rows="2" />

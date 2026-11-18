@@ -37,6 +37,7 @@ const profile: InstitutionProfile = {
   contactPhoneMasked: '****0000',
   status: 'PENDING',
   settlementType: 'MONTHLY',
+  settlementDay: null,
   onlineRate: '0.180000',
   offlineRate: '0.120000',
   platformRate: '0.150000',
@@ -93,6 +94,7 @@ describe('ProfileFormDrawer 创建与普通更新', () => {
     await select(wrapper, 'profile-ownership', 'PRIVATE')
     await select(wrapper, 'profile-grade', 'A')
     await select(wrapper, 'profile-settlement', 'MONTHLY')
+    await select(wrapper, 'profile-settlement-day', '12')
     await wrapper.get('[data-testid="profile-online-rate"]').setValue('18.25')
     await wrapper.get('[data-testid="profile-offline-rate"]').setValue('12')
     await wrapper.get('[data-testid="profile-platform-rate"]').setValue('15')
@@ -104,6 +106,7 @@ describe('ProfileFormDrawer 创建与普通更新', () => {
       institutionNo: 'INST-TEST',
       fullName: '测试机构',
       settlementType: 'MONTHLY',
+      settlementDay: '12',
       onlineRate: '0.182500',
       offlineRate: '0.120000',
       platformRate: '0.150000',

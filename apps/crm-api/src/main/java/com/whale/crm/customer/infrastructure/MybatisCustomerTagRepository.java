@@ -26,6 +26,11 @@ public class MybatisCustomerTagRepository implements CustomerTagRepository {
     }
 
     @Override
+    public int insertIfAbsent(long tenantId, long customerId, String tagCode, Long createdBy) {
+        return customerTagMapper.insertTagIfAbsent(tenantId, customerId, tagCode, createdBy);
+    }
+
+    @Override
     public int delete(long tenantId, long customerId, String tagCode) {
         return customerTagMapper.deleteTag(tenantId, customerId, tagCode);
     }

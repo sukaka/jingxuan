@@ -49,8 +49,8 @@
 .proto-page .el-table .cell { padding: 0 18px; line-height: 1.55; }
 .proto-page .el-table__fixed-right { box-shadow: -5px 0 12px rgb(31 67 82 / 4%); }
 .proto-page .el-button { min-height: 38px; padding: 10px 15px; border-radius: 9px; font-weight: 650; }
-.proto-page .el-button--primary { background: #12978f; border-color: #12978f; box-shadow: 0 4px 10px rgb(15 148 139 / 15%); }
-.proto-page .el-button.is-text { min-height: 28px; padding: 3px; color: #0c968a; font-weight: 680; }
+.proto-page .el-button--primary:not(.is-plain):not(.is-text):not(.is-link):not(.is-dashed) { background: #12978f; border-color: #12978f; box-shadow: 0 4px 10px rgb(15 148 139 / 15%); }
+.proto-page .el-button.is-text { min-height: 28px; padding: 3px; color: #0c968a; background: transparent; font-weight: 680; }
 .proto-page .el-button.is-text:hover { background: transparent; color: #08766f; }
 .proto-page .el-input__wrapper,
 .proto-page .el-select__wrapper { min-height: 39px; border-radius: 9px; box-shadow: 0 0 0 1px #e3ebef inset; }

@@ -235,6 +235,7 @@ class CustomerMergeApiIT extends AbstractMysqlIT {
 
     private long createFollowup(AuthCookies actor, long customerId) throws Exception {
         String body = mockMvc.perform(actor.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "it-merge-followup-" + java.util.UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\","
                                 + "\"summary\":\"ITC02 跟进\"}"))

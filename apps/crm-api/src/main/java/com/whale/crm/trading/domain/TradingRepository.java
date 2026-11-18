@@ -18,6 +18,7 @@ public interface TradingRepository {
     long countOrders(long tenantId, String scopeType, List<Long> teamIds, long selfId, Long customerId, String status);
 
     void insertOrderItem(OrderItem item);
+    void insertOrderItemSelection(OrderItemSelection selection);
     Optional<OrderItem> findOrderItem(long tenantId, long id);
     List<OrderItem> findOrderItems(long tenantId, long orderId);
     void insertPayment(PaymentTxn payment);
@@ -32,10 +33,22 @@ public interface TradingRepository {
     Optional<Entitlement> findEntitlementForUpdate(long tenantId, long id);
     int updateEntitlementBalance(long tenantId, long id, long expectedVersion, int availableCount,
                                  String status, int versionNo);
+    default List<Entitlement> searchEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                                 Long customerId, String status, int offset, int size) {
+        return searchEntitlements(tenantId, scopeType, teamIds, selfId, customerId, status,
+                null, false, offset, size);
+    }
+
+    default long countEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                   Long customerId, String status) {
+        return countEntitlements(tenantId, scopeType, teamIds, selfId, customerId, status, null, false);
+    }
+
     List<Entitlement> searchEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId,
-                                         Long customerId, String status, int offset, int size);
+                                         Long customerId, String status, java.time.LocalDate validTo,
+                                         boolean availableOnly, int offset, int size);
     long countEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId,
-                           Long customerId, String status);
+                           Long customerId, String status, java.time.LocalDate validTo, boolean availableOnly);
     EntitlementSummary summarizeEntitlements(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                                              Long customerId, java.time.LocalDate today);
     void insertLedger(EntitlementLedgerEntry entry);

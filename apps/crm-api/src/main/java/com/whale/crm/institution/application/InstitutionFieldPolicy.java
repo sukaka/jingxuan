@@ -2,6 +2,7 @@ package com.whale.crm.institution.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.whale.crm.institution.domain.InstitutionProfile;
+import com.whale.crm.institution.domain.SettlementDayRule;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 
@@ -18,7 +19,7 @@ public final class InstitutionFieldPolicy {
         return switch (fieldCode) {
             case "bankName", "bankAccount", "taxId", "settlementName" -> "FINANCE";
             case "onlineRate", "offlineRate", "platformRate", "otherRateRule", "chargesFee", "depositFen",
-                    "guaranteeRoi", "roiTerms", "settlementType" -> "MARKET";
+                    "guaranteeRoi", "roiTerms", "settlementType", "settlementDay" -> "MARKET";
             case "fullName", "businessTypeCode", "ownershipCode", "gradeCode" -> "MARKET";
             default -> throw new BusinessException(ErrorCode.VALIDATION_FAILED, "字段不在机构变更白名单内");
         };
@@ -53,6 +54,7 @@ public final class InstitutionFieldPolicy {
             case "guaranteeRoi" -> profile.guaranteeRoi();
             case "roiTerms" -> profile.roiTerms();
             case "settlementType" -> profile.settlementType();
+            case "settlementDay" -> profile.settlementDay();
             default -> throw new BusinessException(ErrorCode.VALIDATION_FAILED, "不支持的机构字段");
         };
     }
@@ -98,6 +100,9 @@ public final class InstitutionFieldPolicy {
         }
         if ("settlementType".equals(fieldCode) && !Set.of("MONTHLY", "PER_REDEMPTION").contains(text)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "结算类型必须为MONTHLY或PER_REDEMPTION");
+        }
+        if ("settlementDay".equals(fieldCode)) {
+            return SettlementDayRule.normalize(text);
         }
         if ("bankAccount".equals(fieldCode) && !text.matches("[0-9A-Za-z-]{6,64}")) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "银行账号格式不正确");

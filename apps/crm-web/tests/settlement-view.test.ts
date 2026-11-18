@@ -30,6 +30,9 @@ const batch: SettlementBatch = {
   institutionId: 91,
   settlementType: 'MONTHLY',
   periodKey: '2026-10',
+  settlementDay: '8',
+  settlementDaySource: 'INSTITUTION',
+  settlementDate: '2026-10-08',
   status: 'DRAFT',
   amountStatus: 'PENDING_VERIFICATION',
   grossFen: 0,
@@ -107,6 +110,8 @@ describe('SettlementsView 待核实金额、权限与对账', () => {
     expect(amounts).toEqual(['待核实', '待核实'])
     expect(wrapper.find('[data-testid="settlement-pay"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="settlement-verify"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('2026-10-08')
+    expect(wrapper.text()).toContain('每月 8 日 · 机构自定义 · Asia/Shanghai')
 
     await wrapper.get('[data-testid="settlement-detail"]').trigger('click')
     await flushPromises()

@@ -1,18 +1,24 @@
 package com.whale.crm.customer.application;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.customer.api.dto.CreateFollowupRequest;
+import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.api.dto.FollowupItemResponse;
 import com.whale.crm.customer.api.dto.UpdateFollowupRequest;
 import com.whale.crm.customer.domain.Customer;
 import com.whale.crm.customer.domain.CustomerRepository;
 import com.whale.crm.customer.domain.Followup;
 import com.whale.crm.customer.domain.FollowupRepository;
+import com.whale.crm.followup.application.FollowupPolicyService;
 import com.whale.crm.platform.audit.application.AuditService;
+import com.whale.crm.platform.idempotency.IdempotencyRecord;
+import com.whale.crm.platform.idempotency.IdempotencyService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.DataScope;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
+import com.whale.crm.trading.application.OutboxService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,28 +30,43 @@ import java.util.Objects;
 
 /**
  * 每日跟进（crm_followup）。每次跟进追加新流水，不覆盖历史；创建后同事务刷新客户 last_followup_at。
- * 设置或修改下次跟进时间时，同事务生成或调整 OPEN 回访任务，不改变其他任务状态。
+ * 新跟进显式下次时间优先，否则按当前策略计算；修改历史记录不回填策略默认值。
  * 修改/软删除权限：创建者本人，或客户同组主管（MANAGER_LEAD），或 ADMIN。
  */
 @Service
 public class FollowupApplicationService {
+
+    private static final String IDEMPOTENCY_SCOPE = "followup.create";
+    private static final String FOLLOWUP_RECORDED_EVENT = "followup.recorded.v1";
 
     private final FollowupRepository followupRepository;
     private final CustomerRepository customerRepository;
     private final CustomerScopeSupport scopeSupport;
     private final AuditService auditService;
     private final TaskApplicationService taskService;
+    private final FollowupPolicyService policyService;
+    private final OutboxService outboxService;
+    private final IdempotencyService idempotencyService;
+    private final ObjectMapper objectMapper;
 
     public FollowupApplicationService(FollowupRepository followupRepository,
                                       CustomerRepository customerRepository,
                                       CustomerScopeSupport scopeSupport,
                                       AuditService auditService,
-                                      TaskApplicationService taskService) {
+                                      TaskApplicationService taskService,
+                                      FollowupPolicyService policyService,
+                                      OutboxService outboxService,
+                                      IdempotencyService idempotencyService,
+                                      ObjectMapper objectMapper) {
         this.followupRepository = followupRepository;
         this.customerRepository = customerRepository;
         this.scopeSupport = scopeSupport;
         this.auditService = auditService;
         this.taskService = taskService;
+        this.policyService = policyService;
+        this.outboxService = outboxService;
+        this.idempotencyService = idempotencyService;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
@@ -69,9 +90,61 @@ public class FollowupApplicationService {
         return new PageResponse<>(items, total, page, size);
     }
 
+    @Transactional(readOnly = true)
+    public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
+                                                        CustomerTimelineCursor cursor) {
+        scopeSupport.requireVisible(tenantId, customerId, user);
+        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
+        int page = 1;
+        long total;
+        do {
+            PageResponse<FollowupItemResponse> result = search(tenantId, user, customerId, page, 100);
+            total = result.total();
+            result.items().stream().flatMap(item -> followupTimelineEvents(item).stream())
+                    .filter(item -> cursor == null || cursor.allows(item)).forEach(events::add);
+            page++;
+        } while ((long) (page - 1) * 100 < total);
+        return events;
+    }
+
+    private List<CustomerTimelineItemResponse> followupTimelineEvents(FollowupItemResponse item) {
+        Instant occurredAt = item.contactAt() != null ? item.contactAt() : item.createdAt();
+        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
+        events.add(CustomerTimelineItemResponse.of("FOLLOWUP", item.id(), "FOLLOWUP", occurredAt,
+                "跟进记录", item.summary(), Map.of("channelCode", item.channelCode()), item.createdBy()));
+        if (item.intentProject() != null && !item.intentProject().isBlank()) {
+            events.add(CustomerTimelineItemResponse.of("INTENT", item.id(), "INTENT", occurredAt,
+                    "意向项目", item.intentProject(), Map.of("estimatedAmountFen", item.estimatedAmountFen()),
+                    item.createdBy()));
+        }
+        if (item.blockerNote() != null && !item.blockerNote().isBlank()) {
+            events.add(CustomerTimelineItemResponse.of("BLOCKER", item.id(), "BLOCKER", occurredAt,
+                    "跟进卡点", item.blockerNote(), Map.of("followupId", item.id()), item.createdBy()));
+        }
+        if (item.nextFollowupAt() != null) {
+            events.add(CustomerTimelineItemResponse.of("NEXT_FOLLOWUP", item.id(), "NEXT_FOLLOWUP", occurredAt,
+                    "下一步跟进", "计划于 " + item.nextFollowupAt() + " 跟进",
+                    Map.of("nextFollowupAt", item.nextFollowupAt()), item.createdBy()));
+        }
+        return events;
+    }
+
     @Transactional
-    public FollowupItemResponse create(long tenantId, CurrentUser user, CreateFollowupRequest request) {
+    public FollowupItemResponse create(long tenantId, CurrentUser user, CreateFollowupRequest request,
+                                       String idempotencyKey) {
         Customer customer = scopeSupport.requireVisible(tenantId, request.customerId(), user);
+        String key = requireKey(idempotencyKey);
+        String payload = canonical(request);
+        IdempotencyRecord replay = idempotencyService.lookup(tenantId, IDEMPOTENCY_SCOPE, key, payload).orElse(null);
+        if (replay != null) {
+            if (!"FOLLOWUP".equals(replay.getResourceType())) {
+                throw new BusinessException(ErrorCode.CONFLICT, "幂等结果不属于跟进记录");
+            }
+            Followup stored = followupRepository.findById(tenantId, Long.parseLong(replay.getResourceId()))
+                    .filter(value -> !value.isDeleted() && Objects.equals(value.getCustomerId(), request.customerId()))
+                    .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "幂等结果与跟进请求不一致"));
+            return toResponse(stored, null);
+        }
         Instant contactAt = request.contactAt() != null ? request.contactAt() : Instant.now();
 
         Followup followup = new Followup();
@@ -83,7 +156,8 @@ public class FollowupApplicationService {
         followup.setSummary(blankToNull(request.summary()));
         followup.setIntentProject(blankToNull(request.intentProject()));
         followup.setEstimatedAmountFen(request.estimatedAmountFen() != null ? request.estimatedAmountFen() : 0L);
-        followup.setNextFollowupAt(request.nextFollowupAt());
+        followup.setNextFollowupAt(policyService.nextFollowupAt(
+                tenantId, customer.getIntentLevel(), contactAt, request.nextFollowupAt()));
         followup.setBlockerNote(blankToNull(request.blockerNote()));
         followup.setCreatedBy(user.userId());
         followupRepository.insert(followup);
@@ -92,7 +166,14 @@ public class FollowupApplicationService {
         Followup persisted = followupRepository.findById(tenantId, followup.getId()).orElseThrow();
         auditService.record(tenantId, user.userId(), AuditService.ACTION_FOLLOWUP_CREATE, "FOLLOWUP",
                 Long.toString(followup.getId()), null, followupSnapshot(persisted), null);
+        outboxService.append(tenantId, FOLLOWUP_RECORDED_EVENT + ":" + persisted.getId(), FOLLOWUP_RECORDED_EVENT,
+                "followup", Long.toString(persisted.getId()), Map.of(
+                        "followupId", persisted.getId(), "customerId", persisted.getCustomerId(),
+                        "sourceVersion", persisted.getVersion(), "staffUserId", persisted.getOwnerStaffId(),
+                        "contactAt", persisted.getContactAt()));
         taskService.syncFromFollowup(tenantId, user, persisted, customer);
+        idempotencyService.recordSuccess(tenantId, IDEMPOTENCY_SCOPE, key, "FOLLOWUP",
+                Long.toString(persisted.getId()), payload);
         return toResponse(persisted, null);
     }
 
@@ -202,6 +283,21 @@ public class FollowupApplicationService {
                 followup.getSummary(), followup.getIntentProject(), followup.getEstimatedAmountFen(),
                 followup.getNextFollowupAt(), followup.getBlockerNote(), followup.getCreatedBy(),
                 followup.getCreatedAt(), followup.getVersion());
+    }
+
+    private String requireKey(String key) {
+        if (key == null || key.isBlank() || key.strip().length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "创建跟进必须提供1至128字符的幂等键");
+        }
+        return key.strip();
+    }
+
+    private String canonical(CreateFollowupRequest request) {
+        try {
+            return objectMapper.writeValueAsString(request);
+        } catch (Exception ex) {
+            throw new IllegalStateException("跟进创建请求规范化失败", ex);
+        }
     }
 
     private static String blankToNull(String value) {

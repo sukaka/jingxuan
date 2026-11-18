@@ -265,6 +265,26 @@ describe('CampaignsView 活动分析与维护', () => {
     expect(vi.mocked(createCampaignBatch).mock.calls[1]?.[2]).toBe(firstKey)
   })
 
+  it('普通运营不能选择活动发布，具备活动审核权限的运营主管可以', async () => {
+    const operation = mountView()
+    await flushPromises()
+    await operation.get('[data-testid="campaign-create"]').trigger('click')
+    await flushPromises()
+    let activeOption = Array.from(document.body.querySelectorAll<HTMLElement>('.el-select-dropdown__item'))
+      .find((node) => node.textContent?.trim() === '进行中')
+    expect(activeOption?.classList.contains('is-disabled')).toBe(true)
+    operation.unmount()
+    document.body.innerHTML = ''
+
+    const lead = mountView(['report:read', 'campaign:read', 'campaign:write', 'campaign:review'])
+    await flushPromises()
+    await lead.get('[data-testid="campaign-create"]').trigger('click')
+    await flushPromises()
+    activeOption = Array.from(document.body.querySelectorAll<HTMLElement>('.el-select-dropdown__item'))
+      .find((node) => node.textContent?.trim() === '进行中')
+    expect(activeOption?.classList.contains('is-disabled')).toBe(false)
+  })
+
   it('只读账号不展示创建或编辑，分析错误与管理空态分别呈现', async () => {
     vi.mocked(getCampaignAnalytics).mockRejectedValueOnce(new ApiError({ status: 500, code: 'REPORT_FAILED', message: '活动分析暂不可用' }))
     vi.mocked(listCampaigns).mockResolvedValueOnce({ items: [], total: 0, page: 1, size: 20 })

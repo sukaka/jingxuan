@@ -30,7 +30,7 @@ const datasets: DatasetDefinition[] = [
       { code: 'nickname', label: '客户昵称' }, { code: 'remarkName', label: '备注名' },
       { code: 'mobile', label: '手机号（脱敏）' }, { code: 'cityCode', label: '城市' },
       { code: 'sourceCode', label: '客户来源' }, { code: 'channelCode', label: '渠道' },
-      { code: 'customerStatus', label: '客户状态' }, { code: 'tierCode', label: '客户分层' },
+      { code: 'customerStatus', label: '客户状态' }, { code: 'tierCode', label: '客户等级' },
       { code: 'intentLevel', label: '意向级别' }, { code: 'spendingLevel', label: '消费能力' },
       { code: 'birthday', label: '生日' }, { code: 'points', label: '积分' },
       { code: 'attentionProjects', label: '关注项目' }, { code: 'blockerNote', label: '卡点情况' },

@@ -1,6 +1,8 @@
 package com.whale.crm.fulfillment.application;
 
+import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.application.CustomerScopeSupport;
+import com.whale.crm.customer.application.CustomerTimelineCursor;
 import com.whale.crm.file.application.FileApplicationService;
 import com.whale.crm.file.domain.FileClassification;
 import com.whale.crm.fulfillment.api.dto.CreateReversalRequest;
@@ -82,6 +84,35 @@ public class RedemptionApplicationService {
         return new PageResponse<>(repository.searchRedemptions(tenantId, scope, customerId, institutionId,
                         projectId, status, offset, size),
                 repository.countRedemptions(tenantId, scope, customerId, institutionId, projectId, status), page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
+                                                        CustomerTimelineCursor cursor) {
+        scopeSupport.requireVisible(tenantId, customerId, user);
+        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
+        int page = 1;
+        long total;
+        do {
+            PageResponse<Redemption> result = search(tenantId, user, customerId, null, null, null, page, 100);
+            total = result.total();
+            for (Redemption redemption : result.items()) {
+                Map<String, Object> details = new HashMap<>();
+                details.put("status", redemption.status());
+                details.put("serviceAt", redemption.serviceAt());
+                details.put("appointmentId", redemption.appointmentId());
+                details.put("institutionId", redemption.institutionId());
+                Instant occurredAt = redemption.postedAt() != null ? redemption.postedAt() : redemption.createdAt();
+                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("REDEMPTION", redemption.id(),
+                        "REDEMPTION", occurredAt, "机构正式核销", "核销状态：" + redemption.status(), details,
+                        redemption.postedBy());
+                if (cursor == null || cursor.allows(event)) {
+                    events.add(event);
+                }
+            }
+            page++;
+        } while ((long) (page - 1) * 100 < total);
+        return events;
     }
 
     @Transactional(readOnly = true)

@@ -37,6 +37,15 @@ app:
   outbox:
     relay:
       enabled: true
+  notification:
+    kafka:
+      enabled: ${NOTIFICATION_KAFKA_ENABLED:true}
+    delivery:
+      worker-enabled: ${NOTIFICATION_WORKER_ENABLED:true}
+  wecom:
+    message:
+      mode: ${WECOM_MESSAGE_MODE:DISABLED}
+      secret: ${WECOM_MESSAGE_SECRET:}
   refunds:
     mock:
       enabled: false

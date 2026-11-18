@@ -7,7 +7,7 @@ public record InstitutionProfileResponse(Long id, String institutionNo, String f
                                          String cityCode, String businessTypeCode, String ownershipCode,
                                          String gradeCode, String address, String contactName,
                                          String contactPhoneMasked, String status, String settlementType,
-                                         BigDecimal onlineRate, BigDecimal offlineRate, BigDecimal platformRate,
+                                         String settlementDay, BigDecimal onlineRate, BigDecimal offlineRate, BigDecimal platformRate,
                                          String otherRateRule, Boolean chargesFee, Long depositFen,
                                          Boolean guaranteeRoi, String roiTerms, String settlementName,
                                          String bankNameMasked, String bankAccountMasked, String taxIdMasked,

@@ -1,4 +1,4 @@
-import type { OrderItem } from '../../api/trading'
+import type { OrderItem, OrderItemSelectionSnapshot } from '../../api/trading'
 import { ApiError } from '../../types/api'
 import { orderStatusTone as sharedOrderStatusTone } from '../../utils/tagTone'
 import type { TagTone } from '../../utils/tagTone'
@@ -102,6 +102,24 @@ export function orderItemAllocationStatus(item: Pick<OrderItem, 'entitlementSnap
     return 'UNKNOWN'
   }
   return 'UNKNOWN'
+}
+
+export function orderItemSelectionSnapshots(
+  item: Pick<OrderItem, 'entitlementSnapshot'>,
+): OrderItemSelectionSnapshot[] {
+  try {
+    const snapshot = JSON.parse(item.entitlementSnapshot) as { selectionSnapshots?: unknown }
+    if (!Array.isArray(snapshot.selectionSnapshots)) return []
+    return snapshot.selectionSnapshots.filter((selection): selection is OrderItemSelectionSnapshot => {
+      if (!selection || typeof selection !== 'object') return false
+      const value = selection as Partial<OrderItemSelectionSnapshot>
+      return typeof value.groupCode === 'string' && typeof value.groupName === 'string'
+        && typeof value.projectName === 'string' && typeof value.projectId === 'number'
+        && typeof value.grantCount === 'number' && typeof value.referencePriceFen === 'number'
+    })
+  } catch {
+    return []
+  }
 }
 
 export function formatDeltaCount(value: number): string {

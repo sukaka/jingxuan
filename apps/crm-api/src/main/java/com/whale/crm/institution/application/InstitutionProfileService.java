@@ -11,6 +11,7 @@ import com.whale.crm.institution.domain.InstitutionRepository;
 import com.whale.crm.institution.domain.InstitutionScope;
 import com.whale.crm.institution.domain.OrdinaryProfileValues;
 import com.whale.crm.institution.domain.ProfileChangeRequest;
+import com.whale.crm.institution.domain.SettlementDayRule;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.idempotency.IdempotencyRecord;
 import com.whale.crm.platform.security.CurrentUser;
@@ -144,7 +145,8 @@ public class InstitutionProfileService {
         InstitutionProfile input = new InstitutionProfile(null, request.institutionNo().strip(), request.fullName().strip(),
                 request.shortName(), request.cityCode(), request.businessTypeCode(), request.ownershipCode(),
                 request.gradeCode(), request.address(), request.contactName(), support.encrypt(request.contactPhone()),
-                "PENDING", request.settlementType(), request.onlineRate(), request.offlineRate(), request.platformRate(),
+                "PENDING", request.settlementType(), SettlementDayRule.normalizeNullable(request.settlementDay()),
+                request.onlineRate(), request.offlineRate(), request.platformRate(),
                 request.otherRateRule(), request.chargesFee() != null && request.chargesFee(),
                 request.depositFen() == null ? Long.valueOf(0L) : request.depositFen(),
                 request.guaranteeRoi() != null && request.guaranteeRoi(), request.roiTerms(), request.settlementName(),

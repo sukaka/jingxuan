@@ -9,6 +9,9 @@ export interface SettlementBatch {
   institutionId: number
   settlementType: 'MONTHLY' | 'PER_REDEMPTION'
   periodKey: string
+  settlementDay: string | null
+  settlementDaySource: 'DEFAULT' | 'INSTITUTION' | null
+  settlementDate: string | null
   status: SettlementStatus
   amountStatus: AmountStatus
   grossFen: number

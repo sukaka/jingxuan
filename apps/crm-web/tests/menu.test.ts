@@ -23,14 +23,14 @@ describe('分角色权限菜单', () => {
   it('管理员无业务权限时只保留工作台，不展示后续栏目', () => {
     const items = visibleMenuItems(hasPermissionFrom([]), ['ADMIN'], 'EMPLOYEE')
 
-    expect(enabledPaths(items)).toEqual(['/'])
-    expect(flatten(items).map((item) => item.path)).toEqual(['/'])
+    expect(enabledPaths(items)).toEqual(['/', '/notifications'])
+    expect(flatten(items).map((item) => item.path)).toEqual(['/', '/notifications'])
     expect(futureTitles(items)).toEqual([])
   })
 
   it('管理员按 user:read 显示用户与角色，按字典和审计权限显示系统入口', () => {
     const userItems = visibleMenuItems(hasPermissionFrom(['user:read']), ['ADMIN'], 'EMPLOYEE')
-    expect(enabledPaths(userItems)).toEqual(['/', '/users', '/roles'])
+    expect(enabledPaths(userItems)).toEqual(['/', '/notifications', '/users', '/roles'])
     expect(userItems.some((item) => isMenuGroup(item) && item.key === 'system')).toBe(true)
 
     const auditItems = visibleMenuItems(
@@ -38,7 +38,7 @@ describe('分角色权限菜单', () => {
       ['ADMIN'],
       'EMPLOYEE',
     )
-    expect(enabledPaths(auditItems)).toEqual(['/', '/dictionaries', '/audit-logs'])
+    expect(enabledPaths(auditItems)).toEqual(['/', '/notifications', '/dictionaries', '/audit-logs'])
   })
 
   it('普通管家使用独立导航和角色文案，不显示无权限后续栏目', () => {
@@ -48,12 +48,27 @@ describe('分角色权限菜单', () => {
       'EMPLOYEE',
     )
 
-    expect(enabledPaths(items)).toEqual(['/', '/tasks', '/followups', '/customers'])
+    expect(enabledPaths(items)).toEqual([
+      '/',
+      '/notifications',
+      '/tasks',
+      '/followups',
+      '/followups/monthly-dispatch',
+      '/customers',
+      '/customers/segments',
+      '/customers/tier-reviews',
+      '/customers/batch-tag-jobs',
+    ])
     expect(flatten(items).filter((item) => !item.disabled).map((item) => item.title)).toEqual([
       '我的工作台',
+      '通知中心',
       '今日待办',
       '客户跟进',
+      '月度派单',
       '我的客户',
+      '客户分组',
+      '等级复核',
+      '批量标签',
     ])
     expect(futureTitles(items)).toEqual([])
     expect(enabledPaths(items)).not.toContain('/users')
@@ -69,6 +84,7 @@ describe('分角色权限菜单', () => {
 
     expect(enabledPaths(items)).toEqual([
       '/',
+      '/notifications',
       '/institutions',
       '/institutions/change-approvals',
       '/appointments',
@@ -77,6 +93,7 @@ describe('分角色权限菜单', () => {
     ])
     expect(flatten(items).filter((item) => !item.disabled).map((item) => item.title)).toEqual([
       '机构工作台',
+      '通知中心',
       '机构资料',
       '资料变更申请',
       '预约接待',
@@ -136,7 +153,7 @@ describe('P2 导航增量接入', () => {
       'EMPLOYEE',
     )
 
-    expect(enabledPaths(items)).toEqual(['/'])
+    expect(enabledPaths(items)).toEqual(['/', '/notifications'])
   })
 
   it('管家显示素材库与我的业绩，但不显示导出菜单，即使账号带有导出权限', () => {
@@ -146,7 +163,7 @@ describe('P2 导航增量接入', () => {
       'EMPLOYEE',
     )
 
-    expect(enabledPaths(items)).toEqual(['/', '/materials', '/performance'])
+    expect(enabledPaths(items)).toEqual(['/', '/notifications', '/materials', '/performance', '/operations/wecom-analytics'])
     expect(flatten(items).map((item) => item.title)).toEqual(expect.arrayContaining(['素材库', '我的业绩']))
     expect(enabledPaths(items)).not.toContain('/exports')
     expect(flatten(items).map((item) => item.title)).not.toContain('数据导出中心')
@@ -156,8 +173,8 @@ describe('P2 导航增量接入', () => {
     const materialOnly = visibleMenuItems(hasPermissionFrom(['material:read']), ['MANAGER'], 'EMPLOYEE')
     const reportOnly = visibleMenuItems(hasPermissionFrom(['report:read']), ['MANAGER'], 'EMPLOYEE')
 
-    expect(enabledPaths(materialOnly)).toEqual(['/', '/materials'])
-    expect(enabledPaths(reportOnly)).toEqual(['/', '/performance'])
+    expect(enabledPaths(materialOnly)).toEqual(['/', '/notifications', '/materials'])
+    expect(enabledPaths(reportOnly)).toEqual(['/', '/notifications', '/performance', '/operations/wecom-analytics'])
   })
 
   it('机构账号不继承 CRM 全局页面入口', () => {
@@ -170,5 +187,98 @@ describe('P2 导航增量接入', () => {
     expect(enabledPaths(items)).not.toEqual(expect.arrayContaining(p2Paths))
     expect(childrenOf(items, 'institution-work').map((item) => item.path)).toContain('/institutions')
     expect(childrenOf(items, 'institution-service').map((item) => item.path)).toContain('/redemptions')
+  })
+})
+
+describe('V30-V33 导航增量接入', () => {
+  const allPermissions = [
+    'customer:read',
+    'customer:write',
+    'followup:read',
+    'complaint:read',
+    'complaint:write',
+    'complaint:config',
+  ]
+  const businessPaths = [
+    '/customers/segments',
+    '/followups/monthly-dispatch',
+    '/customers/tier-reviews',
+    '/complaints',
+    '/customers/batch-tag-jobs',
+  ]
+  const settingsPaths = [
+    '/settings/customer-tiers',
+    '/settings/followup-automation',
+    '/settings/complaint-automation',
+  ]
+
+  it('管理员在客户管理和系统配置看到全部真实入口，通知中心保持不变', () => {
+    const items = visibleMenuItems(hasPermissionFrom(allPermissions), ['ADMIN'], 'EMPLOYEE')
+    const paths = enabledPaths(items)
+
+    expect(paths).toEqual(expect.arrayContaining([...businessPaths, ...settingsPaths, '/notifications']))
+    const customerGroup = items.find((item) => isMenuGroup(item) && item.key === 'customer')
+    const systemGroup = items.find((item) => isMenuGroup(item) && item.key === 'system')
+    expect(customerGroup && isMenuGroup(customerGroup) ? customerGroup.children.map((item) => item.path) : [])
+      .toEqual(expect.arrayContaining(businessPaths))
+    expect(systemGroup && isMenuGroup(systemGroup) ? systemGroup.children.map((item) => item.path) : [])
+      .toEqual(expect.arrayContaining(settingsPaths))
+    expect(futureTitles(items)).toEqual([])
+  })
+
+  it('管家主管按实际权限看到业务入口和跟进提醒，不看到管理员分级规则或客诉配置', () => {
+    const items = visibleMenuItems(
+      hasPermissionFrom(allPermissions.filter((code) => code !== 'complaint:config')),
+      ['MANAGER_LEAD'],
+      'EMPLOYEE',
+    )
+    const paths = enabledPaths(items)
+
+    expect(paths).toEqual(expect.arrayContaining([...businessPaths, '/settings/followup-automation', '/notifications']))
+    expect(paths).not.toContain('/settings/customer-tiers')
+    expect(paths).not.toContain('/settings/complaint-automation')
+  })
+
+  it('普通管家只增加后端可访问的业务入口，不继承系统配置菜单', () => {
+    const items = visibleMenuItems(
+      hasPermissionFrom(allPermissions.filter((code) => code !== 'complaint:config')),
+      ['MANAGER'],
+      'EMPLOYEE',
+    )
+    const paths = enabledPaths(items)
+
+    expect(paths).toEqual(expect.arrayContaining([...businessPaths, '/notifications']))
+    expect(paths).not.toEqual(expect.arrayContaining(settingsPaths))
+  })
+
+  it('写权限不代替分组、复核、客诉、批量标签和派单的读入口权限', () => {
+    const items = visibleMenuItems(
+      hasPermissionFrom(['customer:write', 'followup:write', 'complaint:write']),
+      ['MANAGER'],
+      'EMPLOYEE',
+    )
+
+    expect(enabledPaths(items)).not.toEqual(expect.arrayContaining(businessPaths))
+  })
+
+  it('机构账号即使带有员工权限也不显示这些员工入口', () => {
+    const items = visibleMenuItems(hasPermissionFrom(allPermissions), ['INSTITUTION_OPERATOR'], 'INSTITUTION')
+
+    expect(enabledPaths(items)).not.toEqual(expect.arrayContaining([...businessPaths, ...settingsPaths]))
+    expect(enabledPaths(items)).toContain('/notifications')
+  })
+})
+
+
+describe('V46 话术管理导航', () => {
+  it('管理员按 quickreply:manage 显示话术库，普通管家不继承管理入口', () => {
+    const adminItems = visibleMenuItems(hasPermissionFrom(['quickreply:manage']), ['ADMIN'], 'EMPLOYEE')
+    expect(enabledPaths(adminItems)).toContain('/settings/quick-replies')
+
+    const managerItems = visibleMenuItems(hasPermissionFrom(['quickreply:manage']), ['MANAGER'], 'EMPLOYEE')
+    expect(enabledPaths(managerItems)).not.toContain('/settings/quick-replies')
+
+    const deniedItems = visibleMenuItems(hasPermissionFrom(['quickreply:view']), ['ADMIN'], 'EMPLOYEE')
+    expect(enabledPaths(deniedItems)).not.toContain('/settings/quick-replies')
   })
 })

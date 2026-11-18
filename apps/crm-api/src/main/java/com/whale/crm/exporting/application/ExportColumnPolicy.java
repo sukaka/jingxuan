@@ -20,7 +20,7 @@ public class ExportColumnPolicy {
                     column("nickname", "客户昵称"), column("remarkName", "备注名"),
                     column("mobile", "手机号（脱敏）"), column("cityCode", "城市"),
                     column("sourceCode", "客户来源"), column("channelCode", "渠道"),
-                    column("customerStatus", "客户状态"), column("tierCode", "客户分层"),
+                    column("customerStatus", "客户状态"), column("tierCode", "客户等级"),
                     column("intentLevel", "意向级别"), column("spendingLevel", "消费能力"),
                     column("birthday", "生日"), column("points", "积分"),
                     column("attentionProjects", "关注项目"), column("blockerNote", "卡点情况"),

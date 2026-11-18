@@ -242,7 +242,7 @@ class WecomAcceptanceIT extends AbstractMysqlIT {
                         .cookie(manager1.cookies()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
-        assertThat(data(get("/api/v1/integrations/wecom/messages").cookie(manager1.cookies()))
+        assertThat(data(get("/api/v1/integrations/wecom/messages").param("corpId", CORP).cookie(manager1.cookies()))
                 .at("/total").asLong()).isZero();
         assertThat(monitor().at("/dataGap").asBoolean()).isTrue();
         assertNoPlaintextOutsideControlledContent();
@@ -283,7 +283,7 @@ class WecomAcceptanceIT extends AbstractMysqlIT {
         mockMvc.perform(get("/api/v1/integrations/wecom/messages/{id}/content", firstMessage)
                         .cookie(admin.cookies()))
                 .andExpect(status().isNotFound());
-        assertThat(data(get("/api/v1/integrations/wecom/messages").cookie(admin.cookies()))
+        assertThat(data(get("/api/v1/integrations/wecom/messages").param("corpId", CORP).cookie(admin.cookies()))
                 .at("/total").asLong()).isZero();
         assertNoPlaintextOutsideControlledContent();
     }
@@ -323,7 +323,7 @@ class WecomAcceptanceIT extends AbstractMysqlIT {
         mockMvc.perform(get("/api/v1/integrations/wecom/messages/{id}/content", firstMessage)
                         .cookie(operator1.cookies()))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(get("/api/v1/integrations/wecom/messages").cookie(operator2.cookies()))
+        mockMvc.perform(get("/api/v1/integrations/wecom/messages").param("corpId", CORP).cookie(operator2.cookies()))
                 .andExpect(status().isForbidden());
 
         JsonNode linked = data(link);
@@ -335,12 +335,12 @@ class WecomAcceptanceIT extends AbstractMysqlIT {
                 .isEqualTo(1010L);
         assertThat(data(get("/api/v1/integrations/wecom/messages/{id}/content", secondMessage)
                 .cookie(manager1.cookies())).at("/content").asText()).isEqualTo(TEXT_2);
-        assertThat(data(get("/api/v1/integrations/wecom/messages").cookie(manager1.cookies()))
+        assertThat(data(get("/api/v1/integrations/wecom/messages").param("corpId", CORP).cookie(manager1.cookies()))
                 .at("/total").asLong()).isEqualTo(2);
         mockMvc.perform(get("/api/v1/integrations/wecom/messages/{id}/content", secondMessage)
                         .cookie(manager2.cookies()))
                 .andExpect(status().isNotFound());
-        assertThat(data(get("/api/v1/integrations/wecom/messages").cookie(manager2.cookies()))
+        assertThat(data(get("/api/v1/integrations/wecom/messages").param("corpId", CORP).cookie(manager2.cookies()))
                 .at("/total").asLong()).isZero();
         assertThat(queryInt("SELECT COUNT(*) FROM crm_customer WHERE tenant_id=1")).isEqualTo(customersBefore);
 
@@ -373,7 +373,7 @@ class WecomAcceptanceIT extends AbstractMysqlIT {
             assertThat(decrypted.at("/messageType").asText()).isEqualTo("TEXT");
         }
 
-        String listResponse = mockMvc.perform(get("/api/v1/integrations/wecom/messages")
+        String listResponse = mockMvc.perform(get("/api/v1/integrations/wecom/messages").param("corpId", CORP)
                         .cookie(admin.cookies()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(2))

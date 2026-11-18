@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.ai.infrastructure.mapper.AiChatDelegationMapper">
+  <sql id="runColumns">r.id,r.tenant_id AS tenantId,r.source_message_id AS sourceMessageId,r.customer_id AS customerId,r.staff_user_id AS staffUserId,r.team_id AS teamId,r.corp_id AS corpId,r.external_userid AS externalUserid,r.conversation_id AS conversationId,r.status,r.reason_masked AS reasonMasked,r.reply_cipher AS replyCipher,r.intent,r.risk_flags_json AS riskFlagsJson,r.ai_provider AS aiProvider,r.ai_model AS aiModel,r.send_provider AS sendProvider,r.provider_message_id AS providerMessageId,r.send_attempted_at AS sendAttemptedAt,r.generation_attempts AS generationAttempts,r.send_attempts AS sendAttempts,r.next_attempt_at AS nextAttemptAt,r.lease_owner AS leaseOwner,r.lease_expires_at AS leaseExpiresAt,r.created_at AS createdAt,r.updated_at AS updatedAt,r.version</sql>
+  <sql id="scope">
+    <choose>
+      <when test="scopeType == 'ALL'">1=1</when>
+      <when test="scopeType == 'TEAM' or scopeType == 'SELF'">
+        EXISTS (SELECT 1 FROM crm_customer cu WHERE cu.tenant_id=r.tenant_id AND cu.id=r.customer_id AND cu.deleted=0
+          <choose><when test="scopeType == 'TEAM'">AND (cu.owner_staff_id=#{selfId} OR cu.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)</when><otherwise>AND cu.owner_staff_id=#{selfId}</otherwise></choose>)
+        AND EXISTS (SELECT 1 FROM sys_user su WHERE su.tenant_id=r.tenant_id AND su.id=r.staff_user_id
+          <choose><when test="scopeType == 'TEAM'">AND (su.id=#{selfId} OR su.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)</when><otherwise>AND su.id=#{selfId}</otherwise></choose>)
+      </when>
+      <otherwise>1=0</otherwise>
+    </choose>
+  </sql>
+
+  <select id="selectPolicy" resultType="com.whale.crm.ai.domain.AiChatDelegationRepository$PolicyRow">
+    SELECT tenant_id AS tenantId,enabled,emergency_stopped AS emergencyStopped,min_interval_seconds AS minIntervalSeconds,
+      daily_limit AS dailyLimit,allowed_start AS allowedStart,allowed_end AS allowedEnd,zone_id AS zoneId,
+      blocked_terms_json AS blockedTermsJson,version
+    FROM crm_ai_chat_delegation_policy WHERE tenant_id=#{tenantId}
+  </select>
+  <select id="selectPolicyForUpdate" resultType="com.whale.crm.ai.domain.AiChatDelegationRepository$PolicyRow">
+    SELECT tenant_id AS tenantId,enabled,emergency_stopped AS emergencyStopped,min_interval_seconds AS minIntervalSeconds,
+      daily_limit AS dailyLimit,allowed_start AS allowedStart,allowed_end AS allowedEnd,zone_id AS zoneId,
+      blocked_terms_json AS blockedTermsJson,version
+    FROM crm_ai_chat_delegation_policy WHERE tenant_id=#{tenantId} FOR UPDATE
+  </select>
+  <select id="selectScopes" resultType="com.whale.crm.ai.domain.AiChatDelegationPolicy$ScopeOverride">
+    SELECT scope_type AS scopeType,scope_id AS scopeId,enabled FROM crm_ai_chat_delegation_scope
+    WHERE tenant_id=#{tenantId} ORDER BY scope_type,scope_id
+  </select>
+  <insert id="insertPolicy">
+    INSERT INTO crm_ai_chat_delegation_policy (tenant_id,enabled,emergency_stopped,min_interval_seconds,daily_limit,
+      allowed_start,allowed_end,zone_id,blocked_terms_json,updated_by)
+    VALUES (#{e.tenantId},#{e.enabled},#{e.emergencyStopped},#{e.minIntervalSeconds},#{e.dailyLimit},
+      #{e.allowedStart},#{e.allowedEnd},#{e.zoneId},#{blockedTermsJson},#{actorUserId})
+  </insert>
+  <update id="updatePolicy">
+    UPDATE crm_ai_chat_delegation_policy SET enabled=#{e.enabled},emergency_stopped=#{e.emergencyStopped},
+      min_interval_seconds=#{e.minIntervalSeconds},daily_limit=#{e.dailyLimit},allowed_start=#{e.allowedStart},
+      allowed_end=#{e.allowedEnd},zone_id=#{e.zoneId},blocked_terms_json=#{blockedTermsJson},updated_by=#{actorUserId},
+      version=version+1 WHERE tenant_id=#{e.tenantId} AND version=#{expectedVersion}
+  </update>
+  <delete id="deleteScopes">DELETE FROM crm_ai_chat_delegation_scope WHERE tenant_id=#{tenantId}</delete>
+  <insert id="insertScope">
+    INSERT INTO crm_ai_chat_delegation_scope (tenant_id,scope_type,scope_id,enabled)
+    VALUES (#{tenantId},#{scope.scopeType},#{scope.scopeId},#{scope.enabled})
+  </insert>
+
+  <select id="selectCustomerControl" resultType="com.whale.crm.ai.domain.AiChatDelegationCustomerControl">
+    SELECT id,tenant_id AS tenantId,customer_id AS customerId,mode,reason,updated_by AS updatedBy,
+      updated_at AS updatedAt,version FROM crm_ai_chat_delegation_customer
+    WHERE tenant_id=#{tenantId} AND customer_id=#{customerId}
+  </select>
+  <insert id="insertCustomerControl">
+    INSERT INTO crm_ai_chat_delegation_customer (tenant_id,customer_id,mode,reason,updated_by)
+    VALUES (#{tenantId},#{customerId},#{mode},#{reason},#{actorUserId})
+  </insert>
+  <update id="updateCustomerControl">
+    UPDATE crm_ai_chat_delegation_customer SET mode=#{mode},reason=#{reason},updated_by=#{actorUserId},version=version+1
+    WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} AND version=#{expectedVersion}
+  </update>
+  <select id="selectPendingForCustomerForUpdate" resultType="com.whale.crm.ai.domain.AiChatDelegationRun">
+    SELECT <include refid="runColumns"/> FROM crm_ai_chat_delegation_run r
+    WHERE r.tenant_id=#{tenantId} AND r.customer_id=#{customerId}
+      AND r.status IN ('QUEUED','DEFERRED','RETRY_GENERATE','READY_TO_SEND','RETRY_SEND')
+    ORDER BY r.id FOR UPDATE
+  </select>
+  <update id="blockPendingForCustomer">
+    UPDATE crm_ai_chat_delegation_run SET status='SKIPPED',reason_masked=#{reason},next_attempt_at=NULL,
+      lease_owner=NULL,lease_expires_at=NULL,version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND customer_id=#{customerId}
+      AND status IN ('QUEUED','DEFERRED','RETRY_GENERATE','READY_TO_SEND','RETRY_SEND')
+  </update>
+
+  <insert id="insertRun">
+    INSERT INTO crm_ai_chat_delegation_run (tenant_id,source_message_id,customer_id,staff_user_id,team_id,corp_id,
+      external_userid,conversation_id,status,reason_masked,next_attempt_at)
+    VALUES (#{e.tenantId},#{e.sourceMessageId},#{e.customerId},#{e.staffUserId},#{e.teamId},#{e.corpId},
+      #{e.externalUserid},#{e.conversationId},#{e.status},#{e.reasonMasked},#{e.nextAttemptAt})
+  </insert>
+  <select id="selectRunByMessage" resultType="com.whale.crm.ai.domain.AiChatDelegationRun">
+    SELECT <include refid="runColumns"/> FROM crm_ai_chat_delegation_run r
+    WHERE r.tenant_id=#{tenantId} AND r.source_message_id=#{sourceMessageId}
+  </select>
+  <select id="selectRun" resultType="com.whale.crm.ai.domain.AiChatDelegationRun">
+    SELECT <include refid="runColumns"/> FROM crm_ai_chat_delegation_run r WHERE r.tenant_id=#{tenantId} AND r.id=#{id}
+  </select>
+  <select id="selectRunForUpdate" resultType="com.whale.crm.ai.domain.AiChatDelegationRun">
+    SELECT <include refid="runColumns"/> FROM crm_ai_chat_delegation_run r
+    WHERE r.tenant_id=#{tenantId} AND r.id=#{id} FOR UPDATE
+  </select>
+  <select id="selectWorkTenantIds" resultType="long">
+    SELECT DISTINCT tenant_id FROM crm_ai_chat_delegation_run
+    WHERE status IN ('QUEUED','DEFERRED','RETRY_GENERATE','READY_TO_SEND','RETRY_SEND')
+       OR (status IN ('GENERATING','SENDING') AND lease_expires_at&lt;#{now})
+  </select>
+  <select id="selectClaimableGeneration" resultType="com.whale.crm.ai.domain.AiChatDelegationRun">
+    SELECT <include refid="runColumns"/> FROM crm_ai_chat_delegation_run r WHERE r.tenant_id=#{tenantId}
+      AND (((r.status IN ('QUEUED','DEFERRED','RETRY_GENERATE')) AND (r.next_attempt_at IS NULL OR r.next_attempt_at&lt;=#{now}))
+        OR (r.status='GENERATING' AND r.lease_expires_at&lt;#{now}))
+    ORDER BY r.id LIMIT #{limit}
+  </select>
+  <select id="selectClaimableSending" resultType="com.whale.crm.ai.domain.AiChatDelegationRun">
+    SELECT <include refid="runColumns"/> FROM crm_ai_chat_delegation_run r WHERE r.tenant_id=#{tenantId}
+      AND r.status IN ('READY_TO_SEND','RETRY_SEND') AND (r.next_attempt_at IS NULL OR r.next_attempt_at&lt;=#{now})
+    ORDER BY r.id LIMIT #{limit}
+  </select>
+  <select id="selectExpiredSending" resultType="com.whale.crm.ai.domain.AiChatDelegationRun">
+    SELECT <include refid="runColumns"/> FROM crm_ai_chat_delegation_run r
+    WHERE r.status='SENDING' AND r.lease_expires_at&lt;#{now} ORDER BY r.id LIMIT #{limit}
+  </select>
+  <update id="claimGeneration">
+    UPDATE crm_ai_chat_delegation_run SET status='GENERATING',generation_attempts=generation_attempts+1,
+      lease_owner=#{owner},lease_expires_at=#{leaseExpiresAt},next_attempt_at=NULL,version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND ((status IN ('QUEUED','DEFERRED','RETRY_GENERATE') AND (next_attempt_at IS NULL OR next_attempt_at&lt;=#{now}))
+        OR (status='GENERATING' AND lease_expires_at&lt;#{now}))
+  </update>
+  <update id="claimSending">
+    UPDATE crm_ai_chat_delegation_run SET status='SENDING',send_attempts=send_attempts+1,
+      lease_owner=#{owner},lease_expires_at=#{leaseExpiresAt},next_attempt_at=NULL,version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion}
+      AND status IN ('READY_TO_SEND','RETRY_SEND') AND (next_attempt_at IS NULL OR next_attempt_at&lt;=#{now})
+  </update>
+  <update id="markGenerated">
+    UPDATE crm_ai_chat_delegation_run SET status='READY_TO_SEND',reason_masked=NULL,reply_cipher=#{replyCipher},
+      intent=#{intent},risk_flags_json=#{riskFlagsJson},ai_provider=#{aiProvider},ai_model=#{aiModel},
+      next_attempt_at=#{now},lease_owner=NULL,lease_expires_at=NULL,version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status='GENERATING' AND lease_owner=#{owner}
+  </update>
+  <update id="updateRunStatus">
+    UPDATE crm_ai_chat_delegation_run SET status=#{targetStatus},reason_masked=#{reasonMasked},
+      next_attempt_at=#{nextAttemptAt},lease_owner=NULL,lease_expires_at=NULL,version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status=#{expectedStatus}
+  </update>
+  <update id="markSendAttempted">
+    UPDATE crm_ai_chat_delegation_run SET send_attempted_at=#{now},updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status='SENDING' AND lease_owner=#{owner}
+  </update>
+  <update id="finishSend">
+    UPDATE crm_ai_chat_delegation_run SET status=#{status},reason_masked=#{reasonMasked},send_provider=#{provider},
+      provider_message_id=#{providerMessageId},next_attempt_at=#{nextAttemptAt},lease_owner=NULL,lease_expires_at=NULL,
+      version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status='SENDING' AND lease_owner=#{owner}
+  </update>
+  <select id="selectLatestSendAttempt" resultType="java.time.Instant">
+    SELECT MAX(send_attempted_at) FROM crm_ai_chat_delegation_run
+    WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} AND send_attempted_at IS NOT NULL
+  </select>
+  <select id="countSendAttemptsSince" resultType="long">
+    SELECT COUNT(*) FROM crm_ai_chat_delegation_run
+    WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} AND send_attempted_at IS NOT NULL
+      AND send_attempted_at&gt;=#{since}
+  </select>
+  <insert id="insertAttempt">
+    INSERT INTO crm_ai_chat_delegation_attempt (tenant_id,run_id,phase,result,provider,provider_message_id,error_masked,created_at)
+    VALUES (#{e.tenantId},#{e.runId},#{e.phase},#{e.result},#{e.provider},#{e.providerMessageId},#{e.errorMasked},#{e.createdAt})
+  </insert>
+  <select id="search" resultType="com.whale.crm.ai.domain.AiChatDelegationRun">
+    SELECT <include refid="runColumns"/> FROM crm_ai_chat_delegation_run r WHERE r.tenant_id=#{tenantId}
+    <if test="customerId != null">AND r.customer_id=#{customerId}</if>
+    <if test="status != null and status != ''">AND r.status=#{status}</if>
+    AND <include refid="scope"/> ORDER BY r.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countSearch" resultType="long">
+    SELECT COUNT(*) FROM crm_ai_chat_delegation_run r WHERE r.tenant_id=#{tenantId}
+    <if test="customerId != null">AND r.customer_id=#{customerId}</if>
+    <if test="status != null and status != ''">AND r.status=#{status}</if>
+    AND <include refid="scope"/>
+  </select>
+  <select id="countByStatus" resultType="com.whale.crm.ai.domain.AiChatDelegationRepository$StatusCount">
+    SELECT r.status,COUNT(*) AS count FROM crm_ai_chat_delegation_run r
+    WHERE r.tenant_id=#{tenantId} AND <include refid="scope"/> GROUP BY r.status
+  </select>
+</mapper>

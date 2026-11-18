@@ -76,6 +76,9 @@
     <if test="status != null and status != ''">
       AND t.status = #{status}
     </if>
+    <if test="customerId != null">
+      AND t.customer_id = #{customerId}
+    </if>
   </sql>
 
   <select id="search" resultMap="TaskMap">
@@ -126,6 +129,14 @@
     SELECT <include refid="taskColumns"/>
     FROM crm_task t
     WHERE t.tenant_id = #{tenantId} AND t.source_type = #{sourceType} AND t.source_ref = #{sourceRef}
+  </select>
+
+  <select id="selectOpenAutomaticByCustomer" resultMap="TaskMap">
+    SELECT <include refid="taskColumns"/>
+    FROM crm_task t
+    WHERE t.tenant_id = #{tenantId} AND t.customer_id = #{customerId}
+      AND t.source_type IN ('FOLLOWUP', 'MONTHLY_BATCH') AND t.status IN ('OPEN', 'PROCESSING')
+    ORDER BY t.id LIMIT 1
   </select>
 
   <insert id="insertAutomaticTask" parameterType="com.whale.crm.customer.domain.CrmTask">

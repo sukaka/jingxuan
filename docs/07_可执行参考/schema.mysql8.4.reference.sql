@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS `crm_customer` (
   `source_code` VARCHAR(64) NULL COMMENT '来源字典',
   `channel_code` VARCHAR(64) NULL COMMENT '渠道字典',
   `customer_status` VARCHAR(64) NULL COMMENT '客户状态',
-  `tier_code` VARCHAR(16) NULL COMMENT 'S/A/B/C',
+  `tier_code` VARCHAR(16) NULL COMMENT '客户等级 S/A/B/C/D',
   `intent_level` VARCHAR(16) NULL COMMENT '意向级别',
   `spending_level` VARCHAR(16) NULL COMMENT '消费能力',
   `birthday` DATE NULL COMMENT '生日',

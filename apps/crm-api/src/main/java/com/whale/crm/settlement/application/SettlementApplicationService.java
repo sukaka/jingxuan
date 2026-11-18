@@ -4,12 +4,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.file.application.FileApplicationService;
 import com.whale.crm.file.domain.FileClassification;
+import com.whale.crm.institution.application.InstitutionSettlementDayService;
 import com.whale.crm.institution.domain.InstitutionProfile;
 import com.whale.crm.institution.domain.InstitutionRepository;
+import com.whale.crm.institution.domain.SettlementDayRule;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.idempotency.IdempotencyRecord;
 import com.whale.crm.platform.idempotency.IdempotencyService;
 import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.DataScopeService;
 import com.whale.crm.platform.security.InstitutionAccessSupport;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
@@ -32,7 +35,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.YearMonth;
-import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -54,11 +56,14 @@ public class SettlementApplicationService {
     private final OutboxService outboxService;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
+    private final InstitutionSettlementDayService settlementDays;
+    private final DataScopeService dataScopeService;
 
     public SettlementApplicationService(SettlementRepository repository, InstitutionRepository institutionRepository,
                                         InstitutionAccessSupport institutionAccess, FileApplicationService fileOperations,
                                         IdempotencyService idempotencyService, AuditService auditService, OutboxService outboxService,
-                                        ObjectMapper objectMapper, PlatformTransactionManager transactionManager) {
+                                        ObjectMapper objectMapper, PlatformTransactionManager transactionManager,
+                                        InstitutionSettlementDayService settlementDays, DataScopeService dataScopeService) {
         this.repository = repository;
         this.institutionRepository = institutionRepository;
         this.institutionAccess = institutionAccess;
@@ -68,12 +73,14 @@ public class SettlementApplicationService {
         this.outboxService = outboxService;
         this.objectMapper = objectMapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.settlementDays = settlementDays;
+        this.dataScopeService = dataScopeService;
     }
 
     @Transactional(readOnly = true)
     public PageResponse<SettlementBatch> search(long tenantId, CurrentUser user, Long institutionId,
                                                 String settlementType, String status, int page, int size) {
-        SettlementScope scope = SettlementAccess.scope(tenantId, user, institutionId, institutionAccess);
+        SettlementScope scope = SettlementAccess.scope(tenantId, user, institutionId, institutionAccess, dataScopeService);
         int offset = (page - 1) * size;
         return new PageResponse<>(repository.searchBatches(tenantId, scope, institutionId, settlementType, status, offset, size),
                 repository.countBatches(tenantId, scope, institutionId, settlementType, status), page, size);
@@ -83,13 +90,13 @@ public class SettlementApplicationService {
     public SettlementBatchDetail detail(long tenantId, CurrentUser user, long batchId) {
         SettlementBatch batch = repository.findBatch(tenantId, batchId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "结算批次不存在"));
-        SettlementAccess.requireVisible(tenantId, user, batch, institutionAccess);
+        SettlementAccess.requireVisible(tenantId, user, batch, institutionAccess, dataScopeService);
         return detail(tenantId, batch);
     }
 
     public SettlementBatchDetail create(long tenantId, CurrentUser user, CreateSettlementBatchRequest request,
                                         String idempotencyKey) {
-        SettlementAccess.requireEmployeeWrite(user);
+        SettlementAccess.requireEmployeeWrite(tenantId, user, dataScopeService);
         String key = requireKey(idempotencyKey);
         List<Long> redemptionIds = normalizedRedemptionIds(request.redemptionIds());
         validateTypeAndPeriod(request.settlementType(), request.periodKey());
@@ -108,7 +115,7 @@ public class SettlementApplicationService {
 
     public SettlementBatchDetail verify(long tenantId, CurrentUser user, long batchId,
                                         VerifySettlementBatchRequest request, String idempotencyKey) {
-        SettlementAccess.requireEmployeeWrite(user);
+        SettlementAccess.requireEmployeeWrite(tenantId, user, dataScopeService);
         String key = requireKey(idempotencyKey);
         String payload = canonical(new VerifyCanonical(batchId, request.version(), request.ruleVersion(), request.grossFen(),
                 request.commissionFen(), request.netPayableFen(), request.verificationEvidence()));
@@ -121,7 +128,7 @@ public class SettlementApplicationService {
 
     public SettlementBatchDetail pay(long tenantId, CurrentUser user, long batchId,
                                      RecordSettlementPaymentRequest request, String idempotencyKey) {
-        SettlementAccess.requireEmployeeWrite(user);
+        SettlementAccess.requireEmployeeWrite(tenantId, user, dataScopeService);
         String key = requireKey(idempotencyKey);
         String payload = canonical(new PaymentCanonical(batchId, request.version(), request.amountFen(), request.bankTradeNo(),
                 request.paidAt().toString(), request.voucherFileId(), request.evidenceRef()));
@@ -141,7 +148,7 @@ public class SettlementApplicationService {
         Optional<SettlementBatch> existing = repository.findBatchByPeriod(tenantId, request.institutionId(),
                 request.settlementType(), request.periodKey());
         if (existing.isPresent()) {
-            return sameBatchOrConflict(tenantId, existing.get(), redemptionIds);
+            return sameBatchOrConflict(tenantId, existing.get(), redemptionIds, key, payload);
         }
         Optional<IdempotencyRecord> replay = idempotencyService.lookup(tenantId, CREATE_SCOPE, key, payload);
         if (replay.isPresent()) {
@@ -164,9 +171,9 @@ public class SettlementApplicationService {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "不能将其他机构核销纳入本机构批次");
             }
             if ("MONTHLY".equals(request.settlementType())) {
-                YearMonth serviceMonth = YearMonth.from(redemption.serviceAt().atZone(ZoneOffset.UTC));
+                YearMonth serviceMonth = YearMonth.from(redemption.serviceAt().atZone(SettlementDayRule.ZONE_ID));
                 if (!request.periodKey().equals(serviceMonth.toString())) {
-                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "月结核销服务月份与批次期间不一致");
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "月结核销服务月份与批次期间不一致（Asia/Shanghai）");
                 }
             } else if (!request.periodKey().equals("REDEMPTION:" + redemption.id())) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "次结期间必须对应唯一核销 REDEMPTION:{id}");
@@ -175,8 +182,12 @@ public class SettlementApplicationService {
                 throw new BusinessException(ErrorCode.CONFLICT, "同一核销不能重复进入月结或次结批次");
             }
         }
+        SettlementDayRule.MonthlySnapshot daySnapshot = "MONTHLY".equals(request.settlementType())
+                ? settlementDays.monthlySnapshot(tenantId, institution, YearMonth.parse(request.periodKey())) : null;
         String rateSnapshot = rateSnapshot(institution);
         SettlementBatch draft = new SettlementBatch(null, institution.id(), request.settlementType(), request.periodKey(),
+                daySnapshot == null ? null : daySnapshot.rule(), daySnapshot == null ? null : daySnapshot.source(),
+                daySnapshot == null ? null : daySnapshot.settlementDate(),
                 "DRAFT", "PENDING_VERIFICATION", 0L, 0L, 0L, 0L, null, null, null, null, null);
         repository.insertBatch(tenantId, draft);
         SettlementBatch created = repository.findBatchByPeriod(tenantId, institution.id(), request.settlementType(),
@@ -196,7 +207,7 @@ public class SettlementApplicationService {
                                            VerifySettlementBatchRequest request, String key, String payload) {
         SettlementBatch before = repository.findBatchForUpdate(tenantId, batchId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "结算批次不存在"));
-        SettlementAccess.requireVisible(tenantId, user, before, institutionAccess);
+        SettlementAccess.requireVisible(tenantId, user, before, institutionAccess, dataScopeService);
         Optional<IdempotencyRecord> replay = idempotencyService.lookup(tenantId, VERIFY_SCOPE, key, payload);
         if (replay.isPresent()) {
             return detail(tenantId, before);
@@ -234,7 +245,7 @@ public class SettlementApplicationService {
                                         RecordSettlementPaymentRequest request, String key, String payload) {
         SettlementBatch before = repository.findBatchForUpdate(tenantId, batchId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "结算批次不存在"));
-        SettlementAccess.requireVisible(tenantId, user, before, institutionAccess);
+        SettlementAccess.requireVisible(tenantId, user, before, institutionAccess, dataScopeService);
         Optional<IdempotencyRecord> replay = idempotencyService.lookup(tenantId, PAY_SCOPE, key, payload);
         if (replay.isPresent()) {
             return detail(tenantId, before);
@@ -288,15 +299,18 @@ public class SettlementApplicationService {
         SettlementBatch existing = repository.findBatchByPeriod(tenantId, request.institutionId(),
                 request.settlementType(), request.periodKey())
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "核销已进入其他结算批次"));
-        return sameBatchOrConflict(tenantId, existing, redemptionIds);
+        return sameBatchOrConflict(tenantId, existing, redemptionIds, key, payload);
     }
 
-    private SettlementBatchDetail sameBatchOrConflict(long tenantId, SettlementBatch existing, List<Long> redemptionIds) {
+    private SettlementBatchDetail sameBatchOrConflict(long tenantId, SettlementBatch existing, List<Long> redemptionIds,
+                                                       String key, String payload) {
         List<Long> existingIds = repository.findLines(tenantId, existing.id()).stream()
                 .map(SettlementLine::redemptionId).sorted().toList();
         if (!existingIds.equals(redemptionIds)) {
             throw new BusinessException(ErrorCode.CONFLICT, "同一机构期间批次已存在但核销内容不同");
         }
+        idempotencyService.recordSuccess(tenantId, CREATE_SCOPE, key, "SETTLEMENT_BATCH",
+                existing.id().toString(), payload);
         return detail(tenantId, existing);
     }
 

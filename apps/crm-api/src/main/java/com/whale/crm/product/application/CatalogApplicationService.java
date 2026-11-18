@@ -11,6 +11,7 @@ import com.whale.crm.product.api.dto.CreatePackageVersionRequest;
 import com.whale.crm.product.api.dto.CreateProjectRequest;
 import com.whale.crm.product.api.dto.CreateSkuRequest;
 import com.whale.crm.product.api.dto.PackageProjectItemRequest;
+import com.whale.crm.product.api.dto.PackageSelectionGroupRequest;
 import com.whale.crm.product.api.dto.ReplaceVersionProjectsRequest;
 import com.whale.crm.product.api.dto.UpdatePackageRequest;
 import com.whale.crm.product.api.dto.UpdatePackageVersionRequest;
@@ -20,6 +21,8 @@ import com.whale.crm.product.domain.CatalogRepository;
 import com.whale.crm.product.domain.CatalogRules;
 import com.whale.crm.product.domain.Institution;
 import com.whale.crm.product.domain.PackageProject;
+import com.whale.crm.product.domain.PackageSelectionGroup;
+import com.whale.crm.product.domain.PackageSelectionRules;
 import com.whale.crm.product.domain.PackageVersion;
 import com.whale.crm.product.domain.PackageVersionSnapshot;
 import com.whale.crm.product.domain.ProductPackage;
@@ -51,6 +54,15 @@ public class CatalogApplicationService {
         int offset = (page - 1) * size;
         return new PageResponse<>(repository.searchProjects(tenantId, keyword, status, offset, size),
                 repository.countProjects(tenantId, keyword, status), page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public Project activeProjectForSharing(long tenantId, long projectId) {
+        Project project = requireProject(tenantId, projectId);
+        if (!"ACTIVE".equals(project.status())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "项目不存在或未启用");
+        }
+        return project;
     }
 
     @Transactional
@@ -134,8 +146,9 @@ public class CatalogApplicationService {
                                                 CreatePackageVersionRequest request) {
         repository.findPackageForUpdate(tenantId, packageId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "套餐不存在"));
-        validateSelection(request.selectionMode(), request.choiceCount());
         List<PackageProject> items = validateProjects(tenantId, request.projects());
+        List<PackageSelectionGroup> groups = validateSelectionGroups(request.selectionMode(), request.choiceCount(),
+                items, request.groups());
         int versionNo = repository.nextVersionNo(tenantId, packageId);
         PackageVersion input = new PackageVersion(null, packageId, versionNo, request.selectionMode(),
                 request.choiceCount(), blankToNull(request.selectionRules()), "DRAFT", null, null);
@@ -144,10 +157,14 @@ public class CatalogApplicationService {
             repository.insertVersion(input);
             created = repository.findVersions(tenantId, packageId).stream()
                     .filter(item -> item.versionNo().equals(versionNo)).findFirst().orElseThrow();
+            for (PackageSelectionGroup group : groups) {
+                repository.insertSelectionGroup(new PackageSelectionGroup(null, created.id(), group.groupCode(),
+                        group.groupName(), group.minSelections(), group.maxSelections(), group.sortOrder(), null));
+            }
             for (PackageProject item : items) {
                 repository.insertVersionProject(new PackageProject(null, created.id(), item.projectId(), null, null, null,
                         null, null, item.grantCount(), item.selectionWeight(), item.allocationPriceFen(),
-                        item.optionGroup(), null));
+                        item.optionGroup(), item.referencePriceFen(), null));
             }
         } catch (DuplicateKeyException ex) {
             throw new BusinessException(ErrorCode.CONFLICT, "版本或项目配置重复");
@@ -178,18 +195,35 @@ public class CatalogApplicationService {
         PackageVersion before = requireVersion(tenantId, id);
         requireDraft(before);
         List<PackageProject> items = validateProjects(tenantId, request.projects());
+        List<PackageSelectionGroup> groups = request.groups() == null
+                ? repository.findSelectionGroups(tenantId, id)
+                : validateSelectionGroups(before.selectionMode(), before.choiceCount(), items, request.groups());
+        if (request.groups() == null) {
+            validateSelection(before.selectionMode(), before.choiceCount());
+            if (!groups.isEmpty()) {
+                if (!"CHOOSE_N".equals(before.selectionMode())) {
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "仅 CHOOSE_N 支持结构化选项组");
+                }
+                PackageSelectionRules.validateConfiguration(groups, items);
+            }
+        }
         if (repository.updateVersionStatus(tenantId, id, request.version(), "DRAFT", "DRAFT") == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "版本已被修改或已激活，不能覆盖项目配置");
         }
         try {
             repository.deleteVersionProjects(tenantId, id);
+            repository.deleteSelectionGroups(tenantId, id);
+            for (PackageSelectionGroup group : groups) {
+                repository.insertSelectionGroup(new PackageSelectionGroup(null, id, group.groupCode(), group.groupName(),
+                        group.minSelections(), group.maxSelections(), group.sortOrder(), null));
+            }
             for (PackageProject item : items) {
                 repository.insertVersionProject(new PackageProject(null, id, item.projectId(), null, null, null,
                         null, null, item.grantCount(), item.selectionWeight(), item.allocationPriceFen(),
-                        item.optionGroup(), null));
+                        item.optionGroup(), item.referencePriceFen(), null));
             }
         } catch (DuplicateKeyException ex) {
-            throw new BusinessException(ErrorCode.CONFLICT, "同一选项组中项目不能重复");
+            throw new BusinessException(ErrorCode.CONFLICT, "选项组或同一组中的项目配置重复");
         }
         PackageVersionSnapshot after = snapshot(tenantId, user, id);
         audit(tenantId, user, "PACKAGE_VERSION_PROJECTS_UPDATE", "PACKAGE_VERSION", id, before, after);
@@ -201,7 +235,8 @@ public class CatalogApplicationService {
         PackageVersion before = requireVersion(tenantId, id);
         requireDraft(before);
         List<PackageProject> projects = repository.findVersionProjects(tenantId, id);
-        if (!CatalogRules.canActivate(before, projects)) {
+        List<PackageSelectionGroup> groups = repository.findSelectionGroups(tenantId, id);
+        if (!CatalogRules.canActivate(before, projects, groups)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "激活前必须配置有效子项目、次数和选择模式");
         }
         if (repository.updateVersionStatus(tenantId, id, version, "DRAFT", "ACTIVE") == 0) {
@@ -232,6 +267,7 @@ public class CatalogApplicationService {
         PackageVersion version = requireVersion(tenantId, id);
         ProductPackage productPackage = requirePackage(tenantId, version.packageId());
         List<PackageProject> projects = repository.findVersionProjects(tenantId, id);
+        List<PackageSelectionGroup> groups = repository.findSelectionGroups(tenantId, id);
         Set<Long> institutionScope = institutionScope(user);
         List<Sku> skus = repository.findSkusByVersion(tenantId, id);
         if (institutionScope != null) {
@@ -253,8 +289,8 @@ public class CatalogApplicationService {
         List<Institution> institutions = institutionIds.isEmpty() ? List.of() : repository.findInstitutionsByIds(tenantId, institutionIds);
         return new PackageVersionSnapshot(id, productPackage.id(), productPackage.packageCode(), productPackage.packageName(),
                 version.versionNo(), version.selectionMode(), version.choiceCount(), version.selectionRules(), version.status(),
-                version.version(), CatalogRules.rulesStatus(version), CatalogRules.allocationStatus(projects),
-                CatalogRules.entitlementIssuable(version, projects), projects, skus, institutions);
+                version.version(), CatalogRules.rulesStatus(version, groups), CatalogRules.allocationStatus(projects),
+                CatalogRules.entitlementIssuable(version, projects, groups), projects, skus, institutions, groups);
     }
 
     @Transactional(readOnly = true)
@@ -332,8 +368,9 @@ public class CatalogApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "套餐已停用，不能上架 SKU");
         }
         List<PackageProject> projects = repository.findVersionProjects(tenantId, packageVersion.id());
-        if (!CatalogRules.entitlementIssuable(packageVersion, projects)) {
-            if ("PENDING_Q01".equals(CatalogRules.rulesStatus(packageVersion))) {
+        List<PackageSelectionGroup> groups = repository.findSelectionGroups(tenantId, packageVersion.id());
+        if (!CatalogRules.entitlementIssuable(packageVersion, projects, groups)) {
+            if ("PENDING_Q01".equals(CatalogRules.rulesStatus(packageVersion, groups))) {
                 throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
                         "Q01 选择规则未确认，只能保存模板，不能上架发放权益",
                         java.util.List.of(new ApiResponse.ErrorDetail("Q01", "选 N 项的组合、重复选择和每项次数仍需运营确认")));
@@ -399,12 +436,34 @@ public class CatalogApplicationService {
             if (!"ACTIVE".equals(project.status())) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "子项目已停用: " + project.projectName());
             }
+            long referencePrice = request.referencePriceFen() == null
+                    ? project.listPriceFen() : request.referencePriceFen();
             result.add(new PackageProject(null, null, project.id(), project.projectCode(), project.projectName(),
                     project.categoryCode(), project.listPriceFen(), project.status(), request.grantCount(),
                     request.selectionWeight() == null ? Integer.valueOf(0) : request.selectionWeight(),
-                    request.allocationPriceFen() == null ? Long.valueOf(0L) : request.allocationPriceFen(), group, null));
+                    request.allocationPriceFen() == null ? Long.valueOf(0L) : request.allocationPriceFen(), group,
+                    referencePrice, null));
         }
         return result;
+    }
+
+    private List<PackageSelectionGroup> validateSelectionGroups(String selectionMode, int choiceCount,
+                                                                 List<PackageProject> projects,
+                                                                 List<PackageSelectionGroupRequest> requests) {
+        validateSelection(selectionMode, choiceCount);
+        if (requests == null || requests.isEmpty()) {
+            return List.of();
+        }
+        if (!"CHOOSE_N".equals(selectionMode)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "仅 CHOOSE_N 支持结构化选项组");
+        }
+        List<PackageSelectionGroup> groups = requests.stream()
+                .map(request -> new PackageSelectionGroup(null, null, request.groupCode().strip(),
+                        request.groupName().strip(), request.minSelections(), request.maxSelections(),
+                        request.sortOrder(), null))
+                .toList();
+        PackageSelectionRules.validateConfiguration(groups, projects);
+        return groups;
     }
 
     private Set<Long> validateInstitutions(long tenantId, List<Long> ids) {

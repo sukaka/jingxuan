@@ -93,4 +93,23 @@ describe('ChannelFormDialog 合作资料校验', () => {
     expect(document.body.textContent).toContain('电汇每月两次')
     wrapper.unmount()
   })
+
+  it('老带新与分销一样支持电汇月结和每月两次', async () => {
+    const wrapper = mountDialog()
+    await flushPromises()
+    await wrapper.get('[data-testid="channel-form-type"]').trigger('click')
+    await flushPromises()
+    const referral = Array.from(document.body.querySelectorAll<HTMLElement>('.el-select-dropdown__item'))
+      .find((node) => node.textContent?.trim() === '老带新（老客带新客）')
+    expect(referral).not.toBeNull()
+    referral!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="channel-form-settlement"]').classes()).not.toContain('is-disabled')
+    await wrapper.get('[data-testid="channel-form-settlement"]').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('电汇月结')
+    expect(document.body.textContent).toContain('电汇每月两次')
+    wrapper.unmount()
+  })
 })

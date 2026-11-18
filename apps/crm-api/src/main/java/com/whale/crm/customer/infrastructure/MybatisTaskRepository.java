@@ -22,14 +22,14 @@ public class MybatisTaskRepository implements TaskRepository {
 
     @Override
     public List<CrmTask> search(long tenantId, String scopeType, List<Long> teamIds, long selfId,
-                                Long assigneeId, String status, int offset, int size) {
-        return taskMapper.search(tenantId, scopeType, teamIds, selfId, assigneeId, status, offset, size);
+                                Long assigneeId, String status, Long customerId, int offset, int size) {
+        return taskMapper.search(tenantId, scopeType, teamIds, selfId, assigneeId, status, customerId, offset, size);
     }
 
     @Override
     public long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId,
-                            Long assigneeId, String status) {
-        return taskMapper.countSearch(tenantId, scopeType, teamIds, selfId, assigneeId, status);
+                            Long assigneeId, String status, Long customerId) {
+        return taskMapper.countSearch(tenantId, scopeType, teamIds, selfId, assigneeId, status, customerId);
     }
 
     @Override
@@ -56,6 +56,11 @@ public class MybatisTaskRepository implements TaskRepository {
     @Override
     public Optional<CrmTask> findBySource(long tenantId, String sourceType, String sourceRef) {
         return Optional.ofNullable(taskMapper.selectBySource(tenantId, sourceType, sourceRef));
+    }
+
+    @Override
+    public Optional<CrmTask> findOpenAutomaticByCustomer(long tenantId, long customerId) {
+        return Optional.ofNullable(taskMapper.selectOpenAutomaticByCustomer(tenantId, customerId));
     }
 
     @Override

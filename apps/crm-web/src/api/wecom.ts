@@ -7,8 +7,8 @@ export interface WecomMessageView {
   msgId: string
   archiveSeq: number
   customerId: number | null
-  externalUserid: string
-  staffUserId: number
+  externalUserid: string | null
+  staffUserId: number | null
   conversationId: string | null
   messageType: string
   senderType: string
@@ -17,6 +17,22 @@ export interface WecomMessageView {
   consentSnapshot: string
   currentConsentStatus: string
   status: string
+  recalledAt: string | null
+  recallMessageId: string | null
+  conversationType: 'DIRECT' | 'ROOM'
+  senderWecomUserid: string | null
+  senderStaffUserId: number | null
+  roomRosterVersion: number | null
+}
+
+export interface WecomMediaAssetView {
+  id: number
+  mediaKind: string
+  fileName: string | null
+  contentType: string
+  fileSize: number | null
+  status: 'PENDING' | 'DOWNLOADING' | 'RETRY' | 'STORED' | 'FAILED'
+  available: boolean
 }
 
 export interface WecomContentView {
@@ -24,6 +40,8 @@ export interface WecomContentView {
   messageType: string
   sentAt: string
   content: string
+  mediaAssets?: WecomMediaAssetView[]
+  recalledAt?: string | null
 }
 
 export interface WecomContact {
@@ -83,6 +101,7 @@ export interface WecomSyncResponse {
   lastSeq: number
   hasMore: boolean
   dataGap: boolean
+  recalled: number
 }
 
 export interface WecomLinkInput {
@@ -91,7 +110,7 @@ export interface WecomLinkInput {
   reason: string
 }
 
-export async function listWecomMessages(query: { customerId?: number; page: number; size: number }): Promise<PageResult<WecomMessageView>> {
+export async function listWecomMessages(query: { customerId?: number; conversationId?: string; corpId?: string; page: number; size: number }): Promise<PageResult<WecomMessageView>> {
   const res = await http.get<ApiResponse<PageResult<WecomMessageView>>>('/integrations/wecom/messages', { params: query })
   return res.data.data
 }

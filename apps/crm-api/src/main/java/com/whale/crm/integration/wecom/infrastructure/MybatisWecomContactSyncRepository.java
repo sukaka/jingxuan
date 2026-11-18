@@ -4,6 +4,7 @@ import com.whale.crm.integration.wecom.domain.WecomContactProfile;
 import com.whale.crm.integration.wecom.domain.WecomContactSyncRepository;
 import com.whale.crm.integration.wecom.domain.WecomContactSyncRun;
 import com.whale.crm.integration.wecom.domain.WecomStaffAccount;
+import com.whale.crm.integration.wecom.domain.WecomStaffIdentity;
 import com.whale.crm.integration.wecom.infrastructure.mapper.WecomContactSyncMapper;
 import org.springframework.stereotype.Repository;
 
@@ -18,6 +19,8 @@ public class MybatisWecomContactSyncRepository implements WecomContactSyncReposi
     public MybatisWecomContactSyncRepository(WecomContactSyncMapper mapper) { this.mapper = mapper; }
     public List<WecomStaffAccount> enabledStaff(long t, String c) { return mapper.selectEnabledStaff(t, c); }
     public Optional<WecomStaffAccount> staff(long t, String c, String u) { return Optional.ofNullable(mapper.selectStaff(t, c, u)); }
+    public List<WecomStaffIdentity> activeStaffForAuth(String c, String u) { return mapper.selectActiveStaffForAuth(c, u); }
+    public List<WecomStaffAccount> staffByUserId(long t, String c, long u) { return mapper.selectStaffByUserId(t, c, u); }
     public long startRun(long t, String c, String type, Long actor, Instant now) {
         try {
             if (mapper.insertRun(t, c, type, actor, now) != 1) {

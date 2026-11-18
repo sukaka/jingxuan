@@ -123,6 +123,7 @@ beforeEach(() => {
     projects: [],
     skus: [sku],
     institutions: [],
+    groups: [],
   })
   vi.mocked(getSkuQualityReport).mockResolvedValue(report)
 })

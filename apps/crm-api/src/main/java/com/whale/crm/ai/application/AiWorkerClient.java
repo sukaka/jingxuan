@@ -61,12 +61,58 @@ public class AiWorkerClient {
         }
     }
 
+    public ReplyGenerationResult generateReply(String suggestionId, long customerId, String scene,
+                                               java.util.Map<String, Object> facts, String instruction,
+                                               ProviderConfig providerConfig) {
+        try {
+            String json = mapper.writeValueAsString(new ReplyGenerationRequest(suggestionId, Long.toString(customerId),
+                    scene, facts, instruction, providerConfig));
+            Request request = new Request.Builder().url(baseUrl + "/api/v1/replies/generate")
+                    .header("X-AI-Internal-Token", token).post(RequestBody.create(json, JSON)).build();
+            try (var response = http.newCall(request).execute()) {
+                String body = response.body() == null ? "" : response.body().string();
+                if (!response.isSuccessful()) {
+                    throw new AiWorkerException(response.code() == 503 ? "AI 模型服务未启用或配置不完整" : "AI 回复生成失败，请稍后重试",
+                            response.code() < 500 || response.code() == 503);
+                }
+                return mapper.readValue(body, ReplyGenerationResult.class);
+            }
+        } catch (AiWorkerException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new AiWorkerException("AI 模型服务暂时不可用", false);
+        }
+    }
+
     public void testConnection(ProviderConfig providerConfig) {
         extract(0L, 0L,
                 List.of(new MessageInput("connection-test", "CUSTOMER", Instant.now(), "连接测试，不生成业务操作")),
                 List.of(), List.of(), providerConfig);
     }
 
+    public record ReplyGenerationRequest(@JsonProperty("suggestion_id") String suggestionId,
+                                         @JsonProperty("customer_id") String customerId, String scene,
+                                         java.util.Map<String, Object> facts, String instruction,
+                                         @JsonProperty("provider_config") @JsonInclude(JsonInclude.Include.NON_NULL)
+                                         ProviderConfig providerConfig) {
+        public ReplyGenerationRequest {
+            facts = facts == null ? null : java.util.Map.copyOf(facts);
+        }
+    }
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record ReplyGenerationResult(String provider, String model,
+                                        @JsonProperty("prompt_version") String promptVersion,
+                                        ReplySuggestionData suggestion) { }
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    public record ReplySuggestionData(String scene, String reply, String reason, BigDecimal confidence,
+                                      @JsonProperty("used_fact_codes") List<String> usedFactCodes,
+                                      @JsonProperty("fact_status") String factStatus,
+                                      @JsonProperty("allow_financial_write") Boolean allowFinancialWrite,
+                                      @JsonProperty("requires_human_review") Boolean requiresHumanReview) {
+        public ReplySuggestionData {
+            usedFactCodes = usedFactCodes == null ? null : List.copyOf(usedFactCodes);
+        }
+    }
     public record WorkerRequest(@JsonProperty("job_id") String jobId,
                                 @JsonProperty("customer_id") String customerId,
                                 List<MessageInput> messages,

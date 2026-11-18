@@ -15,6 +15,7 @@ import SettlementPaymentDrawer from './settlement/SettlementPaymentDrawer.vue'
 import { fenToYuan } from '../utils/money'
 import { amountStatusLabel, settlementAmount, settlementPeriodLabel, settlementStatusLabel, settlementStatusTone, settlementTypeLabel } from './finance/financeUi'
 import { tradingErrorText } from './trading/tradingUi'
+import { settlementDayLabel, settlementDaySourceLabel } from './institution/institutionUi'
 import './customer/customer-ui.css'
 import './trading/trading.css'
 import './institution/institution.css'
@@ -182,6 +183,7 @@ onMounted(() => { void load() })
           <app-table :data="batches" row-key="id">
             <el-table-column label="批次 / 机构" min-width="160"><template #default="{ row }"><strong>批次 #{{ row.id }}</strong><div class="trading-cell-sub">机构 #{{ row.institutionId }} · {{ settlementTypeLabel(row.settlementType) }}</div></template></el-table-column>
             <el-table-column label="结算周期" min-width="150"><template #default="{ row }">{{ settlementPeriodLabel(row.settlementType, row.periodKey) }}</template></el-table-column>
+            <el-table-column label="实际结算日快照" min-width="180"><template #default="{ row }"><span v-if="row.settlementType === 'PER_REDEMPTION'">次卡次结不适用</span><span v-else-if="!row.settlementDate">历史批次未记录</span><template v-else>{{ row.settlementDate }}<div class="trading-cell-sub">{{ settlementDayLabel(row.settlementDay) }} · {{ settlementDaySourceLabel(row.settlementDaySource) }} · Asia/Shanghai</div></template></template></el-table-column>
             <el-table-column label="核销基数" width="110" align="right"><template #default="{ row }"><span class="finance-amount" :class="{ pending: row.amountStatus === 'PENDING_VERIFICATION' }">{{ settlementAmount(row.amountStatus, row.grossFen) }}</span></template></el-table-column>
             <el-table-column label="应结净额" width="110" align="right"><template #default="{ row }"><span class="finance-amount" :class="{ pending: row.amountStatus === 'PENDING_VERIFICATION' }">{{ settlementAmount(row.amountStatus, row.netPayableFen) }}</span></template></el-table-column>
             <el-table-column label="已付款" width="105" align="right"><template #default="{ row }">¥{{ fenToYuan(row.paidFen) }}</template></el-table-column>
@@ -195,6 +197,7 @@ onMounted(() => { void load() })
           <article v-for="row in batches" :key="row.id" class="finance-mobile-item">
             <div class="finance-mobile-head"><strong>批次 #{{ row.id }} · {{ settlementPeriodLabel(row.settlementType, row.periodKey) }}</strong><StatusPill :text="settlementStatusLabel(row.status)" :tone="settlementStatusTone(row.status)" /></div>
             <div class="finance-mobile-row"><span>机构 / 方式</span><strong>#{{ row.institutionId }} · {{ settlementTypeLabel(row.settlementType) }}</strong></div>
+            <div class="finance-mobile-row"><span>实际结算日</span><strong>{{ row.settlementType === 'PER_REDEMPTION' ? '不适用' : row.settlementDate || '历史批次未记录' }}</strong></div>
             <div class="finance-mobile-row"><span>应结净额</span><strong :class="{ 'finance-amount pending': row.amountStatus === 'PENDING_VERIFICATION' }">{{ settlementAmount(row.amountStatus, row.netPayableFen) }}</strong></div>
             <div class="finance-mobile-row"><span>已付款</span><strong>¥{{ fenToYuan(row.paidFen) }}</strong></div>
             <div class="finance-mobile-actions"><el-button text @click="openDetail(row.id)">查看详情</el-button><el-button v-if="canVerify(row)" text type="primary" @click="openVerification(row)">核准金额</el-button><el-button v-if="canPay(row)" text type="primary" @click="openPayment(row)">登记付款</el-button></div>

@@ -100,7 +100,7 @@ describe('FollowupsView 每日跟进台账', () => {
     await openButton?.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('填写后自动生成回访任务；改期仅更新待处理任务')
+    expect(wrapper.text()).toContain('显式时间优先；未填按策略（默认14天）生成；改期仅更新待处理任务')
   })
 
   it('登记表单缺少客户 ID/沟通方式时不发请求', async () => {

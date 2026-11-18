@@ -75,6 +75,9 @@ public class CampaignApplicationService {
         }
         validateTimeRange(request.startsAt(), request.endsAt());
         String status = request.status() == null ? "ACTIVE" : request.status();
+        if ("ACTIVE".equals(status)) {
+            requireAccess(tenantId, user, "campaign:review");
+        }
         Campaign input = new Campaign(null, code, request.campaignName().strip(), request.campaignType(),
                 request.startsAt(), request.endsAt(), status, null, null);
         try {
@@ -95,6 +98,9 @@ public class CampaignApplicationService {
         requireCodeUnchanged(request.campaignCode(), before.campaignCode(), "活动编码不可修改");
         validateTimeRange(request.startsAt(), request.endsAt());
         validateStatusTransition(before.status(), request.status());
+        if ("ACTIVE".equals(request.status()) && !"ACTIVE".equals(before.status())) {
+            requireAccess(tenantId, user, "campaign:review");
+        }
         for (CampaignBatch batch : repository.findBatches(tenantId, id)) {
             validateBatchWindow(request.startsAt(), request.endsAt(), batch.startsAt(), batch.endsAt());
         }
@@ -385,8 +391,8 @@ public class CampaignApplicationService {
         }
         boolean valid = switch (channelType) {
             case "BLOGGER" -> "MONTHLY".equals(settlement);
-            case "DISTRIBUTION" -> "MONTHLY".equals(settlement) || "TWICE_MONTHLY".equals(settlement);
-            case "REFERRAL" -> false;
+            case "DISTRIBUTION", "REFERRAL" ->
+                    "MONTHLY".equals(settlement) || "TWICE_MONTHLY".equals(settlement);
             default -> false;
         };
         if (!valid) {

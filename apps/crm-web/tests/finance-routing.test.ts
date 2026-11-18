@@ -28,6 +28,6 @@ describe('P1-4 退款与结算导航权限', () => {
     expect(flatten(visibleMenuItems(permissions(['settlement:read']), ['ADMIN'], 'EMPLOYEE')).map((item) => item.path)).toContain('/settlements')
     expect(flatten(visibleMenuItems(permissions(['refund:read']), ['MANAGER'], 'EMPLOYEE')).map((item) => item.path)).toContain('/refunds')
     expect(flatten(visibleMenuItems(permissions(['settlement:read']), ['INSTITUTION_FINANCE'], 'INSTITUTION')).map((item) => item.path)).toContain('/settlements')
-    expect(flatten(visibleMenuItems(permissions(['refund:write', 'settlement:write']), ['ADMIN'], 'EMPLOYEE')).map((item) => item.path)).toEqual(['/'])
+    expect(flatten(visibleMenuItems(permissions(['refund:write', 'settlement:write']), ['ADMIN'], 'EMPLOYEE')).map((item) => item.path)).toEqual(['/', '/notifications'])
   })
 })

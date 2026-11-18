@@ -3,6 +3,7 @@ package com.whale.crm.integration.wecom.infrastructure.mapper;
 import com.whale.crm.integration.wecom.domain.WecomContactProfile;
 import com.whale.crm.integration.wecom.domain.WecomContactSyncRun;
 import com.whale.crm.integration.wecom.domain.WecomStaffAccount;
+import com.whale.crm.integration.wecom.domain.WecomStaffIdentity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -19,6 +20,12 @@ public interface WecomContactSyncMapper {
 
     @Select("SELECT id,corp_id AS corpId,wecom_userid AS wecomUserid,staff_user_id AS staffUserId,enabled FROM crm_wecom_staff_account WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND wecom_userid=#{wecomUserid}")
     WecomStaffAccount selectStaff(@Param("tenantId") long tenantId, @Param("corpId") String corpId, @Param("wecomUserid") String wecomUserid);
+
+    @Select("SELECT tenant_id AS tenantId,staff_user_id AS staffUserId FROM crm_wecom_staff_account WHERE corp_id=#{corpId} AND wecom_userid=#{wecomUserid} AND enabled=1 ORDER BY tenant_id,id")
+    List<WecomStaffIdentity> selectActiveStaffForAuth(@Param("corpId") String corpId, @Param("wecomUserid") String wecomUserid);
+
+    @Select("SELECT id,corp_id AS corpId,wecom_userid AS wecomUserid,staff_user_id AS staffUserId,enabled FROM crm_wecom_staff_account WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND staff_user_id=#{staffUserId} ORDER BY id")
+    List<WecomStaffAccount> selectStaffByUserId(@Param("tenantId") long tenantId, @Param("corpId") String corpId, @Param("staffUserId") long staffUserId);
 
     @Insert("INSERT INTO crm_wecom_contact_sync_run (tenant_id,corp_id,run_type,status,started_at,created_by) SELECT #{tenantId},#{corpId},#{runType},'RUNNING',#{now},#{actor} FROM dual WHERE NOT EXISTS (SELECT 1 FROM crm_wecom_contact_sync_run WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND status='RUNNING' AND run_type IN ('FULL','RECONCILE') AND #{runType} IN ('FULL','RECONCILE'))")
     int insertRun(@Param("tenantId") long tenantId, @Param("corpId") String corpId, @Param("runType") String runType,

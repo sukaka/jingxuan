@@ -42,17 +42,18 @@ def get_extractor(request: ExtractionRequest | None = None) -> Extractor:
 
 class MockExtractor:
     def extract(self, request: ExtractionRequest) -> tuple[Insight, str, str]:
-        text = "\n".join(message.text for message in request.messages)
-        safe_text = self._without_instructions(text)
+        safe_text = self._without_instructions("\n".join(message.text for message in request.messages))
         insight_type, summary, actions, risks = self._classify(safe_text)
         projects = [project.code for project in request.projects if project.name in safe_text or project.code in safe_text]
         institution = next((item.name for item in request.institutions if item.name in safe_text), None)
         mentioned_time = self._mentioned_time(safe_text)
-        evidence = next((message.id for message in request.messages if message.sender_type == "CUSTOMER"), request.messages[0].id)
-        if insight_type == "GENERAL":
-            draft = None
-        else:
-            draft = FollowupDraft(title="人工核实客户沟通意向", description=f"{summary}；请结合原始证据人工确认，不自动修改业务事实。")
+        evidence = self._evidence_ids(request, insight_type)
+        draft = None
+        if insight_type != "GENERAL":
+            title = "人工复核客户风险线索" if insight_type == "RISK_EVENT" else "人工核实客户沟通意向"
+            if insight_type == "SERVICE_COMPLETION_CLAIM":
+                title = "人工核实服务记录"
+            draft = FollowupDraft(title=title, description=f"{summary}；请结合原始证据人工确认，不自动修改业务事实。")
         insight = Insight(
             insight_type=insight_type,
             customer_id=request.customer_id,
@@ -60,7 +61,7 @@ class MockExtractor:
             mentioned_institution=institution,
             mentioned_time=mentioned_time,
             absolute_time=None,
-            evidence_message_ids=[evidence],
+            evidence_message_ids=evidence,
             confidence=0.72 if insight_type != "GENERAL" else 0.45,
             proposed_actions=actions,
             fact_status="UNVERIFIED",
@@ -70,7 +71,17 @@ class MockExtractor:
             followup_draft=draft,
             risk_flags=risks,
         )
-        return validate_evidence(insight, request), "mock", "mock-rules-v1"
+        return validate_evidence(insight, request), "mock", "mock-rules-v2"
+
+    @classmethod
+    def _evidence_ids(cls, request: ExtractionRequest, insight_type: str) -> list[str]:
+        matches = [message.id for message in request.messages
+                   if cls._classify(cls._without_instructions(message.text))[0] == insight_type]
+        if matches:
+            return matches
+        safe_customer = next((message.id for message in request.messages
+                              if message.sender_type == "CUSTOMER" and cls._without_instructions(message.text)), None)
+        return [safe_customer or request.messages[0].id]
 
     @staticmethod
     def _without_instructions(text: str) -> str:
@@ -80,23 +91,36 @@ class MockExtractor:
 
     @staticmethod
     def _classify(text: str):
-        if any(word in text for word in ("投诉", "态度差", "不满意")):
-            return "COMPLAINT", "客户表达投诉或服务不满，需主管人工核实", ["OFFER_HUMAN_SUPPORT", "CREATE_FOLLOWUP_DRAFT"], ["COMPLAINT", "URGENT"]
-        if any(word in text for word in ("我要退款", "申请退款", "想退款", "怎么退款")):
+        if any(word in text for word in ("医疗事故", "报警", "律师", "起诉", "曝光", "监管", "12315", "感染", "发烧", "呼吸困难", "严重红肿", "严重不适", "过敏", "症状加重")):
+            return "RISK_EVENT", "客户陈述包含需立即人工介入的风险线索，不代表医疗或责任结论", ["OFFER_HUMAN_SUPPORT", "CREATE_FOLLOWUP_DRAFT"], ["URGENT"]
+        if any(word in text for word in ("我要退款", "申请退款", "想退款", "怎么退款", "退费", "退钱")):
             return "REFUND_INTENT", "客户表达退款意向，尚未核实订单与退款规则", ["VERIFY_PAYMENT_RECORD", "CREATE_FOLLOWUP_DRAFT"], ["REFUND_REQUEST"]
+        if any(word in text for word in ("投诉", "态度差", "不满意", "失望", "差评", "服务差")):
+            return "COMPLAINT", "客户表达投诉或服务不满，需主管人工核实", ["OFFER_HUMAN_SUPPORT", "CREATE_FOLLOWUP_DRAFT"], ["COMPLAINT", "URGENT"]
         if any(word in text for word in ("做完", "已做", "做了", "服务完")):
             return "SERVICE_COMPLETION_CLAIM", "客户陈述已完成服务，仅可作为待核实线索", ["VERIFY_SERVICE_RECORD", "CREATE_FOLLOWUP_DRAFT"], ["SERVICE_CLAIM"]
-        if any(word in text for word in ("预约", "下周", "明天", "后天", "到院", "想做")):
+        if any(word in text for word in ("预约", "想约", "改约", "下周", "安排时间", "什么时候可以", "什么时候能", "想做")):
             actions = ["VERIFY_BALANCE", "CREATE_FOLLOWUP_DRAFT"]
             if "医院" not in text and "机构" not in text:
                 actions.insert(1, "ASK_PREFERRED_INSTITUTION")
             return "APPOINTMENT_INTENT", "客户表达预约意向，时间与机构仍需人工确认", actions, []
-        if any(word in text for word in ("多少钱", "价格", "费用", "优惠价")):
+        if any(word in text for word in ("到院", "到店", "来院", "面诊", "想去医院", "过去看看")):
+            actions = ["CREATE_FOLLOWUP_DRAFT"]
+            if "医院" not in text and "机构" not in text:
+                actions.insert(0, "ASK_PREFERRED_INSTITUTION")
+            return "VISIT_INTENT", "客户表达到院或面诊意向，实际接诊安排仍需人工确认", actions, []
+        if any(word in text for word in ("套餐", "权益", "剩几次", "剩余几次", "还剩", "几次", "余额", "还能用", "可以用几次")):
+            return "PACKAGE_QUERY", "客户查询套餐或项目权益，需读取真实权益账本后人工回复", ["VERIFY_BALANCE", "CREATE_FOLLOWUP_DRAFT"], []
+        if any(word in text for word in ("多少钱", "价格", "费用", "优惠价", "怎么收费")):
             return "PRICE_INQUIRY", "客户询问价格，需按当前销售快照人工回复", ["CREATE_FOLLOWUP_DRAFT"], []
-        if any(word in text for word in ("复购", "再买", "续卡")):
+        if any(word in text for word in ("复购", "再买", "续卡", "续费", "再购买", "想再做")):
             return "REPURCHASE_INTENT", "客户表达复购意向，需人工核实适合的销售方案", ["VERIFY_BALANCE", "CREATE_FOLLOWUP_DRAFT"], []
-        if any(word in text for word in ("体验", "恢复", "效果")):
-            return "SERVICE_EXPERIENCE", "客户描述服务后体验，专业问题需转机构人员", ["OFFER_HUMAN_SUPPORT", "CREATE_FOLLOWUP_DRAFT"], []
+        if any(word in text for word in ("术后", "护理", "恢复", "效果", "反馈", "不适", "红肿", "痒", "疼", "刺痛", "灼热")):
+            return "AFTERCARE_FEEDBACK", "客户描述术后护理或服务后反馈，专业问题需转机构人员人工处理", ["OFFER_HUMAN_SUPPORT", "CREATE_FOLLOWUP_DRAFT"], []
+        if any(word in text for word in ("体验", "服务感受")):
+            return "SERVICE_EXPERIENCE", "客户描述服务体验，保留为待人工核实的反馈线索", ["OFFER_HUMAN_SUPPORT", "CREATE_FOLLOWUP_DRAFT"], []
+        if any(word in text for word in ("回访", "联系我", "回复我", "回电话", "再联系", "稍后聊", "考虑考虑", "以后再说", "改天再聊")):
+            return "FOLLOWUP_REQUIRED", "客户需要进一步回访或联系，仅生成人工跟进建议", ["CREATE_FOLLOWUP_DRAFT"], []
         return "GENERAL", "未识别出明确业务意向，仅保留人工阅读线索", [], []
 
     @staticmethod

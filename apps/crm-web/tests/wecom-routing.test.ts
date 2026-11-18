@@ -21,9 +21,10 @@ describe('企业微信会话与合规归档路由及菜单权限', () => {
   it('wecom:monitor 不替代 wecom:read，菜单保留真实会话与监管入口', () => {
     const monitorOnly = visibleMenuItems((code) => code === 'wecom:monitor')
     const readOnly = visibleMenuItems((code) => code === 'wecom:read')
-    expect(flatten(monitorOnly).map((item) => item.path)).toEqual(['/'])
+    expect(flatten(monitorOnly).map((item) => item.path)).toEqual(['/', '/notifications'])
     expect(flatten(readOnly).map((item) => item.path)).toEqual([
       '/',
+      '/notifications',
       '/integrations/wecom',
       '/integrations/wecom/monitor',
     ])
@@ -32,6 +33,6 @@ describe('企业微信会话与合规归档路由及菜单权限', () => {
 
   it('机构主体即使错误配置了读取权限也不显示企微入口', () => {
     const items = visibleMenuItems((code) => code === 'wecom:read', ['INSTITUTION_OPERATOR'], 'INSTITUTION')
-    expect(flatten(items).map((item) => item.path)).toEqual(['/'])
+    expect(flatten(items).map((item) => item.path)).toEqual(['/', '/notifications'])
   })
 })

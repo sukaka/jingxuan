@@ -30,30 +30,38 @@ public class WecomManagementService {
     private final WecomArchiveService archiveService;
     private final CustomerScopeSupport scopeSupport;
     private final AuditService auditService;
+    private final com.whale.crm.integration.wecom.media.application.WecomMediaRegistrationService mediaService;
+    private final com.whale.crm.integration.wecom.adapter.WecomAdapterRouter adapterRouter;
     private final TransactionTemplate transactions;
 
     public WecomManagementService(WecomRepository repository, WecomArchiveService archiveService,
                                   CustomerScopeSupport scopeSupport, AuditService auditService,
+                                  com.whale.crm.integration.wecom.media.application.WecomMediaRegistrationService mediaService,
+                                  com.whale.crm.integration.wecom.adapter.WecomAdapterRouter adapterRouter,
                                   PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.archiveService = archiveService;
         this.scopeSupport = scopeSupport;
         this.auditService = auditService;
+        this.mediaService = mediaService;
+        this.adapterRouter = adapterRouter;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<WecomMessageView> messages(long tenantId, CurrentUser user, Long customerId, int page, int size) {
+    public PageResponse<WecomMessageView> messages(long tenantId, CurrentUser user, Long customerId,
+                                                    String conversationId, String corpId, int page, int size) {
         if (customerId != null) {
             scopeSupport.requireVisible(tenantId, customerId, user);
         }
+        String normalizedCorpId = corpId == null || corpId.isBlank() ? null : corpId.strip();
         DataScope scope = scopeSupport.scope(user);
         CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
         int offset = (page - 1) * size;
-        List<WecomMessageView> items = repository.listMessages(tenantId, customerId, query.scopeType(),
-                        query.teamIds(), query.selfId(), offset, size).stream().map(this::view).toList();
-        return new PageResponse<>(items, repository.countMessages(tenantId, customerId, query.scopeType(),
-                query.teamIds(), query.selfId()), page, size);
+        List<WecomMessageView> items = repository.listMessages(tenantId, customerId, conversationId, normalizedCorpId,
+                        query.scopeType(), query.teamIds(), query.selfId(), offset, size).stream().map(this::view).toList();
+        return new PageResponse<>(items, repository.countMessages(tenantId, customerId, conversationId, normalizedCorpId,
+                query.scopeType(), query.teamIds(), query.selfId()), page, size);
     }
 
     @Transactional(readOnly = true)
@@ -104,21 +112,27 @@ public class WecomManagementService {
         String content = archiveService.readContent(message);
         auditService.record(tenantId, user.userId(), "WECOM_MESSAGE_CONTENT_READ", "WECOM_MESSAGE",
                 Long.toString(messageId), null, Map.of("messageRef", messageId, "corpId", message.corpId()), null);
-        return new WecomContentView(message.id(), message.messageType(), message.sentAt(), content);
+        return new WecomContentView(message.id(), message.messageType(), message.sentAt(), content,
+                mediaService.listByMessage(tenantId, messageId).stream().map(asset ->
+                        new com.whale.crm.integration.wecom.media.api.dto.WecomMediaAssetView(asset.id(),
+                                asset.mediaKind(), asset.fileName(), asset.contentType(), asset.fileSize(), asset.status(),
+                                "STORED".equals(asset.status()))).toList(), message.recalledAt());
     }
 
     @Transactional(readOnly = true)
     public WecomMonitorView monitor(long tenantId, CurrentUser user, String corpId) {
         DataScope scope = scopeSupport.scope(user);
         CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
-        WecomCursor cursor = repository.findCursor(tenantId, corpId, MockWecomAdapter.SCOPE).orElse(null);
+        String archiveScope = "OFFICIAL_SDK".equals(adapterRouter.adapter(tenantId).name())
+                ? "OFFICIAL_ARCHIVE" : MockWecomAdapter.SCOPE;
+        WecomCursor cursor = repository.findCursor(tenantId, corpId, archiveScope).orElse(null);
         long messages = scope.type() == DataScope.ScopeType.ALL ? repository.countAllMessages(tenantId, corpId)
-                : repository.countMessages(tenantId, null, query.scopeType(), query.teamIds(), query.selfId());
+                : repository.countMessages(tenantId, null, null, corpId, query.scopeType(), query.teamIds(), query.selfId());
         long unmatched = scope.type() == DataScope.ScopeType.ALL
                 ? contacts(tenantId, user).stream().filter(contact -> contact.customerId() == null).count() : 0;
-        long activeGaps = repository.findOpenGaps(tenantId, corpId, MockWecomAdapter.SCOPE).size();
-        long history = repository.countResolvedGaps(tenantId, corpId, MockWecomAdapter.SCOPE);
-        return new WecomMonitorView(corpId, MockWecomAdapter.SCOPE, cursor == null ? 0 : cursor.lastSeq(),
+        long activeGaps = repository.findOpenGaps(tenantId, corpId, archiveScope).size();
+        long history = repository.countResolvedGaps(tenantId, corpId, archiveScope);
+        return new WecomMonitorView(corpId, archiveScope, cursor == null ? 0 : cursor.lastSeq(),
                 cursor == null ? null : cursor.lastSuccessAt(), cursor == null ? null : cursor.lastAttemptAt(),
                 cursor == null ? "NEVER_SYNCED" : cursor.status(), cursor == null || cursor.dataGap(),
                 cursor == null ? "尚未采集，无法判断沟通情况" : cursor.gapReason(), messages, unmatched,
@@ -129,7 +143,9 @@ public class WecomManagementService {
         return new WecomMessageView(message.id(), message.corpId(), message.msgId(), message.archiveSeq(),
                 message.customerId(), message.externalUserid(), message.staffUserId(), message.conversationId(),
                 message.messageType(), message.senderType(), message.sentAt(), message.contentObjectKey(),
-                message.consentSnapshot(), message.currentConsentStatus(), message.status());
+                message.consentSnapshot(), message.currentConsentStatus(), message.status(), message.recalledAt(),
+                message.recallMessageId(), message.conversationType(), message.senderWecomUserid(),
+                message.senderStaffUserId(), message.roomRosterVersion());
     }
 
     private BusinessException notFound() {

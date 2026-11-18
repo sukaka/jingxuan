@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400" role="img" aria-labelledby="title desc">
+  <title id="title">鲸选美学项目介绍</title>
+  <desc id="desc">绿色留白风格的服务项目介绍封面</desc>
+  <rect width="640" height="400" fill="#eef4ef"/>
+  <circle cx="570" cy="32" r="156" fill="#d6e6da"/>
+  <circle cx="42" cy="394" r="136" fill="#e0ebe3"/>
+  <rect x="48" y="50" width="62" height="62" rx="18" fill="#275e4b"/>
+  <text x="79" y="94" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="700" fill="#f4f8f5">鲸</text>
+  <text x="50" y="184" font-family="sans-serif" font-size="18" letter-spacing="4" fill="#698476">SERVICE NOTES</text>
+  <text x="48" y="246" font-family="sans-serif" font-size="38" font-weight="700" fill="#274c3c">项目介绍与服务指南</text>
+  <line x1="50" y1="282" x2="198" y2="282" stroke="#6f9a83" stroke-width="3"/>
+  <text x="50" y="326" font-family="sans-serif" font-size="19" fill="#637f70">清晰了解流程 · 与专属管家进一步沟通</text>
+</svg>

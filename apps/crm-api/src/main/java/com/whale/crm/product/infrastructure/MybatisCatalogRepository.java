@@ -69,6 +69,9 @@ public class MybatisCatalogRepository implements CatalogRepository {
     public List<PackageProject> findVersionProjects(long tenantId, long packageVersionId) { return mapper.selectVersionProjects(tenantId, packageVersionId); }
     public void deleteVersionProjects(long tenantId, long packageVersionId) { mapper.deleteVersionProjects(tenantId, packageVersionId); }
     public void insertVersionProject(PackageProject item) { mapper.insertVersionProject(com.whale.crm.platform.context.TenantContext.currentTenantId(), item); }
+    public List<com.whale.crm.product.domain.PackageSelectionGroup> findSelectionGroups(long tenantId, long packageVersionId) { return mapper.selectSelectionGroups(tenantId, packageVersionId); }
+    public void deleteSelectionGroups(long tenantId, long packageVersionId) { mapper.deleteSelectionGroups(tenantId, packageVersionId); }
+    public void insertSelectionGroup(com.whale.crm.product.domain.PackageSelectionGroup group) { mapper.insertSelectionGroup(com.whale.crm.platform.context.TenantContext.currentTenantId(), group); }
 
     public List<Sku> searchSkus(long tenantId, String keyword, String status, Long packageId, Set<Long> institutionIds, int offset, int size) {
         return mapper.searchSkus(tenantId, keyword, status, packageId, institutionIds, offset, size);

@@ -70,11 +70,13 @@ public class WecomController extends WecomBaseController {
     @PreAuthorize("hasAuthority('wecom:read')")
     public ApiResponse<PageResponse<WecomMessageView>> messages(
             @RequestParam(required = false) Long customerId,
+            @RequestParam(required = false) @Size(max = 192) String conversationId,
+            @RequestParam(required = false) @Size(max = 96) String corpId,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             HttpServletRequest request) {
         var user = SecuritySupport.requireCurrentUser();
-        return ApiResponse.ok(managementService.messages(user.tenantId(), user, customerId, page, size), requestId(request));
+        return ApiResponse.ok(managementService.messages(user.tenantId(), user, customerId, conversationId, corpId, page, size), requestId(request));
     }
 
     @GetMapping("/messages/{id}/content")

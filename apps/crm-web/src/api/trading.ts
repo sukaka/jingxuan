@@ -120,6 +120,22 @@ export interface EntitlementSummary {
   customerCount: number
 }
 
+export interface OrderItemSelectionInput {
+  groupCode: string
+  projectId: number
+}
+
+export interface OrderItemSelectionSnapshot extends OrderItemSelectionInput {
+  groupName: string
+  minSelections: number
+  maxSelections: number
+  projectCode: string
+  projectName: string
+  grantCount: number
+  referencePriceFen: number
+  sortOrder: number
+}
+
 export interface CreateOrderInput {
   customerId: number
   receiverType: string
@@ -128,7 +144,7 @@ export interface CreateOrderInput {
   campaignBatchId?: number
   payableFen: number
   validTo?: string
-  items: { skuId: number; quantity: number }[]
+  items: { skuId: number; quantity: number; selections?: OrderItemSelectionInput[] }[]
 }
 
 export interface PaymentConfirmInput {
@@ -172,7 +188,16 @@ export async function confirmPayment(id: number, body: PaymentConfirmInput, idem
   return res.data.data
 }
 
-export async function listEntitlements(query: { page: number; size: number; customerId?: number; status?: string }): Promise<PageResult<Entitlement>> {
+export interface EntitlementListQuery {
+  page: number
+  size: number
+  customerId?: number
+  status?: string
+  validTo?: string
+  availableOnly?: boolean
+}
+
+export async function listEntitlements(query: EntitlementListQuery): Promise<PageResult<Entitlement>> {
   const res = await http.get<ApiResponse<PageResult<Entitlement>>>('/entitlements', { params: query })
   return res.data.data
 }

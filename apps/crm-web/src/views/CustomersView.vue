@@ -55,17 +55,17 @@ onMounted(() => { void dicts.load('customerSources','customerChannels','customer
 
 <template>
   <div class="proto-page customers-page">
-    <PageHeader title="客户中心" description="客户分层标签 + 基础档案 + 跟进节奏；S/A/B/C 与意向/消费能力分开管理">
+    <PageHeader title="客户中心" description="客户等级（S/A/B/C/D）+ 基础档案 + 跟进节奏；与意向/消费能力分开管理">
       <template #actions><RouterLink to="/customers/merge" class="el-button">查重合并</RouterLink><button class="el-button" disabled title="后续阶段开放">数据导出 · 后续</button><el-button v-if="auth.hasPermission('customer:write')" type="primary" @click="openCreate">＋ 新建客户</el-button></template>
     </PageHeader>
-    <div class="proto-stat-grid"><StatCard label="S 级客户" :value="`${summary.s} 位`" sub="重点维护 / 高价值" icon="users" /><StatCard label="A 级客户" :value="`${summary.a} 位`" sub="高意向或高复购" icon="heart" /><StatCard label="今天需跟进" :value="`${summary.due} 条`" sub="按下次跟进时间提醒" icon="calendar" /><StatCard label="查重候选" :value="`${summary.merge} 组`" sub="合并前必须人工确认" icon="users" /></div>
+    <div class="proto-stat-grid"><StatCard label="S 级客户" :value="`${summary.s} 位`" sub="高消费 / 重点维护" icon="users" /><StatCard label="A 级客户" :value="`${summary.a} 位`" sub="较高消费 / 持续维护" icon="heart" /><StatCard label="今天需跟进" :value="`${summary.due} 条`" sub="按下次跟进时间提醒" icon="calendar" /><StatCard label="查重候选" :value="`${summary.merge} 组`" sub="合并前必须人工确认" icon="users" /></div>
     <PageCard>
-      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input v-model="query.keyword" placeholder="姓名 / 手机 / 微信昵称 / 标签" clearable style="width:290px" @keyup.enter="load(1)" /><el-select :model-value="query.needsAttention ? 'NEED' : query.tierCode" placeholder="全部分层" clearable style="width:145px" @change="(value:string) => { query.needsAttention = value === 'NEED'; query.tierCode = value && value !== 'NEED' ? value : ''; load(1) }"><el-option label="全部分层" value="" /><el-option v-for="tier in ['S','A','B','C']" :key="tier" :label="`${tier}级客户`" :value="tier" /><el-option label="需要处理" value="NEED" /></el-select><el-button type="primary" :loading="loading" @click="load(1)">查询</el-button></div><span class="proto-note">导出权限正式上线后按角色控制，管家默认禁止批量导出</span></div>
+      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input v-model="query.keyword" placeholder="姓名 / 手机 / 微信昵称 / 标签" clearable style="width:290px" @keyup.enter="load(1)" /><el-select :model-value="query.needsAttention ? 'NEED' : query.tierCode" placeholder="全部客户等级" clearable style="width:145px" @change="(value:string) => { query.needsAttention = value === 'NEED'; query.tierCode = value && value !== 'NEED' ? value : ''; load(1) }"><el-option label="全部客户等级" value="" /><el-option v-for="tier in ['S','A','B','C','D']" :key="tier" :label="`${tier}级客户`" :value="tier" /><el-option label="需要处理" value="NEED" /></el-select><el-button type="primary" :loading="loading" @click="load(1)">查询</el-button></div><span class="proto-note">导出权限正式上线后按角色控制，管家默认禁止批量导出</span></div>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
       <div class="proto-table-wrap">
         <app-table v-loading="loading" :data="customers">
           <el-table-column label="客户" min-width="160" fixed="left"><template #default="{row}"><div class="proto-namecell"><CustomerAvatar :name="row.displayName ?? row.nickname" :size="34" /><div><strong>{{ row.displayName ?? row.nickname }}</strong><small>{{ row.nickname }} · {{ row.customerNo }}</small></div></div></template></el-table-column>
-          <el-table-column label="分层" width="70"><template #default="{row}"><span class="proto-pill" :class="customerTierTone(row.tierCode)">{{ row.tierCode || '—' }}</span></template></el-table-column>
+          <el-table-column label="客户等级" width="90"><template #default="{row}"><span class="proto-pill" :class="customerTierTone(row.tierCode)">{{ dicts.label('customerTiers', row.tierCode) }}</span></template></el-table-column>
           <el-table-column label="意向 / 消费能力" min-width="155"><template #default="{row}"><span class="proto-pill info">意向 {{ levelLabel(row.intentLevel) }}</span> <span class="proto-pill dark">消费 {{ levelLabel(row.spendingLevel) }}</span></template></el-table-column>
           <el-table-column label="标签" min-width="150"><template #default="{row}"><span v-for="tag in (row.tagCodes || []).slice(0,2)" :key="tag" class="proto-pill success customer-tag">{{ customerTagLabel(tag) }}</span><span v-if="!row.tagCodes?.length">—</span></template></el-table-column>
           <el-table-column label="生日 / 积分" min-width="120"><template #default="{row}">{{ row.birthday || '未维护' }}<div class="proto-subcell">{{ row.pointsCached.toLocaleString() }} 积分</div></template></el-table-column>
@@ -80,7 +80,7 @@ onMounted(() => { void dicts.load('customerSources','customerChannels','customer
       </div>
       <el-pagination v-model:current-page="query.page" v-model:page-size="query.size" :total="total" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="load(1)" />
     </PageCard>
-    <footer class="proto-footer">客户唯一 ID 不等于手机号或昵称；分层与消费能力分开管理</footer>
+    <footer class="proto-footer">客户唯一 ID 不等于手机号或昵称；客户等级与消费能力分开管理</footer>
     <CustomerFormDrawer v-model="formVisible" :mode="formMode" :customer-id="formCustomerId" @saved="reload" />
     <CustomerDetailDrawer v-model="detailVisible" :customer-id="detailCustomerId" :initial-tab="detailTab" @edit="openEdit" @changed="reload" />
   </div>

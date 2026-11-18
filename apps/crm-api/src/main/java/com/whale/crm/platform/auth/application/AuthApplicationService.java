@@ -105,6 +105,19 @@ public class AuthApplicationService {
 
         SysUser user = found.get();
         loginAttemptService.recordSuccess(username);
+        return issueVerifiedSession(user, clientIp, userAgent);
+    }
+
+    @Transactional
+    public AuthResult loginWithVerifiedIdentity(long userId, String clientIp, String userAgent) {
+        SysUser user = userRepository.findByIdForAuth(userId)
+                .filter(SysUser::isActive)
+                .filter(candidate -> "EMPLOYEE".equals(candidate.getUserType()))
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "企微身份未关联有效 CRM 员工"));
+        return issueVerifiedSession(user, clientIp, userAgent);
+    }
+
+    private AuthResult issueVerifiedSession(SysUser user, String clientIp, String userAgent) {
         Instant now = Instant.now();
         String token = jwtService.issue(user.getId(), user.getUsername(), UlidCreator.getUlid().toString());
 

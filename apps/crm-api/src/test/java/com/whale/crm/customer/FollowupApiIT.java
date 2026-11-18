@@ -25,6 +25,7 @@ class FollowupApiIT extends AbstractMysqlIT {
 
         long customerId = createCustomer(manager1, "ITF-跟进");
         mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "itf-create-" + java.util.UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\","
                                 + "\"summary\":\"首次沟通\",\"estimatedAmountFen\":19900,\"intentProject\":\"热玛吉\"}"))
@@ -57,6 +58,7 @@ class FollowupApiIT extends AbstractMysqlIT {
         AuthCookies manager2 = login("manager2");
         long customerId = createCustomer(manager1, "ITF-自动回访");
         String created = mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "itf-create-" + java.util.UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\","
                                 + "\"summary\":\"约定下次沟通\",\"intentProject\":\"光子嫩肤\","
@@ -128,14 +130,16 @@ class FollowupApiIT extends AbstractMysqlIT {
         org.assertj.core.api.Assertions.assertThat(((Number) task.get("version")).longValue()).isEqualTo(3);
 
         String noDate = mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "itf-create-" + java.util.UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"customerId\":" + customerId + ",\"channelCode\":\"PHONE\",\"summary\":\"无需再次回访\"}"))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.nextFollowupAt").exists())
                 .andReturn().getResponse().getContentAsString();
         long noDateFollowupId = objectMapper.readTree(noDate).at("/data/id").asLong();
         org.assertj.core.api.Assertions.assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_task "
                 + "WHERE tenant_id=1 AND source_type='FOLLOWUP' AND source_ref=?", Long.class,
-                "FOLLOWUP:" + noDateFollowupId)).isZero();
+                "FOLLOWUP:" + noDateFollowupId)).isEqualTo(1);
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbcTemplate.update(
                 "INSERT INTO crm_task (tenant_id,customer_id,assignee_user_id,original_assignee_user_id,task_team_id,"
                         + "task_type,priority,status,title,description,due_at,source_type,source_ref) "
@@ -153,6 +157,7 @@ class FollowupApiIT extends AbstractMysqlIT {
 
         long customerId = createCustomer(manager1, "ITF-修改");
         String created = mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "itf-create-" + java.util.UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"customerId\":" + customerId + ",\"channelCode\":\"PHONE\",\"summary\":\"原始\"}"))
                 .andExpect(status().isCreated())
@@ -193,6 +198,7 @@ class FollowupApiIT extends AbstractMysqlIT {
         AuthCookies manager2 = login("manager2");
         long customerId = createCustomer(manager1, "ITF-软删除");
         String created = mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "itf-create-" + java.util.UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\",\"summary\":\"误录删除\"}"))
                 .andExpect(status().isCreated())

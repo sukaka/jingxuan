@@ -1,6 +1,7 @@
 package com.whale.crm.customer.application;
 
 import com.whale.crm.customer.api.dto.CreateTaskRequest;
+import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.api.dto.TaskItemResponse;
 import com.whale.crm.customer.api.dto.UpdateTaskRequest;
 import com.whale.crm.customer.domain.CrmTask;
@@ -23,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * 回访/待办任务（crm_task）。手工创建分配给本人；跟进规则按客户负责人创建。
@@ -62,11 +64,46 @@ public class TaskApplicationService {
                 ? List.of(user.teamId()) : query.teamIds();
         int offset = (page - 1) * size;
         List<TaskItemResponse> items = taskRepository
-                .search(tenantId, query.scopeType(), teamIds, query.selfId(), assigneeId, status, offset, size)
+                .search(tenantId, query.scopeType(), teamIds, query.selfId(), assigneeId, status, null, offset, size)
                 .stream().map(this::toResponse).toList();
         long total = taskRepository.countSearch(tenantId, query.scopeType(), teamIds, query.selfId(),
-                assigneeId, status);
+                assigneeId, status, null);
         return new PageResponse<>(items, total, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
+                                                        CustomerTimelineCursor cursor) {
+        scopeSupport.requireVisible(tenantId, customerId, user);
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return List.of();
+        }
+        CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
+        List<Long> teamIds = scope.type() == DataScope.ScopeType.SELF && user.teamId() != null
+                ? List.of(user.teamId()) : query.teamIds();
+        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
+        int offset = 0;
+        long total;
+        do {
+            List<CrmTask> tasks = taskRepository.search(tenantId, query.scopeType(), teamIds, query.selfId(),
+                    null, null, customerId, offset, 100);
+            total = taskRepository.countSearch(tenantId, query.scopeType(), teamIds, query.selfId(),
+                    null, null, customerId);
+            for (CrmTask task : tasks) {
+                Map<String, Object> details = new LinkedHashMap<>();
+                details.put("status", task.getStatus());
+                details.put("assigneeUserId", task.getAssigneeUserId());
+                details.put("dueAt", task.getDueAt());
+                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("TASK", task.getId(), "TASK",
+                        task.getCreatedAt(), task.getTitle(), task.getDescription(), details, null);
+                if (cursor == null || cursor.allows(event)) {
+                    events.add(event);
+                }
+            }
+            offset += tasks.size();
+        } while (offset < total);
+        return events;
     }
 
     @Transactional(readOnly = true)
@@ -115,7 +152,7 @@ public class TaskApplicationService {
         if (followup.getNextFollowupAt() == null || followup.isDeleted()) {
             return null;
         }
-        scopeSupport.requireVisible(tenantId, customer.getId(), user);
+        customer = scopeSupport.requireVisibleForUpdate(tenantId, customer.getId(), user);
         long assigneeUserId = currentUserService.loadById(followup.getOwnerStaffId())
                 .filter(owner -> owner.tenantId() == tenantId)
                 .map(CurrentUser::userId)
@@ -142,7 +179,14 @@ public class TaskApplicationService {
         task.setSourceType(CrmTask.SOURCE_FOLLOWUP);
         task.setSourceRef(sourceRef);
 
-        boolean existed = taskRepository.findBySource(tenantId, CrmTask.SOURCE_FOLLOWUP, sourceRef).isPresent();
+        Optional<CrmTask> sourceTask = taskRepository.findBySource(tenantId, CrmTask.SOURCE_FOLLOWUP, sourceRef);
+        if (sourceTask.isEmpty()) {
+            Optional<CrmTask> openTask = taskRepository.findOpenAutomaticByCustomer(tenantId, customer.getId());
+            if (openTask.isPresent()) {
+                return toResponse(openTask.orElseThrow());
+            }
+        }
+        boolean existed = sourceTask.isPresent();
         taskRepository.insertAutomatic(task);
         CrmTask persisted = taskRepository.findBySource(tenantId, CrmTask.SOURCE_FOLLOWUP, sourceRef).orElseThrow();
         if (!existed) {
@@ -162,6 +206,58 @@ public class TaskApplicationService {
             }
         }
         return toResponse(persisted);
+    }
+
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public AutomaticTaskResult createFromMonthlyBatch(long tenantId, CurrentUser actor, long customerId,
+                                                      String orderMonth, String sourceRef, Instant dueAt,
+                                                      int orderCount) {
+        Customer customer = scopeSupport.requireVisibleForUpdate(tenantId, customerId, actor);
+        Optional<CrmTask> sourceTask = taskRepository.findBySource(
+                tenantId, CrmTask.SOURCE_MONTHLY_BATCH, sourceRef);
+        if (sourceTask.isPresent()) {
+            return new AutomaticTaskResult(toResponse(sourceTask.orElseThrow()), false);
+        }
+        Optional<CrmTask> openTask = taskRepository.findOpenAutomaticByCustomer(tenantId, customerId);
+        if (openTask.isPresent()) {
+            return new AutomaticTaskResult(toResponse(openTask.orElseThrow()), false);
+        }
+
+        CurrentUser owner = currentUserService.loadById(customer.getOwnerStaffId())
+                .filter(value -> value.tenantId() == tenantId && "EMPLOYEE".equals(value.userType()))
+                .orElse(null);
+        Long taskTeamId = customer.getTeamId() != null ? customer.getTeamId() : owner == null ? null : owner.teamId();
+        if (owner == null && taskTeamId == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "负责人已失效且客户未配置团队，无法进入团队池");
+        }
+        String customerName = java.util.stream.Stream.of(
+                        customer.getDisplayName(), customer.getNickname(), customer.getCustomerNo())
+                .filter(value -> value != null && !value.isBlank()).findFirst().orElse("客户");
+        String title = "三个月回访：" + customerName;
+
+        CrmTask task = new CrmTask();
+        task.setTenantId(tenantId);
+        task.setCustomerId(customerId);
+        task.setAssigneeUserId(owner == null ? null : owner.userId());
+        task.setOriginalAssigneeUserId(owner == null ? null : owner.userId());
+        task.setTaskTeamId(taskTeamId);
+        task.setTaskType("FOLLOWUP");
+        task.setPriority(CrmTask.PRIORITY_MEDIUM);
+        task.setStatus(CrmTask.STATUS_OPEN);
+        task.setTitle(title.length() <= 255 ? title : title.substring(0, 255));
+        task.setDescription(orderMonth + " 订单月度回访，关联 " + orderCount + " 笔订单");
+        task.setDueAt(dueAt);
+        task.setSourceType(CrmTask.SOURCE_MONTHLY_BATCH);
+        task.setSourceRef(sourceRef);
+        taskRepository.insertAutomatic(task);
+        CrmTask persisted = taskRepository.findBySource(
+                tenantId, CrmTask.SOURCE_MONTHLY_BATCH, sourceRef).orElseThrow();
+        auditService.record(tenantId, actor.userId(), AuditService.ACTION_TASK_CREATE, "TASK",
+                Long.toString(persisted.getId()), null, taskSnapshot(persisted), "月度批次创建三个月回访");
+        return new AutomaticTaskResult(toResponse(persisted), true);
+    }
+
+    public record AutomaticTaskResult(TaskItemResponse task, boolean created) {
     }
 
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)

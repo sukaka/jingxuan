@@ -9,8 +9,10 @@ import java.util.List;
 
 public record ReplaceVersionProjectsRequest(
         @NotNull @Min(0) Long version,
-        @NotEmpty List<@Valid PackageProjectItemRequest> projects) {
+        @NotEmpty List<@Valid PackageProjectItemRequest> projects,
+        @Valid List<PackageSelectionGroupRequest> groups) {
     public ReplaceVersionProjectsRequest {
         projects = projects == null ? null : List.copyOf(projects);
+        groups = groups == null ? null : List.copyOf(groups);
     }
 }

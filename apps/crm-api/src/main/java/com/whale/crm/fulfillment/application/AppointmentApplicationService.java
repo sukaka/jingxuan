@@ -1,6 +1,8 @@
 package com.whale.crm.fulfillment.application;
 
+import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.application.CustomerScopeSupport;
+import com.whale.crm.customer.application.CustomerTimelineCursor;
 import com.whale.crm.customer.domain.Customer;
 import com.whale.crm.fulfillment.api.dto.AppointmentDetail;
 import com.whale.crm.fulfillment.api.dto.AppointmentItemRequest;
@@ -77,6 +79,33 @@ public class AppointmentApplicationService {
         return new PageResponse<>(repository.searchAppointments(tenantId, scope, customerId, institutionId,
                         status, offset, size),
                 repository.countAppointments(tenantId, scope, customerId, institutionId, status), page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
+                                                        CustomerTimelineCursor cursor) {
+        scopeSupport.requireVisible(tenantId, customerId, user);
+        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
+        int page = 1;
+        long total;
+        do {
+            PageResponse<Appointment> result = search(tenantId, user, customerId, null, null, page, 100);
+            total = result.total();
+            for (Appointment appointment : result.items()) {
+                Map<String, Object> details = new java.util.LinkedHashMap<>();
+                details.put("status", appointment.status());
+                details.put("scheduledAt", appointment.scheduledAt());
+                details.put("institutionId", appointment.institutionId());
+                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("APPOINTMENT", appointment.id(),
+                        "APPOINTMENT", appointment.createdAt(), "预约 " + appointment.appointmentNo(), appointment.remark(),
+                        details, appointment.createdBy());
+                if (cursor == null || cursor.allows(event)) {
+                    events.add(event);
+                }
+            }
+            page++;
+        } while ((long) (page - 1) * 100 < total);
+        return events;
     }
 
     @Transactional(readOnly = true)

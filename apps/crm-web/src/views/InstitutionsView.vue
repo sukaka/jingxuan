@@ -6,6 +6,7 @@ import type {
   InstitutionContract,
   InstitutionProfile,
   InstitutionQualification,
+  InstitutionSettlementDefault,
 } from '../api/institution'
 import {
   getInstitutionProfile,
@@ -26,10 +27,11 @@ import StatCard from '../components/prototype/StatCard.vue'
 import ChangeRequestPanel from './institution/ChangeRequestPanel.vue'
 import DocumentFormDrawer from './institution/DocumentFormDrawer.vue'
 import InstitutionDetailDrawer from './institution/InstitutionDetailDrawer.vue'
+import InstitutionSettlementDefaultCard from './institution/InstitutionSettlementDefaultCard.vue'
 import ProfileFormDrawer from './institution/ProfileFormDrawer.vue'
 import SensitiveChangeDrawer from './institution/SensitiveChangeDrawer.vue'
 import WorkflowRequestDialog from './institution/WorkflowRequestDialog.vue'
-import { changeStatusLabel, cityLabel, createInstitutionKey, institutionBusinessTypeLabel, institutionGradeLabel, institutionOwnershipLabel, profileStatusLabel, settlementTypeLabel, workflowStepLabel } from './institution/institutionUi'
+import { changeStatusLabel, cityLabel, createInstitutionKey, institutionBusinessTypeLabel, institutionGradeLabel, institutionOwnershipLabel, institutionSettlementDayLabel, profileStatusLabel, settlementTypeLabel, workflowStepLabel } from './institution/institutionUi'
 import { tradingErrorText } from './trading/tradingUi'
 import './customer/customer-ui.css'
 import './trading/trading.css'
@@ -43,6 +45,12 @@ const canChange = computed(() => auth.hasPermission('institution:change_request'
 const canMarket = computed(() => auth.hasPermission('institution:approve_market'))
 const canFinance = computed(() => auth.hasPermission('institution:approve_finance'))
 const activeTab = ref('profiles')
+const settlementDefault = ref<InstitutionSettlementDefault | null>(null)
+const defaultSettlementDay = computed(() => settlementDefault.value?.defaultSettlementDay ?? 'LAST_DAY')
+
+function updateSettlementDefault(config: InstitutionSettlementDefault) {
+  settlementDefault.value = config
+}
 
 const profiles = ref<InstitutionProfile[]>([])
 const profileTotal = ref(0)
@@ -330,6 +338,7 @@ onMounted(() => {
       <template #actions><RouterLink to="/institutions/merchant" class="el-button">商户一页纸</RouterLink><el-button v-if="canWrite" type="primary" @click="openCreate">＋ 新增合作机构</el-button></template>
     </PageHeader>
     <div class="proto-stat-grid"><StatCard label="合作机构" :value="`${profileTotal} 家`" sub="当前数据范围" icon="hospital" /><StatCard label="S/A级商户" :value="`${profiles.filter(item => ['S','A'].includes((item.gradeCode || '').toUpperCase())).length} 家`" sub="按机构等级" icon="users" /><StatCard label="30天内资质到期" value="待核实" sub="按真实资质有效期" icon="calendar" /><StatCard label="收费合作商户" :value="`${profiles.filter(item => item.chargesFee).length} 家`" sub="按收费合作标识" icon="wallet" /></div>
+    <InstitutionSettlementDefaultCard v-if="activeTab === 'profiles'" @loaded="updateSettlementDefault" @saved="updateSettlementDefault" />
     <PageCard>
       <el-tabs v-model="activeTab" class="fulfillment-status-tabs" @tab-change="changeTab">
         <el-tab-pane label="机构档案" name="profiles" />
@@ -358,6 +367,7 @@ onMounted(() => {
             <el-table-column label="业务类型 / 性质" min-width="160"><template #default="{row}"><StatusPill :text="institutionBusinessTypeLabel(row.businessTypeCode)" tone="info" /> <StatusPill :text="institutionOwnershipLabel(row.ownershipCode)" tone="dark" /></template></el-table-column>
             <el-table-column label="商户等级" width="90"><template #default="{row}"><StatusPill :text="institutionGradeLabel(row.gradeCode)" :tone="row.gradeCode==='S'?'danger':row.gradeCode==='A'?'warning':row.gradeCode==='B'?'info':'dark'" /></template></el-table-column>
             <el-table-column label="结算方式" width="100"><template #default="{row}">{{ settlementTypeLabel(row.settlementType) }}</template></el-table-column>
+            <el-table-column label="月结结算日" min-width="180"><template #default="{row}">{{ row.settlementType === 'PER_REDEMPTION' ? '次卡次结不适用' : institutionSettlementDayLabel(row.settlementDay, defaultSettlementDay) }}</template></el-table-column>
             <el-table-column label="佣金规则" min-width="130"><template #default="{row}">线上 {{ row.onlineRate ?? '—' }}<div class="proto-subcell">线下 {{ row.offlineRate ?? '—' }} · 点评 {{ row.platformRate ?? '—' }}</div></template></el-table-column>
             <el-table-column label="收费合作" width="90"><template #default="{row}">{{ row.chargesFee ? '收费' : '不收费' }}</template></el-table-column>
             <el-table-column label="合同到期" width="105">待核实</el-table-column>
@@ -396,11 +406,12 @@ onMounted(() => {
       </template>
     </PageCard>
 
-    <ProfileFormDrawer v-if="canWrite" v-model="profileFormVisible" :profile="profileForEdit" @saved="handleProfileSaved" />
+    <ProfileFormDrawer v-if="canWrite" v-model="profileFormVisible" :profile="profileForEdit" :default-settlement-day="defaultSettlementDay" @saved="handleProfileSaved" />
     <template v-if="detail">
       <InstitutionDetailDrawer
         v-model="detailVisible"
         :profile="detail"
+        :default-settlement-day="defaultSettlementDay"
         :contracts="contracts"
         :qualifications="qualifications"
         :contract-total="contractTotal"
@@ -420,7 +431,7 @@ onMounted(() => {
         @contract-page="contractPage = $event; loadDocuments()"
         @qualification-page="qualificationPage = $event; loadDocuments()"
       />
-      <SensitiveChangeDrawer v-if="canChange" v-model="sensitiveVisible" :profile="detail" @saved="handleWorkflowSaved" />
+      <SensitiveChangeDrawer v-if="canChange" v-model="sensitiveVisible" :profile="detail" :default-settlement-day="defaultSettlementDay" @saved="handleWorkflowSaved" />
       <DocumentFormDrawer v-if="canChange" v-model="documentVisible" :mode="documentMode" :institution-id="detail.id" :previous-contract="previousContract" @saved="handleDocumentSaved" />
       <WorkflowRequestDialog v-if="canChange" v-model="workflowVisible" :mode="workflowMode" :target-id="workflowTargetId" :base-version="workflowBaseVersion" :institution-id="workflowInstitutionId" :title="workflowTitle" @saved="handleWorkflowSaved" />
     </template>

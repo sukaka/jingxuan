@@ -45,6 +45,12 @@ INSERT INTO sys_user (id,tenant_id,org_id,team_id,username,display_name,password
 INSERT INTO sys_user (id,tenant_id,org_id,team_id,username,display_name,password_hash,user_type,status) VALUES
   (11,1,1,NULL,'operator2','机构二操作员','$2y$10$bA7nD4dAyv5R2OVlUo69k.mU1UkiSPlZV7jvAKKrPp8IMNAQuA7Ri','INSTITUTION','ACTIVE')
   ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),user_type=VALUES(user_type),status=VALUES(status);
+INSERT INTO sys_user (tenant_id,org_id,team_id,username,display_name,password_hash,user_type,status) VALUES
+  (1,1,NULL,'operation1','运营测试','$2y$10$bA7nD4dAyv5R2OVlUo69k.mU1UkiSPlZV7jvAKKrPp8IMNAQuA7Ri','EMPLOYEE','ACTIVE')
+  ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),user_type=VALUES(user_type),status=VALUES(status);
+INSERT INTO sys_user (tenant_id,org_id,team_id,username,display_name,password_hash,user_type,status) VALUES
+  (1,1,NULL,'operationlead1','运营主管测试','$2y$10$bA7nD4dAyv5R2OVlUo69k.mU1UkiSPlZV7jvAKKrPp8IMNAQuA7Ri','EMPLOYEE','ACTIVE')
+  ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),user_type=VALUES(user_type),status=VALUES(status);
 
 -- ========== 角色 ==========
 INSERT INTO sys_role (id,tenant_id,role_code,role_name,status) VALUES (1,1,'ADMIN','系统管理员','ACTIVE')
@@ -62,6 +68,10 @@ INSERT INTO sys_role (id,tenant_id,role_code,role_name,status) VALUES (6,1,'FINA
 INSERT INTO sys_role (id,tenant_id,role_code,role_name,status) VALUES (7,1,'INSTITUTION_STAFF','机构操作员','ACTIVE')
   ON DUPLICATE KEY UPDATE role_name=VALUES(role_name),status=VALUES(status);
 INSERT INTO sys_role (id,tenant_id,role_code,role_name,status) VALUES (8,1,'INSTITUTION_FINANCE','机构财务','ACTIVE')
+  ON DUPLICATE KEY UPDATE role_name=VALUES(role_name),status=VALUES(status);
+INSERT INTO sys_role (tenant_id,role_code,role_name,status) VALUES (1,'OPERATION','运营','ACTIVE')
+  ON DUPLICATE KEY UPDATE role_name=VALUES(role_name),status=VALUES(status);
+INSERT INTO sys_role (tenant_id,role_code,role_name,status) VALUES (1,'OPERATION_LEAD','运营主管','ACTIVE')
   ON DUPLICATE KEY UPDATE role_name=VALUES(role_name),status=VALUES(status);
 
 -- ========== 权限目录（含 AI 任务/供应商/知识配置发布、有赞连接与客户合并更正） ==========
@@ -82,7 +92,7 @@ INSERT INTO sys_permission (tenant_id,permission_code,description) VALUES
   (1,'institution:approve_market','机构变更市场审批'),(1,'institution:approve_finance','机构变更财务审批'),
   (1,'settlement:read','结算查看'),(1,'settlement:write','结算操作'),
   (1,'material:read','素材查看'),(1,'material:write','素材维护'),(1,'material:review','素材审核'),
-  (1,'campaign:read','活动查看'),(1,'campaign:write','活动维护'),
+  (1,'campaign:read','活动查看'),(1,'campaign:write','活动维护'),(1,'campaign:review','活动审核与发布'),
   (1,'channel:read','渠道查看'),(1,'channel:write','渠道维护'),
   (1,'report:read','经营报表查看'),
   (1,'export:read','导出记录查看'),(1,'export:create','创建导出任务'),
@@ -95,7 +105,10 @@ INSERT INTO sys_permission (tenant_id,permission_code,description) VALUES
   (1,'risk:read','风控台账查看'),(1,'risk:write','风控处理'),
   (1,'integration:youzan:manage','有赞店铺授权与同步配置'),
   (1,'integration:runtime:manage','外部集成全局运行开关管理'),
-  (1,'customer:merge_reverse','客户合并更正审批与执行')
+  (1,'customer:merge_reverse','客户合并更正审批与执行'),
+  (1,'notification:read','本人通知查看与已读'),
+  (1,'notification:delivery:read','通知投递管理查询'),
+  (1,'notification:delivery:retry','通知投递人工重试')
   ON DUPLICATE KEY UPDATE description=VALUES(description);
 
 -- ========== 角色→权限映射 ==========
@@ -103,6 +116,10 @@ INSERT INTO sys_permission (tenant_id,permission_code,description) VALUES
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
   SELECT 1,r.id,p.id FROM sys_role r CROSS JOIN sys_permission p
   WHERE r.tenant_id=1 AND p.tenant_id=1 AND r.role_code='ADMIN';
+-- 所有角色的用户均可读取并操作本人通知；投递管理权限仅由 ADMIN 全量及显式授权获得。
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+  SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+  WHERE r.tenant_id=1 AND r.status='ACTIVE' AND p.permission_code='notification:read';
 -- OWNER = 所有 *:read（含 report:read / export:read）
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
   SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
@@ -130,8 +147,19 @@ INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
   SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
   WHERE r.tenant_id=1 AND r.role_code='BUSINESS' AND p.permission_code IN (
     'institution:read','institution:write','institution:change_request','institution:approve_market',
-    'product:read','product:write','campaign:read','campaign:write','channel:read','channel:write',
+    'product:read','product:write','campaign:read','campaign:write','campaign:review','channel:read','channel:write',
     'material:read','material:write','material:review','dictionary:read','order:read','report:read');
+-- OPERATION / OPERATION_LEAD = 运营与运营主管；均不授予导出、支付确认、用户或集成配置权限。
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+  SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+  WHERE r.tenant_id=1 AND r.role_code IN ('OPERATION','OPERATION_LEAD') AND p.permission_code IN (
+    'product:read','product:write','campaign:read','campaign:write','material:read','material:write',
+    'channel:read','channel:write','dictionary:read','order:read','report:read','risk:read','risk:write',
+    'customer:read','institution:read');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+  SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+  WHERE r.tenant_id=1 AND r.role_code='OPERATION_LEAD'
+    AND p.permission_code IN ('material:review','campaign:review');
 -- FINANCE = 财务
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
   SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
@@ -164,17 +192,24 @@ INSERT IGNORE INTO sys_user_role (tenant_id,user_id,role_id)
     OR (u.username='owner1' AND r.role_code='OWNER')
     OR (u.username='inst1' AND r.role_code='INSTITUTION_STAFF')
     OR (u.username='operator1' AND r.role_code='INSTITUTION_STAFF')
-    OR (u.username='operator2' AND r.role_code='INSTITUTION_STAFF'));
+    OR (u.username='operator2' AND r.role_code='INSTITUTION_STAFF')
+    OR (u.username='operation1' AND r.role_code='OPERATION')
+    OR (u.username='operationlead1' AND r.role_code='OPERATION_LEAD'));
 
 -- ========== 数据范围 ==========
 -- sys_data_scope 无 (tenant_id,user_id,resource) 唯一键，先删后插保证种子幂等。
 DELETE ds FROM sys_data_scope ds JOIN sys_user u ON u.id=ds.user_id AND u.tenant_id=ds.tenant_id
-  WHERE ds.tenant_id=1 AND u.username IN ('admin','owner1','lead1','lead2','manager1','manager2','finance1','business1');
+  WHERE ds.tenant_id=1 AND u.username IN ('admin','owner1','lead1','lead2','manager1','manager2','finance1','business1','operation1','operationlead1');
 -- admin / owner1：客户与机构均为 ALL
 INSERT INTO sys_data_scope (tenant_id,user_id,resource,scope_type,scope_ref_id)
   SELECT 1,u.id,res.resource,'ALL',NULL FROM sys_user u
   JOIN (SELECT 'customer' AS resource UNION ALL SELECT 'institution') res
   WHERE u.tenant_id=1 AND u.username IN ('admin','owner1');
+-- 开发运营验收账号：覆盖全公司素材、渠道关联和客户匹配；手机号仍由接口脱敏。
+INSERT INTO sys_data_scope (tenant_id,user_id,resource,scope_type,scope_ref_id)
+  SELECT 1,u.id,res.resource,'ALL',NULL FROM sys_user u
+  JOIN (SELECT 'customer' AS resource UNION ALL SELECT 'institution') res
+  WHERE u.tenant_id=1 AND u.username IN ('operation1','operationlead1');
 -- 业务/财务/管家机构资料查看范围；客户范围仍分别受原规则限制，不授予 order:write。
 INSERT INTO sys_data_scope (tenant_id,user_id,resource,scope_type,scope_ref_id)
   SELECT 1,u.id,'institution','ALL',NULL FROM sys_user u
@@ -204,3 +239,16 @@ INSERT INTO crm_institution_user (tenant_id,institution_id,user_id,institution_r
 INSERT INTO crm_institution_user (tenant_id,institution_id,user_id,institution_role,status)
   SELECT 1,2,u.id,'OPERATOR','ACTIVE' FROM sys_user u WHERE u.tenant_id=1 AND u.username='operator2'
   ON DUPLICATE KEY UPDATE institution_role=VALUES(institution_role),status=VALUES(status);
+
+-- V43/V44：可重复种子需覆盖迁移后才创建的 ADMIN/OWNER 等角色，保证全新与升级环境一致。
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='wecom:sidebar:view'
+  AND r.role_code IN ('ADMIN','OWNER','MANAGER','MANAGER_LEAD','OPERATION','OPERATION_LEAD','BUSINESS');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='quickreply:view'
+  AND r.role_code IN ('ADMIN','OWNER','MANAGER','MANAGER_LEAD','OPERATION','OPERATION_LEAD','BUSINESS');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='quickreply:manage' AND r.role_code IN ('ADMIN','OWNER','OPERATION_LEAD');

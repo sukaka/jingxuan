@@ -111,6 +111,9 @@ public class OutboxRelayService {
                 case "youzan", "youzan_order", "youzan_sync_issue" -> OutboxKafkaConfiguration.YOUZAN_EVENTS_TOPIC;
                 case "wecom" -> OutboxKafkaConfiguration.WECOM_EVENTS_TOPIC;
                 case "knowledge_document" -> OutboxKafkaConfiguration.KNOWLEDGE_SYNC_TOPIC;
+                case "notification" -> OutboxKafkaConfiguration.NOTIFICATION_REQUEST_TOPIC;
+                case "followup" -> OutboxKafkaConfiguration.FOLLOWUP_EVENTS_TOPIC;
+                case "customer", "customer_tier" -> OutboxKafkaConfiguration.CUSTOMER_EVENTS_TOPIC;
                 case "redemption", "redemption_reversal" -> OutboxKafkaConfiguration.REDEMPTION_EVENTS_TOPIC;
                 default -> OutboxKafkaConfiguration.ORDER_EVENTS_TOPIC;
             };

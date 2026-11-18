@@ -43,6 +43,7 @@ const form = reactive<FormState>({
   blockerNote: '',
 })
 const submitting = ref(false)
+const createIdempotencyKey = ref('')
 
 const isEdit = () => props.followup !== null
 
@@ -50,6 +51,7 @@ watch(
   () => props.modelValue,
   (visible) => {
     if (!visible) return
+    createIdempotencyKey.value = crypto.randomUUID()
     const source = props.followup
     form.customerId = source?.customerId ?? props.fixedCustomerId ?? undefined
     form.channelCode = source?.channelCode ?? ''
@@ -98,7 +100,7 @@ async function submit() {
       await updateFollowup(props.followup.id, { ...base, version: props.followup.version })
       ElMessage.success('跟进已更新')
     } else {
-      await createFollowup({ customerId: form.customerId, ...base })
+      await createFollowup({ customerId: form.customerId, ...base }, createIdempotencyKey.value)
       ElMessage.success('跟进已登记')
     }
     emit('update:modelValue', false)
@@ -169,7 +171,7 @@ async function submit() {
           value-format="YYYY-MM-DD[T]HH:mm:ssZ"
           class="full-width"
         />
-        <span class="crm-muted">填写后自动生成回访任务；改期仅更新待处理任务</span>
+        <span class="crm-muted">显式时间优先；未填按策略（默认14天）生成；改期仅更新待处理任务</span>
       </el-form-item>
       <el-form-item label="卡点">
         <el-input v-model="form.blockerNote" type="textarea" :rows="2" />

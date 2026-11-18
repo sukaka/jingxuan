@@ -237,6 +237,20 @@ class TaskActionWorkflowApiIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.data[0].reason").value("旧入口转派"));
     }
 
+    @Test
+    void assignedOpenTaskCannotBeClaimedFromTeamPoolByAnotherUser() throws Exception {
+        AuthCookies manager = login("manager1");
+        AuthCookies lead = login("lead1");
+        long taskId = createTask(manager, "ITT-V30-已分配边界");
+
+        action(lead, post("/api/v1/tasks/" + taskId + "/claim"), "{\"version\":0}", "assigned-pool-steal")
+                .andExpect(status().isConflict());
+        action(manager, post("/api/v1/tasks/" + taskId + "/claim"), "{\"version\":0}", "assigned-owner-start")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PROCESSING"))
+                .andExpect(jsonPath("$.data.assigneeUserId").value(2));
+    }
+
     private AuthCookies createSameTeamSelfManager() throws Exception {
         jdbcTemplate.update("""
                 INSERT INTO sys_user (tenant_id, org_id, team_id, username, display_name,

@@ -2,7 +2,9 @@ package com.whale.crm.refund.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.f4b6a3.ulid.UlidCreator;
+import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.application.CustomerScopeSupport;
+import com.whale.crm.customer.application.CustomerTimelineCursor;
 import com.whale.crm.file.application.FileApplicationService;
 import com.whale.crm.file.domain.FileClassification;
 import com.whale.crm.platform.audit.application.AuditService;
@@ -91,6 +93,35 @@ public class RefundApplicationService {
                         query.teamIds(), query.selfId(), offset, size),
                 repository.countSearch(tenantId, orderId, customerId, status, query.scopeType(),
                         query.teamIds(), query.selfId()), page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
+                                                        CustomerTimelineCursor cursor) {
+        scopeSupport.requireVisible(tenantId, customerId, user);
+        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
+        int page = 1;
+        long total;
+        do {
+            PageResponse<Refund> result = search(tenantId, user, null, customerId, null, page, 100);
+            total = result.total();
+            for (Refund refund : result.items()) {
+                Map<String, Object> details = new java.util.LinkedHashMap<>();
+                details.put("status", refund.status());
+                details.put("orderId", refund.orderId());
+                details.put("requestedFen", refund.requestedFen());
+                details.put("approvedFen", refund.approvedFen());
+                details.put("succeededFen", refund.succeededFen());
+                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("REFUND", refund.id(), "REFUND",
+                        refund.createdAt(), "退款 " + refund.refundNo(), "退款状态：" + refund.status(), details,
+                        refund.requestedBy());
+                if (cursor == null || cursor.allows(event)) {
+                    events.add(event);
+                }
+            }
+            page++;
+        } while ((long) (page - 1) * 100 < total);
+        return events;
     }
 
     @Transactional(readOnly = true)
