@@ -56,38 +56,54 @@ public class YouzanConnectionService {
     }
 
     public YouzanShopConfigView saveShop(CurrentUser user, YouzanShopConfigRequest request, String key) {
-        String payload = json(request);
+        String shopId = trimToNull(request.shopId());
+        String shopName = trimToNull(request.shopName());
+        String clientId = trimToNull(request.clientId());
+        String clientSecret = trimToNull(request.clientSecret());
+        if (shopId == null || shopName == null || clientId == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "店铺ID、店铺名称和clientId不能为空");
+        }
+        YouzanShopConfigRequest normalized = new YouzanShopConfigRequest(shopId, shopName, clientId, clientSecret,
+                request.syncEnabled(), request.version());
+        String payload = json(normalized);
         String scope = "youzan.shop.config";
         IdempotencyRecord replay = idempotencyService.lookup(user.tenantId(), scope, key, payload).orElse(null);
         if (replay != null) {
-            return repository.findShopConfig(user.tenantId(), request.shopId()).map(this::view).orElseThrow();
+            return repository.findShopConfig(user.tenantId(), shopId).map(this::view).orElseThrow();
         }
         try {
             YouzanShopConfig result = transactions.execute(status -> {
-                YouzanShopConfig existing = repository.findShopConfigForUpdate(user.tenantId(), request.shopId()).orElse(null);
-                if (existing == null && (request.clientSecret() == null || request.clientSecret().isBlank())) {
+                YouzanShopConfig existing = repository.findShopConfigForUpdate(user.tenantId(), shopId).orElse(null);
+                if (existing == null && clientSecret == null) {
                     throw new BusinessException(ErrorCode.VALIDATION_FAILED, "新店铺必须配置clientSecret");
                 }
-                String secret = request.clientSecret() == null || request.clientSecret().isBlank()
-                        ? existing.clientSecretCipher() : cipher.encrypt(request.clientSecret());
+                String secretCipher = clientSecret == null
+                        ? existing.clientSecretCipher() : cipher.encrypt(clientSecret);
                 if (existing == null) {
                     repository.insertShopConfig(user.tenantId(), new YouzanShopConfig(null, user.tenantId(),
-                            request.shopId(), request.shopName(), request.clientId(), secret, null, null, null,
+                            shopId, shopName, clientId, secretCipher, null, null, null,
                             "UNVERIFIED", request.syncEnabled(), null, null, null, null));
                 } else {
                     if (request.version() == null || !request.version().equals(existing.version())) {
                         throw new BusinessException(ErrorCode.CONFLICT, "店铺配置版本已变化");
                     }
-                    YouzanShopConfig changed = new YouzanShopConfig(existing.id(), user.tenantId(), request.shopId(),
-                            request.shopName(), request.clientId(), secret, existing.accessTokenCipher(),
-                            existing.refreshTokenCipher(), existing.tokenExpiresAt(), existing.connectionStatus(),
-                            request.syncEnabled(), existing.lastError(), existing.lastConnectedAt(), existing.createdAt(),
-                            existing.version());
+                    boolean credentialsChanged = !Objects.equals(existing.clientId(), clientId)
+                            || clientSecret != null;
+                    YouzanShopConfig changed = new YouzanShopConfig(existing.id(), user.tenantId(), shopId,
+                            shopName, clientId, secretCipher,
+                            credentialsChanged ? null : existing.accessTokenCipher(),
+                            credentialsChanged ? null : existing.refreshTokenCipher(),
+                            credentialsChanged ? null : existing.tokenExpiresAt(),
+                            credentialsChanged ? "UNVERIFIED" : existing.connectionStatus(),
+                            request.syncEnabled(),
+                            credentialsChanged ? null : existing.lastError(),
+                            credentialsChanged ? null : existing.lastConnectedAt(),
+                            existing.createdAt(), existing.version());
                     if (repository.updateShopConfig(user.tenantId(), existing.id(), existing.version(), changed) != 1) {
                         throw new BusinessException(ErrorCode.CONFLICT, "店铺配置版本冲突");
                     }
                 }
-                YouzanShopConfig saved = repository.findShopConfig(user.tenantId(), request.shopId()).orElseThrow();
+                YouzanShopConfig saved = repository.findShopConfig(user.tenantId(), shopId).orElseThrow();
                 idempotencyService.recordSuccess(user.tenantId(), scope, key, "YOUZAN_SHOP",
                         saved.id().toString(), payload);
                 auditService.record(user.tenantId(), user.userId(), "YOUZAN_SHOP_CONFIG_SAVE", "YOUZAN_SHOP",
@@ -116,30 +132,34 @@ public class YouzanConnectionService {
     }
 
     public YouzanSyncPolicy savePolicy(CurrentUser user, String shopId, YouzanSyncPolicyRequest request) {
-        return transactions.execute(status -> {
-            requireShop(user.tenantId(), shopId);
-            YouzanSyncPolicy existing = repository.findSyncPolicy(user.tenantId(), shopId).orElse(null);
-            if (existing == null) {
-                repository.insertSyncPolicy(user.tenantId(), new YouzanSyncPolicy(null, shopId,
-                        request.initialStartTime(), request.intervalSeconds(), request.overlapSeconds(),
-                        request.pageSize(), request.enabled(), request.nextRunAt(), null, null));
-            } else {
-                if (request.version() == null || !request.version().equals(existing.version())) {
-                    throw new BusinessException(ErrorCode.CONFLICT, "同步策略版本已变化");
+        try {
+            return transactions.execute(status -> {
+                requireShop(user.tenantId(), shopId);
+                YouzanSyncPolicy existing = repository.findSyncPolicy(user.tenantId(), shopId).orElse(null);
+                if (existing == null) {
+                    repository.insertSyncPolicy(user.tenantId(), new YouzanSyncPolicy(null, shopId,
+                            request.initialStartTime(), request.intervalSeconds(), request.overlapSeconds(),
+                            request.pageSize(), request.enabled(), request.nextRunAt(), null, null));
+                } else {
+                    if (request.version() == null || !request.version().equals(existing.version())) {
+                        throw new BusinessException(ErrorCode.CONFLICT, "同步策略版本已变化");
+                    }
+                    YouzanSyncPolicy changed = new YouzanSyncPolicy(existing.id(), shopId, request.initialStartTime(),
+                            request.intervalSeconds(), request.overlapSeconds(), request.pageSize(), request.enabled(),
+                            request.nextRunAt() == null ? existing.nextRunAt() : request.nextRunAt(),
+                            existing.lastScheduledAt(), existing.version());
+                    if (repository.updateSyncPolicy(user.tenantId(), existing.id(), existing.version(), changed) != 1) {
+                        throw new BusinessException(ErrorCode.CONFLICT, "同步策略版本冲突");
+                    }
                 }
-                YouzanSyncPolicy changed = new YouzanSyncPolicy(existing.id(), shopId, request.initialStartTime(),
-                        request.intervalSeconds(), request.overlapSeconds(), request.pageSize(), request.enabled(),
-                        request.nextRunAt() == null ? existing.nextRunAt() : request.nextRunAt(),
-                        existing.lastScheduledAt(), existing.version());
-                if (repository.updateSyncPolicy(user.tenantId(), existing.id(), existing.version(), changed) != 1) {
-                    throw new BusinessException(ErrorCode.CONFLICT, "同步策略版本冲突");
-                }
-            }
-            YouzanSyncPolicy saved = repository.findSyncPolicy(user.tenantId(), shopId).orElseThrow();
-            auditService.record(user.tenantId(), user.userId(), "YOUZAN_SYNC_POLICY_SAVE", "YOUZAN_SHOP",
-                    shopId, existing, saved, null);
-            return saved;
-        });
+                YouzanSyncPolicy saved = repository.findSyncPolicy(user.tenantId(), shopId).orElseThrow();
+                auditService.record(user.tenantId(), user.userId(), "YOUZAN_SYNC_POLICY_SAVE", "YOUZAN_SHOP",
+                        shopId, existing, saved, null);
+                return saved;
+            });
+        } catch (DuplicateKeyException ex) {
+            throw new BusinessException(ErrorCode.CONFLICT, "同步策略已被并发创建，请重试");
+        }
     }
 
     public PageResponse<YouzanSyncJob> jobs(long tenantId, String shopId, int page, int size) {
@@ -159,6 +179,14 @@ public class YouzanConnectionService {
                 config.clientSecretCipher() != null && !config.clientSecretCipher().isBlank(), config.tokenExpiresAt(),
                 config.connectionStatus(), Boolean.TRUE.equals(config.syncEnabled()), config.lastError(),
                 config.lastConnectedAt(), "/api/v1/webhooks/youzan/official", config.version());
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private String json(Object value) {

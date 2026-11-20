@@ -28,6 +28,7 @@
   <select id="selectPendingEvents" resultType="com.whale.crm.integration.youzan.domain.YouzanEvent">
     SELECT <include refid="eventColumns"/> FROM crm_youzan_event
     WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND source_system='OFFICIAL_WEBHOOK'
+      AND process_attempts &lt; 10
       AND ((process_status='RECEIVED' AND received_at &lt;= #{retryBefore})
         OR (process_status='RETRY' AND (next_retry_at IS NULL OR next_retry_at &lt;= #{retryBefore})))
     ORDER BY id LIMIT #{limit}
@@ -173,7 +174,7 @@
     VALUES (#{tenantId},#{entity.shopId},#{entity.cursorValue},#{entity.windowStart},#{entity.windowEnd},#{entity.lastSyncAt},#{entity.lastExternalUpdatedAt})
   </insert>
   <update id="updateCursor">
-    UPDATE crm_youzan_sync_cursor SET cursor_value=#{cursorValue},last_sync_at=#{lastSyncAt},last_external_updated_at=#{lastExternalUpdatedAt},version=version+1
+    UPDATE crm_youzan_sync_cursor SET cursor_value=#{cursorValue},window_start=#{windowStart},window_end=#{windowEnd},last_sync_at=#{lastSyncAt},last_external_updated_at=#{lastExternalUpdatedAt},version=version+1
     WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
   </update>
 </mapper>

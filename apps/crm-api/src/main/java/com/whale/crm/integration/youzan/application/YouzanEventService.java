@@ -118,6 +118,9 @@ public class YouzanEventService {
                                            String normalized, String providerPayload) {
         transactionTemplate.executeWithoutResult(status -> {
             YouzanEvent raw = repository.findEventForUpdate(tenantId, eventId).orElseThrow();
+            if ("PROCESSED".equals(raw.processStatus())) {
+                return;
+            }
             if (repository.updateEventPayload(tenantId, eventId, raw.version(), event.externalOrderNo(),
                     event.eventType(), maskedView(normalized, providerPayload), cipher.encrypt(normalized), mask(providerPayload),
                     cipher.encrypt(providerPayload)) != 1) {
@@ -160,7 +163,7 @@ public class YouzanEventService {
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
         YouzanOrderMap existing = repository.findOrderMap(tenantId, event.shopId(), event.externalOrderNo()).orElse(null);
         if (existing != null && !event.externalUpdatedAt().isAfter(existing.lastExternalUpdatedAt())) {
-            return complete(tenantId, eventId, raw, existing.crmOrderId(), true);
+            return complete(tenantId, eventId, raw, existing.crmOrderId(), true, actor(tenantId).userId());
         }
         List<OrderItemRequest> items = new ArrayList<>();
         for (YouzanOrderLine line : event.items()) {
@@ -215,10 +218,11 @@ public class YouzanEventService {
                 throw new ProcessingFailure("PAYMENT_MISMATCH", "订单当前状态不允许供应商支付确认");
             }
         }
-        return complete(tenantId, eventId, raw, existing.crmOrderId(), false);
+        return complete(tenantId, eventId, raw, existing.crmOrderId(), false, actor.userId());
     }
 
-    private YouzanEventResponse complete(long tenantId, long eventId, YouzanEvent raw, long orderId, boolean duplicate) {
+    private YouzanEventResponse complete(long tenantId, long eventId, YouzanEvent raw, long orderId, boolean duplicate,
+                                         long actorUserId) {
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
         YouzanOrderMap map = repository.findOrderMapForUpdate(tenantId, event.shopId(), event.externalOrderNo()).orElseThrow();
         if (event.externalUpdatedAt().isAfter(map.lastExternalUpdatedAt())) {
@@ -234,14 +238,14 @@ public class YouzanEventService {
             repository.findIssueByEventAndType(tenantId, eventId, type).ifPresent(issue -> {
                 if (!"RESOLVED".equals(issue.status())) {
                     repository.updateIssueStatus(tenantId, issue.id(), issue.version(), "RESOLVED", issue.attempts(),
-                            null, null, Instant.now(), tenantId);
+                            null, null, Instant.now(), actorUserId);
                 }
             });
         }
         outboxService.append(tenantId, "youzan.order.processed.v1:" + raw.eventId(), "youzan.order.processed.v1",
                 "youzan", Long.toString(orderId), Map.of("shopId", raw.shopId(),
                         "externalOrderNo", raw.externalOrderNo(), "orderId", orderId));
-        auditService.record(tenantId, tenantId, "YOUZAN_ORDER_PROCESSED", "ORDER", Long.toString(orderId), null,
+        auditService.record(tenantId, actorUserId, "YOUZAN_ORDER_PROCESSED", "ORDER", Long.toString(orderId), null,
                 Map.of("shopId", raw.shopId(), "externalOrderNo", raw.externalOrderNo(), "status", "PROCESSED"), null);
         YouzanEvent processed = repository.findEvent(tenantId, eventId).orElseThrow();
         return response(tenantId, processed, duplicate);
@@ -270,7 +274,13 @@ public class YouzanEventService {
 
     private YouzanEventResponse markRetry(long tenantId, long eventId, Exception error) {
         YouzanEvent raw = repository.findEventForUpdate(tenantId, eventId).orElseThrow();
-        String detail = safeError(error.getMessage());
+        if ("PROCESSED".equals(raw.processStatus())
+                || "MAPPING_FAILED".equals(raw.processStatus())
+                || "CUSTOMER_UNRESOLVED".equals(raw.processStatus())
+                || "PAYMENT_MISMATCH".equals(raw.processStatus())) {
+            return response(tenantId, raw, "PROCESSED".equals(raw.processStatus()));
+        }
+        String detail = safeError(error == null ? null : error.getMessage());
         Instant retryAt = Instant.now().plusSeconds(60);
         if (repository.updateEventStatus(tenantId, eventId, raw.version(), "RETRY", detail, retryAt,
                 null, raw.orderId()) == 0) {
@@ -294,7 +304,7 @@ public class YouzanEventService {
         }
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
         YouzanOrderMap map = repository.findOrderMap(tenantId, event.shopId(), event.externalOrderNo()).orElseThrow();
-        return complete(tenantId, eventId, raw, map.crmOrderId(), true);
+        return complete(tenantId, eventId, raw, map.crmOrderId(), true, actor(tenantId).userId());
     }
 
     private YouzanOrderEvent readEvent(String encrypted) {

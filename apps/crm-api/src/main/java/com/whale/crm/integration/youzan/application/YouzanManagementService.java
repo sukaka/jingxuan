@@ -48,13 +48,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
 public class YouzanManagementService {
     private static final Duration MAX_WINDOW = Duration.ofDays(90);
+    private static final int MAX_SCHEDULED_PAGES = 100;
     private final YouzanRepository repository;
     private final YouzanConfigRepository configRepository;
     private final YouzanEventService eventService;
@@ -201,9 +204,20 @@ public class YouzanManagementService {
     public YouzanSyncResponse syncScheduled(long tenantId, String shopId, String cursor, int limit) {
         YouzanSyncJob job = startJob(tenantId, shopId, "INCREMENTAL");
         try {
-            YouzanSyncResponse response = syncOnce(tenantId, shopId, cursor, limit, job);
-            finishJob(tenantId, job, response, null);
-            return response;
+            String nextCursor = cursor;
+            YouzanSyncResponse total = new YouzanSyncResponse(0, 0, 0, 0, nextCursor, false);
+            for (int i = 0; i < MAX_SCHEDULED_PAGES; i++) {
+                YouzanSyncResponse current = syncOnce(tenantId, shopId, nextCursor, limit, job);
+                total = new YouzanSyncResponse(total.received() + current.received(),
+                        total.processed() + current.processed(), total.duplicates() + current.duplicates(),
+                        total.issues() + current.issues(), current.nextCursor(), current.hasMore());
+                nextCursor = current.nextCursor();
+                if (!current.hasMore()) {
+                    break;
+                }
+            }
+            finishJob(tenantId, job, total, null);
+            return total;
         } catch (RuntimeException ex) {
             finishJob(tenantId, job, null, ex.getMessage());
             throw ex;
@@ -227,15 +241,21 @@ public class YouzanManagementService {
     }
 
     public YouzanEventResponse retryIssue(CurrentUser user, long issueId) {
-        YouzanSyncIssue issue = repository.findIssueForUpdate(tenant(), issueId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
-        if (List.of("RESOLVED", "DEAD").contains(issue.status())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "已解决或终止的异常不能重试");
-        }
-        repository.updateIssueStatus(tenant(), issue.id(), issue.version(), "RETRYING", issue.attempts() + 1,
-                issue.lastError(), issue.nextRetryAt(), null, null);
-        YouzanEventResponse result = eventService.process(user.tenantId(), issue.eventId());
-        auditService.record(tenant(), user.userId(), "YOUZAN_ISSUE_RETRY", "YOUZAN", Long.toString(issue.eventId()),
+        long tenantId = user.tenantId();
+        YouzanSyncIssue issue = Objects.requireNonNull(transactionTemplate.execute(status -> {
+            YouzanSyncIssue locked = repository.findIssueForUpdate(tenantId, issueId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
+            if (List.of("RESOLVED", "DEAD").contains(locked.status())) {
+                throw new BusinessException(ErrorCode.CONFLICT, "已解决或终止的异常不能重试");
+            }
+            if (repository.updateIssueStatus(tenantId, locked.id(), locked.version(), "RETRYING",
+                    locked.attempts() + 1, locked.lastError(), locked.nextRetryAt(), null, null) != 1) {
+                throw new BusinessException(ErrorCode.CONFLICT, "同步异常状态已变化，请重试");
+            }
+            return locked;
+        }));
+        YouzanEventResponse result = eventService.process(tenantId, issue.eventId());
+        auditService.record(tenantId, user.userId(), "YOUZAN_ISSUE_RETRY", "YOUZAN", Long.toString(issue.eventId()),
                 null, result, null);
         return result;
     }
@@ -340,6 +360,7 @@ public class YouzanManagementService {
         }
         String nextCursor = page.nextCursor();
         boolean hasMore = page.hasMore();
+        boolean advancedWindow = false;
         if (adapter instanceof RealYouzanAdapter && !hasMore) {
             YouzanSyncCursorValue position = readCursor(nextCursor);
             if (position.windowEnd().isBefore(position.finalEnd())) {
@@ -348,6 +369,7 @@ public class YouzanManagementService {
                 nextCursor = json(new YouzanSyncCursorValue(position.queryType(), position.windowEnd(), nextEnd,
                         position.finalEnd(), 1));
                 hasMore = true;
+                advancedWindow = true;
             }
         }
         int received = 0;
@@ -369,15 +391,19 @@ public class YouzanManagementService {
             } else {
                 issues++;
             }
-            if (latest == null || event.externalUpdatedAt().isAfter(latest)) {
+            if (event.externalUpdatedAt() != null && (latest == null || event.externalUpdatedAt().isAfter(latest))) {
                 latest = event.externalUpdatedAt();
             }
         }
-        if (job != null && configRepository.acquireShopLease(tenantId, shopId, job.leaseOwner(),
-                Instant.now().plusSeconds(300)) != 1) {
-            throw new BusinessException(ErrorCode.CONFLICT, "同步租约已被其他实例接管，请从最新游标重试");
+        if (job != null) {
+            Instant leaseExpiresAt = Instant.now().plusSeconds(300);
+            if (configRepository.acquireShopLease(tenantId, shopId, job.leaseOwner(), leaseExpiresAt) != 1
+                    || (job.id() != null && configRepository.renewSyncJobLease(tenantId, job.id(),
+                    job.leaseOwner(), leaseExpiresAt) != 1)) {
+                throw new BusinessException(ErrorCode.CONFLICT, "同步租约已被其他实例接管或已过期，请从最新游标重试");
+            }
         }
-        saveCursor(tenantId, shopId, nextCursor, latest);
+        saveCursor(tenantId, shopId, nextCursor, latest, hasMore, advancedWindow);
         outboxService.append(tenantId, syncCompletedEventId(shopId, nextCursor),
                 "youzan.sync.completed.v1", "youzan", shopId,
                 Map.of("shopId", shopId, "received", received, "processed", processed, "issues", issues));
@@ -387,11 +413,11 @@ public class YouzanManagementService {
     private YouzanSyncResponse splitOversizedWindow(long tenantId, String shopId, String cursor, int limit,
                                                     YouzanSyncJob job) {
         YouzanSyncCursorValue position = readCursor(cursor);
-        long millis = Duration.between(position.windowStart(), position.windowEnd()).toMillis();
-        if (millis <= 1000) {
+        long seconds = Duration.between(position.windowStart(), position.windowEnd()).getSeconds();
+        if (seconds <= 1) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "有赞订单过密且时间窗无法继续细分，请按订单号补偿");
         }
-        Instant midpoint = position.windowStart().plusMillis(millis / 2);
+        Instant midpoint = position.windowStart().plusSeconds(seconds / 2);
         String firstHalf = json(new YouzanSyncCursorValue(position.queryType(), position.windowStart(), midpoint,
                 position.finalEnd(), 1));
         return syncOnce(tenantId, shopId, firstHalf, limit, job);
@@ -402,9 +428,10 @@ public class YouzanManagementService {
     }
 
     private String initialCursor(long tenantId, String shopId) {
-        Instant end = Instant.now();
+        Instant end = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         Instant start = configRepository.findSyncPolicy(tenantId, shopId)
-                .map(YouzanSyncPolicy::initialStartTime).orElse(end.minus(Duration.ofDays(7)));
+                .map(YouzanSyncPolicy::initialStartTime).orElse(end.minus(Duration.ofDays(7)))
+                .truncatedTo(ChronoUnit.SECONDS);
         Instant windowEnd = start.plus(MAX_WINDOW).isBefore(end) ? start.plus(MAX_WINDOW) : end;
         return json(new YouzanSyncCursorValue("CREATED", start, windowEnd, end, 1));
     }
@@ -417,20 +444,58 @@ public class YouzanManagementService {
         }
     }
 
-    private void saveCursor(long tenantId, String shopId, String nextCursor, Instant latest) {
+    private void saveCursor(long tenantId, String shopId, String nextCursor, Instant latest,
+                            boolean hasMore, boolean advancedWindow) {
         transactionTemplate.execute(status -> {
             YouzanSyncCursor existing = repository.findCursorForUpdate(tenantId, shopId).orElse(null);
             YouzanSyncCursorValue position = nextCursor != null && nextCursor.startsWith("{")
                     ? readCursor(nextCursor) : null;
+            Instant windowStart = position != null ? position.windowStart()
+                    : (existing == null ? null : existing.windowStart());
+            Instant windowEnd = position != null ? position.windowEnd()
+                    : (existing == null ? null : existing.windowEnd());
+            Instant lastSyncAt = resolveLastSyncAt(existing, position, hasMore, advancedWindow);
+            Instant lastExternalUpdatedAt = resolveLastExternalUpdatedAt(existing, latest);
             if (existing == null) {
                 repository.insertCursor(tenantId, new YouzanSyncCursor(null, shopId, nextCursor,
-                        position == null ? null : position.windowStart(), position == null ? null : position.windowEnd(),
-                        Instant.now(), latest, null, null));
-            } else if (repository.updateCursor(tenantId, existing.id(), existing.version(), nextCursor, Instant.now(), latest) == 0) {
+                        windowStart, windowEnd, lastSyncAt, lastExternalUpdatedAt, null, null));
+            } else if (repository.updateCursor(tenantId, existing.id(), existing.version(), nextCursor,
+                    windowStart, windowEnd, lastSyncAt, lastExternalUpdatedAt) == 0) {
                 throw new BusinessException(ErrorCode.CONFLICT, "同步游标已变化，请重试");
             }
             return null;
         });
+    }
+
+    private Instant resolveLastSyncAt(YouzanSyncCursor existing, YouzanSyncCursorValue position,
+                                      boolean hasMore, boolean advancedWindow) {
+        if (position == null) {
+            return Instant.now();
+        }
+        Instant existingLastSyncAt = existing == null ? null : existing.lastSyncAt();
+        if (!hasMore) {
+            Instant candidate = position.windowEnd() != null ? position.windowEnd() : Instant.now();
+            return existingLastSyncAt != null && existingLastSyncAt.isAfter(candidate) ? existingLastSyncAt : candidate;
+        }
+        if (advancedWindow && position.pageNo() == 1 && position.windowStart() != null) {
+            return existingLastSyncAt != null && existingLastSyncAt.isAfter(position.windowStart())
+                    ? existingLastSyncAt : position.windowStart();
+        }
+        if (existingLastSyncAt != null) {
+            return existingLastSyncAt;
+        }
+        return position.windowStart() != null ? position.windowStart() : Instant.now();
+    }
+
+    private Instant resolveLastExternalUpdatedAt(YouzanSyncCursor existing, Instant latest) {
+        Instant existingUpdatedAt = existing == null ? null : existing.lastExternalUpdatedAt();
+        if (latest == null) {
+            return existingUpdatedAt;
+        }
+        if (existingUpdatedAt != null && existingUpdatedAt.isAfter(latest)) {
+            return existingUpdatedAt;
+        }
+        return latest;
     }
 
     private YouzanSyncJob startJob(long tenantId, String shopId, String type) {
@@ -458,7 +523,11 @@ public class YouzanManagementService {
             return;
         }
         try {
-            YouzanSyncJob current = configRepository.findSyncJob(tenantId, job.id()).orElseThrow();
+            YouzanSyncJob current = configRepository.findSyncJob(tenantId, job.id()).orElse(null);
+            if (current == null || !"RUNNING".equals(current.status())
+                    || !Objects.equals(current.leaseOwner(), job.leaseOwner())) {
+                return;
+            }
             String status = error != null ? "FAILED" : response != null && response.issues() > 0 ? "PARTIAL" : "SUCCEEDED";
             String errorMessage = error == null || error.isBlank() ? "有赞同步失败" : error;
             YouzanSyncJob finished = new YouzanSyncJob(current.id(), current.shopId(), current.jobType(), status,

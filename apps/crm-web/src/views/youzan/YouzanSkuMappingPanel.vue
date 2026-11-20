@@ -127,14 +127,14 @@ async function save() {
       <el-table-column label="CRM SKU" min-width="150"><template #default="{ row }">#{{ row.crmSkuId }}</template></el-table-column>
       <el-table-column label="配置状态" width="105"><template #default="{ row }">{{ statusText(row.status) }}</template></el-table-column>
       <el-table-column label="版本" width="75"><template #default="{ row }">{{ row.version }}</template></el-table-column>
-      <el-table-column v-if="canWrite" label="操作" width="100" fixed="right"><template #default="{ row }"><el-button text size="small" @click="openEdit(row)">编辑</el-button></template></el-table-column>
+      <el-table-column v-if="canWrite" label="操作" width="100" fixed="right"><template #default="{ row }"><el-button text size="small" data-testid="sku-mapping-edit" @click="openEdit(row)">编辑</el-button></template></el-table-column>
       <template #empty><el-empty description="暂无 SKU 映射，缺失映射的订单会进入异常队列" /></template>
     </app-table>
 
     <el-dialog v-model="formVisible" :title="editingId ? '编辑 SKU 映射' : '新增 SKU 映射'" width="min(560px, 94vw)">
       <el-alert type="info" :closable="false" title="只选择真实上架且权益规则完整的 SKU；保存映射不等于订单或支付已同步。" class="dialog-tip" />
       <el-form label-position="top" @submit.prevent>
-        <el-form-item label="有赞外部 SKU ID" required><el-input v-model="externalSkuId" maxlength="128" data-testid="sku-mapping-external" /></el-form-item>
+        <el-form-item label="有赞外部 SKU ID" required><el-input v-model="externalSkuId" :disabled="editingId !== null" maxlength="128" data-testid="sku-mapping-external" /></el-form-item>
         <el-form-item label="CRM 标准 SKU" required>
           <el-select :model-value="crmSkuId" filterable remote :remote-method="searchSkus" :loading="searching" class="full-width" data-testid="sku-mapping-crm" @change="selectSku">
             <el-option v-for="sku in skuOptions" :key="sku.id" :label="skuLabel(sku)" :value="sku.id" />

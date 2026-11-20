@@ -3,6 +3,7 @@ import { reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getYouzanSyncPolicy, saveYouzanSyncPolicy } from '../../api/youzan'
 import { tradingErrorText } from '../trading/tradingUi'
+import { formatDateTime } from '../customer/shared'
 import { createYouzanKey } from './youzanUi'
 
 const props = defineProps<{ shopId: string; canWrite: boolean }>()
@@ -43,6 +44,7 @@ async function save() {
   try {
     const saved = await saveYouzanSyncPolicy(props.shopId, { initialStartTime: new Date(form.initialStartTime).toISOString(), intervalSeconds: form.intervalSeconds, overlapSeconds: form.overlapSeconds, pageSize: form.pageSize, enabled: form.enabled, nextRunAt: form.nextRunAt ? new Date(form.nextRunAt).toISOString() : undefined, version: form.version }, createYouzanKey('youzan.sync.policy'))
     form.version = saved.version
+    form.nextRunAt = saved.nextRunAt ? localInput(new Date(saved.nextRunAt)) : ''
     form.lastScheduledAt = saved.lastScheduledAt
     ElMessage.success('同步策略已保存，调度器将按下次执行时间运行')
   } catch (error) {
@@ -72,7 +74,7 @@ watch(() => props.shopId, () => {
         <el-form-item label="下次执行时间" :required="form.enabled"><el-date-picker v-model="form.nextRunAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" class="full-width" data-testid="youzan-next-run-at" placeholder="选择下一次自动同步时间" /></el-form-item>
       </div>
       <el-form-item label="自动增量同步"><el-switch v-model="form.enabled" :disabled="!canWrite" active-text="启用" inactive-text="停用" /></el-form-item>
-      <p v-if="form.lastScheduledAt" class="proto-note">最近调度：{{ form.lastScheduledAt }}；每次执行后按间隔自动计算下一次。</p>
+      <p v-if="form.lastScheduledAt" class="proto-note">最近调度：{{ formatDateTime(form.lastScheduledAt) }}；每次执行后按间隔自动计算下一次。</p>
       <el-button v-if="canWrite" type="primary" :loading="saving" data-testid="youzan-policy-save" @click="save">保存策略</el-button>
     </el-form>
   </section>

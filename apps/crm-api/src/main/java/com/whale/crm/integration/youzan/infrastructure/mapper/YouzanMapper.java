@@ -84,6 +84,8 @@ public interface YouzanMapper {
     YouzanSyncCursor selectCursorForUpdate(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
     void insertCursor(@Param("tenantId") long tenantId, @Param("entity") YouzanSyncCursor entity);
     int updateCursor(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
-                     @Param("cursorValue") String cursorValue, @Param("lastSyncAt") Instant lastSyncAt,
+                     @Param("cursorValue") String cursorValue,
+                     @Param("windowStart") Instant windowStart, @Param("windowEnd") Instant windowEnd,
+                     @Param("lastSyncAt") Instant lastSyncAt,
                      @Param("lastExternalUpdatedAt") Instant lastExternalUpdatedAt);
 }

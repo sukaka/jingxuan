@@ -25,7 +25,8 @@ public interface YouzanConfigMapper {
                                    @Param("version") long version, @Param("status") String status,
                                    @Param("error") String error, @Param("connectedAt") Instant connectedAt);
     int acquireShopLease(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
-                         @Param("owner") String owner, @Param("expiresAt") Instant expiresAt);
+                         @Param("owner") String owner, @Param("now") Instant now,
+                         @Param("expiresAt") Instant expiresAt);
     int releaseShopLease(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                          @Param("owner") String owner);
     int releaseExpiredShopLeases(@Param("now") Instant now);
@@ -47,4 +48,6 @@ public interface YouzanConfigMapper {
     long countSyncJobs(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
     int updateSyncJob(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
                       @Param("entity") YouzanSyncJob entity);
+    int renewSyncJobLease(@Param("tenantId") long tenantId, @Param("jobId") long jobId,
+                          @Param("leaseOwner") String leaseOwner, @Param("expiresAt") Instant expiresAt);
 }

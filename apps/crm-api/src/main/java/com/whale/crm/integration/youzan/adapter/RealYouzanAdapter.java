@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class RealYouzanAdapter implements YouzanAdapter {
@@ -24,8 +25,8 @@ public class RealYouzanAdapter implements YouzanAdapter {
     private final ObjectMapper objectMapper;
     private final String detailVersion;
     private final long minIntervalMs;
-    private final Map<String, Object> rateLocks = new java.util.concurrent.ConcurrentHashMap<>();
-    private final Map<String, Long> nextCallAt = new HashMap<>();
+    private final Map<String, Object> rateLocks = new ConcurrentHashMap<>();
+    private final Map<String, Long> nextCallAt = new ConcurrentHashMap<>();
 
     @org.springframework.beans.factory.annotation.Autowired
     public RealYouzanAdapter(YouzanTokenService tokenService, YouzanRemoteClient remoteClient,
@@ -72,19 +73,26 @@ public class RealYouzanAdapter implements YouzanAdapter {
         JsonNode response = callApi(tenantId, shopId, "youzan.trades.sold.get", "4.0.2", query);
         JsonNode data = response.path("data");
         long total = data.path("total_results").asLong(0);
+        if (total > 100L * limit) {
+            throw new YouzanWindowTooLargeException();
+        }
         List<YouzanOrderEvent> events = new ArrayList<>();
         Map<String, String> rawPayloads = new HashMap<>();
         for (JsonNode wrapper : data.path("full_order_info_list")) {
-            String tid = wrapper.path("full_order_info").path("order_info").path("tid").asText();
+            JsonNode full = wrapper.path("full_order_info");
+            String tid = full.path("order_info").path("tid").asText();
             if (tid.isBlank()) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "有赞订单列表缺少订单号");
             }
-            YouzanOrderEnvelope detail = fetchOrder(tenantId, shopId, null, tid);
-            events.add(detail.event());
-            rawPayloads.put(detail.event().eventId(), detail.providerPayload());
-        }
-        if (position.pageNo() == 100 && (long) position.pageNo() * limit < total) {
-            throw new YouzanWindowTooLargeException();
+            if (orderMapper.hasCompleteDetail(full)) {
+                YouzanOrderEvent event = orderMapper.toOrderEventFromFullOrderInfo(shopId, null, full);
+                events.add(event);
+                rawPayloads.put(event.eventId(), wrapper.toString());
+            } else {
+                YouzanOrderEnvelope detail = fetchOrder(tenantId, shopId, null, tid);
+                events.add(detail.event());
+                rawPayloads.put(detail.event().eventId(), detail.providerPayload());
+            }
         }
         boolean hasMore = position.pageNo() < 100 && (long) position.pageNo() * limit < total;
         YouzanSyncCursorValue next = new YouzanSyncCursorValue(position.queryType(), position.windowStart(),

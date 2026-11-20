@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { YouzanCustomerLink, YouzanOrderView, YouzanReconcileReport, YouzanShopConfig, YouzanSkuMapping, YouzanSyncIssue } from '../api/youzan'
 import {
@@ -45,6 +45,16 @@ const canManageRuntime = computed(() => auth.hasPermission('integration:runtime:
 const activeTab = ref('orders')
 const showPrerequisites = ref(false)
 const shopId = ref('MOCK-SHOP-001')
+const normalizedShopId = computed(() => shopId.value.trim())
+const isMockShop = computed(() => normalizedShopId.value.startsWith('MOCK-'))
+const currentShop = computed(() => shops.value.find((item) => item.shopId === normalizedShopId.value) ?? null)
+const activeRealShops = computed(() => shops.value.filter((item) => item.syncEnabled && item.connectionStatus === 'CONNECTED'))
+const hasActiveRealIntegration = computed(() => (!isMockShop.value && Boolean(normalizedShopId.value)) || activeRealShops.value.length > 0)
+function shopStatusNote(shop: YouzanShopConfig): string {
+  if (shop.connectionStatus === 'CONNECTED') return '连接通过，同步未启用'
+  if (shop.connectionStatus === 'FAILED') return '连接失败'
+  return '连接待验证'
+}
 const customerNames = ref<Record<number, string>>({})
 const pendingMatches = computed(() => orders.value.filter((row) => row.mappingStatus === 'CUSTOMER_UNRESOLVED').length)
 const syncErrors = computed(() => orders.value.filter((row) => ['MAPPING_FAILED','PAYMENT_MISMATCH','RETRY','DEAD_LETTER'].includes(row.mappingStatus || '')).length)
@@ -92,7 +102,7 @@ async function loadOrders() {
   orderLoading.value = true
   orderError.value = ''
   try {
-    const result = await listYouzanOrders({ shopId: shopId.value, page: orderQuery.page, size: orderQuery.size })
+    const result = await listYouzanOrders({ shopId: normalizedShopId.value, page: orderQuery.page, size: orderQuery.size })
     orders.value = result.items
     orderTotal.value = result.total
     orderQuery.page = result.page
@@ -109,7 +119,7 @@ async function loadOrders() {
 async function loadReport() {
   reportError.value = ''
   try {
-    report.value = await getYouzanReconcileReport(shopId.value)
+    report.value = await getYouzanReconcileReport(normalizedShopId.value)
   } catch (error) {
     report.value = null
     reportError.value = tradingErrorText(error)
@@ -119,7 +129,7 @@ async function loadReport() {
 async function loadMappings() {
   mappingsLoading.value = true
   try {
-    mappings.value = await listYouzanSkuMappings(shopId.value)
+    mappings.value = await listYouzanSkuMappings(normalizedShopId.value)
   } catch (error) {
     mappings.value = []
     ElMessage.error(tradingErrorText(error))
@@ -131,7 +141,7 @@ async function loadMappings() {
 async function loadLinks() {
   linksLoading.value = true
   try {
-    links.value = await listYouzanCustomerLinks(shopId.value)
+    links.value = await listYouzanCustomerLinks(normalizedShopId.value)
     const ids = [...new Set(links.value.map((item) => item.customerId))]
     const results = await Promise.allSettled(ids.map((id) => getCustomer(id)))
     results.forEach((result, index) => {
@@ -176,7 +186,9 @@ async function loadShops() {
 }
 
 function selectShop(id: string) {
-  shopId.value = id
+  syncCursor.value = ''
+  syncAttempt = null
+  shopId.value = id.trim()
   search()
 }
 
@@ -223,24 +235,33 @@ const syncing = ref(false)
 const syncCursor = ref('')
 let syncAttempt: { signature: string; key: string } | null = null
 
+watch(shopId, () => {
+  syncCursor.value = ''
+  syncAttempt = null
+}, { flush: 'sync' })
+
 async function runSync(mode: 'sync' | 'reconcile') {
   if (syncing.value) return
+  const targetShopId = normalizedShopId.value
   const cursor = mode === 'sync' ? syncCursor.value : ''
-  const signature = `${shopId.value}:${mode}:${cursor}`
+  const signature = `${targetShopId}:${mode}:${cursor}`
   if (syncAttempt?.signature !== signature) syncAttempt = { signature, key: createYouzanKey(`youzan.${mode}`) }
   const key = syncAttempt.key
   syncing.value = true
   try {
     const result = mode === 'sync'
-      ? await syncYouzanOrders({ shopId: shopId.value, cursor: cursor || undefined, limit: 50 }, key)
-      : await reconcileYouzanOrders({ shopId: shopId.value, cursor: cursor || undefined, limit: 50 }, key)
+      ? await syncYouzanOrders({ shopId: targetShopId, cursor: cursor || undefined, limit: 50 }, key)
+      : await reconcileYouzanOrders({ shopId: targetShopId, cursor: cursor || undefined, limit: 50 }, key)
     syncAttempt = null
-    syncCursor.value = result.nextCursor ?? ''
+    if (normalizedShopId.value === targetShopId) {
+      syncCursor.value = result.nextCursor ?? ''
+    }
     await Promise.allSettled([loadOrders(), loadIssues(), loadReport()])
+    const syncLabel = targetShopId.startsWith('MOCK-') ? '模拟同步' : '同步'
     if (result.issues > 0) {
-      ElMessage.warning(`模拟同步返回 ${result.issues} 条异常，不能视为全部成功；已处理 ${result.processed} 条，重复 ${result.duplicates} 条`)
+      ElMessage.warning(`${syncLabel}返回 ${result.issues} 条异常，不能视为全部成功；已处理 ${result.processed} 条，重复 ${result.duplicates} 条`)
     } else {
-      ElMessage.success(`模拟同步完成：接收 ${result.received} 条，处理 ${result.processed} 条，重复 ${result.duplicates} 条`)
+      ElMessage.success(`${syncLabel}完成：接收 ${result.received} 条，处理 ${result.processed} 条，重复 ${result.duplicates} 条`)
     }
   } catch (error) {
     ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
@@ -283,12 +304,19 @@ onMounted(() => {
     <PageHeader title="有赞订单同步中心" description="线上订单自动进入 CRM：去重 → 匹配客户 → 识别套餐 → 保留活动归属 → 生成订单/权益">
       <template #actions><el-button type="info" plain @click="showPrerequisites = true">接口前置条件</el-button><el-button v-if="canManage" text data-testid="youzan-sync" @click="runSync('sync')">手动单页同步</el-button><el-button v-if="canManage" type="primary" :loading="syncing" data-testid="youzan-reconcile" @click="runSync('reconcile')">立即拉取订单</el-button></template>
     </PageHeader>
-    <div class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟</span><strong>真实接入功能已预建 · 默认禁用 · Q11 待授权联调</strong><p>模拟回调不代表真实资金到账；真实店铺须完成授权、沙箱验收后另行启用。</p></div>
+    <div v-if="isMockShop && activeRealShops.length === 0" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟</span><strong>真实接入功能已预建 · 默认禁用 · Q11 待授权联调</strong><p>模拟回调不代表真实资金到账；真实店铺须完成授权、沙箱验收后另行启用。</p></div>
+    <div v-else-if="isMockShop" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟视图</span><strong>当前查看模拟店铺（{{ normalizedShopId }}）；已存在 {{ activeRealShops.length }} 个已连接并启用的真实店铺</strong><p>模拟数据不代表真实资金到账；如需操作真实店铺，请切换为对应有赞店铺 ID（kdt_id）或在「店铺接入」中选择。</p></div>
+    <div v-else class="youzan-real-banner" data-testid="youzan-real-banner">
+      <span class="youzan-real-badge">真实店铺</span>
+      <strong v-if="currentShop?.syncEnabled && currentShop?.connectionStatus === 'CONNECTED'">当前店铺「{{ currentShop.shopName }}」（{{ currentShop.shopId }}）已连接并启用真实同步</strong>
+      <strong v-else>当前查看有赞店铺 {{ normalizedShopId }}{{ currentShop ? `（${currentShop.shopName} · ${shopStatusNote(currentShop)}）` : '' }}</strong>
+      <p>订单与支付状态以有赞官方接口及 CRM 支付核验为准；消息推送与重叠窗口自动幂等去重，异常请前往异常队列处理。</p>
+    </div>
     <el-alert v-if="!canRead" type="error" title="缺少 order:read 权限，无法查看有赞同步数据" :closable="false" />
     <template v-else>
       <IntegrationRuntimeSettings v-if="canManageRuntime" provider="youzan" />
       <div class="proto-stat-grid"><StatCard label="今日拉取" :value="`${report?.todayEvents ?? 0} 单`" sub="按实际接收时间" icon="bag" /><StatCard label="待匹配" :value="`${pendingMatches} 单`" sub="需要确认 CRM 客户" icon="users" /><StatCard label="同步异常" :value="`${syncErrors} 单`" sub="商品映射或支付核验异常" icon="shield" /><StatCard label="活动订单" :value="`${report?.campaignOrders ?? 0} 单`" sub="保留活动与批次归属" icon="activity" /></div>
-      <div class="proto-toolbar shop-card"><div class="proto-toolbar-left"><el-input v-model="shopId" placeholder="模拟店铺 ID" data-testid="youzan-shop-id" @keyup.enter="search" /><el-button @click="search">查询</el-button></div><span class="proto-note">默认店铺来自后端模拟适配器；其他店铺不会伪造同步结果</span></div>
+      <div class="proto-toolbar shop-card"><div class="proto-toolbar-left"><el-input v-model="shopId" placeholder="店铺 ID（kdt_id 或 MOCK-SHOP-001）" data-testid="youzan-shop-id" @keyup.enter="search" /><el-button @click="search">查询</el-button></div><span class="proto-note">{{ isMockShop ? '默认店铺来自后端模拟适配器；其他店铺不会伪造同步结果' : '当前按真实有赞店铺 ID（kdt_id）查询与同步；未授权店铺不会伪造同步结果' }}</span></div>
       <el-alert v-if="reportError" type="error" :title="reportError" :closable="false" />
 
       <el-card shadow="never">
@@ -327,19 +355,19 @@ onMounted(() => {
         </template>
 
         <template v-else-if="activeTab === 'policy'">
-          <YouzanSyncPolicyPanel :shop-id="shopId" :can-write="canManage" />
+          <YouzanSyncPolicyPanel :shop-id="normalizedShopId" :can-write="canManage" />
         </template>
 
         <template v-else-if="activeTab === 'jobs'">
-          <YouzanSyncJobPanel :shop-id="shopId" />
+          <YouzanSyncJobPanel :shop-id="normalizedShopId" />
         </template>
 
         <template v-else-if="activeTab === 'mappings'">
-          <YouzanSkuMappingPanel :mappings="mappings" :shop-id="shopId" :can-write="canWrite" :loading="mappingsLoading" @saved="loadMappings" />
+          <YouzanSkuMappingPanel :mappings="mappings" :shop-id="normalizedShopId" :can-write="canWrite" :loading="mappingsLoading" @saved="loadMappings" />
         </template>
 
         <template v-else-if="activeTab === 'customers'">
-          <YouzanCustomerLinkPanel :links="links" :shop-id="shopId" :can-write="canWrite" :loading="linksLoading" @saved="loadLinks" />
+          <YouzanCustomerLinkPanel :links="links" :shop-id="normalizedShopId" :can-write="canWrite" :loading="linksLoading" @saved="loadLinks" />
         </template>
 
         <template v-else>
@@ -361,7 +389,11 @@ onMounted(() => {
     </template>
 
     <YouzanOrderDetailDrawer v-model="detailVisible" :order="selectedOrder" />
-    <el-dialog v-model="showPrerequisites" title="有赞接口前置条件" width="520px"><p>正式接入需确认店铺类型、开放平台应用与授权、订单/退款接口、回调安全规则及分页限速。当前 Q11 未确认，真实 API 保持禁用。</p><p class="proto-note">有赞订单号必须唯一；重复推送不能重复发权益，退款回调也必须幂等。</p></el-dialog>
+    <el-dialog v-model="showPrerequisites" title="有赞接口前置条件" width="520px">
+      <p v-if="hasActiveRealIntegration">当前已进入真实店铺接入：请确认使用有赞云无容器自用型应用凭证、服务端出口 IP 已加入有赞 IP 白名单、公网 HTTPS 消息地址可正常返回 HTTP 200 {"code":0,"msg":"success"}，并按策略执行分页与增量同步。</p>
+      <p v-else>正式接入需确认店铺类型、开放平台应用与授权、订单/退款接口、回调安全规则及分页限速。当前尚未启用已验证的真实店铺，真实 API 默认保持禁用，完成授权与连接测试后可在全局开关及店铺配置中启用。</p>
+      <p class="proto-note">有赞订单号必须唯一；重复推送不能重复发权益，退款回调也必须幂等。</p>
+    </el-dialog>
   </div>
 </template>
 
@@ -369,4 +401,8 @@ onMounted(() => {
 .shop-card { margin-bottom: 16px; }
 .shop-input { width: min(300px, 100%); }
 .summary-time { margin-left: 6px; color: #8298a4; font-size: 11px; font-weight: 400; }
+.youzan-real-banner { margin-bottom: 18px; padding: 16px 20px; border: 1px solid #cce0db; border-radius: 14px; background: linear-gradient(105deg, #f1f9f7, #f8fcfb); }
+.youzan-real-banner strong { display: block; margin-bottom: 6px; color: #173f3a; font-size: 14px; }
+.youzan-real-banner p { margin: 0; color: #4c6d67; font-size: 12px; line-height: 1.75; }
+.youzan-real-badge { display: inline-flex; margin-bottom: 8px; padding: 3px 8px; border-radius: 6px; background: #1e6b63; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .5px; }
 </style>

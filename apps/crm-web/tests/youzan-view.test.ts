@@ -505,9 +505,11 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     await flushPromises()
 
     expect(retryYouzanSyncIssue).toHaveBeenCalledTimes(2)
-    const firstKey = vi.mocked(retryYouzanSyncIssue).mock.calls[0]?.[0]
-    const secondKey = vi.mocked(retryYouzanSyncIssue).mock.calls[1]?.[0]
-    expect(firstKey).toBeTruthy()
+    expect(vi.mocked(retryYouzanSyncIssue).mock.calls[0]?.[0]).toBe(801)
+    expect(vi.mocked(retryYouzanSyncIssue).mock.calls[1]?.[0]).toBe(801)
+    const firstKey = vi.mocked(retryYouzanSyncIssue).mock.calls[0]?.[1]
+    const secondKey = vi.mocked(retryYouzanSyncIssue).mock.calls[1]?.[1]
+    expect(firstKey).toEqual(expect.stringMatching(/^youzan\.issue\.retry:/))
     expect(secondKey).toBe(firstKey)
     expect(listYouzanOrders).toHaveBeenCalledTimes(2)
   })
@@ -544,5 +546,141 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     await wrapper.get('[data-testid="customer-link-save"]').trigger('click')
     await flushPromises()
     expect(saveYouzanCustomerLink).toHaveBeenCalledWith(expect.objectContaining({ customerId: 42, reason: '人工核对订单与CRM档案' }), expect.any(String))
+  })
+
+  it('切换店铺时清空同步游标，防止跨店游标泄漏', async () => {
+    vi.mocked(syncYouzanOrders)
+      .mockResolvedValueOnce({ received: 2, processed: 2, duplicates: 0, issues: 0, nextCursor: 'mock-cursor-2', hasMore: true })
+      .mockResolvedValueOnce({ received: 1, processed: 1, duplicates: 0, issues: 0, nextCursor: 'real-cursor-2', hasMore: false })
+      .mockResolvedValueOnce({ received: 1, processed: 1, duplicates: 0, issues: 0, nextCursor: null, hasMore: false })
+    vi.mocked(listYouzanShops).mockResolvedValue([{
+      id: 11,
+      shopId: '123456',
+      shopName: '正式美学店',
+      clientId: 'yz-client',
+      secretConfigured: true,
+      tokenExpiresAt: '2026-12-01T00:00:00Z',
+      connectionStatus: 'CONNECTED',
+      syncEnabled: true,
+      lastError: null,
+      lastConnectedAt: '2026-11-20T00:00:00Z',
+      webhookPath: '/api/v1/webhooks/youzan/official',
+      version: 1,
+    }])
+
+    const wrapper = mountView(['order:read', 'integration:youzan:manage'])
+    await flushPromises()
+
+    await wrapper.get('[data-testid="youzan-sync"]').trigger('click')
+    await flushPromises()
+    expect(syncYouzanOrders).toHaveBeenNthCalledWith(1, { shopId: 'MOCK-SHOP-001', cursor: undefined, limit: 50 }, expect.any(String))
+
+    await wrapper.get('[data-testid="youzan-shop-id"]').setValue('123456')
+    await flushPromises()
+    await wrapper.get('[data-testid="youzan-sync"]').trigger('click')
+    await flushPromises()
+    expect(syncYouzanOrders).toHaveBeenNthCalledWith(2, { shopId: '123456', cursor: undefined, limit: 50 }, expect.any(String))
+
+    await openTab(wrapper, '店铺接入')
+    const shopButton = wrapper.findAll('button').find((item) => item.text() === '正式美学店')
+    expect(shopButton).toBeDefined()
+    await shopButton?.trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="youzan-sync"]').trigger('click')
+    await flushPromises()
+    expect(syncYouzanOrders).toHaveBeenNthCalledWith(3, { shopId: '123456', cursor: undefined, limit: 50 }, expect.any(String))
+  })
+
+  it('真实店铺激活时展示真实接入横幅与同步提示，不再误报模拟或 Q11 禁用', async () => {
+    const success = vi.spyOn(ElMessage, 'success')
+    vi.mocked(listYouzanShops).mockResolvedValue([{
+      id: 11,
+      shopId: '123456',
+      shopName: '正式美学店',
+      clientId: 'yz-client',
+      secretConfigured: true,
+      tokenExpiresAt: '2026-12-01T00:00:00Z',
+      connectionStatus: 'CONNECTED',
+      syncEnabled: true,
+      lastError: null,
+      lastConnectedAt: '2026-11-20T00:00:00Z',
+      webhookPath: '/api/v1/webhooks/youzan/official',
+      version: 1,
+    }])
+    const wrapper = mountView(['order:read', 'integration:youzan:manage'])
+    await flushPromises()
+
+    await wrapper.get('[data-testid="youzan-shop-id"]').setValue('123456')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="youzan-real-banner"]').text()).toContain('正式美学店')
+    expect(wrapper.text()).not.toContain('Q11 待授权联调')
+    expect(wrapper.text()).not.toContain('当前 Q11 未确认，真实 API 保持禁用')
+
+    await wrapper.get('[data-testid="youzan-reconcile"]').trigger('click')
+    await flushPromises()
+    expect(success).toHaveBeenCalledWith(expect.stringContaining('同步完成：'))
+    expect(success).not.toHaveBeenCalledWith(expect.stringContaining('模拟同步完成'))
+  })
+
+  it('编辑已有 SKU 映射和人工客户链接时禁用外部自然键输入框', async () => {
+    const wrapper = mountView(['order:read', 'campaign:write'])
+    await flushPromises()
+
+    await openTab(wrapper, 'SKU 映射')
+    await wrapper.get('[data-testid="sku-mapping-edit"]').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="sku-mapping-external"]').element as HTMLInputElement).disabled).toBe(true)
+
+    await openTab(wrapper, '人工客户链接')
+    await wrapper.get('[data-testid="customer-link-edit"]').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="customer-link-external"]').element as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it('连接失败店铺在横幅显示连接失败，查询与映射面板均使用去空白后的 shopId', async () => {
+    vi.mocked(listYouzanShops).mockResolvedValue([{
+      id: 12,
+      shopId: '123456',
+      shopName: '失败测试店',
+      clientId: 'yz-client',
+      secretConfigured: true,
+      tokenExpiresAt: null,
+      connectionStatus: 'FAILED',
+      syncEnabled: false,
+      lastError: 'token expired',
+      lastConnectedAt: null,
+      webhookPath: '/api/v1/webhooks/youzan/official',
+      version: 1,
+    }])
+    const wrapper = mountView(['order:read', 'campaign:write', 'integration:youzan:manage'])
+    await flushPromises()
+
+    await wrapper.get('[data-testid="youzan-shop-id"]').setValue('  123456  ')
+    await flushPromises()
+
+    const bannerText = wrapper.get('[data-testid="youzan-real-banner"]').text()
+    expect(bannerText).toContain('失败测试店')
+    expect(bannerText).toContain('连接失败')
+    expect(bannerText).not.toContain('连接待验证')
+
+    const queryButton = wrapper.findAll('.shop-card button').find((item) => item.text() === '查询')
+    expect(queryButton).toBeDefined()
+    await queryButton?.trigger('click')
+    await flushPromises()
+
+    expect(listYouzanOrders).toHaveBeenLastCalledWith({ shopId: '123456', page: 1, size: 20 })
+    expect(getYouzanReconcileReport).toHaveBeenLastCalledWith('123456')
+    expect(listYouzanSkuMappings).toHaveBeenLastCalledWith('123456')
+    expect(listYouzanCustomerLinks).toHaveBeenLastCalledWith('123456')
+
+    await openTab(wrapper, 'SKU 映射')
+    await wrapper.get('[data-testid="sku-mapping-create"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="sku-mapping-external"]').setValue('YZ-SKU-TRIM')
+    component(wrapper, 'sku-mapping-crm').vm.$emit('change', 301)
+    await wrapper.get('[data-testid="sku-mapping-save"]').trigger('click')
+    await flushPromises()
+    expect(saveYouzanSkuMapping).toHaveBeenCalledWith(expect.objectContaining({ shopId: '123456', externalSkuId: 'YZ-SKU-TRIM', crmSkuId: 301 }), expect.any(String))
   })
 })

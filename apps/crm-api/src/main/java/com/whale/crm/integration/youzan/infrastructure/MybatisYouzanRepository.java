@@ -76,7 +76,9 @@ public class MybatisYouzanRepository implements YouzanRepository {
     public Optional<YouzanSyncCursor> findCursorForUpdate(long tenantId, String shopId) { return Optional.ofNullable(mapper.selectCursorForUpdate(tenantId, shopId)); }
     public void insertCursor(long tenantId, YouzanSyncCursor e) { mapper.insertCursor(tenantId, e); }
     public int updateCursor(long tenantId, long id, long version, String cursorValue,
+                            Instant windowStart, Instant windowEnd,
                             Instant lastSyncAt, Instant lastExternalUpdatedAt) {
-        return mapper.updateCursor(tenantId, id, version, cursorValue, lastSyncAt, lastExternalUpdatedAt);
+        return mapper.updateCursor(tenantId, id, version, cursorValue, windowStart, windowEnd,
+                lastSyncAt, lastExternalUpdatedAt);
     }
 }

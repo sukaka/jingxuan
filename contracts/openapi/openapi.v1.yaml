@@ -2916,7 +2916,7 @@ paths:
   /integrations/youzan/reconcile-report:
     get:
       tags: [YouzanIntegration]
-      summary: Mock 同步对账摘要（order:read）
+      summary: 有赞同步对账摘要（order:read）
       parameters:
         - {name: shopId, in: query, required: true, schema: {type: string}}
       responses:
@@ -3062,7 +3062,7 @@ paths:
     post:
       tags: [YouzanIntegration]
       summary: 新建或更新有赞店铺授权配置（integration:youzan:manage）
-      description: clientSecret 仅用于写入并加密保存；编辑时留空表示保持不变。真实同步仍受 FEATURE_REAL_YOUZAN 和店铺开关约束。
+      description: clientSecret 仅用于写入并加密保存；入参自动去除首尾空白，新建禁止空白密钥，编辑留空表示保持不变。仅修改 shopName 或 syncEnabled 会保留已验证连接与缓存 Token；修改 clientId 或 clientSecret 会清空 Token 并将状态重置为 UNVERIFIED。真实同步受企业运行时开关或 FEATURE_REAL_YOUZAN 及店铺开关约束。
       parameters:
         - {$ref: '#/components/parameters/CsrfToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -3161,8 +3161,8 @@ paths:
   /webhooks/youzan/official:
     post:
       tags: [YouzanIntegration]
-      summary: 有赞云官方消息入口；验签后延迟查询订单详情
-      description: 使用 Client-Id、Event-Type 和 Event-Sign，按 client_id + 原始请求实体 + client_secret 验签。消息只作为变更通知，不直接确认支付；测试消息不进入订单处理。
+      summary: 有赞云官方消息入口；验签后返回官方 200 ACK 并延迟查询订单详情
+      description: 使用 Client-Id、Event-Type 和 Event-Sign，按 client_id + 原始请求实体 + client_secret 验签。验签通过后按有赞云官方协议返回 HTTP 200 {"code":0,"msg":"success"}；其中 test=true 控制台验证消息与非订单事件仅返回 200 ACK，不进入订单或支付处理；订单类消息只作为变更通知触发延迟查单，不直接确认支付。
       security: []
       parameters:
         - {name: Client-Id, in: header, required: true, schema: {type: string}}
@@ -3172,21 +3172,21 @@ paths:
         required: true
         content:
           application/json:
-            schema: {type: object, description: 有赞官方消息原始实体，含 msgId/kdtId/msg 等}
+            schema: {type: object, description: 有赞官方消息原始实体，含 msgId/kdtId/msg/test 等}
       responses:
-        '202':
-          description: 验签通过并已接收，不代表订单详情或支付已处理成功
+        '200':
+          description: 有赞云官方消息推送标准成功 ACK；含 test=true 控制台验证消息与非订单事件的无副作用应答，订单类消息仅表示验签入库并已排期查单，不代表订单或支付已处理成功
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/YouzanEventEnvelope'}
+              schema: {$ref: '#/components/schemas/YouzanOfficialWebhookAck'}
         '400': {$ref: '#/components/responses/ValidationFailed'}
-        '413':
-          description: 消息体超过1MB限制；过深JSON按400拒绝
+        '401':
+          description: 签名无效、店铺未配置/未启用同步或真实接入未启用
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
-        '401':
-          description: 签名无效、店铺未授权或真实接入未启用
+        '413':
+          description: 消息体超过 1MB 限制（含 Content-Length 超限与 chunked 流式超限）；过深 JSON 按 400 拒绝
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
@@ -10276,7 +10276,7 @@ components:
         processed: {type: integer, format: int32, minimum: 0}
         duplicates: {type: integer, format: int32, minimum: 0}
         issues: {type: integer, format: int32, minimum: 0}
-        nextCursor: {type: string, description: Mock 下一页游标}
+        nextCursor: {type: string, nullable: true, description: 下一页游标（Mock 页码或真实时间窗/页码 JSON）}
         hasMore: {type: boolean, description: true 表示仍需继续补偿，不代表已完成全量对账}
     YouzanReconcileReport:
       type: object
@@ -10485,6 +10485,13 @@ components:
         data: {$ref: '#/components/schemas/YouzanEventResponse'}
         requestId: {type: string}
         timestamp: {type: string, format: date-time}
+    YouzanOfficialWebhookAck:
+      type: object
+      required: [code, msg]
+      description: 有赞云官方消息推送标准成功应答体
+      properties:
+        code: {type: integer, format: int32, enum: [0], example: 0}
+        msg: {type: string, enum: [success], example: success}
     YouzanSkuMappingListEnvelope:
       type: object
       required: [code, message, data, requestId, timestamp]

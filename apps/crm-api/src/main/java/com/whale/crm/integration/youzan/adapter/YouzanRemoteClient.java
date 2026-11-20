@@ -15,12 +15,17 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class YouzanRemoteClient {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+    private static final Set<Integer> RATE_LIMIT_CODES = Set.of(4101, 429, 40009);
+    private static final Set<Integer> TOKEN_ERROR_CODES = Set.of(4201, 4202, 4203, 40010, 40011, 40012);
     private final OkHttpClient client;
     private final ObjectMapper objectMapper;
     private final String baseUrl;
@@ -38,8 +43,12 @@ public class YouzanRemoteClient {
     }
 
     public YouzanTokenResponse fetchSelfToken(String clientId, String clientSecret, String shopId) {
+        return fetchSelfToken(clientId, clientSecret, shopId, false);
+    }
+
+    public YouzanTokenResponse fetchSelfToken(String clientId, String clientSecret, String shopId, boolean refresh) {
         Map<String, Object> body = Map.of("client_id", clientId, "client_secret", clientSecret,
-                "authorize_type", "silent", "grant_id", shopId, "refresh", true);
+                "authorize_type", "silent", "grant_id", shopId, "refresh", refresh);
         JsonNode response = post(baseUrl + "/auth/token", body);
         JsonNode data = requiredSuccess(response).path("data");
         String accessToken = requiredText(data, "access_token");
@@ -84,14 +93,28 @@ public class YouzanRemoteClient {
     }
 
     private JsonNode requiredSuccess(JsonNode response) {
+        if (response != null && response.path("gw_err_resp").isObject()) {
+            JsonNode gw = response.path("gw_err_resp");
+            int errCode = gw.path("err_code").asInt(0);
+            String errMsg = gw.path("err_msg").asText("");
+            if (isRateLimitFailure(errCode, errMsg)) {
+                throw new YouzanApiException(ErrorCode.RATE_LIMITED, "有赞接口限流，请稍后重试", errCode,
+                        false, true, null);
+            }
+            if (TOKEN_ERROR_CODES.contains(errCode) || isTokenFailure(errMsg)) {
+                throw new YouzanApiException(ErrorCode.UNAUTHORIZED, "有赞授权或Token已失效", errCode,
+                        true, false, null);
+            }
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "有赞网关返回错误: " + errCode);
+        }
         if (response == null || !response.path("success").asBoolean(false) || response.path("code").asInt() != 200) {
             int code = response == null ? 0 : response.path("code").asInt();
             String message = response == null ? "" : response.path("message").asText("");
-            if (code == 4101) {
+            if (isRateLimitFailure(code, message)) {
                 throw new YouzanApiException(ErrorCode.RATE_LIMITED, "有赞接口限流，请稍后重试", code,
                         false, true, null);
             }
-            if (isTokenFailure(message)) {
+            if (TOKEN_ERROR_CODES.contains(code) || isTokenFailure(message)) {
                 throw new YouzanApiException(ErrorCode.UNAUTHORIZED, "有赞授权或Token已失效", code,
                         true, false, null);
             }
@@ -100,22 +123,31 @@ public class YouzanRemoteClient {
         return response;
     }
 
-    private static java.time.Duration retryAfter(String value) {
+    private static Duration retryAfter(String value) {
         if (value == null || value.isBlank()) {
             return null;
         }
         try {
-            return java.time.Duration.ofSeconds(Math.max(0, Long.parseLong(value)));
+            return Duration.ofSeconds(Math.max(0, Long.parseLong(value.trim())));
         } catch (NumberFormatException ex) {
             return null;
         }
     }
 
+    private static boolean isRateLimitFailure(int code, String message) {
+        if (RATE_LIMIT_CODES.contains(code)) {
+            return true;
+        }
+        String value = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return value.contains("限流") || value.contains("rate") || value.contains("frequency");
+    }
+
     private static boolean isTokenFailure(String message) {
-        String value = message == null ? "" : message.toLowerCase();
-        boolean credential = value.contains("token") || value.contains("授权");
+        String value = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        boolean credential = value.contains("token") || value.contains("授权") || value.contains("凭证");
         boolean invalid = value.contains("过期") || value.contains("失效") || value.contains("无效")
-                || value.contains("expired") || value.contains("invalid");
+                || value.contains("不存在") || value.contains("expired") || value.contains("invalid")
+                || value.contains("not exist");
         return credential && invalid;
     }
 

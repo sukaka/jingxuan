@@ -32,4 +32,5 @@ public interface YouzanConfigRepository {
     List<YouzanSyncJob> findSyncJobs(long tenantId, String shopId, int offset, int size);
     long countSyncJobs(long tenantId, String shopId);
     int updateSyncJob(long tenantId, long id, long version, YouzanSyncJob job);
+    int renewSyncJobLease(long tenantId, long jobId, String leaseOwner, Instant expiresAt);
 }

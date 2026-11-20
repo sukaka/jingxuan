@@ -19,9 +19,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -81,6 +83,134 @@ class RealYouzanHttpFlowTest {
             assertThat(tokenCalls.get()).isEqualTo(1);
             assertThat(listCalls.get()).isEqualTo(1);
             assertThat(detailCalls.get()).isEqualTo(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void completeListPayloadSkipsTradeDetailHttpCallAndUsesNonForcedTokenFetch() throws Exception {
+        AtomicInteger tokenCalls = new AtomicInteger();
+        AtomicInteger listCalls = new AtomicInteger();
+        AtomicInteger detailCalls = new AtomicInteger();
+        AtomicReference<String> tokenBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/auth/token", exchange -> {
+            tokenCalls.incrementAndGet();
+            tokenBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, "{\"success\":true,\"code\":200,\"data\":{\"access_token\":\"http-token\",\"refresh_token\":\"http-refresh\",\"expires\":1893456000000}}");
+        });
+        server.createContext("/api/youzan.trades.sold.get/4.0.2", exchange -> {
+            listCalls.incrementAndGet();
+            respond(exchange, "{\"success\":true,\"code\":200,\"data\":{\"total_results\":1,\"full_order_info_list\":[{\"full_order_info\":{"
+                    + "\"order_info\":{\"tid\":\"E-HTTP-FULL-1\",\"status\":\"TRADE_SUCCESS\",\"update_time\":\"2026-10-24 11:00:00\"},"
+                    + "\"pay_info\":{\"payment\":\"36.22\",\"pay_time\":\"2026-10-24 10:59:00\",\"transaction\":[\"T-HTTP-FULL-1\"],\"phase_payments\":[]},"
+                    + "\"buyer_info\":{\"yz_open_id\":\"yz-http-full-1\"},\"orders\":[{\"item_id\":301,\"sku_id\":9,\"num\":2}]}}]}}");
+        });
+        server.createContext("/api/youzan.trade.get/4.0.2", exchange -> {
+            detailCalls.incrementAndGet();
+            respond(exchange, "{\"success\":true,\"code\":200,\"data\":{}}");
+        });
+        server.start();
+        try {
+            ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            YouzanRemoteClient remote = new YouzanRemoteClient(new okhttp3.OkHttpClient(), mapper, base);
+            YouzanConfigRepository repository = mock(YouzanConfigRepository.class);
+            AesGcmCipher cipher = mock(AesGcmCipher.class);
+            AtomicReference<YouzanShopConfig> config = new AtomicReference<>(
+                    new YouzanShopConfig(1L, 2L, "123", "HTTP测试店", "client", "secret-cipher",
+                            null, null, null, "UNVERIFIED", true, null, null, null, 0L));
+            when(repository.findShopConfig(2L, "123")).thenAnswer(invocation -> Optional.of(config.get()));
+            when(repository.findShopConfigForUpdate(2L, "123")).thenAnswer(invocation -> Optional.of(config.get()));
+            when(repository.updateShopTokens(eq(2L), eq(1L), anyLong(), any())).thenAnswer(invocation -> {
+                YouzanShopConfig updated = invocation.getArgument(3);
+                config.set(new YouzanShopConfig(updated.id(), updated.tenantId(), updated.shopId(), updated.shopName(),
+                        updated.clientId(), updated.clientSecretCipher(), updated.accessTokenCipher(),
+                        updated.refreshTokenCipher(), updated.tokenExpiresAt(), updated.connectionStatus(),
+                        updated.syncEnabled(), updated.lastError(), updated.lastConnectedAt(), updated.createdAt(),
+                        updated.version() + 1));
+                return 1;
+            });
+            when(cipher.decrypt(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+            when(cipher.encrypt(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+            YouzanTokenService tokens = new YouzanTokenService(repository, remote, cipher, transactionManager());
+            RealYouzanAdapter adapter = new RealYouzanAdapter(tokens, remote, new YouzanOrderMapper(), mapper, "4.0.2", 0);
+            Instant start = Instant.parse("2026-10-01T00:00:00Z");
+            Instant end = Instant.parse("2026-10-26T00:00:00Z");
+            String cursor = mapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", start, end, end, 1));
+
+            YouzanPullPage page = adapter.pullOrders(2L, "123", cursor, 50);
+
+            assertThat(page.events()).hasSize(1);
+            assertThat(page.events().get(0).externalOrderNo()).isEqualTo("E-HTTP-FULL-1");
+            assertThat(page.events().get(0).amountFen()).isEqualTo(3622L);
+            assertThat(page.events().get(0).externalTradeNo()).isEqualTo("T-HTTP-FULL-1");
+            assertThat(page.events().get(0).paidAt()).isEqualTo(Instant.parse("2026-10-24T02:59:00Z"));
+            assertThat(mapper.readTree(tokenBody.get()).path("refresh").asBoolean(true)).isFalse();
+            assertThat(tokenCalls.get()).isEqualTo(1);
+            assertThat(listCalls.get()).isEqualTo(1);
+            assertThat(detailCalls.get()).isZero();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void gatewayTokenExpiredErrorForcesRefreshAndRetriesOverHttp() throws Exception {
+        AtomicInteger tokenCalls = new AtomicInteger();
+        AtomicInteger listCalls = new AtomicInteger();
+        AtomicReference<String> tokenBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/auth/token", exchange -> {
+            tokenCalls.incrementAndGet();
+            tokenBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, "{\"success\":true,\"code\":200,\"data\":{\"access_token\":\"fresh-http-token\",\"refresh_token\":\"fresh-refresh\",\"expires\":1893456000000}}");
+        });
+        server.createContext("/api/youzan.trades.sold.get/4.0.2", exchange -> {
+            int call = listCalls.incrementAndGet();
+            if (call == 1) {
+                respond(exchange, "{\"gw_err_resp\":{\"err_code\":4202,\"err_msg\":\"请求凭证过期\"}}");
+            } else {
+                respond(exchange, "{\"success\":true,\"code\":200,\"data\":{\"total_results\":0,\"full_order_info_list\":[]}}");
+            }
+        });
+        server.start();
+        try {
+            ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            YouzanRemoteClient remote = new YouzanRemoteClient(new okhttp3.OkHttpClient(), mapper, base);
+            YouzanConfigRepository repository = mock(YouzanConfigRepository.class);
+            AesGcmCipher cipher = mock(AesGcmCipher.class);
+            AtomicReference<YouzanShopConfig> config = new AtomicReference<>(
+                    new YouzanShopConfig(1L, 2L, "123", "HTTP测试店", "client", "secret-cipher",
+                            "stale-http-token", "old-refresh", Instant.parse("2030-01-01T00:00:00Z"),
+                            "CONNECTED", true, null, Instant.parse("2026-10-01T00:00:00Z"), null, 1L));
+            when(repository.findShopConfig(2L, "123")).thenAnswer(invocation -> Optional.of(config.get()));
+            when(repository.findShopConfigForUpdate(2L, "123")).thenAnswer(invocation -> Optional.of(config.get()));
+            when(repository.updateShopTokens(eq(2L), eq(1L), anyLong(), any())).thenAnswer(invocation -> {
+                YouzanShopConfig updated = invocation.getArgument(3);
+                config.set(new YouzanShopConfig(updated.id(), updated.tenantId(), updated.shopId(), updated.shopName(),
+                        updated.clientId(), updated.clientSecretCipher(), updated.accessTokenCipher(),
+                        updated.refreshTokenCipher(), updated.tokenExpiresAt(), updated.connectionStatus(),
+                        updated.syncEnabled(), updated.lastError(), updated.lastConnectedAt(), updated.createdAt(),
+                        updated.version() + 1));
+                return 1;
+            });
+            when(cipher.decrypt(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+            when(cipher.encrypt(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+            YouzanTokenService tokens = new YouzanTokenService(repository, remote, cipher, transactionManager());
+            RealYouzanAdapter adapter = new RealYouzanAdapter(tokens, remote, new YouzanOrderMapper(), mapper, "4.0.2", 0);
+            Instant start = Instant.parse("2026-10-01T00:00:00Z");
+            Instant end = Instant.parse("2026-10-26T00:00:00Z");
+            String cursor = mapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", start, end, end, 1));
+
+            YouzanPullPage page = adapter.pullOrders(2L, "123", cursor, 50);
+
+            assertThat(page.events()).isEmpty();
+            assertThat(tokenCalls.get()).isEqualTo(1);
+            assertThat(listCalls.get()).isEqualTo(2);
+            assertThat(mapper.readTree(tokenBody.get()).path("refresh").asBoolean(false)).isTrue();
         } finally {
             server.stop(0);
         }

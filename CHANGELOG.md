@@ -2,6 +2,25 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [YOUZAN-OFFICIAL-FIX] 有赞云官方协议、同步可靠性与前端工作台修复 — 2026-11-20
+
+### 实现
+- **官方消息入口协议对齐**：`POST /api/v1/webhooks/youzan/official` 改为按有赞云官方消息推送协议返回 HTTP `200 OK` 与 `{"code":0,"msg":"success"}`（含 `test=true` 控制台验证消息与非订单事件的无副作用应答）；缺失请求头或过深 JSON 返回 `400`，签名无效/店铺未启用/开关禁用返回 `401`，>1MB（含 chunked）返回 `413`；支持 `full_order_info.order_info.tid`、原始 JSON `msg` 免误解码、大小写 MD5 验签、重试复用 `externalOrderNo`、`selectPendingEvents` 过滤 `process_attempts < 10` 防队头饥饿及并发重试不回退 `PROCESSED`/已分类事件。
+- **官方客户端与适配器可靠性**：`YouzanRemoteClient` 统一解析有赞网关错误 `gw_err_resp`（`4202`/`4203`/`40010`/`4101`），常规取 Token 使用 `refresh=false`、强制刷新使用 `refresh=true`，`testConnection` 遇 Token 过期自动强制刷新重试一次；`RealYouzanAdapter` 直接映射 `youzan.trades.sold.get/4.0.2` 完整 `full_order_info`（全状态校验 `yz_open_id`/`payment`/`pay_time`）以避免 N+1 查单消耗配额，缺失字段自动回退 `youzan.trade.get`，超过 100 页上限时首轮即触发窗口二分，`nextCallAt` 改为 `ConcurrentHashMap`。
+- **增量同步与店铺配置**：`YouzanIncrementalSyncService` 与调度同步支持续跑未完成游标、自动裁剪超过 90 天窗口、跨多页循环拉取、仅在窗口完整完成后推进 `lastSyncAt`、按 UTC 时间校验店铺租约、校验 `renewSyncJobLease` 并阻止 `finishJob` 复活已过期 `FAILED` 任务、整秒二分高密度窗口；`YouzanConnectionService` 对凭证入参自动去空白，仅修改 `shopName`/`syncEnabled` 时保留既有已验证 Token 与 `CONNECTED` 状态；`YouzanEventService.complete()` 改用真实管理员 `userId` 记录审计与异常解决人。
+- **前端工作台与测试修复**：
+  - `YouzanShopConfigPanel.vue` 对店铺/应用/密钥去空白并拒绝新建纯空格密钥，补齐 `kdt_id`/`grant_id`、无容器自用型应用凭证、Token 保留规则、动态 `webhookPath` 及公网 HTTPS/HTTP 200 ACK/IP 白名单指引。
+  - `YouzanOrdersView.vue` 在切换店铺时清空 `syncCursor` 防止跨店游标泄漏，统一使用去空白 `normalizedShopId` 查询订单/报表/映射面板；真实店铺激活时区分 `CONNECTED`/`FAILED`/`UNVERIFIED` 状态并切换横幅、前置条件与手动同步提示，不再误报模拟同步或 Q11 禁用。
+  - `YouzanSyncPolicyPanel.vue` 使用 `formatDateTime` 格式化最近调度时间并在保存后同步 `saved.nextRunAt`；`YouzanSkuMappingPanel.vue` 与 `YouzanCustomerLinkPanel.vue` 编辑态禁用外部自然键输入。
+  - 修正 `youzan-view.test.ts` 中异常重试幂等键断言误取参数下标 `[0]` 的缺陷，补齐空白密钥拦截、游标重置、真实店铺提示、策略时间同步及编辑态自然键禁用测试。
+- **契约与文档同步**：更新 `contracts/openapi/openapi.v1.yaml`（新增 `YouzanOfficialWebhookAck`、修正官方 webhook 200 响应及旧 Mock 描述）、`docs/04_接口与集成/42_有赞订单对接.md` 与 `docs/04_接口与集成/42_有赞字段映射与交接.md`。无新增数据库表或 Flyway 迁移。
+
+### 验证
+- 后端 `./mvnw -B -pl apps/crm-api -Dit.test='*Youzan*IT' verify`：**BUILD SUCCESS**；409 项后端全量单元测试 + 15 项有赞真实 MySQL 8.4 Testcontainers 集成测试（`YouzanOrderQueryIT` 3、`YouzanConnectionApiIT` 3、`YouzanV8SchemaIT` 2、`YouzanAcceptanceIT` 7）全部通过；Checkstyle 0 违规、SpotBugs 0 问题、Spotless 0 格式问题（1205 个文件清洁）。注：未运行非有赞模块的 `*IT` 套件与 E2E。
+- 前端全量验证通过：`apps/crm-web` 执行 `npm run typecheck`、`npm run lint`（0 warning）、`npm run test`（142 个测试文件、615 项测试全部通过）与 `npm run build`（exit 0）。
+- OpenAPI 契约解析校验通过：283 个 paths、2503 个本地 `$ref` 全部解析（0 缺失）、160 个 `operationId` 无重复。
+- 真实有赞生产/沙箱店铺联调（Q11）、退款同步及目标服务器公网 HTTPS 与出口 IP 白名单仍需在部署环境配置验收。
+
 ## [V53-OPS] 本地 ClamAV 异常恢复与扫描验收 — 2026-11-14
 
 ### 实现

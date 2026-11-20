@@ -10,9 +10,11 @@ import java.time.Instant;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -124,6 +126,106 @@ class RealYouzanAdapterTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> adapter.fetchOrder(2L, "123", "m-1", "E-1"))
                 .isSameAs(limited);
         verify(remote, org.mockito.Mockito.times(3)).callApi(eq("token"), eq("youzan.trade.get"), eq("4.0.2"), any());
+    }
+
+    @Test
+    void pullMapsCompleteListOrderDirectlyWithoutCallingTradeGet() throws Exception {
+        YouzanTokenService tokenService = mock(YouzanTokenService.class);
+        YouzanRemoteClient remote = mock(YouzanRemoteClient.class);
+        when(tokenService.accessToken(2L, "123")).thenReturn("token");
+        JsonNode list = objectMapper.readTree("""
+                {"success":true,"code":200,"data":{"total_results":1,"full_order_info_list":[
+                  {"full_order_info":{
+                    "order_info":{"tid":"E-COMPLETE-1","status":"TRADE_SUCCESS","update_time":"2026-10-24 11:00:00"},
+                    "pay_info":{"payment":"88.50","pay_time":"2026-10-24 10:59:00","transaction":["T-COMPLETE-1"],"phase_payments":[]},
+                    "buyer_info":{"yz_open_id":"yz-complete-1"},
+                    "orders":[{"item_id":301,"sku_id":9,"num":2}]
+                  }}
+                ]}}
+                """);
+        when(remote.callApi(eq("token"), eq("youzan.trades.sold.get"), eq("4.0.2"), any())).thenReturn(list);
+        RealYouzanAdapter adapter = new RealYouzanAdapter(tokenService, remote, new YouzanOrderMapper(), objectMapper, "4.0.2", 0);
+        Instant start = Instant.parse("2026-10-01T00:00:00Z");
+        Instant end = Instant.parse("2026-10-26T00:00:00Z");
+        String cursor = objectMapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", start, end, end, 1));
+
+        YouzanPullPage page = adapter.pullOrders(2L, "123", cursor, 50);
+
+        assertThat(page.events()).hasSize(1);
+        YouzanOrderEvent event = page.events().get(0);
+        assertThat(event.externalOrderNo()).isEqualTo("E-COMPLETE-1");
+        assertThat(event.amountFen()).isEqualTo(8850L);
+        assertThat(event.externalCustomerId()).isEqualTo("yz-complete-1");
+        assertThat(event.externalTradeNo()).isEqualTo("T-COMPLETE-1");
+        assertThat(event.paidAt()).isEqualTo(Instant.parse("2026-10-24T02:59:00Z"));
+        assertThat(event.items()).containsExactly(new YouzanOrderLine("301:9", 2));
+        assertThat(page.rawPayloads()).containsKey(event.eventId());
+        assertThat(page.rawPayloads().get(event.eventId())).contains("E-COMPLETE-1");
+        verify(remote, never()).callApi(any(), eq("youzan.trade.get"), any(), any());
+    }
+
+    @Test
+    void pullWithUpdatedCursorUsesStartUpdateAndEndUpdateParams() throws Exception {
+        YouzanTokenService tokenService = mock(YouzanTokenService.class);
+        YouzanRemoteClient remote = mock(YouzanRemoteClient.class);
+        when(tokenService.accessToken(2L, "123")).thenReturn("token");
+        JsonNode list = objectMapper.readTree("{\"success\":true,\"code\":200,\"data\":{\"total_results\":0,\"full_order_info_list\":[]}}");
+        when(remote.callApi(eq("token"), eq("youzan.trades.sold.get"), eq("4.0.2"), any())).thenReturn(list);
+        RealYouzanAdapter adapter = new RealYouzanAdapter(tokenService, remote, new YouzanOrderMapper(), objectMapper, "4.0.2", 0);
+        Instant start = Instant.parse("2026-10-20T00:00:00Z");
+        Instant end = Instant.parse("2026-10-26T00:00:00Z");
+        String cursor = objectMapper.writeValueAsString(YouzanSyncCursorValue.updated(start, end));
+
+        adapter.pullOrders(2L, "123", cursor, 50);
+
+        ArgumentCaptor<Map<String, Object>> query = ArgumentCaptor.captor();
+        verify(remote).callApi(eq("token"), eq("youzan.trades.sold.get"), eq("4.0.2"), query.capture());
+        assertThat(query.getValue())
+                .containsEntry("start_update", YouzanTime.format(start))
+                .containsEntry("end_update", YouzanTime.format(end))
+                .doesNotContainKeys("start_created", "end_created");
+    }
+
+    @Test
+    void pageOneHundredBeyondOfficialCapSplitsBeforeMakingDetailCalls() throws Exception {
+        YouzanTokenService tokenService = mock(YouzanTokenService.class);
+        YouzanRemoteClient remote = mock(YouzanRemoteClient.class);
+        when(tokenService.accessToken(2L, "123")).thenReturn("token");
+        JsonNode list = objectMapper.readTree("""
+                {"success":true,"code":200,"data":{"total_results":10001,"full_order_info_list":[
+                  {"full_order_info":{"order_info":{"tid":"E-STUB-1"}}}
+                ]}}
+                """);
+        when(remote.callApi(eq("token"), eq("youzan.trades.sold.get"), eq("4.0.2"), any())).thenReturn(list);
+        RealYouzanAdapter adapter = new RealYouzanAdapter(tokenService, remote, new YouzanOrderMapper(), objectMapper, "4.0.2", 0);
+        Instant start = Instant.parse("2026-01-01T00:00:00Z");
+        Instant end = Instant.parse("2026-03-01T00:00:00Z");
+        String cursor = objectMapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", start, end, end, 100));
+
+        assertThatThrownBy(() -> adapter.pullOrders(2L, "123", cursor, 100))
+                .isInstanceOf(YouzanWindowTooLargeException.class);
+        verify(remote, never()).callApi(any(), eq("youzan.trade.get"), any(), any());
+    }
+
+    @Test
+    void pageOneBeyondOfficialCapSplitsImmediatelyBeforeMakingDetailCalls() throws Exception {
+        YouzanTokenService tokenService = mock(YouzanTokenService.class);
+        YouzanRemoteClient remote = mock(YouzanRemoteClient.class);
+        when(tokenService.accessToken(2L, "123")).thenReturn("token");
+        JsonNode list = objectMapper.readTree("""
+                {"success":true,"code":200,"data":{"total_results":10001,"full_order_info_list":[
+                  {"full_order_info":{"order_info":{"tid":"E-STUB-P1"}}}
+                ]}}
+                """);
+        when(remote.callApi(eq("token"), eq("youzan.trades.sold.get"), eq("4.0.2"), any())).thenReturn(list);
+        RealYouzanAdapter adapter = new RealYouzanAdapter(tokenService, remote, new YouzanOrderMapper(), objectMapper, "4.0.2", 0);
+        Instant start = Instant.parse("2026-01-01T00:00:00Z");
+        Instant end = Instant.parse("2026-03-01T00:00:00Z");
+        String cursor = objectMapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", start, end, end, 1));
+
+        assertThatThrownBy(() -> adapter.pullOrders(2L, "123", cursor, 100))
+                .isInstanceOf(YouzanWindowTooLargeException.class);
+        verify(remote, never()).callApi(any(), eq("youzan.trade.get"), any(), any());
     }
 
     private JsonNode detail() throws Exception {

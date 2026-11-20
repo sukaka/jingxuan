@@ -58,5 +58,10 @@ public interface YouzanRepository {
     void insertCursor(long tenantId, YouzanSyncCursor cursor);
     default void insertCursor(YouzanSyncCursor cursor) { insertCursor(TenantContext.currentTenantId(), cursor); }
     int updateCursor(long tenantId, long id, long version, String cursorValue,
+                     Instant windowStart, Instant windowEnd,
                      Instant lastSyncAt, Instant lastExternalUpdatedAt);
+    default int updateCursor(long tenantId, long id, long version, String cursorValue,
+                             Instant lastSyncAt, Instant lastExternalUpdatedAt) {
+        return updateCursor(tenantId, id, version, cursorValue, null, null, lastSyncAt, lastExternalUpdatedAt);
+    }
 }

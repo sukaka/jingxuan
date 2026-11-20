@@ -1,5 +1,6 @@
 package com.whale.crm.integration.youzan.application;
 
+import com.whale.crm.integration.youzan.adapter.YouzanApiException;
 import com.whale.crm.integration.youzan.adapter.YouzanRemoteClient;
 import com.whale.crm.integration.youzan.adapter.YouzanTokenResponse;
 import com.whale.crm.integration.youzan.adapter.YouzanTime;
@@ -67,7 +68,15 @@ public class YouzanTokenService {
             Instant end = Instant.now();
             Map<String, Object> query = Map.of("page_no", 1, "page_size", 1,
                     "start_created", YouzanTime.format(end.minus(1, ChronoUnit.DAYS)), "end_created", YouzanTime.format(end));
-            remoteClient.callApi(token, "youzan.trades.sold.get", "4.0.2", query);
+            try {
+                remoteClient.callApi(token, "youzan.trades.sold.get", "4.0.2", query);
+            } catch (YouzanApiException ex) {
+                if (!ex.authError()) {
+                    throw ex;
+                }
+                String refreshed = refreshAccessToken(tenantId, shopId);
+                remoteClient.callApi(refreshed, "youzan.trades.sold.get", "4.0.2", query);
+            }
             return transactions.execute(status -> {
                 YouzanShopConfig config = repository.findShopConfigForUpdate(tenantId, shopId).orElseThrow();
                 repository.updateShopConnectionStatus(tenantId, config.id(), config.version(), "CONNECTED", null, Instant.now());
@@ -86,7 +95,7 @@ public class YouzanTokenService {
             return cipher.decrypt(config.accessTokenCipher());
         }
         YouzanTokenResponse token = remoteClient.fetchSelfToken(config.clientId(),
-                cipher.decrypt(config.clientSecretCipher()), shopId);
+                cipher.decrypt(config.clientSecretCipher()), shopId, force);
         YouzanShopConfig updated = new YouzanShopConfig(config.id(), config.tenantId(), config.shopId(),
                 config.shopName(), config.clientId(), config.clientSecretCipher(), cipher.encrypt(token.accessToken()),
                 cipher.encrypt(token.refreshToken()), token.expiresAt(), "CONNECTED", config.syncEnabled(),
@@ -100,7 +109,7 @@ public class YouzanTokenService {
     private void markFailed(long tenantId, String shopId, BusinessException error) {
         transactions.executeWithoutResult(status -> repository.findShopConfigForUpdate(tenantId, shopId)
                 .ifPresent(config -> repository.updateShopConnectionStatus(tenantId, config.id(), config.version(),
-                        "FAILED", safeError(error.getMessage()), null)));
+                        "FAILED", safeError(error.getMessage()), config.lastConnectedAt())));
     }
 
     private YouzanShopConfig config(long tenantId, String shopId) {

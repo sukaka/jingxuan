@@ -138,14 +138,14 @@ async function save() {
       <el-table-column label="链接方式" width="100"><template #default="{ row }">{{ row.linkType === 'STRONG' ? '强确认' : row.linkType === 'MANUAL' ? '人工确认' : row.linkType }}</template></el-table-column>
       <el-table-column label="证据等级" width="95"><template #default="{ row }">{{ ({ HIGH: '高', MEDIUM: '中', LOW: '低' } as Record<string, string>)[row.confidence] || row.confidence }}</template></el-table-column>
       <el-table-column prop="reason" label="人工理由" min-width="190" show-overflow-tooltip />
-      <el-table-column v-if="canWrite" label="操作" width="100" fixed="right"><template #default="{ row }"><el-button text size="small" @click="openEdit(row)">编辑</el-button></template></el-table-column>
+      <el-table-column v-if="canWrite" label="操作" width="100" fixed="right"><template #default="{ row }"><el-button text size="small" data-testid="customer-link-edit" @click="openEdit(row)">编辑</el-button></template></el-table-column>
       <template #empty><el-empty description="暂无人工客户链接；未确认客户不会生成订单或权益" /></template>
     </app-table>
 
     <el-dialog v-model="formVisible" :title="editingId ? '编辑人工客户链接' : '新增人工客户链接'" width="min(580px, 94vw)">
       <el-alert type="warning" :closable="false" title="这里只保存人工确认关系，不按昵称或手机号自动匹配，也不会据此伪造支付凭证。" class="dialog-tip" />
       <el-form label-position="top" @submit.prevent>
-        <el-form-item label="有赞外部客户标识" required><el-input v-model="externalCustomerId" maxlength="128" data-testid="customer-link-external" /></el-form-item>
+        <el-form-item label="有赞外部客户标识" required><el-input v-model="externalCustomerId" :disabled="editingId !== null" maxlength="128" data-testid="customer-link-external" /></el-form-item>
         <el-form-item label="CRM 客户（当前数据范围）" required>
           <el-select :model-value="customerId" filterable remote :remote-method="searchCustomers" :loading="searching" class="full-width" data-testid="customer-link-crm" @change="selectCustomer">
             <el-option v-for="item in customerOptions" :key="item.id" :label="customerLabel(item)" :value="item.id" />

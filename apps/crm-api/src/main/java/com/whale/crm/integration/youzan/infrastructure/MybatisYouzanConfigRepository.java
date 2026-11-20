@@ -28,7 +28,7 @@ public class MybatisYouzanConfigRepository implements YouzanConfigRepository {
     public int updateShopConfig(long tenantId, long id, long version, YouzanShopConfig config) { return mapper.updateShopConfig(tenantId, id, version, config); }
     public int updateShopTokens(long tenantId, long id, long version, YouzanShopConfig config) { return mapper.updateShopTokens(tenantId, id, version, config); }
     public int updateShopConnectionStatus(long tenantId, long id, long version, String status, String error, Instant connectedAt) { return mapper.updateShopConnectionStatus(tenantId, id, version, status, error, connectedAt); }
-    public int acquireShopLease(long tenantId, String shopId, String owner, Instant expiresAt) { return mapper.acquireShopLease(tenantId, shopId, owner, expiresAt); }
+    public int acquireShopLease(long tenantId, String shopId, String owner, Instant expiresAt) { return mapper.acquireShopLease(tenantId, shopId, owner, Instant.now(), expiresAt); }
     public int releaseShopLease(long tenantId, String shopId, String owner) { return mapper.releaseShopLease(tenantId, shopId, owner); }
     public int releaseExpiredShopLeases(Instant now) { return mapper.releaseExpiredShopLeases(now); }
     public int expireRunningJobs(Instant now) { return mapper.expireRunningJobs(now); }
@@ -43,4 +43,5 @@ public class MybatisYouzanConfigRepository implements YouzanConfigRepository {
     public List<YouzanSyncJob> findSyncJobs(long tenantId, String shopId, int offset, int size) { return mapper.selectSyncJobs(tenantId, shopId, offset, size); }
     public long countSyncJobs(long tenantId, String shopId) { return mapper.countSyncJobs(tenantId, shopId); }
     public int updateSyncJob(long tenantId, long id, long version, YouzanSyncJob job) { return mapper.updateSyncJob(tenantId, id, version, job); }
+    public int renewSyncJobLease(long tenantId, long jobId, String leaseOwner, Instant expiresAt) { return mapper.renewSyncJobLease(tenantId, jobId, leaseOwner, expiresAt); }
 }

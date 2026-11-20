@@ -25,7 +25,7 @@
     SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE sync_enabled=1 ORDER BY id
   </select>
   <update id="updateShopConfig">
-    UPDATE crm_youzan_shop_config SET shop_name=#{entity.shopName},client_id=#{entity.clientId},client_secret_cipher=#{entity.clientSecretCipher},access_token_cipher=NULL,refresh_token_cipher=NULL,token_expires_at=NULL,sync_enabled=#{entity.syncEnabled},connection_status='UNVERIFIED',last_error=NULL,last_connected_at=NULL,version=version+1
+    UPDATE crm_youzan_shop_config SET shop_name=#{entity.shopName},client_id=#{entity.clientId},client_secret_cipher=#{entity.clientSecretCipher},access_token_cipher=#{entity.accessTokenCipher},refresh_token_cipher=#{entity.refreshTokenCipher},token_expires_at=#{entity.tokenExpiresAt},sync_enabled=#{entity.syncEnabled},connection_status=#{entity.connectionStatus},last_error=#{entity.lastError},last_connected_at=#{entity.lastConnectedAt},version=version+1
     WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
   </update>
   <update id="updateShopTokens">
@@ -39,7 +39,7 @@
   <update id="acquireShopLease">
     UPDATE crm_youzan_shop_config SET lease_owner=#{owner},lease_expires_at=#{expiresAt}
     WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
-      AND (lease_owner IS NULL OR lease_owner=#{owner} OR lease_expires_at &lt; CURRENT_TIMESTAMP(3))
+      AND (lease_owner IS NULL OR lease_owner=#{owner} OR lease_expires_at &lt; #{now})
   </update>
   <update id="releaseShopLease">
     UPDATE crm_youzan_shop_config SET lease_owner=NULL,lease_expires_at=NULL
@@ -90,5 +90,9 @@
   <update id="updateSyncJob">
     UPDATE crm_youzan_sync_job SET status=#{entity.status},cursor_value=#{entity.cursorValue},window_start=#{entity.windowStart},window_end=#{entity.windowEnd},received_count=#{entity.receivedCount},processed_count=#{entity.processedCount},duplicate_count=#{entity.duplicateCount},issue_count=#{entity.issueCount},last_error=#{entity.lastError},lease_owner=#{entity.leaseOwner},lease_expires_at=#{entity.leaseExpiresAt},started_at=#{entity.startedAt},finished_at=#{entity.finishedAt},version=version+1
     WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+  <update id="renewSyncJobLease">
+    UPDATE crm_youzan_sync_job SET lease_expires_at=#{expiresAt},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{jobId} AND status='RUNNING' AND lease_owner=#{leaseOwner}
   </update>
 </mapper>

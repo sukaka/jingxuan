@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { YouzanShopConfig } from '../../api/youzan'
 import { saveYouzanShop, testYouzanShop } from '../../api/youzan'
@@ -7,13 +7,15 @@ import { tradingErrorText } from '../trading/tradingUi'
 import { createYouzanKey } from './youzanUi'
 import { formatDateTime } from '../customer/shared'
 
-defineProps<{ shops: YouzanShopConfig[]; loading: boolean; canWrite: boolean }>()
+const props = defineProps<{ shops: YouzanShopConfig[]; loading: boolean; canWrite: boolean }>()
 const emit = defineEmits<{ saved: []; select: [shopId: string] }>()
 const formVisible = ref(false)
 const saving = ref(false)
 const testingId = ref<number | null>(null)
 const editingId = ref<number | null>(null)
 const form = reactive({ shopId: '', shopName: '', clientId: '', clientSecret: '', syncEnabled: false, version: undefined as number | undefined })
+const selectedShop = computed(() => props.shops.find((item) => item.id === editingId.value) ?? null)
+const webhookPath = computed(() => selectedShop.value?.webhookPath || '/api/v1/webhooks/youzan/official')
 
 function openCreate() {
   editingId.value = null
@@ -28,14 +30,18 @@ function openEdit(shop: YouzanShopConfig) {
 }
 
 async function save() {
-  if (!form.shopId.trim() || !form.shopName.trim() || !form.clientId.trim() || (!editingId.value && !form.clientSecret)) {
+  const shopId = form.shopId.trim()
+  const shopName = form.shopName.trim()
+  const clientId = form.clientId.trim()
+  const clientSecret = form.clientSecret.trim()
+  if (!shopId || !shopName || !clientId || (!editingId.value && !clientSecret)) {
     ElMessage.warning('请完整填写店铺、应用和密钥信息')
     return
   }
   saving.value = true
   try {
-    const saved = await saveYouzanShop({ shopId: form.shopId.trim(), shopName: form.shopName.trim(), clientId: form.clientId.trim(), clientSecret: form.clientSecret || undefined, syncEnabled: form.syncEnabled, version: form.version }, createYouzanKey('youzan.shop.config'))
-    ElMessage.success('店铺配置已保存，连接成功前不会视为真实店铺已联调')
+    const saved = await saveYouzanShop({ shopId, shopName, clientId, clientSecret: clientSecret || undefined, syncEnabled: form.syncEnabled, version: form.version }, createYouzanKey('youzan.shop.config'))
+    ElMessage.success(saved.connectionStatus === 'CONNECTED' ? '店铺配置已保存，已保留验证通过的连接状态' : '店铺配置已保存，连接成功前不会视为真实店铺已联调')
     formVisible.value = false
     emit('saved')
     emit('select', saved.shopId)
@@ -86,13 +92,16 @@ function statusText(status: string) {
     <el-dialog v-model="formVisible" :title="editingId ? '编辑有赞店铺' : '接入有赞店铺'" width="min(620px, 94vw)">
       <el-form label-position="top" @submit.prevent>
         <div class="youzan-form-grid">
-          <el-form-item label="有赞店铺编号" required><el-input v-model="form.shopId" :disabled="!!editingId" maxlength="64" data-testid="youzan-shop-kdt" /></el-form-item>
-          <el-form-item label="店铺名称" required><el-input v-model="form.shopName" maxlength="128" /></el-form-item>
+          <el-form-item label="有赞店铺 ID（kdt_id / grant_id）" required><el-input v-model="form.shopId" :disabled="editingId !== null" maxlength="64" placeholder="填写有赞云授权店铺 kdt_id / grant_id" data-testid="youzan-shop-kdt" /></el-form-item>
+          <el-form-item label="店铺名称" required><el-input v-model="form.shopName" maxlength="128" placeholder="填写便于识别的店铺名称" /></el-form-item>
         </div>
-        <el-form-item label="应用 ID" required><el-input v-model="form.clientId" maxlength="128" autocomplete="off" /></el-form-item>
-        <el-form-item :label="editingId ? '应用密钥（留空保持不变）' : '应用密钥'" :required="!editingId"><el-input v-model="form.clientSecret" type="password" show-password maxlength="512" autocomplete="new-password" data-testid="youzan-shop-secret" /></el-form-item>
-        <el-form-item label="真实同步开关"><el-switch v-model="form.syncEnabled" active-text="允许同步" inactive-text="仅保存配置" /><div class="proto-note">还需服务端 FEATURE_REAL_YOUZAN 开启，且授权与连接测试通过。</div></el-form-item>
-        <el-form-item label="官方消息推送地址"><el-input model-value="/api/v1/webhooks/youzan/official" readonly><template #prepend>CRM</template></el-input><div class="proto-note">在有赞云控制台配置公网安全地址，并订阅交易支付等已授权消息。</div></el-form-item>
+        <el-form-item label="应用 ID（client_id）" required><el-input v-model="form.clientId" maxlength="128" autocomplete="off" placeholder="有赞云无容器自用型应用 client_id" /></el-form-item>
+        <el-form-item :label="editingId ? '应用密钥（client_secret，留空保持不变）' : '应用密钥（client_secret）'" :required="!editingId">
+          <el-input v-model="form.clientSecret" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="有赞云无容器自用型应用 client_secret" data-testid="youzan-shop-secret" />
+          <div class="proto-note">使用有赞云无容器自用型应用凭证。修改 client_id 或 client_secret 会清空已缓存 Token 并将连接状态重置为待验证（UNVERIFIED）；仅修改店铺名称或同步开关会保留已验证连接与 Token。</div>
+        </el-form-item>
+        <el-form-item label="真实同步开关"><el-switch v-model="form.syncEnabled" active-text="允许同步" inactive-text="仅保存配置" /><div class="proto-note">开启真实同步还需在本页打开企业全局开关或服务端配置 FEATURE_REAL_YOUZAN=true，并通过连接测试。</div></el-form-item>
+        <el-form-item label="官方消息推送地址"><el-input :model-value="webhookPath" readonly data-testid="youzan-shop-webhook-path"><template #prepend>CRM</template></el-input><div class="proto-note">在有赞云控制台配置公网 HTTPS 域名地址并订阅已授权交易消息；入口返回 HTTP 200 {"code":0,"msg":"success"} 用于有赞云验证，且服务端出口 IP 需加入有赞 IP 白名单。</div></el-form-item>
       </el-form>
       <template #footer><el-button :disabled="saving" @click="formVisible = false">取消</el-button><el-button type="primary" :loading="saving" data-testid="youzan-shop-save" @click="save">保存配置</el-button></template>
     </el-dialog>

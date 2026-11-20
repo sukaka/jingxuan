@@ -15,6 +15,8 @@ import com.whale.crm.integration.youzan.domain.YouzanShopConfig;
 import com.whale.crm.platform.security.crypto.AesGcmCipher;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
@@ -24,6 +26,10 @@ import java.util.List;
 
 @Service
 public class YouzanOfficialMessageService {
+    public static final int MAX_AUTO_RETRIES = 10;
+
+    private static final Logger log = LoggerFactory.getLogger(YouzanOfficialMessageService.class);
+
     private final YouzanConfigRepository configRepository;
     private final YouzanRepository eventRepository;
     private final YouzanOfficialMessageParser parser;
@@ -60,16 +66,20 @@ public class YouzanOfficialMessageService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "有赞官方消息签名无效");
         }
         if (message.test()) {
-            throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "有赞测试消息不进入订单或支付处理");
+            log.info("忽略有赞官方测试消息 tenantId={} shopId={} eventType={}",
+                    config.tenantId(), message.shopId(), message.eventType());
+            return ignoredResponse(message);
         }
         if (message.orderNo() == null || message.orderNo().isBlank()) {
-            throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "当前仅支持包含订单号的有赞交易消息");
+            log.info("忽略无订单号的有赞官方消息 tenantId={} shopId={} eventType={} messageId={}",
+                    config.tenantId(), message.shopId(), message.eventType(), message.messageId());
+            return ignoredResponse(message);
         }
         YouzanOrderEvent placeholder = new YouzanOrderEvent(message.messageId(), message.eventType(), message.shopId(),
                 message.orderNo(), null, null,
                 "NOTIFICATION", null, null, Instant.EPOCH, "REGULAR", null, null, "PLATFORM", null, List.of());
         YouzanEventResponse response = eventService.ingest(config.tenantId(), placeholder, "OFFICIAL_WEBHOOK", rawBody);
-        if (!"PROCESSED".equals(response.processStatus())) {
+        if (isPendingStatus(response.processStatus()) && attemptsOf(response.processAttempts()) < MAX_AUTO_RETRIES) {
             taskScheduler.schedule(() -> refreshAndProcess(config.tenantId(), response.id()), Instant.now().plusSeconds(30));
         }
         return response;
@@ -88,6 +98,14 @@ public class YouzanOfficialMessageService {
                 continue;
             }
             for (YouzanEvent event : eventRepository.findPendingEvents(shop.tenantId(), shop.shopId(), retryBefore, 100)) {
+                if (!isPendingStatus(event.processStatus())) {
+                    continue;
+                }
+                if (attemptsOf(event.processAttempts()) >= MAX_AUTO_RETRIES) {
+                    log.warn("有赞官方消息已达到最大自动重试次数，跳过自动恢复 tenantId={} eventId={} attempts={}",
+                            shop.tenantId(), event.id(), event.processAttempts());
+                    continue;
+                }
                 refreshAndProcess(shop.tenantId(), event.id());
             }
         }
@@ -97,20 +115,71 @@ public class YouzanOfficialMessageService {
         if (!runtimeConfig.youzanRealEnabled(tenantId)) {
             return;
         }
+        int currentAttempts = 0;
         try {
-            YouzanEvent raw = eventRepository.findEvent(tenantId, eventId).orElseThrow();
-            if ("PROCESSED".equals(raw.processStatus())) {
+            YouzanEvent raw = eventRepository.findEvent(tenantId, eventId).orElse(null);
+            if (raw == null || !isPendingStatus(raw.processStatus())) {
                 return;
             }
-            YouzanMessage message = parser.parse(cipher.decrypt(raw.providerPayloadCipher()), raw.eventType());
-            if (message.orderNo() == null) {
+            currentAttempts = attemptsOf(raw.processAttempts());
+            if (currentAttempts >= MAX_AUTO_RETRIES) {
+                log.warn("有赞官方消息已达到最大自动重试次数，停止自动调度 tenantId={} eventId={} attempts={}",
+                        tenantId, eventId, currentAttempts);
+                return;
+            }
+            String orderNo = resolveOrderNo(raw);
+            if (orderNo == null || orderNo.isBlank()) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "有赞交易消息缺少订单号");
             }
-            YouzanOrderEnvelope detail = realAdapter.fetchOrder(tenantId, raw.shopId(), raw.eventId(), message.orderNo());
-            eventService.replacePayloadAndProcess(tenantId, eventId, detail.event(), detail.providerPayload());
+            YouzanOrderEnvelope detail = realAdapter.fetchOrder(tenantId, raw.shopId(), raw.eventId(), orderNo);
+            YouzanEventResponse processed = eventService.replacePayloadAndProcess(
+                    tenantId, eventId, detail.event(), detail.providerPayload());
+            if (processed != null && "RETRY".equals(processed.processStatus())) {
+                int updatedAttempts = attemptsOf(processed.processAttempts());
+                if (updatedAttempts < MAX_AUTO_RETRIES) {
+                    taskScheduler.schedule(() -> refreshAndProcess(tenantId, eventId), Instant.now().plusSeconds(60));
+                } else {
+                    log.warn("有赞官方消息处理后达到最大自动重试次数，等待人工处理 tenantId={} eventId={} attempts={}",
+                            tenantId, eventId, updatedAttempts);
+                }
+            }
         } catch (Exception ex) {
-            eventService.retryLater(tenantId, eventId, ex);
-            taskScheduler.schedule(() -> refreshAndProcess(tenantId, eventId), Instant.now().plusSeconds(60));
+            YouzanEventResponse retried = eventService.retryLater(tenantId, eventId, ex);
+            if (retried != null && !"RETRY".equals(retried.processStatus())) {
+                return;
+            }
+            int updatedAttempts = retried != null && retried.processAttempts() != null
+                    ? retried.processAttempts()
+                    : currentAttempts + 1;
+            if (updatedAttempts < MAX_AUTO_RETRIES) {
+                taskScheduler.schedule(() -> refreshAndProcess(tenantId, eventId), Instant.now().plusSeconds(60));
+            } else {
+                log.warn("有赞官方消息重试失败并达到最大自动重试次数，等待人工处理 tenantId={} eventId={} attempts={}",
+                        tenantId, eventId, updatedAttempts);
+            }
         }
+    }
+
+    private String resolveOrderNo(YouzanEvent raw) {
+        if (raw.externalOrderNo() != null && !raw.externalOrderNo().isBlank()) {
+            return raw.externalOrderNo();
+        }
+        if (raw.providerPayloadCipher() == null || raw.providerPayloadCipher().isBlank()) {
+            return null;
+        }
+        return parser.parse(cipher.decrypt(raw.providerPayloadCipher()), raw.eventType()).orderNo();
+    }
+
+    private static YouzanEventResponse ignoredResponse(YouzanMessage message) {
+        return new YouzanEventResponse(null, message.messageId(), message.eventType(), message.orderNo(),
+                "IGNORED", 0, null, null, Instant.now(), null, false);
+    }
+
+    private static boolean isPendingStatus(String status) {
+        return "RECEIVED".equals(status) || "RETRY".equals(status);
+    }
+
+    private static int attemptsOf(Integer attempts) {
+        return attempts == null ? 0 : attempts;
     }
 }

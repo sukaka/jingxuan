@@ -13,11 +13,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 @Service
 public class YouzanIncrementalSyncService {
     private static final Logger log = LoggerFactory.getLogger(YouzanIncrementalSyncService.class);
+    private static final Duration MAX_WINDOW = Duration.ofDays(90);
     private final YouzanConfigRepository configRepository;
     private final YouzanRepository repository;
     private final YouzanManagementService managementService;
@@ -62,16 +65,50 @@ public class YouzanIncrementalSyncService {
             return;
         }
         try {
-            Instant lastSync = repository.findCursor(shop.tenantId(), shop.shopId())
-                    .map(YouzanSyncCursor::lastSyncAt).orElse(policy.initialStartTime());
-            Instant start = lastSync.minusSeconds(policy.overlapSeconds());
-            if (!start.isBefore(now)) {
-                return;
+            YouzanSyncCursor existingCursor = repository.findCursor(shop.tenantId(), shop.shopId()).orElse(null);
+            String cursor = resumableCursor(existingCursor);
+            if (cursor == null) {
+                Instant finalEnd = now.truncatedTo(ChronoUnit.SECONDS);
+                Instant lastSync = existingCursor != null && existingCursor.lastSyncAt() != null
+                        ? existingCursor.lastSyncAt() : policy.initialStartTime();
+                Instant start = lastSync.minusSeconds(policy.overlapSeconds()).truncatedTo(ChronoUnit.SECONDS);
+                if (!start.isBefore(finalEnd)) {
+                    return;
+                }
+                Instant maxWindowEnd = start.plus(MAX_WINDOW);
+                Instant windowEnd = maxWindowEnd.isBefore(finalEnd) ? maxWindowEnd : finalEnd;
+                cursor = objectMapper.writeValueAsString(new YouzanSyncCursorValue("UPDATED", start, windowEnd, finalEnd, 1));
             }
-            String cursor = objectMapper.writeValueAsString(new YouzanSyncCursorValue("UPDATED", start, now, now, 1));
             managementService.syncScheduled(shop.tenantId(), shop.shopId(), cursor, policy.pageSize());
         } catch (Exception ex) {
             log.warn("有赞增量同步失败，shopId={}，原因={}", shop.shopId(), ex.getMessage());
         }
+    }
+
+    private String resumableCursor(YouzanSyncCursor existingCursor) {
+        if (existingCursor == null || existingCursor.cursorValue() == null
+                || !existingCursor.cursorValue().startsWith("{")) {
+            return null;
+        }
+        try {
+            YouzanSyncCursorValue saved = objectMapper.readValue(existingCursor.cursorValue(), YouzanSyncCursorValue.class);
+            if (!"UPDATED".equals(saved.queryType())
+                    || saved.windowStart() == null || saved.windowEnd() == null || saved.finalEnd() == null
+                    || !saved.windowEnd().isAfter(saved.windowStart())
+                    || Duration.between(saved.windowStart(), saved.windowEnd()).compareTo(MAX_WINDOW) > 0
+                    || saved.pageNo() < 1 || saved.pageNo() > 100) {
+                return null;
+            }
+            boolean hasRemainingPages = saved.pageNo() > 1
+                    && (existingCursor.lastSyncAt() == null || existingCursor.lastSyncAt().isBefore(saved.windowEnd()));
+            boolean hasRemainingWindows = saved.windowEnd().isBefore(saved.finalEnd());
+            if (hasRemainingPages || hasRemainingWindows) {
+                return existingCursor.cursorValue();
+            }
+        } catch (Exception ex) {
+            log.warn("有赞增量同步已保存游标无法解析，将按最近同步时间重建，shopId={}，原因={}",
+                    existingCursor.shopId(), ex.getMessage());
+        }
+        return null;
     }
 }
