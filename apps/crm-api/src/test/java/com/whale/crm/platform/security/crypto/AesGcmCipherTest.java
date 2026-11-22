@@ -56,9 +56,31 @@ class AesGcmCipherTest {
 
     @Test
     void invalidKeyMaterial_isRejected() {
+        assertThatThrownBy(() -> new AesGcmCipher(null))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new AesGcmCipher(new CryptoProperties(null, "pepper-a")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new AesGcmCipher(new CryptoProperties("   ", "pepper-a")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new AesGcmCipher(new CryptoProperties("${APP_AES_KEY_BASE64}", "pepper-a")))
+                .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> new AesGcmCipher(new CryptoProperties("!!!not-base64!!!", "p")))
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> new AesGcmCipher(new CryptoProperties("YWJj", "p")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new BlindIndex(null))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new BlindIndex(new CryptoProperties(DEV_KEY_BASE64, null)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new BlindIndex(new CryptoProperties(DEV_KEY_BASE64, "")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new BlindIndex(new CryptoProperties(DEV_KEY_BASE64, "   ")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new BlindIndex(new CryptoProperties(DEV_KEY_BASE64, "${APP_BLIND_INDEX_PEPPER}")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new BlindIndex(new CryptoProperties(DEV_KEY_BASE64, "prefix-${PEPPER}")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new BlindIndex(new CryptoProperties(DEV_KEY_BASE64, "short")))
                 .isInstanceOf(IllegalStateException.class);
     }
 }

@@ -14,12 +14,27 @@ import org.springframework.stereotype.Component;
  * 只做等值匹配，不支持范围/模糊查询；pepper 与 AES 密钥分离，轮换需重建索引列。
  */
 @Component
-public class BlindIndex {
+public final class BlindIndex {
+
+    private static final int MIN_PEPPER_BYTES = 8;
 
     private final byte[] pepper;
 
     public BlindIndex(CryptoProperties properties) {
-        this.pepper = properties.blindIndexPepper().getBytes(StandardCharsets.UTF_8);
+        if (properties == null || properties.blindIndexPepper() == null
+                || properties.blindIndexPepper().isBlank()
+                || containsUnresolvedPlaceholder(properties.blindIndexPepper())) {
+            throw new IllegalStateException("未配置有效的 blindIndexPepper");
+        }
+        byte[] pepperBytes = properties.blindIndexPepper().getBytes(StandardCharsets.UTF_8);
+        if (pepperBytes.length < MIN_PEPPER_BYTES) {
+            throw new IllegalStateException("app.security.crypto.blind-index-pepper 至少需要 8 字节");
+        }
+        this.pepper = pepperBytes;
+    }
+
+    private static boolean containsUnresolvedPlaceholder(String value) {
+        return value.contains("${");
     }
 
     /**

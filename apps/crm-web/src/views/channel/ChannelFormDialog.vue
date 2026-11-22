@@ -2,19 +2,47 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import type { Channel } from '../../api/channel'
-import type { ChannelOwnerOption } from '../../api/channel'
+import type { Channel, ChannelOwnerOption, UpdateChannelRequest } from '../../api/channel'
 import { createChannel, listChannelOwnerOptions, updateChannel } from '../../api/channel'
 import { ApiError } from '../../types/api'
-import { isValidChineseIdCard, isValidMainlandMobile, normalizeChineseIdCard } from '../../utils/channelValidation'
+import {
+  hasMaskedWildcard,
+  isValidChineseIdCard,
+  isValidMainlandMobile,
+  normalizeChineseIdCard,
+} from '../../utils/channelValidation'
 import { useDictionaries } from '../customer/shared'
 
 const props = defineProps<{ modelValue: boolean; channel: Channel | null }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  saved: []
+  'request-finance-change': [channel: Channel]
+}>()
 const dicts = useDictionaries()
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 const visible = computed({ get: () => props.modelValue, set: (value) => emit('update:modelValue', value) })
+const isEdit = computed(() => form.id !== 0)
+
+const hasPhoneConfigured = computed(() => Boolean(props.channel?.contactPhoneConfigured ?? props.channel?.contactPhone))
+const hasIdCardConfigured = computed(() => Boolean(props.channel?.idCardConfigured ?? props.channel?.idCardNumber))
+const hasPaymentAccountConfigured = computed(() => Boolean(
+  props.channel?.paymentAccountConfigured
+  ?? (props.channel?.paymentAccountName || props.channel?.paymentAccountNo),
+))
+
+const isFinancialLocked = computed(() => {
+  if (!isEdit.value || !props.channel) return false
+  return (
+    props.channel.status === 'ACTIVE'
+    || hasPaymentAccountConfigured.value
+    || props.channel.commissionPercent !== null
+    || props.channel.settlementMethod !== null
+    || Boolean(props.channel.paymentBankName)
+  )
+})
+
 const form = reactive({
   id: 0,
   name: '',
@@ -60,6 +88,22 @@ const rules: FormRules = {
     },
     trigger: 'change',
   }],
+  paymentAccountName: [{
+    validator: (_rule, value, callback) => {
+      if (!isFinancialLocked.value && value && hasMaskedWildcard(String(value))) {
+        callback(new Error('收款账户名称不能包含脱敏占位符 *，请输入完整真实账户名称'))
+      } else callback()
+    },
+    trigger: 'blur',
+  }],
+  paymentAccountNo: [{
+    validator: (_rule, value, callback) => {
+      if (!isFinancialLocked.value && value && hasMaskedWildcard(String(value))) {
+        callback(new Error('收款账号不能包含脱敏占位符 *，请输入完整真实账号'))
+      } else callback()
+    },
+    trigger: 'blur',
+  }],
 }
 
 const platformOptions = computed(() => {
@@ -79,6 +123,7 @@ const settlementOptions = computed(() => {
 })
 
 function handleChannelTypeChange() {
+  if (isFinancialLocked.value) return
   if (form.channelType === 'BLOGGER' && form.settlementMethod !== 'MONTHLY') form.settlementMethod = 'MONTHLY'
   else if ((form.channelType === 'DISTRIBUTION' || form.channelType === 'REFERRAL')
     && !['MONTHLY', 'TWICE_MONTHLY'].includes(form.settlementMethod)) form.settlementMethod = 'MONTHLY'
@@ -96,6 +141,7 @@ const ownerOptions = computed(() => {
 
 function reset() {
   const item = props.channel
+  const editing = Boolean(item?.id)
   Object.assign(form, {
     id: item?.id ?? 0,
     name: item?.name ?? '',
@@ -104,13 +150,14 @@ function reset() {
     commissionPercent: item?.commissionPercent ?? undefined,
     businessOwnerUserId: item?.businessOwnerUserId ?? undefined,
     realName: item?.realName ?? '',
-    contactPhone: item?.contactPhone ?? '',
-    idCardNumber: item?.idCardNumber ?? '',
+    // 编辑模式下绝不回填脱敏后的手机号/身份证/收款账号，避免校验失败或误覆盖密文
+    contactPhone: '',
+    idCardNumber: '',
     settlementMethod: item?.settlementMethod ?? '',
     cooperationStartDate: item?.cooperationStartDate ?? '',
     cooperationEndDate: item?.cooperationEndDate ?? '',
-    paymentAccountName: item?.paymentAccountName ?? '',
-    paymentAccountNo: item?.paymentAccountNo ?? '',
+    paymentAccountName: editing ? '' : (item?.paymentAccountName ?? ''),
+    paymentAccountNo: editing ? '' : (item?.paymentAccountNo ?? ''),
     paymentBankName: item?.paymentBankName ?? '',
     status: item?.status ?? 'ACTIVE',
     remarks: item?.remarks ?? '',
@@ -123,7 +170,7 @@ function text(value: string): string | null {
   return value.trim() || null
 }
 
-function profilePayload() {
+function createPayload() {
   return {
     channelType: form.channelType,
     commissionPercent: form.commissionPercent ?? null,
@@ -139,6 +186,36 @@ function profilePayload() {
   }
 }
 
+function updatePayload(): UpdateChannelRequest {
+  const payload: UpdateChannelRequest = {
+    name: form.name.trim(),
+    channelType: form.channelType,
+    platformCode: text(form.platformCode),
+    businessOwnerUserId: form.businessOwnerUserId ?? null,
+    realName: text(form.realName),
+    cooperationStartDate: text(form.cooperationStartDate),
+    cooperationEndDate: text(form.cooperationEndDate),
+    status: form.status,
+    remarks: text(form.remarks),
+    version: form.version,
+  }
+  // 留空时不发送敏感字段，由后端保留既有密文
+  if (form.contactPhone.trim()) {
+    payload.contactPhone = form.contactPhone.trim()
+  }
+  if (form.idCardNumber.trim()) {
+    payload.idCardNumber = normalizeChineseIdCard(form.idCardNumber)
+  }
+  if (!isFinancialLocked.value) {
+    if (form.commissionPercent !== undefined) payload.commissionPercent = form.commissionPercent
+    if (form.settlementMethod.trim()) payload.settlementMethod = form.settlementMethod.trim()
+    if (form.paymentAccountName.trim()) payload.paymentAccountName = form.paymentAccountName.trim()
+    if (form.paymentAccountNo.trim()) payload.paymentAccountNo = form.paymentAccountNo.trim()
+    if (form.paymentBankName.trim()) payload.paymentBankName = form.paymentBankName.trim()
+  }
+  return payload
+}
+
 function validateBusinessRules(): boolean {
   if (form.contactPhone && !isValidMainlandMobile(form.contactPhone)) {
     ElMessage.warning('请输入有效的 11 位中国大陆手机号')
@@ -152,7 +229,15 @@ function validateBusinessRules(): boolean {
     ElMessage.warning('合作结束时间不得早于合作开始时间')
     return false
   }
-  if (form.settlementMethod && !settlementOptions.value.some((option) =>
+  if (!isFinancialLocked.value && form.paymentAccountName && hasMaskedWildcard(form.paymentAccountName)) {
+    ElMessage.warning('收款账户名称不能包含脱敏占位符 *，请输入完整真实账户名称')
+    return false
+  }
+  if (!isFinancialLocked.value && form.paymentAccountNo && hasMaskedWildcard(form.paymentAccountNo)) {
+    ElMessage.warning('收款账号不能包含脱敏占位符 *，请输入完整真实账号')
+    return false
+  }
+  if (!isFinancialLocked.value && form.settlementMethod && !settlementOptions.value.some((option) =>
     option.code === form.settlementMethod && !option.label.includes('历史'))) {
     ElMessage.warning('结算方式与当前合作类型不匹配，请重新选择')
     return false
@@ -160,24 +245,23 @@ function validateBusinessRules(): boolean {
   return true
 }
 
+function openFinanceChange() {
+  if (!props.channel) return
+  const target = props.channel
+  visible.value = false
+  emit('request-finance-change', target)
+}
+
 async function save() {
-  if (saving.value || !validateBusinessRules()) return
+  if (saving.value) return
   const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
+  if (!validateBusinessRules() || !valid) return
   saving.value = true
   try {
-    const profile = profilePayload()
     if (form.id) {
-      await updateChannel(form.id, {
-        ...profile,
-        name: form.name.trim(),
-        platformCode: text(form.platformCode),
-        businessOwnerUserId: form.businessOwnerUserId ?? null,
-        status: form.status,
-        remarks: text(form.remarks),
-        version: form.version,
-      })
+      await updateChannel(form.id, updatePayload())
     } else {
+      const profile = createPayload()
       await createChannel({
         ...profile,
         name: form.name.trim(),
@@ -196,7 +280,7 @@ async function save() {
   }
 }
 
-watch(() => props.modelValue, (value) => { if (value) reset() })
+watch(() => props.modelValue, (value) => { if (value) reset() }, { immediate: true })
 onMounted(() => {
   void dicts.load('customerChannels')
   void dicts.load('settlementTypes')
@@ -207,7 +291,19 @@ onMounted(() => {
 
 <template>
   <el-dialog v-model="visible" :title="form.id ? '修改合作渠道' : '新增合作渠道'" width="min(960px, 96vw)" destroy-on-close>
-    <el-alert type="info" :closable="false" title="联系方式、身份证和收款账号将加密保存；请仅录入真实合作所需资料。" class="form-alert" />
+    <el-alert type="info" :closable="false" title="联系方式、身份证和收款账号加密保存；编辑时脱敏字段留空即保留原值。" class="form-alert" />
+    <el-alert
+      v-if="isFinancialLocked"
+      type="warning"
+      :closable="false"
+      class="form-alert"
+      data-testid="channel-finance-locked-alert"
+      title="当前渠道为合作中或已配置结算/收款信息，普通编辑已锁定分佣比例、结算方式与收款账号。如需调整，请发起财务资料变更申请。"
+    >
+      <template #default>
+        <el-button link type="primary" data-testid="channel-open-finance-change" @click="openFinanceChange">去发起财务变更申请</el-button>
+      </template>
+    </el-alert>
     <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent>
       <h3 class="form-section-title">基本信息</h3>
       <div class="form-grid">
@@ -237,20 +333,30 @@ onMounted(() => {
       <div class="form-grid">
         <el-form-item label="真实姓名" prop="realName"><el-input v-model="form.realName" maxlength="80" /></el-form-item>
         <el-form-item label="联系方式" prop="contactPhone">
-          <el-input v-model="form.contactPhone" maxlength="11" placeholder="11 位中国大陆手机号" data-testid="channel-form-phone" />
+          <el-input
+            v-model="form.contactPhone"
+            maxlength="11"
+            :placeholder="isEdit && hasPhoneConfigured ? '已配置（留空保持不变，输入新 11 位手机号覆盖）' : '11 位中国大陆手机号'"
+            data-testid="channel-form-phone"
+          />
         </el-form-item>
         <el-form-item label="身份证号" prop="idCardNumber">
-          <el-input v-model="form.idCardNumber" maxlength="18" placeholder="18 位，末位可为 X" data-testid="channel-form-id-card" />
+          <el-input
+            v-model="form.idCardNumber"
+            maxlength="18"
+            :placeholder="isEdit && hasIdCardConfigured ? '已配置（留空保持不变，输入新 18 位身份证号覆盖）' : '18 位，末位可为 X'"
+            data-testid="channel-form-id-card"
+          />
         </el-form-item>
       </div>
 
       <h3 class="form-section-title">合作与结算</h3>
       <div class="form-grid">
         <el-form-item label="分佣比例（%）" prop="commissionPercent">
-          <el-input-number v-model="form.commissionPercent" :min="0" :max="100" :precision="2" controls-position="right" class="full-width" placeholder="例如 12.50" data-testid="channel-form-commission" />
+          <el-input-number v-model="form.commissionPercent" :disabled="isFinancialLocked" :min="0" :max="100" :precision="2" controls-position="right" class="full-width" placeholder="例如 12.50" data-testid="channel-form-commission" />
         </el-form-item>
         <el-form-item label="结算方式" prop="settlementMethod">
-          <el-select v-model="form.settlementMethod" clearable class="full-width" data-testid="channel-form-settlement" placeholder="请选择结算方式">
+          <el-select v-model="form.settlementMethod" :disabled="isFinancialLocked" clearable class="full-width" data-testid="channel-form-settlement" placeholder="请选择结算方式">
             <el-option v-for="option in settlementOptions" :key="option.code" :label="option.label" :value="option.code" :disabled="option.label.includes('历史')" />
           </el-select>
         </el-form-item>
@@ -264,9 +370,27 @@ onMounted(() => {
 
       <h3 class="form-section-title">收款信息</h3>
       <div class="form-grid">
-        <el-form-item label="收款账户信息" prop="paymentAccountName"><el-input v-model="form.paymentAccountName" maxlength="160" placeholder="收款账户名称" /></el-form-item>
-        <el-form-item label="收款账号" prop="paymentAccountNo"><el-input v-model="form.paymentAccountNo" maxlength="64" /></el-form-item>
-        <el-form-item label="收款开户行" prop="paymentBankName"><el-input v-model="form.paymentBankName" maxlength="255" /></el-form-item>
+        <el-form-item label="收款账户信息" prop="paymentAccountName">
+          <el-input
+            v-model="form.paymentAccountName"
+            :disabled="isFinancialLocked"
+            maxlength="160"
+            :placeholder="isEdit && hasPaymentAccountConfigured ? '已配置（请通过财务变更申请修改）' : '收款账户名称'"
+            data-testid="channel-form-account-name"
+          />
+        </el-form-item>
+        <el-form-item label="收款账号" prop="paymentAccountNo">
+          <el-input
+            v-model="form.paymentAccountNo"
+            :disabled="isFinancialLocked"
+            maxlength="64"
+            :placeholder="isEdit && hasPaymentAccountConfigured ? '已配置（请通过财务变更申请修改）' : '银行卡号或对公账号'"
+            data-testid="channel-form-account-no"
+          />
+        </el-form-item>
+        <el-form-item label="收款开户行" prop="paymentBankName">
+          <el-input v-model="form.paymentBankName" :disabled="isFinancialLocked" maxlength="255" data-testid="channel-form-bank" />
+        </el-form-item>
         <el-form-item label="备注" prop="remarks"><el-input v-model="form.remarks" type="textarea" :rows="2" maxlength="4000" /></el-form-item>
       </div>
     </el-form>

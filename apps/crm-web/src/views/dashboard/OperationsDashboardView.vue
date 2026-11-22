@@ -191,7 +191,10 @@ function openDuty(row: DutyRow) {
   }
   const status = { appointments: 'PENDING_INSTITUTION', redemptions: 'SERVICE_DONE', refunds: 'REQUESTED' }[row.id]
   const path = row.id === 'refunds' ? '/refunds' : '/appointments'
-  void router.push({ path, query: { status, institutionId: filters.institutionId } })
+  const query = row.id === 'refunds'
+    ? { status }
+    : { status, ...(filters.institutionId ? { institutionId: filters.institutionId } : {}) }
+  void router.push({ path, query })
 }
 
 function syncFullscreenState() {

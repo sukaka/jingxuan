@@ -24,6 +24,11 @@ public class JwtService {
     private final long ttlSeconds;
 
     public JwtService(AuthSecurityProperties properties) {
+        if (properties == null || properties.jwtSecret() == null
+                || properties.jwtSecret().isBlank()
+                || properties.jwtSecret().contains("${")) {
+            throw new IllegalStateException("未配置有效的 app.security.auth.jwt-secret");
+        }
         byte[] secretBytes = properties.jwtSecret().getBytes(StandardCharsets.UTF_8);
         if (secretBytes.length < 32) {
             throw new IllegalStateException("app.security.auth.jwt-secret 至少需要 32 字节（HS256）");

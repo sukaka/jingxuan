@@ -18,7 +18,16 @@ done
 for required in python3 docker curl; do
   command -v "$required" >/dev/null
 done
-JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home)}"
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  JAVA_CMD="$JAVA_HOME/bin/java"
+elif [ -x /usr/libexec/java_home ] && JAVA_HOME="$(/usr/libexec/java_home 2>/dev/null)"; then
+  JAVA_CMD="$JAVA_HOME/bin/java"
+elif command -v java >/dev/null 2>&1; then
+  JAVA_CMD="$(command -v java)"
+else
+  echo "缺少可用的 java 运行时（JAVA_HOME 或 PATH 中未找到 java）" >&2
+  exit 1
+fi
 
 RUN_ID="$(date +%s)-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:10])')"
 WORK="$ROOT/tmp/m01-$RUN_ID"
@@ -34,13 +43,38 @@ BACKEND_PID=""
 STARTED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 sql_source() {
-  docker exec "$SOURCE_DB" sh -c 'mysql --user=root --password="$MYSQL_ROOT_PASSWORD" --database=medical_crm --batch --skip-column-names --execute="$1"' sh "$1"
+  printf '%s\n' "$1" | docker exec -i "$SOURCE_DB" sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root --database=medical_crm --batch --skip-column-names'
 }
 sql_target() {
-  docker exec "$TARGET_DB" sh -c 'mysql --user=root --password="$MYSQL_ROOT_PASSWORD" --database=medical_crm --batch --skip-column-names --execute="$1"' sh "$1"
+  printf '%s\n' "$1" | docker exec -i "$TARGET_DB" sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root --database=medical_crm --batch --skip-column-names'
 }
 sql_target_vertical() {
-  docker exec "$TARGET_DB" sh -c 'mysql --user=root --password="$MYSQL_ROOT_PASSWORD" --database=medical_crm --vertical --execute="$1"' sh "$1"
+  printf '%s\n' "$1" | docker exec -i "$TARGET_DB" sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root --database=medical_crm --vertical'
+}
+write_mc_config() {
+  python3 - "$WORK/mc-config/config.json" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+config_path = Path(sys.argv[1])
+aliases = {}
+if config_path.is_file():
+    existing = json.loads(config_path.read_text(encoding='utf-8'))
+    aliases = existing.get('aliases', {})
+alias_name = os.environ['MC_ALIAS_NAME']
+aliases[alias_name] = {
+    'url': os.environ['MC_ALIAS_URL'],
+    'accessKey': os.environ['MC_ALIAS_ACCESS_KEY'],
+    'secretKey': os.environ['MC_ALIAS_SECRET_KEY'],
+    'api': 's3v4',
+    'path': 'auto',
+}
+config_path.parent.mkdir(parents=True, exist_ok=True)
+config_path.write_text(json.dumps({'version': '10', 'aliases': aliases}, indent=2) + '\n', encoding='utf-8')
+os.chmod(config_path, 0o600)
+PY
 }
 run_mc() {
   docker run --rm -v "$WORK:/work" --env MC_CONFIG_DIR=/work/mc-config --entrypoint /bin/sh minio/mc:RELEASE.2025-05-21T01-59-54Z -c "$1"
@@ -57,7 +91,8 @@ cleanup() {
     kill -TERM "$BACKEND_PID" 2>/dev/null || true
     wait "$BACKEND_PID" 2>/dev/null || true
   fi
-  docker exec "$SOURCE_DB" sh -c 'mysql --user=root --password="$MYSQL_ROOT_PASSWORD" --database=medical_crm --execute="DROP DATABASE IF EXISTS m01_probe; DROP USER IF EXISTS '\''m01_repl'\''@'\''%'\'';"' >/dev/null 2>&1 || true
+  printf "DROP DATABASE IF EXISTS m01_probe; DROP USER IF EXISTS 'm01_repl'@'%%';\n" | \
+    docker exec -i "$SOURCE_DB" sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root --database=medical_crm' >/dev/null 2>&1 || true
   if docker container inspect "$TARGET_DB" >/dev/null 2>&1; then
     docker logs "$TARGET_DB" > "$WORK/mysql.log" 2>&1 || true
     docker rm -f "$TARGET_DB" >/dev/null
@@ -75,9 +110,9 @@ sql_source "DROP USER IF EXISTS 'm01_repl'@'%'; CREATE USER 'm01_repl'@'%' IDENT
 sql_source "CREATE DATABASE m01_probe; CREATE TABLE m01_probe.recovery_marker (id BIGINT AUTO_INCREMENT PRIMARY KEY, marker VARCHAR(64)); INSERT INTO m01_probe.recovery_marker(marker) VALUES('before_backup');"
 
 DUMP_FILE="$WORK/backup.sql"
-docker exec "$SOURCE_DB" sh -c 'mysqldump --user=root --password="$MYSQL_ROOT_PASSWORD" --single-transaction --source-data=2 --set-gtid-purged=OFF --routines --events --triggers --hex-blob --databases medical_crm m01_probe' > "$DUMP_FILE"
+docker exec "$SOURCE_DB" sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump --user=root --single-transaction --source-data=2 --set-gtid-purged=OFF --routines --events --triggers --hex-blob --databases medical_crm m01_probe' > "$DUMP_FILE"
 chmod 600 "$DUMP_FILE"
-read -r LOG_FILE LOG_POS < <(python3 -c 'import re,pathlib; text=pathlib.Path("'"$DUMP_FILE"'").read_text(); match=re.search(r"SOURCE_LOG_FILE=\x27([^\x27]+)\x27,\s*SOURCE_LOG_POS=(\d+)",text); assert match, "dump 缺少 binlog 切点"; print(match.group(1),match.group(2))')
+read -r LOG_FILE LOG_POS < <(python3 -c 'import re,pathlib,sys; text=pathlib.Path(sys.argv[1]).read_text(); match=re.search(r"SOURCE_LOG_FILE=\x27([^\x27]+)\x27,\s*SOURCE_LOG_POS=(\d+)",text); assert match, "dump 缺少 binlog 切点"; print(match.group(1),match.group(2))' "$DUMP_FILE")
 sql_source "INSERT INTO m01_probe.recovery_marker(marker) VALUES('after_backup');"
 read -r END_FILE END_POS < <(sql_source "SHOW BINARY LOG STATUS" | python3 -c 'import sys; row=sys.stdin.read().strip().split("\t"); assert len(row)>=2, "缺少 BINARY LOG STATUS"; print(row[0],row[1])')
 printf 'M01 dump 切点：%s:%s；增量终点：%s:%s\n' "$LOG_FILE" "$LOG_POS" "$END_FILE" "$END_POS"
@@ -88,7 +123,7 @@ docker run --detach --rm --name "$TARGET_DB" \
   mysql:8.4 --server-id=2 --log-bin-trust-function-creators=1
 DB_READY=0
 for attempt in {1..60}; do
-  if docker exec "$TARGET_DB" sh -c 'mysql --user=root --password="$MYSQL_ROOT_PASSWORD" --execute="SELECT 1"' >/dev/null 2>&1; then
+  if printf 'SELECT 1;\n' | docker exec -i "$TARGET_DB" sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root' >/dev/null 2>&1; then
     DB_READY=1
     break
   fi
@@ -98,7 +133,7 @@ if [ "$DB_READY" != 1 ]; then
   echo '隔离 MySQL 的 root 认证查询未在 60 秒内就绪' >&2
   exit 1
 fi
-docker exec -i "$TARGET_DB" sh -c 'mysql --user=root --password="$MYSQL_ROOT_PASSWORD"' < "$DUMP_FILE"
+docker exec -i "$TARGET_DB" sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root' < "$DUMP_FILE"
 sql_target "CREATE USER 'm01_app'@'%' IDENTIFIED BY '$DB_SECRET'; GRANT ALL PRIVILEGES ON medical_crm.* TO 'm01_app'@'%'; GRANT ALL PRIVILEGES ON m01_probe.* TO 'm01_app'@'%';"
 sql_target "CHANGE REPLICATION SOURCE TO SOURCE_HOST='host.docker.internal',SOURCE_PORT=3307,SOURCE_USER='m01_repl',SOURCE_PASSWORD='$REPL_SECRET',SOURCE_LOG_FILE='$LOG_FILE',SOURCE_LOG_POS=$LOG_POS,GET_SOURCE_PUBLIC_KEY=1; START REPLICA UNTIL SOURCE_LOG_FILE='$END_FILE',SOURCE_LOG_POS=$END_POS;"
 
@@ -128,10 +163,58 @@ if [ "$(sql_target "SELECT COUNT(*) FROM m01_probe.recovery_marker WHERE marker=
   echo "after-backup 探针未恢复" >&2
   exit 1
 fi
-if [ "$(sql_target "SELECT COALESCE(MAX(CAST(version AS UNSIGNED)),0) FROM flyway_schema_history WHERE version IS NOT NULL AND success=1")" != 23 ]; then
-  echo "恢复后的 Flyway 版本不符合当前 V23" >&2
+FAILED_MIGRATIONS="$(sql_target "SELECT COUNT(*) FROM flyway_schema_history WHERE success=0")"
+if [ "$FAILED_MIGRATIONS" != 0 ]; then
+  echo "恢复后的 Flyway 存在失败迁移记录：$FAILED_MIGRATIONS" >&2
   exit 1
 fi
+SOURCE_FLYWAY_VERSIONS="$(sql_source "SELECT version FROM flyway_schema_history WHERE version IS NOT NULL AND success=1")"
+TARGET_FLYWAY_VERSIONS="$(sql_target "SELECT version FROM flyway_schema_history WHERE version IS NOT NULL AND success=1")"
+TARGET_FLYWAY_VERSION="$(python3 - "$ROOT/apps/crm-api/src/main/resources/db/migration" "$SOURCE_FLYWAY_VERSIONS" "$TARGET_FLYWAY_VERSIONS" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+migration_dir = Path(sys.argv[1])
+source_raw = sys.argv[2]
+target_raw = sys.argv[3]
+
+def parse_ver(ver_str: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.split(r'[._]', ver_str.strip()))
+
+expected_versions = []
+for path in migration_dir.glob('V*.sql'):
+    m = re.match(r'^V(\d+(?:[._]\d+)*)__', path.name)
+    if m:
+        ver_str = m.group(1)
+        expected_versions.append((parse_ver(ver_str), ver_str))
+assert expected_versions, '未找到 Flyway 迁移脚本'
+expected_max_tuple, expected_max_str = max(expected_versions, key=lambda item: item[0])
+
+def parse_applied(raw_lines: str) -> tuple[tuple[int, ...], str, set[tuple[int, ...]]]:
+    parsed = []
+    for line in raw_lines.splitlines():
+        s = line.strip()
+        if not s or not re.match(r'^\d+(?:[._]\d+)*$', s):
+            continue
+        parsed.append((parse_ver(s), s))
+    if not parsed:
+        return (0,), '0', set()
+    max_tuple, max_str = max(parsed, key=lambda item: item[0])
+    return max_tuple, max_str, {t for t, _ in parsed}
+
+source_max_tuple, source_max_str, source_tuples = parse_applied(source_raw)
+target_max_tuple, target_max_str, target_tuples = parse_applied(target_raw)
+
+if target_max_tuple != source_max_tuple or target_max_tuple < expected_max_tuple or target_tuples != source_tuples:
+    print(
+        f'恢复后的 Flyway 版本不符合预期：target=V{target_max_str} source=V{source_max_str} expected>=V{expected_max_str}',
+        file=sys.stderr,
+    )
+    sys.exit(1)
+print(target_max_str)
+PY
+)"
 
 for table in crm_entitlement crm_entitlement_ledger crm_redemption crm_redemption_line crm_redemption_reversal crm_payment_txn crm_refund crm_file_object crm_outbox_event crm_inbox_event flyway_schema_history; do
   SOURCE_SUM="$(sql_source "CHECKSUM TABLE $table" | python3 -c 'import sys; print(sys.stdin.read().strip().split("\t")[-1])')"
@@ -155,7 +238,11 @@ assert_zero "SELECT COUNT(*) FROM crm_redemption_line r LEFT JOIN crm_entitlemen
 assert_zero "SELECT COUNT(*) FROM crm_entitlement_ledger l LEFT JOIN crm_redemption_line r ON r.tenant_id=l.tenant_id AND r.entitlement_id=l.entitlement_id AND l.source_type='REDEMPTION' AND l.source_ref=CAST(r.id AS CHAR) AND l.txn_type='REDEEM' WHERE l.source_type='REDEMPTION' AND r.id IS NULL" "存在孤立核销负流水"
 assert_zero "SELECT COUNT(*) FROM crm_redemption_reversal v JOIN crm_redemption_line r ON r.tenant_id=v.tenant_id AND r.redemption_id=v.redemption_id LEFT JOIN crm_entitlement_ledger l ON l.tenant_id=r.tenant_id AND l.entitlement_id=r.entitlement_id AND l.source_type='REDEMPTION_REVERSAL' AND l.source_ref=CAST(v.id AS CHAR) AND l.txn_type='CORRECTION_IN' WHERE v.status='APPROVED' AND (l.id IS NULL OR l.delta_count<>r.count OR l.idempotency_key<>CONCAT('redemption.reversal:',v.id,':',r.id))" "冲正补偿流水缺失或次数不一致"
 
-run_mc 'mc alias set source http://host.docker.internal:9000 dev_minio_CHANGE_ME dev_minio_secret_CHANGE_ME'
+MC_ALIAS_NAME=source \
+MC_ALIAS_URL='http://host.docker.internal:9000' \
+MC_ALIAS_ACCESS_KEY="${M01_SOURCE_S3_ACCESS_KEY:-dev_minio_CHANGE_ME}" \
+MC_ALIAS_SECRET_KEY="${M01_SOURCE_S3_SECRET_KEY:-dev_minio_secret_CHANGE_ME}" \
+write_mc_config
 run_mc 'mc mirror --overwrite source/crm-private-dev/material /work/objects/material'
 SEALED_OBJECTS="$(run_mc 'mc ls --recursive source/crm-private-dev/sealed' | wc -l | tr -d ' ')"
 if [ "$SEALED_OBJECTS" -gt 0 ]; then
@@ -173,7 +260,11 @@ for attempt in {1..45}; do
   sleep 1
 done
 docker inspect --format '{{.Id}} {{.Config.Image}}' "$TARGET_S3" > "$WORK/minio-container.txt"
-run_mc "mc alias set target http://host.docker.internal:$TARGET_S3_PORT m01_minio $S3_SECRET"
+MC_ALIAS_NAME=target \
+MC_ALIAS_URL="http://host.docker.internal:$TARGET_S3_PORT" \
+MC_ALIAS_ACCESS_KEY=m01_minio \
+MC_ALIAS_SECRET_KEY="$S3_SECRET" \
+write_mc_config
 run_mc "mc mb --ignore-existing target/$TARGET_BUCKET"
 run_mc "mc mirror --overwrite /work/objects target/$TARGET_BUCKET"
 run_mc "mc mirror --overwrite target/$TARGET_BUCKET /work/restore"
@@ -213,16 +304,21 @@ export FILES_BUCKET="$TARGET_BUCKET"
 export MINIO_ROOT_USER=m01_minio
 export MINIO_ROOT_PASSWORD="$S3_SECRET"
 export SPRING_PROFILES_ACTIVE=local
-"$JAVA_HOME/bin/java" -jar "$JAR" > "$WORK/backend.log" 2>&1 &
+"$JAVA_CMD" -jar "$JAR" > "$WORK/backend.log" 2>&1 &
 BACKEND_PID=$!
 for attempt in {1..60}; do
   if curl --fail --silent http://127.0.0.1:18081/actuator/health >/dev/null 2>&1; then break; fi
   sleep 1
 done
 curl --fail --silent http://127.0.0.1:18081/actuator/health > "$WORK/health.json"
-curl --fail --silent -c "$WORK/cookies.txt" -H 'Content-Type: application/json' \
-  --data '{"username":"admin","password":"Dev@12345"}' \
-  http://127.0.0.1:18081/api/v1/auth/login > "$WORK/login.json"
+export M01_ADMIN_USERNAME="${M01_ADMIN_USERNAME:-admin}"
+export M01_ADMIN_PASSWORD="${M01_ADMIN_PASSWORD:-Dev@12345}"
+python3 "$ROOT/infra/production/tests/captcha_solver.py" \
+  --base-url http://127.0.0.1:18081 \
+  --username-env M01_ADMIN_USERNAME \
+  --password-env M01_ADMIN_PASSWORD \
+  --cookie-jar "$WORK/cookies.txt" \
+  --out-json "$WORK/login.json"
 python3 - "$WORK/login.json" <<'PY'
 import json,sys
 body=json.load(open(sys.argv[1]))
@@ -254,18 +350,18 @@ for line in open(path):
 assert headers.get('content-type')==expected,(headers.get('content-type'),expected)
 PY
 ACTUAL_SHA="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/download.bin")"
-ACTUAL_SIZE="$(stat -f '%z' "$WORK/download.bin")"
+ACTUAL_SIZE="$(wc -c < "$WORK/download.bin" | tr -d '[:space:]')"
 if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ] || [ "$ACTUAL_SIZE" != "$EXPECTED_SIZE" ]; then
   echo "恢复后私有下载内容不一致" >&2
   exit 1
 fi
 FINISHED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-python3 - "$WORK" "$DUMP_FILE" "$LOG_FILE" "$LOG_POS" "$END_FILE" "$END_POS" "$STARTED_UTC" "$REPLICA_DONE_UTC" "$OBJECTS_DONE_UTC" "$FINISHED_UTC" "$TARGET_DB" "$TARGET_S3" "$TARGET_BUCKET" "$FILE_ID" "$EXPECTED_SHA" <<'PY'
+python3 - "$WORK" "$DUMP_FILE" "$LOG_FILE" "$LOG_POS" "$END_FILE" "$END_POS" "$STARTED_UTC" "$REPLICA_DONE_UTC" "$OBJECTS_DONE_UTC" "$FINISHED_UTC" "$TARGET_DB" "$TARGET_S3" "$TARGET_BUCKET" "$FILE_ID" "$EXPECTED_SHA" "$TARGET_FLYWAY_VERSION" <<'PY'
 from pathlib import Path
 from datetime import datetime
 import hashlib
 import sys
-work,dump,lf,lp,ef,ep,start,replica,objects,finish,db,s3,bucket,file_id,sha=sys.argv[1:]
+work,dump,lf,lp,ef,ep,start,replica,objects,finish,db,s3,bucket,file_id,sha,flyway_ver=sys.argv[1:]
 rto_seconds=max(0,int((datetime.fromisoformat(finish.replace('Z','+00:00'))-datetime.fromisoformat(start.replace('Z','+00:00'))).total_seconds()))
 report=f'''# M01 隔离恢复演练报告（实际执行）
 
@@ -282,7 +378,7 @@ report=f'''# M01 隔离恢复演练报告（实际执行）
 ## 实际验证结果
 
 - 使用 `mysqldump` 全量恢复后，MySQL 原生 `START REPLICA UNTIL` 按 file/position 完成增量恢复；after-backup 探针已恢复。
-- Flyway V23、11 张核心业务/事件表 `CHECKSUM TABLE` 均与源一致。
+- Flyway V{flyway_ver}、11 张核心业务/事件表 `CHECKSUM TABLE` 均与源一致。
 - 权益余额无负数且与账本一致；核销负流水逐行对应；APPROVED 冲正补偿流水与原始次数、幂等键一致。
 - 4 个合成私有对象经独立 MinIO 恢复后逐文件 SHA-256 一致；恢复后的登录、对账查询和素材修订专用私有下载实际内容 hash 与元数据一致，下载 `Content-Type=application/pdf`，未签名对象地址返回 403。
 - 未使用 `mysqlbinlog`，未覆盖开发库、删除开发卷、修改权益/核销历史或宣称真实供应商接入。

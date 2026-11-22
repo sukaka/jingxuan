@@ -28,12 +28,17 @@ public class MybatisLoginSessionRepository implements LoginSessionRepository {
     }
 
     @Override
-    public int revokeByTokenHash(String tokenHash, Instant revokedAt) {
-        return loginSessionMapper.revokeByTokenHash(tokenHash, revokedAt);
+    public int revokeByTokenHash(long tenantId, long userId, String tokenHash, Instant revokedAt) {
+        return loginSessionMapper.revokeByTokenHash(tenantId, userId, tokenHash, revokedAt);
     }
 
     @Override
     public int revokeAllByUserId(long tenantId, long userId, Instant revokedAt) {
         return loginSessionMapper.revokeAllByUserId(tenantId, userId, revokedAt);
+    }
+
+    @Override
+    public int deleteExpiredBefore(Instant cutoff, int limit) {
+        return loginSessionMapper.deleteExpiredBefore(cutoff, limit);
     }
 }

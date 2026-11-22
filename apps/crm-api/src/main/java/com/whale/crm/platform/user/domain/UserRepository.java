@@ -9,10 +9,25 @@ import java.util.Optional;
 public interface UserRepository {
 
     /**
-     * 认证引导（登录）：按登录名查找。用户名在单租户内唯一；跨租户重复视为配置错误由实现抛出。
+     * 认证引导（登录）：按登录名查找。若唯一命中则返回，跨租户重复返回 empty。
      * 此例外仅用于认证前身份定位，登录成功后一切数据访问均以用户行的 tenantId 过滤。
      */
     Optional<SysUser> findByUsernameForAuth(String username);
+
+    /**
+     * 认证引导（登录）：按登录名查找候选账号（最多 2 条），用于检测跨租户同名冲突。
+     */
+    List<SysUser> findCandidatesByUsernameForAuth(String username);
+
+    /**
+     * 认证引导（登录）：按组织编码解析有效租户 ID（最多 2 条），用于显式租户登录与歧义检测。
+     */
+    List<Long> findActiveTenantIdsByOrgCode(String orgCode);
+
+    /**
+     * 认证引导（登录）：在已确定租户内按登录名定位账号。
+     */
+    Optional<SysUser> findByTenantAndUsernameForAuth(long tenantId, String username);
 
     /**
      * 认证引导（令牌校验）：按全局主键查找。随后所有查询继续使用用户行的 tenantId。

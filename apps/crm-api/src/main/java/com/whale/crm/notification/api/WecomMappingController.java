@@ -36,14 +36,14 @@ public class WecomMappingController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAuthority('notification:delivery:read')")
+    @PreAuthorize("hasAnyAuthority('wecom:mapping:manage', 'notification:delivery:read')")
     public ApiResponse<List<WecomMappingResponse>> list(HttpServletRequest request) {
         return ApiResponse.ok(service.list(TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser()),
                 requestId(request));
     }
 
     @PostMapping
-    @PreAuthorize("hasAuthority('notification:delivery:retry')")
+    @PreAuthorize("hasAuthority('wecom:mapping:manage')")
     public ApiResponse<WecomMappingResponse> create(@Valid @RequestBody CreateWecomMappingRequest body,
             @RequestHeader("Idempotency-Key") @Size(min = 1, max = 128)
             @Pattern(regexp = ".*\\S.*") String idempotencyKey, HttpServletRequest request) {
@@ -52,7 +52,7 @@ public class WecomMappingController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAuthority('notification:delivery:retry')")
+    @PreAuthorize("hasAuthority('wecom:mapping:manage')")
     public ApiResponse<WecomMappingResponse> update(@PathVariable long id,
             @Valid @RequestBody UpdateWecomMappingRequest body,
             @RequestHeader("Idempotency-Key") @Size(min = 1, max = 128)

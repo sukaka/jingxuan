@@ -8,23 +8,23 @@ import org.springframework.stereotype.Component;
 public class WecomAdapterRouter {
     private final ObjectProvider<MockWecomAdapter> mock;
     private final DisabledWecomAdapter disabled;
-    private final OfficialWecomArchiveAdapter official;
+    private final OfficialWecomArchiveAdapter officialAdapter;
     private final WecomArchiveOfficialProperties properties;
     private final IntegrationRuntimeConfigService runtimeConfig;
 
     public WecomAdapterRouter(ObjectProvider<MockWecomAdapter> mock, DisabledWecomAdapter disabled,
-                              OfficialWecomArchiveAdapter official, WecomArchiveOfficialProperties properties,
+                              OfficialWecomArchiveAdapter officialAdapter, WecomArchiveOfficialProperties properties,
                               IntegrationRuntimeConfigService runtimeConfig) {
         this.mock = mock;
         this.disabled = disabled;
-        this.official = official;
+        this.officialAdapter = officialAdapter;
         this.properties = properties;
         this.runtimeConfig = runtimeConfig;
     }
 
     public WecomAdapter adapter(long tenantId) {
         if (runtimeConfig.wecomArchiveRealEnabled(tenantId)) {
-            return properties.allowedTenantId() == tenantId ? official : disabled;
+            return properties.allowedTenantId() == tenantId ? officialAdapter : disabled;
         }
         return mock.getIfAvailable() == null ? disabled : mock.getIfAvailable();
     }

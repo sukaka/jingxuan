@@ -59,6 +59,14 @@ class KnowledgePublicationApiIT extends AbstractMysqlIT {
     void setUp() throws Exception {
         objects.clear();
         when(scanner.scan(any())).thenReturn(com.whale.crm.file.application.ClamAvScanner.ScanResult.CLEAN);
+        when(storage.stat(anyString())).thenAnswer(invocation -> {
+            byte[] content = objects.get(invocation.getArgument(0));
+            if (content == null) {
+                throw new IllegalStateException("测试对象不存在");
+            }
+            String md5 = HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(content));
+            return new PrivateObjectStorage.ObjectStat('"' + md5 + '"', content.length, "text/markdown");
+        });
         when(storage.getObject(anyString())).thenAnswer(invocation -> {
             byte[] content = objects.get(invocation.getArgument(0));
             if (content == null) throw new IllegalStateException("测试对象不存在");

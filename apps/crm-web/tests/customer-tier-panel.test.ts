@@ -120,4 +120,49 @@ describe('客户分级面板', () => {
       tierCode: 'A', reason: '继续人工锁定', lock: true, version: 7,
     }, expect.any(String))
   })
+
+  it('切换 customerId 时清空旧客户分级数据并丢弃过期响应', async () => {
+    const wrapper = await mountPanel()
+    expect(wrapper.get('[data-testid="tier-current"]').text()).toBe('A')
+
+    let resolveLate!: (value: CustomerTierView) => void
+    vi.mocked(getCustomerTier)
+      .mockImplementationOnce(() => new Promise((res) => { resolveLate = res }))
+      .mockResolvedValueOnce({ ...view, customerId: 9, tierCode: 'S' })
+    vi.mocked(listCustomerTierHistory).mockResolvedValue([])
+
+    await wrapper.setProps({ customerId: 8 })
+    expect(wrapper.find('[data-testid="tier-current"]').exists()).toBe(false)
+
+    await wrapper.setProps({ customerId: 9 })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="tier-current"]').text()).toBe('S')
+
+    resolveLate({ ...view, customerId: 8, tierCode: 'D' })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="tier-current"]').text()).toBe('S')
+  })
+
+  it('重算请求尚未完成时卸载组件，响应后不再提示 ElMessage 或重新拉取等级', async () => {
+    const errorSpy = vi.spyOn(ElMessage, 'error').mockImplementation(() => ({ close: vi.fn() }))
+    const wrapper = await mountPanel()
+    vi.mocked(getCustomerTier).mockClear()
+    vi.mocked(listCustomerTierHistory).mockClear()
+    vi.mocked(ElMessage.success).mockClear()
+
+    let resolveRecalc!: (value: NonNullable<CustomerTierView['latestSnapshot']>) => void
+    vi.mocked(recalculateCustomerTier).mockReturnValueOnce(new Promise((res) => { resolveRecalc = res }))
+
+    await wrapper.get('[data-testid="tier-recalculate"]').trigger('click')
+    wrapper.unmount()
+
+    resolveRecalc(view.latestSnapshot!)
+    await flushPromises()
+
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(getCustomerTier).not.toHaveBeenCalled()
+    expect(listCustomerTierHistory).not.toHaveBeenCalled()
+    expect(wrapper.emitted('changed')).toBeUndefined()
+  })
 })

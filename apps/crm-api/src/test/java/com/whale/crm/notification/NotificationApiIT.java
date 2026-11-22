@@ -47,8 +47,8 @@ class NotificationApiIT extends AbstractMysqlIT {
     @Test
     void completeNotificationFlowIsIsolatedIdempotentAuditedAndNeverCallsOfficialWecom() throws Exception {
         String suffix = UUID.randomUUID().toString();
-        jdbcTemplate.update("INSERT INTO crm_wecom_staff_account (tenant_id,corp_id,wecom_userid,staff_user_id,enabled) "
-                        + "VALUES (1,'ww-notification-api-it',?,2,0) ON DUPLICATE KEY UPDATE staff_user_id=VALUES(staff_user_id)",
+        jdbcTemplate.update("INSERT INTO crm_wecom_staff_account (tenant_id,corp_id,wecom_userid,staff_user_id,enabled,message_enabled) "
+                        + "VALUES (1,'ww-notification-api-it',?,2,0,1) ON DUPLICATE KEY UPDATE staff_user_id=VALUES(staff_user_id),message_enabled=VALUES(message_enabled)",
                 "synthetic-staff-" + suffix);
         NotificationRequest request = new NotificationRequest(1L, 2L, "FOLLOWUP_DUE", "合成跟进提醒",
                 "仅合成脱敏正文", "FOLLOWUP", suffix, "followup:" + suffix, "/followups/" + suffix,

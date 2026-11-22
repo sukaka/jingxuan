@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import java.util.Set;
 
 public final class InstitutionFieldPolicy {
-    private static final Set<String> CIPHER_FIELDS = Set.of("bankName", "bankAccount", "taxId", "settlementName");
+    private static final Set<String> CIPHER_FIELDS = Set.of("bankName", "bankAccount", "taxId");
 
     private InstitutionFieldPolicy() {
     }
@@ -130,6 +130,12 @@ public final class InstitutionFieldPolicy {
     }
 
     public static String storageValue(String fieldCode, String normalized, InstitutionSupport support) {
-        return normalized == null || !cipherField(fieldCode) ? normalized : support.encrypt(normalized);
+        if (normalized == null) {
+            return null;
+        }
+        if ("chargesFee".equals(fieldCode) || "guaranteeRoi".equals(fieldCode)) {
+            return "true".equals(normalized) ? "1" : "0";
+        }
+        return cipherField(fieldCode) ? support.encrypt(normalized) : normalized;
     }
 }

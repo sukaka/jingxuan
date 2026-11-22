@@ -14,14 +14,10 @@
     <if test="institutionId != null">AND institution_id=#{institutionId}</if>
   </sql>
 
-  <insert id="insertBatch">
+  <insert id="insertBatch" useGeneratedKeys="true" keyProperty="entity.id">
     INSERT INTO crm_settlement_batch (tenant_id,institution_id,settlement_type,period_key,settlement_day,settlement_day_source,settlement_date,status,amount_status,gross_fen,commission_fen,net_payable_fen,paid_fen)
     VALUES (#{tenantId},#{entity.institutionId},#{entity.settlementType},#{entity.periodKey},#{entity.settlementDay},#{entity.settlementDaySource},#{entity.settlementDate},'DRAFT','PENDING_VERIFICATION',0,0,0,0)
   </insert>
-  <select id="selectBatchByPeriod" resultType="com.whale.crm.settlement.domain.SettlementBatch">
-    SELECT <include refid="batchColumns"/> FROM crm_settlement_batch
-    WHERE tenant_id=#{tenantId} AND institution_id=#{institutionId} AND settlement_type=#{type} AND period_key=#{periodKey}
-  </select>
   <select id="selectBatch" resultType="com.whale.crm.settlement.domain.SettlementBatch">
     SELECT <include refid="batchColumns"/> FROM crm_settlement_batch WHERE tenant_id=#{tenantId} AND id=#{id}
   </select>
@@ -53,10 +49,28 @@
   <select id="selectLineByRedemption" resultType="com.whale.crm.settlement.domain.SettlementLine">
     SELECT <include refid="lineColumns"/> FROM crm_settlement_line WHERE tenant_id=#{tenantId} AND redemption_id=#{redemptionId}
   </select>
+  <select id="selectLinesByRedemptions" resultType="com.whale.crm.settlement.domain.SettlementLine">
+    SELECT <include refid="lineColumns"/> FROM crm_settlement_line
+    WHERE tenant_id=#{tenantId} AND redemption_id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    ORDER BY redemption_id
+  </select>
+  <select id="lockLineIdByRedemption" resultType="long">
+    SELECT id FROM crm_settlement_line WHERE tenant_id=#{tenantId} AND redemption_id=#{redemptionId} LIMIT 1 FOR UPDATE
+  </select>
   <select id="lockRedemptions" resultType="com.whale.crm.settlement.domain.SettlementRedemption">
     SELECT id,institution_id AS institutionId,status,service_at AS serviceAt FROM crm_redemption
     WHERE tenant_id=#{tenantId} AND id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
-    ORDER BY id FOR UPDATE
+    ORDER BY id ASC FOR UPDATE
+  </select>
+  <select id="selectActiveReversalRedemptionIds" resultType="long">
+    SELECT DISTINCT redemption_id FROM crm_redemption_reversal
+    WHERE tenant_id=#{tenantId}
+      AND (
+        active_redemption_id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+        OR (redemption_id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+            AND status IN ('REQUESTED','APPROVED'))
+      )
+    ORDER BY redemption_id
   </select>
 
   <update id="updateVerification">
@@ -131,6 +145,11 @@
     FROM crm_redemption r
     WHERE r.tenant_id=#{tenantId} AND r.status='POSTED'
       AND NOT EXISTS (SELECT 1 FROM crm_settlement_line l WHERE l.tenant_id=r.tenant_id AND l.redemption_id=r.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM crm_redemption_reversal rv
+        WHERE rv.tenant_id=r.tenant_id
+          AND (rv.active_redemption_id=r.id OR (rv.redemption_id=r.id AND rv.status IN ('REQUESTED','APPROVED')))
+      )
     <include refid="institutionScope"/>
     ORDER BY r.id
   </select>

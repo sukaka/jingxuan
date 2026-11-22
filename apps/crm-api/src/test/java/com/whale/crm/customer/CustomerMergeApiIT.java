@@ -1,10 +1,35 @@
 package com.whale.crm.customer;
 
+import com.whale.crm.customer.api.dto.CreateMergeCaseRequest;
+import com.whale.crm.customer.api.dto.MergeCandidateItemResponse;
+import com.whale.crm.customer.api.dto.MergeReversalActionRequest;
+import com.whale.crm.customer.api.dto.MergeReversalResponse;
+import com.whale.crm.customer.application.MergeApplicationService;
+import com.whale.crm.customer.application.MergeReversalApplicationService;
+import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.support.AbstractMysqlIT;
+import com.whale.crm.platform.web.BusinessException;
+import com.whale.crm.platform.web.ErrorCode;
+import com.whale.crm.trading.api.dto.CreateOrderRequest;
+import com.whale.crm.trading.api.dto.OrderItemRequest;
+import com.whale.crm.trading.application.OrderApplicationService;
+import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+
+import javax.sql.DataSource;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -21,6 +46,16 @@ class CustomerMergeApiIT extends AbstractMysqlIT {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private MergeApplicationService mergeService;
+    @Autowired
+    private MergeReversalApplicationService mergeReversalService;
+    @Autowired
+    private OrderApplicationService orderService;
+    @Autowired
+    private CurrentUserService currentUserService;
+    @Autowired
+    private DataSource dataSource;
 
     @Test
     void c02_sameMobileProducesCandidate_confirmMigratesAndArchives() throws Exception {
@@ -217,6 +252,183 @@ class CustomerMergeApiIT extends AbstractMysqlIT {
         for (var item : objectMapper.readTree(list).at("/data/items")) {
             assertThat(item.get("id").asLong()).isNotEqualTo(caseId);
         }
+    }
+
+    @Test
+    void scanRespectsTeamDataScopeAndSkipsOtherTeamAndCrossTeamDuplicates() throws Exception {
+        AuthCookies admin = login("admin");
+        AuthCookies lead1 = login("lead1");
+
+        long t1a = createCustomer(admin, "IT-SCAN-T1A", "13955551111", 2);
+        long t1b = createCustomer(admin, "IT-SCAN-T1B", "13955551111", 2);
+        long t2a = createCustomer(admin, "IT-SCAN-T2A", "13955552222", 3);
+        long t2b = createCustomer(admin, "IT-SCAN-T2B", "13955552222", 3);
+        long cross1 = createCustomer(admin, "IT-SCAN-X1", "13955553333", 2);
+        long cross2 = createCustomer(admin, "IT-SCAN-X2", "13955553333", 3);
+
+        long t2Id1 = createCustomer(admin, "IT-SCAN-ID-T2A", "13955554441", 3);
+        long t2Id2 = createCustomer(admin, "IT-SCAN-ID-T2B", "13955554442", 3);
+        long crossId1 = createCustomer(admin, "IT-SCAN-ID-X1", "13955555551", 2);
+        long crossId2 = createCustomer(admin, "IT-SCAN-ID-X2", "13955555552", 3);
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String t2Ext = "wx-scan-t2-" + suffix;
+        String crossExt = "wx-scan-cross-" + suffix;
+        jdbcTemplate.update(
+                "INSERT INTO crm_customer_identity (tenant_id,customer_id,identity_type,source_app,external_id,status) "
+                        + "VALUES (1,?,'WECOM','corp-scan-a',?,'LINKED'),"
+                        + "(1,?,'WECOM','corp-scan-b',?,'LINKED'),"
+                        + "(1,?,'WECOM','corp-scan-a',?,'LINKED'),"
+                        + "(1,?,'WECOM','corp-scan-b',?,'LINKED')",
+                t2Id1, t2Ext, t2Id2, t2Ext, crossId1, crossExt, crossId2, crossExt);
+
+        String scanBody = mockMvc.perform(lead1.withAuth(post("/api/v1/customer-merge-candidates/scan")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        var items = objectMapper.readTree(scanBody).at("/data/items");
+        List<Long> returnedPairs = new ArrayList<>();
+        for (var item : items) {
+            returnedPairs.add(item.get("primaryCustomerId").asLong());
+            returnedPairs.add(item.get("secondaryCustomerId").asLong());
+        }
+        assertThat(returnedPairs).contains(t1a, t1b);
+        assertThat(returnedPairs).doesNotContain(t2a, t2b, cross1, cross2, t2Id1, t2Id2, crossId1, crossId2);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM crm_merge_case WHERE tenant_id=1 AND primary_customer_id IN (?,?,?,?)",
+                Integer.class, t2a, cross1, t2Id1, crossId1)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM crm_merge_case WHERE tenant_id=1 AND primary_customer_id=? AND secondary_customer_id=?",
+                Integer.class, t1a, t1b)).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentMergeConfirmBurstDoesNotStarveHikariPool() throws Exception {
+        HikariDataSource hikari = dataSource.unwrap(HikariDataSource.class);
+        assertThat(hikari.getMaximumPoolSize()).isEqualTo(16);
+
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        int burstCount = 20;
+        List<long[]> pairs = new ArrayList<>(burstCount);
+        for (int i = 0; i < burstCount; i++) {
+            long primary = createCustomer(admin, "IT-POOL-主-" + i, "1391000" + String.format("%04d", i));
+            long secondary = createCustomer(admin, "IT-POOL-从-" + i, "1392000" + String.format("%04d", i));
+            long orderId = orderService.create(1L, adminUser, new CreateOrderRequest(
+                    secondary, "PLATFORM", "REGULAR", 1L, 1L, 181100L,
+                    LocalDate.of(2027, 12, 31), List.of(new OrderItemRequest(301L, 1)))).order().order().id();
+            long caseId = mergeService.createCase(1L, adminUser,
+                    new CreateMergeCaseRequest(primary, secondary, "连接池并发压测-" + i)).id();
+            mergeService.review(1L, adminUser, caseId, 0L, "连接池并发压测复核-" + i);
+            pairs.add(new long[]{caseId, primary, secondary, orderId});
+        }
+
+        CountDownLatch ready = new CountDownLatch(burstCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<MergeCandidateItemResponse>> futures = new ArrayList<>(burstCount);
+        try (var executor = Executors.newFixedThreadPool(burstCount)) {
+            for (long[] pair : pairs) {
+                long caseId = pair[0];
+                futures.add(executor.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(15, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("pool burst start latch timed out");
+                    }
+                    return mergeService.confirm(1L, adminUser, caseId, 1L, "并发连接池压测");
+                }));
+            }
+            assertThat(ready.await(15, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            for (Future<MergeCandidateItemResponse> future : futures) {
+                assertThat(future.get(25, TimeUnit.SECONDS).status()).isEqualTo("CONFIRMED");
+            }
+        }
+
+        for (long[] pair : pairs) {
+            long caseId = pair[0];
+            long primary = pair[1];
+            long secondary = pair[2];
+            long orderId = pair[3];
+            assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM crm_customer WHERE id=?",
+                    Integer.class, secondary)).isEqualTo(1);
+            assertThat(jdbcTemplate.queryForObject("SELECT customer_id FROM crm_order WHERE id=?",
+                    Long.class, orderId)).isEqualTo(primary);
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM crm_merge_resource_snapshot WHERE merge_case_id=? AND resource_type='ORDER' AND resource_key=?",
+                    Integer.class, caseId, Long.toString(orderId))).isEqualTo(1);
+        }
+        if (hikari.getHikariPoolMXBean() != null) {
+            assertThat(hikari.getHikariPoolMXBean().getActiveConnections()).isZero();
+            assertThat(hikari.getHikariPoolMXBean().getThreadsAwaitingConnection()).isZero();
+        }
+    }
+
+    @Test
+    void concurrentMergeReversalApproveAndMergeConfirmSerializeWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        for (int round = 0; round < 10; round++) {
+            long primary = createCustomer(admin, "IT-MR-主-" + round, "1393000" + String.format("%04d", round));
+            long secondary = createCustomer(admin, "IT-MR-从-" + round, "1394000" + String.format("%04d", round));
+            long orderId = orderService.create(1L, adminUser, new CreateOrderRequest(
+                    secondary, "PLATFORM", "REGULAR", 1L, 1L, 181100L,
+                    LocalDate.of(2027, 12, 31), List.of(new OrderItemRequest(301L, 1)))).order().order().id();
+            long caseId = mergeService.createCase(1L, adminUser,
+                    new CreateMergeCaseRequest(primary, secondary, "并发更正合并-" + round)).id();
+            mergeService.review(1L, adminUser, caseId, 0L, "并发更正合并复核-" + round);
+            mergeService.confirm(1L, adminUser, caseId, 1L, "并发更正合并确认-" + round);
+            long reversalId = mergeReversalService.request(adminUser, caseId,
+                    new MergeReversalActionRequest("并发更正申请-" + round, null),
+                    "it-mr-req-" + round + "-" + UUID.randomUUID()).id();
+
+            String approveKey = "it-mr-app-" + round + "-" + UUID.randomUUID();
+            MergeReversalActionRequest approveReq = new MergeReversalActionRequest("并发更正审批-" + round, 0L);
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+            Outcome<MergeReversalResponse> approveOutcome;
+            Outcome<MergeCandidateItemResponse> confirmOutcome;
+            String confirmReason = "并发重复确认-" + round;
+            try (var executor = Executors.newFixedThreadPool(2)) {
+                Future<Outcome<MergeReversalResponse>> approveFuture = executor.submit(() ->
+                        runWithLatch(ready, start, () ->
+                                mergeReversalService.approve(adminUser, reversalId, approveReq, approveKey)));
+                Future<Outcome<MergeCandidateItemResponse>> confirmFuture = executor.submit(() ->
+                        runWithLatch(ready, start, () ->
+                                mergeService.confirm(1L, adminUser, caseId, 2L, confirmReason)));
+                assertThat(ready.await(15, TimeUnit.SECONDS)).isTrue();
+                start.countDown();
+                approveOutcome = approveFuture.get(25, TimeUnit.SECONDS);
+                confirmOutcome = confirmFuture.get(25, TimeUnit.SECONDS);
+            }
+
+            assertThat(approveOutcome.error()).isNull();
+            assertThat(approveOutcome.value().status()).isEqualTo("EXECUTED");
+            assertThat(confirmOutcome.error())
+                    .isInstanceOf(BusinessException.class)
+                    .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.CONFLICT));
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_merge_reversal WHERE id=?",
+                    String.class, reversalId)).isEqualTo("EXECUTED");
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_merge_case WHERE id=?",
+                    String.class, caseId)).isEqualTo("REVERSED");
+            assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM crm_customer WHERE id=?",
+                    Integer.class, secondary)).isZero();
+            assertThat(jdbcTemplate.queryForObject("SELECT customer_id FROM crm_order WHERE id=?",
+                    Long.class, orderId)).isEqualTo(secondary);
+        }
+    }
+
+    private <T> Outcome<T> runWithLatch(CountDownLatch ready, CountDownLatch start, Callable<T> action) {
+        ready.countDown();
+        try {
+            if (!start.await(15, TimeUnit.SECONDS)) {
+                return new Outcome<>(null, new IllegalStateException("start latch timed out"));
+            }
+            return new Outcome<>(action.call(), null);
+        } catch (Throwable ex) {
+            return new Outcome<>(null, ex);
+        }
+    }
+
+    private record Outcome<T>(T value, Throwable error) {
     }
 
     private long createCustomer(AuthCookies actor, String nickname, String mobile) throws Exception {

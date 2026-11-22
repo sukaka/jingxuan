@@ -49,13 +49,21 @@ public class FileContentInspector {
             byte[] header = header(path);
             String mimeType = detectMimeType(header);
             boolean declaredMarkdown = "text/markdown".equals(declaredMimeType) || "text/x-markdown".equals(declaredMimeType);
-            if (allowText && mimeType == null && (declaredMarkdown || looksMarkdown(path))) {
-                mimeType = detectText(path, declaredMarkdown ? Boolean.TRUE : null);
+            boolean declaredPlainText = "text/plain".equals(declaredMimeType);
+            boolean csvCandidate = declaredMimeType == null || "text/csv".equals(declaredMimeType);
+            if (allowText && mimeType == null) {
+                if (declaredMarkdown) {
+                    mimeType = detectText(path, Boolean.TRUE);
+                } else if (declaredPlainText) {
+                    mimeType = detectText(path, Boolean.FALSE);
+                } else if (declaredMimeType == null && looksMarkdown(path)) {
+                    mimeType = detectText(path, null);
+                }
             }
-            if (mimeType == null) {
+            if (mimeType == null && csvCandidate) {
                 mimeType = detectCsv(path);
             }
-            if (allowText && mimeType == null) {
+            if (allowText && mimeType == null && !declaredPlainText && !declaredMarkdown) {
                 mimeType = detectText(path);
             }
             if (mimeType == null) {

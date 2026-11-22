@@ -26,10 +26,19 @@ public class WecomMessageClientRouter implements WecomMessageClient {
     public WecomSendResult send(WecomMessageCommand command) {
         String mode = properties.mode() == null ? "DISABLED" : properties.mode().strip().toUpperCase(Locale.ROOT);
         return switch (mode) {
-            case "OFFICIAL" -> official.send(command);
+            case "OFFICIAL" -> sendOfficial(command);
             case "MOCK" -> mock.send(command);
             case "DISABLED", "" -> disabled.send(command);
             default -> throw new IllegalStateException("Unsupported WeCom message mode");
         };
+    }
+
+    private WecomSendResult sendOfficial(WecomMessageCommand command) {
+        if (command == null || properties.allowedTenantId() <= 0
+                || command.tenantId() != properties.allowedTenantId()) {
+            return new WecomSendResult(WecomSendResult.Status.FAILED, "OFFICIAL", null,
+                    "WECOM_MESSAGE_TENANT_FORBIDDEN");
+        }
+        return official.send(command);
     }
 }

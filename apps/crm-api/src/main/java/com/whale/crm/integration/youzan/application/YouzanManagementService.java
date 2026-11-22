@@ -2,7 +2,6 @@ package com.whale.crm.integration.youzan.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.customer.application.CustomerScopeSupport;
-import com.whale.crm.platform.context.TenantContext;
 import com.whale.crm.integration.youzan.adapter.RealYouzanAdapter;
 import com.whale.crm.integration.youzan.adapter.YouzanAdapterRouter;
 import com.whale.crm.integration.youzan.adapter.YouzanOrderEvent;
@@ -52,6 +51,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -93,26 +93,45 @@ public class YouzanManagementService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    @Transactional(readOnly = true)
     public PageResponse<YouzanOrderView> orders(long tenantId, CurrentUser user, String shopId, int page, int size) {
         int offset = (page - 1) * size;
         DataScope scope = scopeSupport.scope(user);
-        boolean linkedOnly = scope.type() != DataScope.ScopeType.ALL;
-        List<YouzanOrderView> items = repository.findLatestOrderEvents(tenantId, shopId, linkedOnly, offset, size).stream()
-                .map(raw -> toView(tenantId, user, scope, raw, true)).filter(view -> view != null).toList();
-        return new PageResponse<>(items, repository.countDistinctExternalOrders(tenantId, shopId, linkedOnly), page, size);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return new PageResponse<>(List.of(), 0, page, size);
+        }
+        CustomerScopeSupport.ScopeQuery scopeQuery = scopeQuery(scope, user);
+        List<YouzanOrderView> items = repository.findLatestOrderEvents(tenantId, shopId, scopeQuery, offset, size).stream()
+                .map(raw -> toView(tenantId, user, scope, raw, true)).filter(Objects::nonNull).toList();
+        return new PageResponse<>(items, repository.countDistinctExternalOrders(tenantId, shopId, scopeQuery), page, size);
     }
 
     @Transactional(readOnly = true)
     public YouzanOrderView order(long tenantId, CurrentUser user, long eventId) {
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            throw orderNotFound();
+        }
         YouzanEvent raw = repository.findEvent(tenantId, eventId).orElseThrow(this::orderNotFound);
-        return toView(tenantId, user, scopeSupport.scope(user), raw, false);
+        return toView(tenantId, user, scope, raw, false);
     }
 
     private YouzanOrderView toView(long tenantId, CurrentUser user, DataScope scope, YouzanEvent raw,
                                    boolean omitUnlinked) {
         YouzanOrderMap map = repository.findOrderMap(tenantId, raw.shopId(), raw.externalOrderNo()).orElse(null);
-        OrderFulfillmentView detail = map == null ? null : orderService.detail(tenantId, user, map.crmOrderId());
+        OrderFulfillmentView detail = null;
+        if (map != null) {
+            try {
+                detail = orderService.detail(tenantId, user, map.crmOrderId());
+            } catch (BusinessException ex) {
+                if (ex.errorCode() == ErrorCode.NOT_FOUND) {
+                    if (omitUnlinked) {
+                        return null;
+                    }
+                    throw orderNotFound();
+                }
+                throw ex;
+            }
+        }
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
         if (map == null && !rawVisible(tenantId, user, scope, event)) {
             if (omitUnlinked) {
@@ -136,7 +155,7 @@ public class YouzanManagementService {
         if (scope.type() == DataScope.ScopeType.ALL) {
             return true;
         }
-        if (event.externalCustomerId() == null || event.externalCustomerId().isBlank()) {
+        if (scopeSupport.isEmptyScope(scope) || event.externalCustomerId() == null || event.externalCustomerId().isBlank()) {
             return false;
         }
         YouzanCustomerLink customer = repository.findCustomerLink(tenantId, event.shopId(), event.externalCustomerId())
@@ -144,8 +163,24 @@ public class YouzanManagementService {
         if (customer == null) {
             return false;
         }
-        scopeSupport.requireVisible(tenantId, customer.customerId(), user);
-        return true;
+        try {
+            scopeSupport.requireVisible(tenantId, customer.customerId(), user);
+            return true;
+        } catch (BusinessException ex) {
+            if (ex.errorCode() == ErrorCode.NOT_FOUND) {
+                return false;
+            }
+            throw ex;
+        }
+    }
+
+    private CustomerScopeSupport.ScopeQuery scopeQuery(DataScope scope, CurrentUser user) {
+        return Optional.ofNullable(scopeSupport.queryOf(scope, user))
+                .orElseGet(() -> {
+                    List<Long> teamIds = scope.teamIds() == null
+                            ? null : scope.teamIds().stream().sorted().toList();
+                    return new CustomerScopeSupport.ScopeQuery(scope.type().name(), teamIds, user.userId());
+                });
     }
 
     private YouzanOrderEvent readEvent(String encrypted) {
@@ -225,12 +260,26 @@ public class YouzanManagementService {
     }
 
     @Transactional(readOnly = true)
-    public YouzanReconcileReport report(long tenantId, String shopId) {
+    public YouzanReconcileReport report(long tenantId, CurrentUser user, String shopId) {
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return new YouzanReconcileReport(shopId, 0, 0, 0, null, 0, 0);
+        }
         YouzanSyncCursor cursor = repository.findCursor(tenantId, shopId).orElse(null);
-        return new YouzanReconcileReport(shopId, repository.countEvents(tenantId, shopId),
-                repository.countOrderMaps(tenantId, shopId), repository.countIssues(tenantId, "OPEN"),
-                cursor == null ? null : cursor.lastSyncAt(), repository.countTodayEvents(tenantId, shopId),
-                repository.countCampaignOrders(tenantId, shopId));
+        if (scope.type() == DataScope.ScopeType.ALL || user.permissions().contains("integration:youzan:manage")) {
+            return new YouzanReconcileReport(shopId, repository.countEvents(tenantId, shopId),
+                    repository.countOrderMaps(tenantId, shopId), repository.countIssues(tenantId, "OPEN"),
+                    cursor == null ? null : cursor.lastSyncAt(), repository.countTodayEvents(tenantId, shopId),
+                    repository.countCampaignOrders(tenantId, shopId));
+        }
+        CustomerScopeSupport.ScopeQuery scopeQuery = scopeQuery(scope, user);
+        return new YouzanReconcileReport(shopId,
+                repository.countScopedEvents(tenantId, shopId, scopeQuery),
+                repository.countScopedOrderMaps(tenantId, shopId, scopeQuery),
+                repository.countScopedIssues(tenantId, "OPEN", scopeQuery),
+                cursor == null ? null : cursor.lastSyncAt(),
+                repository.countScopedTodayEvents(tenantId, shopId, scopeQuery),
+                repository.countScopedCampaignOrders(tenantId, shopId, scopeQuery));
     }
 
     @Transactional(readOnly = true)
@@ -240,8 +289,38 @@ public class YouzanManagementService {
                 repository.countIssues(tenantId, status), page, size);
     }
 
+    @Transactional(readOnly = true)
+    public PageResponse<YouzanSyncIssue> issues(long tenantId, CurrentUser user, String status, int page, int size) {
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return new PageResponse<>(List.of(), 0, page, size);
+        }
+        if (scope.type() == DataScope.ScopeType.ALL || user.permissions().contains("integration:youzan:manage")) {
+            return issues(tenantId, status, page, size);
+        }
+        int offset = (page - 1) * size;
+        CustomerScopeSupport.ScopeQuery scopeQuery = scopeQuery(scope, user);
+        return new PageResponse<>(repository.findScopedIssues(tenantId, status, scopeQuery, offset, size),
+                repository.countScopedIssues(tenantId, status, scopeQuery), page, size);
+    }
+
     public YouzanEventResponse retryIssue(CurrentUser user, long issueId) {
         long tenantId = user.tenantId();
+        if (!user.permissions().contains("integration:youzan:manage")) {
+            DataScope scope = scopeSupport.scope(user);
+            if (scopeSupport.isEmptyScope(scope)) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在");
+            }
+            if (scope.type() != DataScope.ScopeType.ALL) {
+                YouzanSyncIssue existing = repository.findIssue(tenantId, issueId)
+                        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
+                YouzanEvent raw = repository.findEvent(tenantId, existing.eventId())
+                        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
+                if (toView(tenantId, user, scope, raw, true) == null) {
+                    throw new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在");
+                }
+            }
+        }
         YouzanSyncIssue issue = Objects.requireNonNull(transactionTemplate.execute(status -> {
             YouzanSyncIssue locked = repository.findIssueForUpdate(tenantId, issueId)
                     .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
@@ -261,88 +340,100 @@ public class YouzanManagementService {
     }
 
     @Transactional(readOnly = true)
-    public List<YouzanSkuMapping> skuMappings(long tenantId, String shopId) {
+    public List<YouzanSkuMapping> skuMappings(long tenantId, CurrentUser user, String shopId) {
+        if (user.isInstitutionUser()) {
+            return List.of();
+        }
         return repository.findSkuMappings(tenantId, shopId);
     }
 
     public YouzanSkuMapping upsertSkuMapping(CurrentUser user, YouzanSkuMappingRequest request, String idempotencyKey) {
+        long tenantId = user.tenantId();
         String key = requireKey(idempotencyKey);
         String payload = json(request);
         String scope = "youzan.sku.mapping";
-        IdempotencyRecord replay = idempotencyService.lookup(tenant(), scope, key, payload).orElse(null);
+        IdempotencyRecord replay = idempotencyService.lookup(tenantId, scope, key, payload).orElse(null);
         if (replay != null) {
-            return repository.findSkuMapping(tenant(), request.shopId(), request.externalSkuId()).orElseThrow();
+            return repository.findSkuMapping(tenantId, request.shopId(), request.externalSkuId()).orElseThrow();
         }
         try {
             return transactionTemplate.execute(status -> {
-                PackageVersionSnapshot snapshot = catalogService.snapshot(tenant(), user, request.crmSkuId());
+                PackageVersionSnapshot snapshot = catalogService.snapshot(tenantId, user, request.crmSkuId());
                 if (!snapshot.entitlementIssuable()) {
                     throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "SKU权益规则不完整，不能建立有赞映射");
                 }
-                YouzanSkuMapping existing = repository.findSkuMapping(tenant(), request.shopId(), request.externalSkuId())
+                YouzanSkuMapping existing = repository.findSkuMapping(tenantId, request.shopId(), request.externalSkuId())
                         .orElse(null);
                 if (existing == null) {
-                    repository.insertSkuMapping(new YouzanSkuMapping(null, request.shopId(), request.externalSkuId(),
+                    repository.insertSkuMapping(tenantId, new YouzanSkuMapping(null, request.shopId(), request.externalSkuId(),
                             request.crmSkuId(), "ACTIVE", null, null));
                 } else {
                     if (request.version() == null || !existing.version().equals(request.version())) {
                         throw new BusinessException(ErrorCode.CONFLICT, "SKU映射版本已变化");
                     }
-                    if (repository.updateSkuMapping(tenant(), existing.id(), request.version(), request.crmSkuId(), "ACTIVE") == 0) {
+                    if (repository.updateSkuMapping(tenantId, existing.id(), request.version(), request.crmSkuId(), "ACTIVE") == 0) {
                         throw new BusinessException(ErrorCode.CONFLICT, "SKU映射版本冲突");
                     }
                 }
-                YouzanSkuMapping result = repository.findSkuMapping(tenant(), request.shopId(), request.externalSkuId()).orElseThrow();
-                idempotencyService.recordSuccess(tenant(), scope, key, "YOUZAN_SKU_MAPPING",
+                YouzanSkuMapping result = repository.findSkuMapping(tenantId, request.shopId(), request.externalSkuId()).orElseThrow();
+                idempotencyService.recordSuccess(tenantId, scope, key, "YOUZAN_SKU_MAPPING",
                         result.id().toString(), payload);
-                auditService.record(tenant(), user.userId(), "YOUZAN_SKU_MAPPING_SAVE", "YOUZAN", result.id().toString(),
+                auditService.record(tenantId, user.userId(), "YOUZAN_SKU_MAPPING_SAVE", "YOUZAN", result.id().toString(),
                         existing, result, null);
                 return result;
             });
         } catch (DuplicateKeyException ex) {
-            return repository.findSkuMapping(tenant(), request.shopId(), request.externalSkuId()).orElseThrow();
+            return repository.findSkuMapping(tenantId, request.shopId(), request.externalSkuId()).orElseThrow();
         }
     }
 
     @Transactional(readOnly = true)
-    public List<YouzanCustomerLink> customerLinks(long tenantId, String shopId) {
-        return repository.findCustomerLinks(tenantId, shopId);
+    public List<YouzanCustomerLink> customerLinks(long tenantId, CurrentUser user, String shopId) {
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return List.of();
+        }
+        if (scope.type() == DataScope.ScopeType.ALL || user.permissions().contains("integration:youzan:manage")) {
+            return repository.findCustomerLinks(tenantId, shopId);
+        }
+        return repository.findScopedCustomerLinks(tenantId, shopId, scopeQuery(scope, user));
     }
 
     public YouzanCustomerLink upsertCustomerLink(CurrentUser user, YouzanCustomerLinkRequest request, String idempotencyKey) {
+        long tenantId = user.tenantId();
         String key = requireKey(idempotencyKey);
         String payload = json(request);
         String scope = "youzan.customer.link";
-        IdempotencyRecord replay = idempotencyService.lookup(tenant(), scope, key, payload).orElse(null);
+        IdempotencyRecord replay = idempotencyService.lookup(tenantId, scope, key, payload).orElse(null);
         if (replay != null) {
-            return repository.findCustomerLink(tenant(), request.shopId(), request.externalCustomerId()).orElseThrow();
+            return repository.findCustomerLink(tenantId, request.shopId(), request.externalCustomerId()).orElseThrow();
         }
         try {
             return transactionTemplate.execute(status -> {
-                scopeSupport.requireVisible(tenant(), request.customerId(), user);
-                YouzanCustomerLink existing = repository.findCustomerLink(tenant(), request.shopId(), request.externalCustomerId()).orElse(null);
+                scopeSupport.requireVisible(tenantId, request.customerId(), user);
+                YouzanCustomerLink existing = repository.findCustomerLink(tenantId, request.shopId(), request.externalCustomerId()).orElse(null);
                 if (existing == null) {
-                    repository.insertCustomerLink(new YouzanCustomerLink(null, request.shopId(), request.externalCustomerId(),
+                    repository.insertCustomerLink(tenantId, new YouzanCustomerLink(null, request.shopId(), request.externalCustomerId(),
                             request.customerId(), "MANUAL", "HIGH", request.reason(), user.userId(), null, null));
                 } else {
                     if (request.version() == null || !existing.version().equals(request.version())) {
                         throw new BusinessException(ErrorCode.CONFLICT, "客户映射版本已变化");
                     }
-                    if (repository.updateCustomerLink(tenant(), existing.id(), request.version(), request.customerId(),
+                    if (repository.updateCustomerLink(tenantId, existing.id(), request.version(), request.customerId(),
                             request.reason()) == 0) {
                         throw new BusinessException(ErrorCode.CONFLICT, "客户映射版本冲突");
                     }
                 }
-                YouzanCustomerLink result = repository.findCustomerLink(tenant(), request.shopId(), request.externalCustomerId())
+                YouzanCustomerLink result = repository.findCustomerLink(tenantId, request.shopId(), request.externalCustomerId())
                         .orElseThrow();
-                idempotencyService.recordSuccess(tenant(), scope, key, "YOUZAN_CUSTOMER_LINK",
+                idempotencyService.recordSuccess(tenantId, scope, key, "YOUZAN_CUSTOMER_LINK",
                         result.id().toString(), payload);
-                auditService.record(tenant(), user.userId(), "YOUZAN_CUSTOMER_LINK_SAVE", "YOUZAN",
+                auditService.record(tenantId, user.userId(), "YOUZAN_CUSTOMER_LINK_SAVE", "YOUZAN",
                         result.id().toString(), existing, result, request.reason());
                 return result;
             });
         } catch (DuplicateKeyException ex) {
-            return repository.findCustomerLink(tenant(), request.shopId(), request.externalCustomerId()).orElseThrow();
+            return repository.findCustomerLink(tenantId, request.shopId(), request.externalCustomerId()).orElseThrow();
         }
     }
 
@@ -542,10 +633,6 @@ public class YouzanManagementService {
         } finally {
             configRepository.releaseShopLease(tenantId, job.shopId(), job.leaseOwner());
         }
-    }
-
-    private long tenant() {
-        return TenantContext.currentTenantId();
     }
 
     private String requireKey(String key) {

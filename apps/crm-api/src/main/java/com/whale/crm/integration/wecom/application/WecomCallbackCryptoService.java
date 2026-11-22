@@ -100,7 +100,8 @@ public class WecomCallbackCryptoService {
     }
 
     private void requireConfigured() {
-        if (properties.callbackToken() == null || properties.callbackToken().isBlank()
+        if (properties.allowedTenantId() <= 0
+                || properties.callbackToken() == null || properties.callbackToken().isBlank()
                 || properties.callbackAesKey() == null || !properties.callbackAesKey().matches("[A-Za-z0-9]{43}")
                 || properties.corpId() == null || properties.corpId().isBlank()) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "企微回调参数未配置");

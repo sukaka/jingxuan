@@ -1,7 +1,32 @@
 package com.whale.crm.customer;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.whale.crm.customer.api.dto.CustomerSegmentCriteria;
+import com.whale.crm.customer.api.dto.MergeCandidateItemResponse;
+import com.whale.crm.customer.api.dto.MergeReversalActionRequest;
+import com.whale.crm.customer.api.dto.MergeReversalResponse;
+import com.whale.crm.customer.application.MergeApplicationService;
+import com.whale.crm.customer.application.MergeReversalApplicationService;
+import com.whale.crm.customer.batchtag.api.dto.BatchTagJobActionRequest;
+import com.whale.crm.customer.batchtag.api.dto.BatchTagJobDetailResponse;
+import com.whale.crm.customer.batchtag.api.dto.BatchTagSourceRequest;
+import com.whale.crm.customer.batchtag.api.dto.CreateBatchTagJobRequest;
+import com.whale.crm.customer.batchtag.api.dto.PreviewBatchTagJobRequest;
+import com.whale.crm.customer.batchtag.application.BatchTagJobApplicationService;
+import com.whale.crm.customer.domain.CustomerRepository;
+import com.whale.crm.customer.domain.MergeCaseRepository;
+import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.support.AbstractMysqlIT;
+import com.whale.crm.platform.web.BusinessException;
+import com.whale.crm.platform.web.ErrorCode;
+import com.whale.crm.trading.api.dto.CreateOrderRequest;
+import com.whale.crm.trading.api.dto.OrderItemRequest;
+import com.whale.crm.trading.api.dto.OrderReviewRequest;
+import com.whale.crm.trading.api.dto.PaymentConfirmRequest;
+import com.whale.crm.trading.application.OrderApplicationService;
+import com.whale.crm.trading.application.PaymentApplicationService;
+import com.whale.crm.trading.domain.OrderFulfillmentView;
 import com.whale.crm.trading.domain.TradingRepository;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import static org.mockito.Mockito.doAnswer;
@@ -12,11 +37,24 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -26,8 +64,24 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private PlatformTransactionManager transactionManager;
+    @Autowired
+    private MergeApplicationService mergeService;
+    @Autowired
+    private MergeReversalApplicationService mergeReversalService;
+    @Autowired
+    private BatchTagJobApplicationService batchTagJobService;
+    @Autowired
+    private OrderApplicationService orderService;
+    @Autowired
+    private PaymentApplicationService paymentService;
+    @Autowired
+    private CurrentUserService currentUserService;
     @MockitoSpyBean
     private TradingRepository tradingRepository;
+    @MockitoSpyBean
+    private CustomerRepository customerRepository;
+    @MockitoSpyBean
+    private MergeCaseRepository mergeCaseRepository;
 
     @Test
     void mergeRejectsExistingAppointmentWithoutChangingCustomers() throws Exception {
@@ -96,6 +150,392 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
         }
         assertThat(ownerOf("crm_entitlement", entitlement)).isEqualTo(secondary);
         assertThat(customerDeleted(secondary)).isZero();
+    }
+
+    @Test
+    void hBiz04_deterministicMergeDoesNotDeadlockOnOrderStatusSecondaryIndex() throws Exception {
+        AuthCookies admin = login("admin");
+        AuthCookies manager1 = login("manager1");
+        AuthCookies operator1 = login("operator1");
+        long primary = createCustomer(admin, "合成索引锁主1");
+        long secondary = createCustomer(admin, "合成索引锁从1");
+        long orderId = createPaidOrderForMergeRace(admin, secondary, 301L, 181100L);
+        long entitlementId = entitlementOf(orderId);
+        long apptId = createServiceDoneAppointment(manager1, operator1, secondary, entitlementId, 3);
+        long caseId = createCase(admin, primary, secondary);
+        data(admin, post("/api/v1/customer-merges/" + caseId + "/review"), "{\"version\":0}", 200);
+
+        AtomicBoolean active = new AtomicBoolean(true);
+        CountDownLatch beforeOrderStatusUpdate = new CountDownLatch(1);
+        CountDownLatch mergeReady = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            if (active.get()) {
+                beforeOrderStatusUpdate.countDown();
+                mergeReady.await(5, TimeUnit.SECONDS);
+            }
+            return invocation.callRealMethod();
+        }).when(tradingRepository).updateOrderStatus(eq(1L), eq(orderId), anyLong(),
+                eq("PAID"), eq("FULFILLED"), isNull(), isNull());
+        doAnswer(invocation -> {
+            if (active.get() && beforeOrderStatusUpdate.getCount() == 0) {
+                mergeReady.countDown();
+            }
+            return invocation.callRealMethod();
+        }).when(tradingRepository).findOrdersForUpdate(eq(1L),
+                argThat(ids -> ids != null && ids.contains(orderId)));
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<org.springframework.test.web.servlet.MvcResult> redeemFuture = executor.submit(() -> {
+                String body = objectMapper.writeValueAsString(Map.of(
+                        "appointmentVersion", 3L,
+                        "serviceAt", Instant.now().toString(),
+                        "evidenceRef", "HBIZ04-DET-ORD",
+                        "lines", List.of(Map.of("entitlementId", entitlementId, "count", 3))));
+                return mockMvc.perform(operator1.withAuth(post("/api/v1/appointments/" + apptId + "/redemptions"))
+                                .header("Idempotency-Key", "it-det-ord-" + UUID.randomUUID())
+                                .contentType(MediaType.APPLICATION_JSON).content(body))
+                        .andReturn();
+            });
+            assertThat(beforeOrderStatusUpdate.await(15, TimeUnit.SECONDS)).isTrue();
+            Future<org.springframework.test.web.servlet.MvcResult> mergeFuture = executor.submit(() ->
+                    mockMvc.perform(admin.withAuth(post("/api/v1/customer-merges/" + caseId + "/confirm"))
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content("{\"version\":1,\"reason\":\"并发锁序校验\"}"))
+                            .andReturn());
+
+            assertThat(redeemFuture.get(20, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+            assertThat(mergeFuture.get(20, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(409);
+        } finally {
+            active.set(false);
+        }
+
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_order WHERE id=?", String.class, orderId))
+                .isEqualTo("FULFILLED");
+        assertThat(ownerOf("crm_order", orderId)).isEqualTo(secondary);
+        assertThat(customerDeleted(secondary)).isZero();
+    }
+
+    @Test
+    void hBiz04_deterministicMergeDoesNotDeadlockOnEntitlementStatusSecondaryIndex() throws Exception {
+        AuthCookies admin = login("admin");
+        AuthCookies manager1 = login("manager1");
+        AuthCookies operator1 = login("operator1");
+        long primary = createCustomer(admin, "合成索引锁主2");
+        long secondary = createCustomer(admin, "合成索引锁从2");
+        long orderId = createPaidOrderForMergeRace(admin, secondary, 301L, 181100L);
+        long entitlementId = entitlementOf(orderId);
+        long apptId = createServiceDoneAppointment(manager1, operator1, secondary, entitlementId, 3);
+        long caseId = createCase(admin, primary, secondary);
+        data(admin, post("/api/v1/customer-merges/" + caseId + "/review"), "{\"version\":0}", 200);
+
+        AtomicBoolean active = new AtomicBoolean(true);
+        CountDownLatch beforeEntitlementUpdate = new CountDownLatch(1);
+        CountDownLatch mergeReady = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            if (active.get()) {
+                beforeEntitlementUpdate.countDown();
+                mergeReady.await(5, TimeUnit.SECONDS);
+            }
+            return invocation.callRealMethod();
+        }).when(tradingRepository).updateEntitlementBalance(eq(1L), eq(entitlementId), anyLong(),
+                eq(0), eq("EXHAUSTED"), anyInt());
+        doAnswer(invocation -> {
+            if (active.get() && beforeEntitlementUpdate.getCount() == 0) {
+                mergeReady.countDown();
+            }
+            return invocation.callRealMethod();
+        }).when(tradingRepository).findOrdersForUpdate(eq(1L),
+                argThat(ids -> ids != null && ids.contains(orderId)));
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<org.springframework.test.web.servlet.MvcResult> redeemFuture = executor.submit(() -> {
+                String body = objectMapper.writeValueAsString(Map.of(
+                        "appointmentVersion", 3L,
+                        "serviceAt", Instant.now().toString(),
+                        "evidenceRef", "HBIZ04-DET-ENT",
+                        "lines", List.of(Map.of("entitlementId", entitlementId, "count", 3))));
+                return mockMvc.perform(operator1.withAuth(post("/api/v1/appointments/" + apptId + "/redemptions"))
+                                .header("Idempotency-Key", "it-det-ent-" + UUID.randomUUID())
+                                .contentType(MediaType.APPLICATION_JSON).content(body))
+                        .andReturn();
+            });
+            assertThat(beforeEntitlementUpdate.await(15, TimeUnit.SECONDS)).isTrue();
+            Future<org.springframework.test.web.servlet.MvcResult> mergeFuture = executor.submit(() ->
+                    mockMvc.perform(admin.withAuth(post("/api/v1/customer-merges/" + caseId + "/confirm"))
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content("{\"version\":1,\"reason\":\"并发锁序校验\"}"))
+                            .andReturn());
+
+            assertThat(redeemFuture.get(20, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+            assertThat(mergeFuture.get(20, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(409);
+        } finally {
+            active.set(false);
+        }
+
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_entitlement WHERE id=?", String.class, entitlementId))
+                .isEqualTo("EXHAUSTED");
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_order WHERE id=?", String.class, orderId))
+                .isEqualTo("FULFILLED");
+        assertThat(ownerOf("crm_entitlement", entitlementId)).isEqualTo(secondary);
+        assertThat(customerDeleted(secondary)).isZero();
+    }
+
+    @Test
+    void mergeConfirmSeesOrderCommittedBeforeSecondaryLockUnderRepeatableRead() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        long primary = createCustomer(admin, "合成快照主");
+        long secondary = createCustomer(admin, "合成快照从");
+        assertThat(primary).isLessThan(secondary);
+        long caseId = createCase(admin, primary, secondary);
+        data(admin, post("/api/v1/customer-merges/" + caseId + "/review"), "{\"version\":0}", 200);
+
+        AtomicBoolean active = new AtomicBoolean(true);
+        CountDownLatch waitingOnPrimaryLock = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            if (active.get()) {
+                waitingOnPrimaryLock.countDown();
+            }
+            return invocation.callRealMethod();
+        }).when(customerRepository).findByIdForUpdate(eq(1L), eq(primary));
+
+        long newOrderId;
+        Future<MergeCandidateItemResponse> mergeFuture;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.atomic.AtomicReference<Future<MergeCandidateItemResponse>> mergeRef =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            newOrderId = new TransactionTemplate(transactionManager).execute(status -> {
+                jdbcTemplate.queryForObject("SELECT id FROM crm_customer WHERE tenant_id=1 AND id=? FOR UPDATE",
+                        Long.class, primary);
+                mergeRef.set(executor.submit(() ->
+                        mergeService.confirm(1L, adminUser, caseId, 1L, "快照可见性测试")));
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                try {
+                    while (!waitingOnPrimaryLock.await(50, TimeUnit.MILLISECONDS)) {
+                        if (mergeRef.get().isDone()) {
+                            throw new IllegalStateException("合并提前结束: " + mergeRef.get().get());
+                        }
+                        if (System.nanoTime() >= deadline) {
+                            throw new IllegalStateException("合并未在20秒内到达主客户行锁");
+                        }
+                    }
+                    Future<OrderFulfillmentView> orderFuture = executor.submit(() ->
+                            orderService.create(1L, adminUser, new CreateOrderRequest(
+                                    secondary, "PLATFORM", "REGULAR", 1L, 1L, 181100L,
+                                    LocalDate.of(2027, 12, 31), List.of(new OrderItemRequest(301L, 1)))));
+                    return orderFuture.get(20, TimeUnit.SECONDS).order().order().id();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("等待合并主客户锁被中断", e);
+                } catch (Exception e) {
+                    throw new IllegalStateException("等待并发下单提交失败", e);
+                }
+            });
+            mergeFuture = mergeRef.get();
+            assertThat(mergeFuture.get(20, TimeUnit.SECONDS).status()).isEqualTo("CONFIRMED");
+        } finally {
+            active.set(false);
+        }
+
+        assertThat(ownerOf("crm_order", newOrderId)).isEqualTo(primary);
+        assertThat(snapshotCount(caseId, "ORDER", newOrderId)).isEqualTo(1);
+        assertThat(customerDeleted(secondary)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_order WHERE tenant_id=1 AND customer_id=?",
+                Integer.class, secondary)).isZero();
+    }
+
+    @Test
+    void hBiz04_deterministicOrderCreateVsMergeConfirmSerializesWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        long primary = createCustomer(admin, "合成下单锁主");
+        long secondary = createCustomer(admin, "合成下单锁从");
+        long caseId = createCase(admin, primary, secondary);
+        data(admin, post("/api/v1/customer-merges/" + caseId + "/review"), "{\"version\":0}", 200);
+
+        AtomicBoolean active = new AtomicBoolean(true);
+        CountDownLatch orderReadyToInsert = new CountDownLatch(1);
+        CountDownLatch mergeAtSecondaryLock = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            if (active.get()) {
+                orderReadyToInsert.countDown();
+                if (!mergeAtSecondaryLock.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("merge did not reach secondary lock");
+                }
+            }
+            return invocation.callRealMethod();
+        }).when(tradingRepository).insertOrder(eq(1L),
+                argThat(o -> o != null && Long.valueOf(secondary).equals(o.customerId())));
+        doAnswer(invocation -> {
+            if (active.get() && orderReadyToInsert.getCount() == 0) {
+                mergeAtSecondaryLock.countDown();
+            }
+            return invocation.callRealMethod();
+        }).when(customerRepository).findByIdForUpdate(eq(1L), eq(secondary));
+
+        Outcome<OrderFulfillmentView> orderOutcome;
+        Outcome<MergeCandidateItemResponse> mergeOutcome;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Outcome<OrderFulfillmentView>> orderFuture = executor.submit(() -> runSafe(() ->
+                    orderService.create(1L, adminUser, new CreateOrderRequest(
+                            secondary, "PLATFORM", "REGULAR", 1L, 1L, 181100L,
+                            LocalDate.of(2027, 12, 31), List.of(new OrderItemRequest(301L, 1))))));
+            assertThat(orderReadyToInsert.await(15, TimeUnit.SECONDS)).isTrue();
+            Future<Outcome<MergeCandidateItemResponse>> mergeFuture = executor.submit(() -> runSafe(() ->
+                    mergeService.confirm(1L, adminUser, caseId, 1L, "确定性下单合并锁序")));
+            orderOutcome = orderFuture.get(20, TimeUnit.SECONDS);
+            mergeOutcome = mergeFuture.get(20, TimeUnit.SECONDS);
+        } finally {
+            active.set(false);
+        }
+
+        assertThat(mergeOutcome.error()).isNull();
+        assertThat(mergeOutcome.value().status()).isEqualTo("CONFIRMED");
+        assertThat(customerDeleted(secondary)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_order WHERE tenant_id=1 AND customer_id=?",
+                Integer.class, secondary)).isZero();
+        if (orderOutcome.error() == null) {
+            long orderId = orderOutcome.value().order().order().id();
+            assertThat(ownerOf("crm_order", orderId)).isEqualTo(primary);
+            assertThat(snapshotCount(caseId, "ORDER", orderId)).isEqualTo(1);
+        } else {
+            assertThat(orderOutcome.error())
+                    .isInstanceOf(BusinessException.class)
+                    .satisfies(ex -> assertThat(((BusinessException) ex).errorCode())
+                            .isIn(ErrorCode.NOT_FOUND, ErrorCode.CONFLICT));
+        }
+    }
+
+    @Test
+    void hBiz04_deterministicPaymentConfirmVsMergeConfirmSerializesWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        long primary = createCustomer(admin, "合成支付锁主");
+        long secondary = createCustomer(admin, "合成支付锁从");
+        long orderId = orderService.create(1L, adminUser, new CreateOrderRequest(
+                secondary, "PLATFORM", "REGULAR", 1L, 1L, 181100L,
+                LocalDate.of(2027, 12, 31), List.of(new OrderItemRequest(301L, 1)))).order().order().id();
+        orderService.submit(1L, adminUser, orderId, new OrderReviewRequest(0L, "待支付"));
+        long caseId = createCase(admin, primary, secondary);
+        data(admin, post("/api/v1/customer-merges/" + caseId + "/review"), "{\"version\":0}", 200);
+
+        AtomicBoolean active = new AtomicBoolean(true);
+        CountDownLatch paymentAtInsert = new CountDownLatch(1);
+        CountDownLatch mergeAtSecondaryLock = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            if (active.get()) {
+                paymentAtInsert.countDown();
+                if (!mergeAtSecondaryLock.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("merge did not reach secondary lock");
+                }
+            }
+            return invocation.callRealMethod();
+        }).when(tradingRepository).insertPayment(eq(1L),
+                argThat(p -> p != null && Long.valueOf(orderId).equals(p.orderId())));
+        doAnswer(invocation -> {
+            if (active.get() && paymentAtInsert.getCount() == 0) {
+                mergeAtSecondaryLock.countDown();
+            }
+            return invocation.callRealMethod();
+        }).when(customerRepository).findByIdForUpdate(eq(1L), eq(secondary));
+
+        String tradeNo = "IT-DET-PM-" + UUID.randomUUID();
+        PaymentConfirmRequest payRequest = new PaymentConfirmRequest(tradeNo, "BANK_TRANSFER", 181100L,
+                Instant.parse("2026-10-24T03:00:00Z"), "IT-DET-PAY-MERGE", null);
+        Outcome<OrderFulfillmentView> payOutcome;
+        Outcome<MergeCandidateItemResponse> mergeOutcome;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Outcome<OrderFulfillmentView>> payFuture = executor.submit(() -> runSafe(() ->
+                    paymentService.confirm(1L, adminUser, orderId, payRequest, tradeNo)));
+            assertThat(paymentAtInsert.await(15, TimeUnit.SECONDS)).isTrue();
+            Future<Outcome<MergeCandidateItemResponse>> mergeFuture = executor.submit(() -> runSafe(() ->
+                    mergeService.confirm(1L, adminUser, caseId, 1L, "确定性支付合并锁序")));
+            payOutcome = payFuture.get(20, TimeUnit.SECONDS);
+            mergeOutcome = mergeFuture.get(20, TimeUnit.SECONDS);
+        } finally {
+            active.set(false);
+        }
+
+        assertThat(mergeOutcome.error()).isNull();
+        assertThat(mergeOutcome.value().status()).isEqualTo("CONFIRMED");
+        assertThat(customerDeleted(secondary)).isEqualTo(1);
+        assertThat(ownerOf("crm_order", orderId)).isEqualTo(primary);
+        assertThat(snapshotCount(caseId, "ORDER", orderId)).isEqualTo(1);
+        if (payOutcome.error() == null) {
+            assertThat(payOutcome.value().order().order().status()).isEqualTo("PAID");
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_order WHERE id=?", String.class, orderId))
+                    .isEqualTo("PAID");
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT customer_id FROM crm_entitlement WHERE order_item_id IN (SELECT id FROM crm_order_item WHERE order_id=?)",
+                    Long.class, orderId)).isEqualTo(primary);
+            java.sql.Timestamp primaryFirstOrderAt = jdbcTemplate.queryForObject(
+                    "SELECT first_order_at FROM crm_customer WHERE id=?", java.sql.Timestamp.class, primary);
+            java.sql.Timestamp secondaryFirstOrderAt = jdbcTemplate.queryForObject(
+                    "SELECT first_order_at FROM crm_customer WHERE id=?", java.sql.Timestamp.class, secondary);
+            assertThat(primaryFirstOrderAt != null || secondaryFirstOrderAt != null).isTrue();
+        } else {
+            assertThat(payOutcome.error())
+                    .isInstanceOf(BusinessException.class)
+                    .satisfies(ex -> assertThat(((BusinessException) ex).errorCode())
+                            .isIn(ErrorCode.NOT_FOUND, ErrorCode.CONFLICT));
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_order WHERE id=?", String.class, orderId))
+                    .isEqualTo("PENDING_PAYMENT");
+        }
+    }
+
+    private <T> Outcome<T> runSafe(Callable<T> action) {
+        try {
+            return new Outcome<>(action.call(), null);
+        } catch (Throwable ex) {
+            return new Outcome<>(null, ex);
+        }
+    }
+
+    private record Outcome<T>(T value, Throwable error) {
+    }
+
+    private long createPaidOrderForMergeRace(AuthCookies actor, long customerId, long skuId, long amountFen) throws Exception {
+        String orderBody = objectMapper.writeValueAsString(Map.of(
+                "customerId", customerId,
+                "receiverType", "PLATFORM",
+                "orderTypeCode", "REGULAR",
+                "campaignId", 1,
+                "campaignBatchId", 1,
+                "payableFen", amountFen,
+                "validTo", "2027-12-31",
+                "items", List.of(Map.of("skuId", skuId, "quantity", 1))));
+        long orderId = data(actor, post("/api/v1/orders"), orderBody, 201).at("/order/order/id").asLong();
+        data(actor, post("/api/v1/orders/" + orderId + "/submit"), "{\"version\":0}", 200);
+        String tradeNo = "IT-MERGE-PAY-" + UUID.randomUUID();
+        String payBody = objectMapper.writeValueAsString(Map.of(
+                "externalTradeNo", tradeNo,
+                "paymentChannel", "BANK_TRANSFER",
+                "amountFen", amountFen,
+                "paidAt", "2026-10-24T03:00:00Z",
+                "evidenceRef", "IT-MERGE-PAID"));
+        data(actor, post("/api/v1/orders/" + orderId + "/payment-confirmations")
+                .header("Idempotency-Key", tradeNo), payBody, 200);
+        return orderId;
+    }
+
+    private long createServiceDoneAppointment(AuthCookies manager, AuthCookies operator,
+                                              long customerId, long entitlementId, int count) throws Exception {
+        String body = objectMapper.writeValueAsString(Map.of(
+                "customerId", customerId,
+                "institutionId", 1,
+                "scheduledAt", Instant.now().plusSeconds(86400).toString(),
+                "remark", "IT-MERGE-RACE",
+                "items", List.of(Map.of("entitlementId", entitlementId, "count", count))));
+        long apptId = data(manager, post("/api/v1/appointments")
+                .header("Idempotency-Key", "it-det-appt-" + UUID.randomUUID()), body, 201)
+                .at("/appointment/id").asLong();
+        data(operator, post("/api/v1/appointments/" + apptId + "/confirm")
+                .header("Idempotency-Key", "it-det-conf-" + UUID.randomUUID()), "{\"version\":0,\"reason\":\"IT\"}", 200);
+        data(operator, post("/api/v1/appointments/" + apptId + "/check-in")
+                .header("Idempotency-Key", "it-det-chk-" + UUID.randomUUID()), "{\"version\":1,\"reason\":\"IT\"}", 200);
+        data(operator, post("/api/v1/appointments/" + apptId + "/service-done")
+                .header("Idempotency-Key", "it-det-done-" + UUID.randomUUID()), "{\"version\":2,\"reason\":\"IT\"}", 200);
+        return apptId;
     }
 
     @Test
@@ -345,6 +785,242 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
         assertThat(mergeStatus(caseId)).isEqualTo("CONFIRMED");
         assertThat(customerDeleted(secondary)).isEqualTo(1);
         assertThat(ownerOf("crm_followup", followup)).isEqualTo(primary);
+    }
+
+    @Test
+    void approve_outOfScopeCallerWithWrongVersionOrTerminalStatusReturns404() throws Exception {
+        AuthCookies admin = login("admin");
+        long primary = createCustomer(admin, "合成越权主", 3);
+        long secondary = createCustomer(admin, "合成越权从", 3);
+        orderWithEntitlement(secondary, "oos-precedence");
+        long caseId = createCase(admin, primary, secondary);
+        confirmCase(admin, caseId);
+        long reversalId = requestReversal(admin, caseId, "it-oos-req-" + UUID.randomUUID(), "越权错误码优先级");
+
+        jdbcTemplate.update("INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id) "
+                + "SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id "
+                + "WHERE r.role_code='MANAGER_LEAD' AND p.permission_code='customer:merge_reverse'");
+        try {
+            AuthCookies lead = login("lead1");
+            mockMvc.perform(lead.withAuth(post("/api/v1/customer-merge-reversals/" + reversalId + "/approve"))
+                            .header("Idempotency-Key", "it-oos-wrong-ver-" + UUID.randomUUID())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"version\":999,\"reason\":\"越权错版本\"}"))
+                    .andExpect(status().isNotFound());
+
+            data(admin, post("/api/v1/customer-merge-reversals/" + reversalId + "/approve")
+                    .header("Idempotency-Key", "it-oos-admin-exec-" + UUID.randomUUID()),
+                    "{\"version\":0,\"reason\":\"管理员同意更正\"}", 200);
+            assertThat(reversalStatus(reversalId)).isEqualTo("EXECUTED");
+
+            mockMvc.perform(lead.withAuth(post("/api/v1/customer-merge-reversals/" + reversalId + "/approve"))
+                            .header("Idempotency-Key", "it-oos-terminal-" + UUID.randomUUID())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"version\":999,\"reason\":\"越权终态探测\"}"))
+                    .andExpect(status().isNotFound());
+        } finally {
+            jdbcTemplate.update("DELETE rp FROM sys_role_permission rp JOIN sys_role r ON r.id=rp.role_id "
+                    + "JOIN sys_permission p ON p.id=rp.permission_id "
+                    + "WHERE r.role_code='MANAGER_LEAD' AND p.permission_code='customer:merge_reverse'");
+        }
+    }
+
+    @Test
+    void hBiz04_deterministicMergeReversalApproveVsMergeConfirmSerializesWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        long primary = createCustomer(admin, "合成更正并发主");
+        long secondary = createCustomer(admin, "合成更正并发从");
+        long orderId = orderWithEntitlement(secondary, "det-reversal-confirm-race");
+        long entitlementId = entitlementOf(orderId);
+        long caseId = createCase(admin, primary, secondary);
+        confirmCase(admin, caseId);
+        long reversalId = requestReversal(admin, caseId, "it-det-rev-req-" + UUID.randomUUID(), "确定性更正并发锁序");
+
+        AtomicBoolean active = new AtomicBoolean(true);
+        CountDownLatch reversalHoldingCustomerLocks = new CountDownLatch(1);
+        CountDownLatch mergeEnteredCaseLock = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            if (active.get()) {
+                reversalHoldingCustomerLocks.countDown();
+                if (!mergeEnteredCaseLock.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("merge confirm did not enter case lock");
+                }
+            }
+            return invocation.callRealMethod();
+        }).when(customerRepository).restore(eq(1L), eq(secondary), anyLong());
+        doAnswer(invocation -> {
+            if (active.get() && reversalHoldingCustomerLocks.getCount() == 0) {
+                mergeEnteredCaseLock.countDown();
+            }
+            return invocation.callRealMethod();
+        }).when(mergeCaseRepository).findByIdForUpdate(eq(1L), eq(caseId));
+
+        String approveKey = "it-det-rev-app-" + UUID.randomUUID();
+        MergeReversalActionRequest approveReq = new MergeReversalActionRequest("确定性更正审批并发", 0L);
+        Outcome<MergeReversalResponse> approveOutcome;
+        Outcome<MergeCandidateItemResponse> confirmOutcome;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Outcome<MergeReversalResponse>> approveFuture = executor.submit(() -> runSafe(() ->
+                    mergeReversalService.approve(adminUser, reversalId, approveReq, approveKey)));
+            assertThat(reversalHoldingCustomerLocks.await(15, TimeUnit.SECONDS)).isTrue();
+            Future<Outcome<MergeCandidateItemResponse>> confirmFuture = executor.submit(() -> runSafe(() ->
+                    mergeService.confirm(1L, adminUser, caseId, 2L, "确定性合并确认并发")));
+            approveOutcome = approveFuture.get(20, TimeUnit.SECONDS);
+            confirmOutcome = confirmFuture.get(20, TimeUnit.SECONDS);
+        } finally {
+            active.set(false);
+        }
+
+        assertThat(approveOutcome.error()).isNull();
+        assertThat(approveOutcome.value().status()).isEqualTo("EXECUTED");
+        assertThat(confirmOutcome.error())
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.CONFLICT));
+        assertThat(reversalStatus(reversalId)).isEqualTo("EXECUTED");
+        assertThat(mergeStatus(caseId)).isEqualTo("REVERSED");
+        assertThat(customerDeleted(secondary)).isZero();
+        assertThat(ownerOf("crm_order", orderId)).isEqualTo(secondary);
+        assertThat(ownerOf("crm_entitlement", entitlementId)).isEqualTo(secondary);
+    }
+
+    @Test
+    void hBiz04_deterministicMergeConfirmVsMergeReversalApproveSerializesWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        long primary = createCustomer(admin, "合成确认抢锁主");
+        long secondary = createCustomer(admin, "合成确认抢锁从");
+        long orderId = orderWithEntitlement(secondary, "det-confirm-reversal-race");
+        long entitlementId = entitlementOf(orderId);
+        long caseId = createCase(admin, primary, secondary);
+        confirmCase(admin, caseId);
+        long reversalId = requestReversal(admin, caseId, "it-det-conf-req-" + UUID.randomUUID(), "确定性确认抢锁并发");
+
+        long firstLock = Math.min(primary, secondary);
+        AtomicBoolean active = new AtomicBoolean(true);
+        AtomicBoolean confirmPaused = new AtomicBoolean(false);
+        CountDownLatch confirmHoldingLocks = new CountDownLatch(1);
+        CountDownLatch reversalEnteredCaseLock = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            Object result = invocation.callRealMethod();
+            if (active.get() && confirmPaused.compareAndSet(false, true)) {
+                confirmHoldingLocks.countDown();
+                if (!reversalEnteredCaseLock.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("merge reversal did not enter case lock");
+                }
+            }
+            return result;
+        }).when(customerRepository).findByIdForUpdate(eq(1L), eq(firstLock));
+        doAnswer(invocation -> {
+            if (active.get() && confirmHoldingLocks.getCount() == 0) {
+                reversalEnteredCaseLock.countDown();
+            }
+            return invocation.callRealMethod();
+        }).when(mergeCaseRepository).findByIdForUpdate(eq(1L), eq(caseId));
+
+        String approveKey = "it-det-conf-app-" + UUID.randomUUID();
+        MergeReversalActionRequest approveReq = new MergeReversalActionRequest("确定性更正后发并发", 0L);
+        Outcome<MergeCandidateItemResponse> confirmOutcome;
+        Outcome<MergeReversalResponse> approveOutcome;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Outcome<MergeCandidateItemResponse>> confirmFuture = executor.submit(() -> runSafe(() ->
+                    mergeService.confirm(1L, adminUser, caseId, 2L, "确定性确认抢先锁")));
+            assertThat(confirmHoldingLocks.await(15, TimeUnit.SECONDS)).isTrue();
+            Future<Outcome<MergeReversalResponse>> approveFuture = executor.submit(() -> runSafe(() ->
+                    mergeReversalService.approve(adminUser, reversalId, approveReq, approveKey)));
+            confirmOutcome = confirmFuture.get(20, TimeUnit.SECONDS);
+            approveOutcome = approveFuture.get(20, TimeUnit.SECONDS);
+        } finally {
+            active.set(false);
+        }
+
+        assertThat(confirmOutcome.error())
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.CONFLICT));
+        assertThat(approveOutcome.error()).isNull();
+        assertThat(approveOutcome.value().status()).isEqualTo("EXECUTED");
+        assertThat(reversalStatus(reversalId)).isEqualTo("EXECUTED");
+        assertThat(mergeStatus(caseId)).isEqualTo("REVERSED");
+        assertThat(customerDeleted(secondary)).isZero();
+        assertThat(ownerOf("crm_order", orderId)).isEqualTo(secondary);
+        assertThat(ownerOf("crm_entitlement", entitlementId)).isEqualTo(secondary);
+    }
+
+    @Test
+    void hBiz04_deterministicBatchTagProcessItemVsMergeReversalApproveSerializesWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        String cityCode = "REV_BT_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        jdbcTemplate.update("INSERT INTO sys_dictionary_item (tenant_id,dict_type_id,option_code,option_label,status) "
+                        + "SELECT 1,id,?,'并发城市','ACTIVE' FROM sys_dictionary_type "
+                        + "WHERE tenant_id=1 AND dict_code='cities' ON DUPLICATE KEY UPDATE status='ACTIVE'",
+                cityCode);
+        jdbcTemplate.update("INSERT INTO sys_dictionary_item (tenant_id,dict_type_id,option_code,option_label,status) "
+                + "SELECT 1,id,'VIP','贵宾客户','ACTIVE' FROM sys_dictionary_type "
+                + "WHERE tenant_id=1 AND dict_code='customerTags' ON DUPLICATE KEY UPDATE status='ACTIVE'");
+
+        long primary = createCustomer(admin, "合成打标并发主");
+        long secondary = data(admin, post("/api/v1/customers"),
+                "{\"nickname\":\"合成打标并发从\",\"ownerStaffId\":2,\"cityCode\":\"" + cityCode + "\"}", 201)
+                .at("/id").asLong();
+        String previewId = batchTagJobService.preview(1L, adminUser,
+                new PreviewBatchTagJobRequest("ADD", List.of("VIP"),
+                        new BatchTagSourceRequest("FILTER", null,
+                                new CustomerSegmentCriteria(List.of(cityCode), null, null, null, null, null), null),
+                        1, 20),
+                "it-det-bt-prev-" + UUID.randomUUID()).previewId();
+        long jobId = batchTagJobService.create(1L, adminUser,
+                new CreateBatchTagJobRequest(previewId), "it-det-bt-create-" + UUID.randomUUID()).job().id();
+
+        orderWithEntitlement(secondary, "det-bt-rev-race");
+        long caseId = createCase(admin, primary, secondary);
+        confirmCase(admin, caseId);
+        long reversalId = requestReversal(admin, caseId, "it-det-bt-req-" + UUID.randomUUID(), "确定性打标更正并发");
+
+        AtomicBoolean active = new AtomicBoolean(true);
+        CountDownLatch reversalHoldingCustomerLocks = new CountDownLatch(1);
+        CountDownLatch batchTagEnteredCustomerLock = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            if (active.get()) {
+                reversalHoldingCustomerLocks.countDown();
+                if (!batchTagEnteredCustomerLock.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("batch tag did not enter customer lock");
+                }
+            }
+            return invocation.callRealMethod();
+        }).when(customerRepository).restore(eq(1L), eq(secondary), anyLong());
+        doAnswer(invocation -> {
+            if (active.get() && reversalHoldingCustomerLocks.getCount() == 0) {
+                batchTagEnteredCustomerLock.countDown();
+            }
+            return invocation.callRealMethod();
+        }).when(customerRepository).findByIdForUpdate(eq(1L), eq(secondary));
+
+        String approveKey = "it-det-bt-app-" + UUID.randomUUID();
+        MergeReversalActionRequest approveReq = new MergeReversalActionRequest("确定性打标与更正并发", 0L);
+        Outcome<MergeReversalResponse> approveOutcome;
+        Outcome<BatchTagJobDetailResponse> batchTagOutcome;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<Outcome<MergeReversalResponse>> approveFuture = executor.submit(() -> runSafe(() ->
+                    mergeReversalService.approve(adminUser, reversalId, approveReq, approveKey)));
+            assertThat(reversalHoldingCustomerLocks.await(15, TimeUnit.SECONDS)).isTrue();
+            Future<Outcome<BatchTagJobDetailResponse>> batchTagFuture = executor.submit(() -> runSafe(() ->
+                    batchTagJobService.execute(1L, adminUser, jobId, new BatchTagJobActionRequest(0L),
+                            "it-det-bt-exec-" + UUID.randomUUID())));
+            approveOutcome = approveFuture.get(20, TimeUnit.SECONDS);
+            batchTagOutcome = batchTagFuture.get(20, TimeUnit.SECONDS);
+        } finally {
+            active.set(false);
+        }
+
+        assertThat(approveOutcome.error()).isNull();
+        assertThat(approveOutcome.value().status()).isEqualTo("EXECUTED");
+        assertThat(batchTagOutcome.error()).isNull();
+        assertThat(batchTagOutcome.value().job().status()).isEqualTo("SUCCEEDED");
+        assertThat(reversalStatus(reversalId)).isEqualTo("EXECUTED");
+        assertThat(mergeStatus(caseId)).isEqualTo("REVERSED");
+        assertThat(customerDeleted(secondary)).isZero();
+        assertThat(tagCount(secondary, "VIP")).isEqualTo(1);
     }
 
     @Test

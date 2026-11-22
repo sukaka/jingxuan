@@ -13,6 +13,8 @@ import com.whale.crm.platform.web.BusinessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -24,7 +26,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -48,6 +52,11 @@ class FileExportRegistrationTest {
         }).when(repository).insert(any());
         when(storage.stat(anyString())).thenReturn(new PrivateObjectStorage.ObjectStat(
                 HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(content)), content.length, "text/csv"));
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.getArgument(1, InputStream.class).transferTo(captured);
+            return null;
+        }).when(storage).putObject(anyString(), any(InputStream.class), anyLong(), anyString());
 
         try (ClamAvTestServer server = new ClamAvTestServer("stream: OK\0")) {
             ExportFileService service = service(repository, storage, server);
@@ -61,7 +70,10 @@ class FileExportRegistrationTest {
             assertThat(metadata.institutionId()).isNull();
             assertThat(metadata.expiresAt()).isEqualTo(expiresAt);
             assertThat(server.awaitReceipt().content()).isEqualTo(content);
-            verify(storage).putObject("export/1/IT-EXP-CLEAN.csv", content, "text/csv;charset=UTF-8");
+            assertThat(captured.toByteArray()).isEqualTo(content);
+            verify(storage).putObject(eq("export/1/IT-EXP-CLEAN.csv"), any(InputStream.class),
+                    eq((long) content.length), eq("text/csv;charset=UTF-8"));
+            verify(storage, never()).putObject(anyString(), any(byte[].class), anyString());
             verify(repository).insert(any());
         } finally {
             Files.deleteIfExists(path);

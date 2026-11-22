@@ -14,6 +14,7 @@ import PageHeader from '../components/prototype/PageHeader.vue'
 import PageCard from '../components/prototype/PageCard.vue'
 import ShellIcon from '../components/shell/ShellIcon.vue'
 import { knowledgeDocumentTone, knowledgeSyncTone } from '../utils/tagTone'
+import { shanghaiDateTimeMinute } from '../utils/date'
 
 const auth = useAuthStore()
 const materials = ref<Material[]>([])
@@ -171,7 +172,7 @@ function revisionText(revision: MaterialRevision): string {
 }
 
 function timeText(value: string | null): string {
-  return value ? value.replace('T', ' ').slice(0, 16) : '—'
+  return shanghaiDateTimeMinute(value) || '—'
 }
 
 onMounted(() => {

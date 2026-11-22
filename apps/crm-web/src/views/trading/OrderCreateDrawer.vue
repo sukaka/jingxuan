@@ -69,6 +69,7 @@ const form = reactive({
   items: [newOrderLine()],
 })
 const saving = ref(false)
+const payableEdited = ref(false)
 const customerKeyword = ref('')
 const skuKeyword = ref('')
 const selectedCustomer = ref<CustomerListItem | null>(null)
@@ -104,12 +105,14 @@ watch(
     skuKeyword.value = ''
     selectedCustomer.value = null
     selectedSkus.value = {}
+    payableEdited.value = false
   },
 )
 
 watch(
-  [() => form.items.map((item) => [item.skuId, item.quantity]), skuOptions],
+  () => form.items.map((item) => [item.skuId, item.quantity]),
   () => {
+    if (payableEdited.value) return
     const payableFen = form.items.reduce((total, item) => {
       const sku = skuOptions.value.find((candidate) => candidate.id === item.skuId)
       return total + (sku ? sku.salePriceFen * item.quantity : 0)
@@ -118,6 +121,10 @@ watch(
   },
   { deep: true },
 )
+
+function markPayableEdited() {
+  payableEdited.value = true
+}
 
 function addItem() {
   form.items.push(newOrderLine())
@@ -187,6 +194,10 @@ function isChooseN(line: OrderLineState): boolean {
   return lineSku(line)?.selectionMode === 'CHOOSE_N'
 }
 
+function isUseN(line: OrderLineState): boolean {
+  return lineSku(line)?.selectionMode === 'USE_N'
+}
+
 function selectedCount(line: OrderLineState, groupCode: string): number {
   return line.selections[groupCode]?.length ?? 0
 }
@@ -198,6 +209,7 @@ function requiredText(group: PackageSelectionGroup): string {
 }
 
 function lineSelectionError(line: OrderLineState): string {
+  if (isUseN(line)) return '该 SKU 为 USE_N 模式（Q01 待确认），不可创建订单发放权益'
   if (!isChooseN(line)) return ''
   if (line.snapshotLoading) return '正在加载套餐选择规则'
   if (line.snapshotError) return `套餐选择规则加载失败：${line.snapshotError}`
@@ -224,7 +236,8 @@ function searchSkus(keyword: string) {
 }
 
 function skuLabel(sku: Sku) {
-  return `${sku.packageName ?? sku.skuCode}｜${sku.specName}｜${(sku.salePriceFen / 100).toFixed(2)}元`
+  const suffix = sku.selectionMode === 'USE_N' ? '（Q01待确认·不可下单）' : ''
+  return `${sku.packageName ?? sku.skuCode}｜${sku.specName}｜${(sku.salePriceFen / 100).toFixed(2)}元${suffix}`
 }
 
 async function save() {
@@ -328,7 +341,16 @@ async function save() {
           </el-select>
         </el-form-item>
         <el-form-item label="应付金额（元）" required>
-          <el-input-number v-model="form.payableYuan" :min="0.01" :precision="2" :step="100" class="full-width" />
+          <el-input-number
+            v-model="form.payableYuan"
+            :min="0.01"
+            :precision="2"
+            :step="100"
+            class="full-width"
+            data-testid="order-payable-yuan"
+            @change="markPayableEdited"
+            @input="markPayableEdited"
+          />
         </el-form-item>
         <el-form-item label="活动 ID / 批次 ID（可选，需成对）">
           <div class="campaign-inputs">
@@ -358,11 +380,19 @@ async function save() {
             data-testid="order-sku-select"
             @change="selectSku(index, $event)"
           >
-            <el-option v-for="sku in skuOptions" :key="sku.id" :label="skuLabel(sku)" :value="sku.id" />
+            <el-option v-for="sku in skuOptions" :key="sku.id" :label="skuLabel(sku)" :value="sku.id" :disabled="sku.selectionMode === 'USE_N'" />
           </el-select>
           <el-input-number v-model="item.quantity" :min="1" :max="1000" class="quantity-input" />
           <el-button text type="danger" :disabled="form.items.length === 1" @click="removeItem(index)">移除</el-button>
         </div>
+        <el-alert
+          v-if="isUseN(item)"
+          type="warning"
+          :closable="false"
+          :title="lineSelectionError(item)"
+          class="selection-error"
+          data-testid="use-n-blocked"
+        />
         <div v-if="isChooseN(item)" class="package-selection" data-testid="package-selection">
           <div v-if="item.snapshotLoading" class="option-feedback">正在加载套餐分组与参考价…</div>
           <el-alert v-if="item.snapshotError" type="error" :closable="false" :title="item.snapshotError" />

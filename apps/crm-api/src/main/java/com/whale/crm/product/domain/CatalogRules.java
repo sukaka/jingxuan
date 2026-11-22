@@ -14,7 +14,8 @@ public final class CatalogRules {
     }
 
     public static String rulesStatus(PackageVersion version, List<PackageSelectionGroup> groups) {
-        if ("CHOOSE_N".equals(version.selectionMode()) && groups.isEmpty()) {
+        if ("USE_N".equals(version.selectionMode())
+                || ("CHOOSE_N".equals(version.selectionMode()) && groups.isEmpty())) {
             return "PENDING_Q01";
         }
         return "READY";
@@ -41,8 +42,7 @@ public final class CatalogRules {
         if ("CHOOSE_N".equals(version.selectionMode())) {
             return !groups.isEmpty() && validGroups(groups, projects);
         }
-        return !groups.isEmpty() ? false
-                : !"USE_N".equals(version.selectionMode()) || version.choiceCount() != null && version.choiceCount() > 0;
+        return "FIXED".equals(version.selectionMode()) && groups.isEmpty() && distinctProjectIds(projects);
     }
 
     public static boolean canActivate(PackageVersion version, List<PackageProject> projects) {
@@ -59,10 +59,11 @@ public final class CatalogRules {
             return groups.isEmpty() ? version.choiceCount() != null && version.choiceCount() > 0
                     : validGroups(groups, projects);
         }
-        if ("USE_N".equals(version.selectionMode())) {
-            return groups.isEmpty() && version.choiceCount() != null && version.choiceCount() > 0;
-        }
-        return "FIXED".equals(version.selectionMode()) && groups.isEmpty();
+        return "FIXED".equals(version.selectionMode()) && groups.isEmpty() && distinctProjectIds(projects);
+    }
+
+    private static boolean distinctProjectIds(List<PackageProject> projects) {
+        return projects.stream().map(PackageProject::projectId).distinct().count() == projects.size();
     }
 
     private static boolean validGroups(List<PackageSelectionGroup> groups, List<PackageProject> projects) {

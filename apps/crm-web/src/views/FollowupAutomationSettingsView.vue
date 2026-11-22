@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   getFollowupAutomationPolicy,
   updateFollowupAutomationPolicy,
@@ -7,7 +7,10 @@ import {
 import type { IntentIntervalOverride } from '../api/followup-automation'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import PageCard from '../components/prototype/PageCard.vue'
+import { useAuthStore } from '../stores/auth'
 
+const auth = useAuthStore()
+const canManage = computed(() => auth.hasPermission('followup:policy:manage'))
 const defaultIntervalDays = ref(14)
 const intentOverrides = ref<IntentIntervalOverride[]>([])
 const version = ref(0)
@@ -34,13 +37,14 @@ async function load() {
 }
 
 function addOverride() {
+  if (!canManage.value) return
   const used = new Set(intentOverrides.value.map((item) => item.intentLevel))
   const intentLevel = ['HIGH', 'MEDIUM', 'LOW'].find((code) => !used.has(code)) ?? 'HIGH'
   intentOverrides.value.push({ intentLevel, intervalDays: 7 })
 }
 
 async function save() {
-  if (saving.value) return
+  if (!canManage.value || saving.value) return
   successMessage.value = ''
   errorMessage.value = ''
   if (defaultIntervalDays.value < 1 || defaultIntervalDays.value > 365) {
@@ -89,32 +93,39 @@ onMounted(() => { void load() })
     <PageHeader title="跟进自动化策略" description="按客户意向配置新跟进节奏；显式下次时间始终优先，不回填历史任务" />
     <PageCard title="跟进间隔" subtitle="默认 14 天，可按意向级别覆盖为 1–365 天">
       <div v-loading="loading" class="policy-form">
+        <el-alert
+          v-if="!canManage"
+          type="info"
+          title="当前账号仅具备跟进策略只读权限，修改配置需具备 followup:policy:manage 权限。"
+          :closable="false"
+          data-testid="followup-readonly-alert"
+        />
         <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" role="alert" />
         <el-alert v-if="successMessage" type="success" :title="successMessage" :closable="false" role="status" />
         <el-form label-position="top" @submit.prevent>
           <el-form-item label="默认跟进间隔（天）" required>
-            <el-input-number v-model="defaultIntervalDays" :min="1" :max="365" data-testid="default-interval" />
+            <el-input-number v-model="defaultIntervalDays" :min="1" :max="365" :disabled="!canManage" data-testid="default-interval" />
           </el-form-item>
           <div class="override-heading">
             <div><strong>意向级别覆盖</strong><p>客户意向级别匹配时使用对应间隔</p></div>
-            <el-button data-testid="add-override" @click="addOverride">＋ 添加覆盖</el-button>
+            <el-button v-if="canManage" data-testid="add-override" @click="addOverride">＋ 添加覆盖</el-button>
           </div>
           <div v-if="intentOverrides.length" class="override-list">
             <div v-for="(item, index) in intentOverrides" :key="`${item.intentLevel}-${index}`" class="override-row">
-              <el-select v-model="item.intentLevel" aria-label="意向级别">
+              <el-select v-model="item.intentLevel" :disabled="!canManage" aria-label="意向级别">
                 <el-option label="高意向" value="HIGH" />
                 <el-option label="中意向" value="MEDIUM" />
                 <el-option label="低意向" value="LOW" />
               </el-select>
-              <el-input-number v-model="item.intervalDays" :min="1" :max="365" aria-label="覆盖间隔天数" />
+              <el-input-number v-model="item.intervalDays" :min="1" :max="365" :disabled="!canManage" aria-label="覆盖间隔天数" />
               <span>天</span>
-              <el-button text type="danger" @click="intentOverrides.splice(index, 1)">删除</el-button>
+              <el-button v-if="canManage" text type="danger" @click="intentOverrides.splice(index, 1)">删除</el-button>
             </div>
           </div>
           <div v-else class="proto-empty">暂无意向覆盖，全部使用默认间隔</div>
           <div class="policy-actions">
             <span>当前版本 {{ version }}</span>
-            <el-button type="primary" :loading="saving" data-testid="save-policy" @click="save">保存策略</el-button>
+            <el-button v-if="canManage" type="primary" :loading="saving" data-testid="save-policy" @click="save">保存策略</el-button>
           </div>
         </el-form>
       </div>

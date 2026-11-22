@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { getPublicH5Card } from '../api/h5Card'
+import { getPublicH5Card, isValidShareKey } from '../api/h5Card'
 import type { PublicH5Card } from '../api/h5Card'
 import { ApiError } from '../types/api'
 
@@ -19,6 +19,10 @@ async function load(): Promise<void> {
   errorMessage.value = ''
   try {
     const shareKey = String(route.params.shareKey ?? '')
+    if (!isValidShareKey(shareKey)) {
+      errorMessage.value = '分享链接无效或格式不正确'
+      return
+    }
     card.value = await getPublicH5Card(shareKey)
     document.title = `${card.value.title} - 鲸选美学`
   } catch (error) {

@@ -2,6 +2,41 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [AUDIT-M5B] M5B 有赞作用域与事件可靠度、V51 消费者、AI/Dify SSRF 防护与 OpenAPI 契约同步 — 2026-11-22
+- **C-02 / C-04（有赞租户隔离与签名/重定向安全）**：移除 `integration/youzan/**` 与 `ai/**` 非 Controller 层 `TenantContext.currentTenantId()` 回退，显式传入 `tenantId`（覆盖 `insertSkuMapping`/`insertCustomerLink` 多租户测试与 `YouzanAdapterRouter.webhookAdapter(long)`）；`YouzanOfficialSignature.valid` 增加 `clientId`/`clientSecret` `isBlank()` 校验；`MockYouzanAdapter` 修复时间戳窗口 `Long.MIN_VALUE` 溢出；`YouzanRemoteClient` 禁用重定向（`followRedirects(false)` / `followSslRedirects(false)`）。保留 `HEAD=8c535f5` 官方 webhook 协议、增量游标与原有测试不变。
+- **H-SEC-09 #7（有赞 SQL `DataScope` 下推与 `/orders` 列表防崩）**：`YouzanMapper.xml` 新增 `customerScopeCondition`/`eventScopeCondition` 下推（关联 `crm_customer` 且限定 `c.deleted = 0`）与 `allScopeOrderFilter`（`ALL` 作用域跳过已软删客户映射订单以保持 `items`/`total` 一致），覆盖 `selectLatestOrderEvents`、`countDistinctExternalOrders`、`selectScopedIssues`/`countScopedIssues`、`selectScopedCustomerLinks` 及 `reconcile-report` 统计；移除 `YouzanManagementService.orders` 外层 `@Transactional(readOnly = true)` 避免 `orderService.detail` `404` 触发 `UnexpectedRollbackException` HTTP 500，`scopeQuery` 委托 `CustomerScopeSupport.queryOf` 并在 `ScopeQuery`/`queryOf` 对 `teamIds` 确定性排序；`/integrations/youzan/orders` 列表越界行不再抛出 404 导致整页失败（保持 200 跳过不可见行），`/orders/{id}` 明细越界仍返回 404；控制层权限放宽为 `hasAnyAuthority('integration:youzan:manage', 'order:read'|'campaign:write')`；保留 4 参 `issues(tenantId, status, page, size)` 供 `RiskSourceSynchronizer` 使用；补齐 `SELF`/`TEAM`/`NONE`/`INSTITUTION` 与软删客户集成与单测。
+- **H-BIZ-06 + M3 §3.2（有赞事件处理与锁序对齐）**：`YouzanEventService.doProcess` 对同秒（`!externalUpdatedAt.isAfter(lastExternalUpdatedAt)`）`ORDER_PAID` 事件在映射订单处于 `DRAFT` 或 `PENDING_PAYMENT` 时不再丢弃；且在 `existing == null` 与 `existing != null` 两条分支均先通过 `scopeSupport.requireVisibleForUpdate` 获取 `X(crm_customer)` 锁，再调用 `orderService`/`paymentService` 获取 `X(crm_order)` 锁。
+- **C-05（V51 `wecom.message.archived.v1` 消费者与 OkHttp 安全）**：`AiChatDelegationEventConsumer` 与 `ComplaintEventConsumer` `PAYLOAD_FIELDS`/`WECOM_FIELDS` 补全 `conversationType` 与 `roomRosterVersion`，`validateEnvelope` `event_id`/`correlation_id` 上限放宽至 192；校验 DB 消息来源后对 `"ROOM"` 消息干净去重跳过且不入 DLQ、不生成托管运行或客诉命中记录（`AiChatDelegationService.receive` 同步增加 `"DIRECT"` 防御守卫）；`AiWorkerClient` 与 `KnowledgeWorkerClient` 禁用重定向并限制超时 `[1s, 300s]`；补齐基于真实 `WecomArchiveService` → `OutboxRelayService` JSON 的单元测试及真实 MySQL+Kafka 集成测试（`ComplaintBrokerReliabilityIT`、`AiChatDelegationBrokerReliabilityIT`）。
+- **H-SEC-02（Java + Python `ai-worker` SSRF 与 DNS Rebinding 防护）**：
+  - **Java**：抽取共享 `AiOutboundUrlValidator` 并接入 `AiProviderConfigService`（`save`/`testConnection`/`workerConfig`）与 `DifyKnowledgeConfigService`（`save`/`testConnection`/`workerConfig`/`datasetWorkerConfig`），对 `http`/`https` 均执行 DNS 解析校验，阻断回环、链路本地/`169.254.169.254`、RFC1918 私网、CGNAT `100.64.0.0/10`、多播、未指定及 IPv6 ULA/映射/NAT64/6to4 地址，支持 `application.yml` 中 `app.ai.provider.allowed-hosts` 与 `app.ai.knowledge.allowed-hosts` 运维白名单（白名单仍严禁链路本地/元数据/多播/未指定地址）。
+  - **Python（`apps/ai-worker`）**：新增 `app/services/ssrf.py`（`validate_outbound_base_url` + 基于 `httpcore.SyncBackend` 的 `PinnedHTTPTransport` 防止 DNS Rebinding），收敛 `schemas.py`/`config.py` 长度与 `timeout_seconds <= 300` 上限，并在 `extractor.py`、`reply.py`、`knowledge.py`、`knowledge_dataset.py` 统一启用 `follow_redirects=False` 与 `trust_env=False`，新增 `tests/test_ssrf.py`。
+- **H-BUG-05 / H-BUG-07**：`ConfirmAiJobRequest.decision` 补充 `@NotNull` 且 `AiJobApplicationService` 显式校验 `CONFIRM`/`REJECT`（`LinkedHashMap` 兼容空 `taskId`）；`AiChatSendFenceMapper`/Repository/Service 新增 `releaseForRetry`（仅在 `finishSend` 提交 `RETRY_SEND` 时释放 `in_flight=0, finished_at=NULL`，`SENT`/`FAILED` 仍锁定防重发）。
+- **OpenAPI 与总账文档同步（`contracts/openapi/openapi.v1.yaml`）**：保留 `HEAD=8c535f5` 全部有赞协议章节；补齐 M4 缺失的 6 个端点（`/channels/{id}/status`、`POST/GET /channels/{id}/financial-change-requests`、`GET /channel-change-requests`、`POST /channel-change-requests/{reqId}/review`、`POST /risks/sync`）及 11 项 Schema/约束/权限/描述同步（`PartnerChannel` 脱敏模型、`UpdateUser.password` 非空白正则、`UpdateRolePermissions` 多段权限正则、`RecordSettlementPaymentRequest.amountFen >= 0`、`OperationsInstitutionRow.pendingReconciliationFen` 权限门控、`notification-settings/wecom-mappings*` `wecom:mapping:manage`、`followup-automation/*` `followup:policy:manage` 与 `ALL` 范围说明、`/customer-segments/{id}` 创建者或 `ALL` 范围、`/customers/{id}/timeline` 分领域权限、`/files/upload-init` `MERCHANT_RESOURCE`、`/customer-merge-candidates/scan`）；全量校验 288 paths、167 唯一 `operationId`、0 断链 `$ref`、100% Controller 路由覆盖。
+- **验证证据（最终代码与契约定稿后实测）**：
+  - Python `apps/ai-worker`：`(cd apps/ai-worker && .venv/bin/pytest -q)` 通过（110 passed）。
+  - Java `crm-api` 静态检查与打包：`./mvnw -B -pl apps/crm-api compile test-compile spotless:check checkstyle:check spotbugs:check package` 通过（Spotless 1248 文件洁净、Checkstyle 0 违规、SpotBugs 0 缺陷、544 个单元测试 0 失败 0 跳过、产物 jar 不含 dev seeds）；`YouzanManagementServiceTest` 3 次独立 JVM 复跑（9 run / 0 fail）与 `Customer*Test,Wecom*Test`（38 run / 0 fail）全部通过。
+  - Java MySQL/Kafka 集成测试分批全部通过：`Batch A`（`YouzanOrderQueryIT,YouzanAcceptanceIT,YouzanConnectionApiIT,YouzanV8SchemaIT`：18 run / 0 fail / 0 err）、`Batch B`（`AiProviderConfigApiIT,DifyKnowledgeConfigApiIT,AiJobRepositoryIT,AiReplySuggestionApiIT,KnowledgePublicationApiIT,AiChatDelegationMigrationRollbackIT`：19 run / 0 fail / 0 err）、`Batch C1`（`ComplaintDetectionIT,ComplaintBrokerReliabilityIT`：4 run / 0 fail / 0 err）、`Batch C2`（`AiChatDelegationBrokerReliabilityIT`：1 run / 0 fail / 0 err）。
+  - OpenAPI 校验：`contracts/openapi/openapi.v1.yaml` 校验 288 paths、167 unique operationIds、0 broken `$ref`、100% Controller 路由覆盖。
+
+## [AUDIT-M5A] M5A 企微归档/撤回修复与多模块高危缺陷收敛 — 2026-11-21
+- **迁移 `V55`**：`V55__wecom_archive_scope_and_recall_repair.sql` 修复企微归档范围与撤回字段约束（`V1..V55` 冻结）。
+- **核心修复**：覆盖 `C-02`（多模块租户参数显式化）、`C-03` / `C-04`（企微回调与归档身份/作用域边界）、`H-SEC-01`、`H-SEC-04`、`H-BUG-08`、`H-BUG-11`、`H-BUG-12`。
+
+## [AUDIT-M4] M4 渠道财务审批、机构/风险/客户与素材权限收敛 — 2026-11-21
+- **迁移 `V54`**：`V54__channel_change_requests_and_crm_fixes.sql` 新增渠道财务双人复核变更单表并收口历史约束。
+- **核心修复**：覆盖 `C-02`、`H-SEC-03`、`H-SEC-09 #2..#6`、`H-BIZ-07`、`H-BIZ-08`、`H-BUG-06`、`H-BUG-09`、`M-BE-01`（含渠道 `/status` 启停、`/financial-change-requests`、`/channel-change-requests` 与 `/risks/sync`）。
+
+## [AUDIT-M3] M3 交易/核销/退款/对账并发与状态机加固 — 2026-11-21
+- **迁移 `V53`**：`V53__trading_settlement_fixes.sql`。
+- **核心修复**：覆盖 `C-01`、`C-02`、`H-BIZ-01..05`、`H-SEC-09 #1/#7`、`M-BE-06..08`（不含后续交由 M5B 落地的 `H-BIZ-06` 与有赞 `DataScope` 下推）。
+
+## [AUDIT-M1] M1 平台安全与基础数据作用域加固 — 2026-11-21
+- **迁移 `V52`**：`V52__platform_security_and_indexes.sql`。
+- **核心修复**：覆盖 `H-SEC-05..08`、`H-BUG-02..04`、`H-BUG-10`、`M-BE-01..05`。
+
+## [AUDIT-DEFERRED] 已明确延后项（不在 M1-M5B 范围实施）
+- `M-BE-04`、`M-BE-09`、`M-BE-10`、`M-BE-11`、`M-BE-12`、`M-BE-13`、`M-BE-14`、`M-BE-15`（含 `AiJob` `claimed_by` fence 与安全正则扩展等）及独立 `LOW` 优化项。
+
 ## [YOUZAN-OFFICIAL-FIX] 有赞云官方协议、同步可靠性与前端工作台修复 — 2026-11-20
 
 ### 实现

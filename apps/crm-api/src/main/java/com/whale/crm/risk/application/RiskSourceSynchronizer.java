@@ -5,6 +5,7 @@ import com.whale.crm.integration.youzan.application.YouzanManagementService;
 import com.whale.crm.integration.youzan.domain.YouzanSyncIssue;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.web.PageResponse;
+import com.whale.crm.risk.api.dto.RiskSyncResponse;
 import com.whale.crm.risk.domain.RiskSourceRecord;
 import com.whale.crm.settlement.application.ReconciliationService;
 import com.whale.crm.settlement.api.dto.ReconciliationResponse;
@@ -12,12 +13,14 @@ import com.whale.crm.settlement.domain.ReconciliationIssue;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Component
 public class RiskSourceSynchronizer {
     private static final int SOURCE_PAGE_SIZE = 100;
+    private static final int MAX_SYNC_PAGES = 100;
 
     private final YouzanManagementService youzanService;
     private final ReconciliationService reconciliationService;
@@ -35,37 +38,48 @@ public class RiskSourceSynchronizer {
     }
 
     @Transactional
-    public void sync(CurrentUser user) {
-        importYouzanIssues(user.tenantId());
+    public RiskSyncResponse sync(CurrentUser user) {
+        int createdCount = importYouzanIssues(user.tenantId());
         ReconciliationResponse reconciliation = reconciliationService.reconcile(user.tenantId(), user, null);
         for (ReconciliationIssue issue : reconciliation.issues()) {
             if (issue.resourceId() == null) {
                 continue;
             }
-            registrationService.register(new RiskSourceRecord(user.tenantId(), issue.checkType(),
-                    reconciliationSeverity(issue.checkType()), reconciliationSourceType(issue.checkType()),
-                    issue.resourceId().toString(), reconciliationEvidence(issue)), null);
+            RiskCaseRegistrationService.RegistrationResult outcome = registrationService.registerOutcome(
+                    new RiskSourceRecord(user.tenantId(), issue.checkType(),
+                            reconciliationSeverity(issue.checkType()), reconciliationSourceType(issue.checkType()),
+                            issue.resourceId().toString(), reconciliationEvidence(issue)),
+                    null);
+            if (outcome != null && outcome.created()) {
+                createdCount++;
+            }
         }
+        return new RiskSyncResponse(createdCount, 0, Instant.now());
     }
 
-    private void importYouzanIssues(long tenantId) {
-        int page = 1;
-        while (true) {
+    private int importYouzanIssues(long tenantId) {
+        int createdCount = 0;
+        for (int page = 1; page <= MAX_SYNC_PAGES; page++) {
             PageResponse<YouzanSyncIssue> result = youzanService.issues(tenantId, null, page, SOURCE_PAGE_SIZE);
             for (YouzanSyncIssue issue : result.items()) {
                 if ("RESOLVED".equals(issue.status())) {
                     continue;
                 }
-                registrationService.register(new RiskSourceRecord(tenantId, issue.issueType(),
-                        youzanSeverity(issue.issueType()), "YOUZAN_SYNC_ISSUE", issue.id().toString(),
-                        youzanEvidence(issue)), null);
+                RiskCaseRegistrationService.RegistrationResult outcome = registrationService.registerOutcome(
+                        new RiskSourceRecord(tenantId, issue.issueType(),
+                                youzanSeverity(issue.issueType()), "YOUZAN_SYNC_ISSUE", issue.id().toString(),
+                                youzanEvidence(issue)),
+                        null);
+                if (outcome != null && outcome.created()) {
+                    createdCount++;
+                }
             }
             long consumed = (long) page * SOURCE_PAGE_SIZE;
             if (result.items().isEmpty() || result.items().size() < SOURCE_PAGE_SIZE || consumed >= result.total()) {
-                return;
+                break;
             }
-            page++;
         }
+        return createdCount;
     }
 
     private String youzanEvidence(YouzanSyncIssue issue) {

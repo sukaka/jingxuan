@@ -16,8 +16,11 @@ import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.security.DataScope;
+import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.PageResponse;
 import com.whale.crm.product.application.CatalogApplicationService;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -158,6 +161,41 @@ class AiJobApplicationServiceTest {
 
         verify(repository, never()).insertInsight(any());
         verify(repository).markRetry(eq(1L), eq(1L), eq(1L), anyString(), any(), eq(true));
+    }
+
+    @Test
+    void rejectDecisionPersistsNullTaskIdInAuditAndNullDecisionFailsValidation() {
+        AiJob proposed = job("PROPOSED", 0L);
+        AiJob rejected = new AiJob(1L, 1L, 1010L, "CONV", 2L, "[1]", "hash", "create-key", "REJECTED",
+                null, null, 1, null, "mock", "mock-rules-v1", null, 2L, Instant.now(), "客户已线下处理", "reject-key",
+                "h", null, Instant.now(), Instant.now(), 1L);
+        when(repository.findByIdForUpdate(1L, 1L)).thenReturn(Optional.of(proposed));
+        when(repository.findScopedById(eq(1L), eq(1L), eq("SELF"), anyList(), eq(2L))).thenReturn(Optional.of(proposed));
+        when(repository.confirm(eq(1L), eq(1L), eq(0L), eq("REJECTED"), eq(2L), any(), eq("客户已线下处理"),
+                eq("reject-key"), anyString(), eq(null))).thenReturn(1);
+        when(repository.findById(1L, 1L)).thenReturn(Optional.of(rejected));
+
+        var response = service.confirm(manager, 1L,
+                new ConfirmAiJobRequest(0L, "REJECT", null, null, null, "客户已线下处理"), "reject-key");
+
+        assertThat(response.status()).isEqualTo("REJECTED");
+        assertThat(response.taskId()).isNull();
+        verify(taskService, never()).createFromAi(anyLong(), any(), anyLong(), anyString(), anyString(), any(), any());
+        verify(auditService).record(eq(1L), eq(2L), eq("AI_JOB_REJECTED"), eq("AI_JOB"), eq("1"),
+                any(), org.mockito.ArgumentMatchers.argThat(snapshot ->
+                        snapshot instanceof java.util.Map<?, ?> map
+                                && "REJECTED".equals(map.get("status"))
+                                && map.containsKey("taskId")
+                                && map.get("taskId") == null),
+                eq("客户已线下处理"));
+
+        Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
+        assertThat(validator.validate(new ConfirmAiJobRequest(0L, null, null, null, null, "reason"))).isNotEmpty();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.confirm(manager, 1L,
+                        new ConfirmAiJobRequest(0L, null, null, null, null, "reason"), "null-decision"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("CONFIRM");
     }
 
     private AiJob job(String status, long version) {

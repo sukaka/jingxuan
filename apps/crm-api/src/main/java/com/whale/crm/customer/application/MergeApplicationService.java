@@ -119,16 +119,29 @@ public class MergeApplicationService {
      */
     @Transactional
     public MergeScanResultResponse scan(long tenantId, CurrentUser user) {
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return new MergeScanResultResponse(0, List.of());
+        }
+        CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
         Map<String, List<Long>> pairs = new LinkedHashMap<>();
         Map<String, String> evidenceByPair = new LinkedHashMap<>();
 
-        for (CustomerRepository.DuplicateMobileGroup group : customerRepository.findDuplicateMobileGroups(tenantId)) {
+        for (CustomerRepository.DuplicateMobileGroup group : customerRepository.findDuplicateMobileGroups(
+                tenantId, query.scopeType(), query.teamIds(), query.selfId())) {
             List<Long> ids = group.customerIds();
+            if (ids.size() < 2) {
+                continue;
+            }
             Customer sample = customerRepository.findById(tenantId, ids.get(0)).orElse(null);
             String masked = sample == null ? null : mobileSupport.maskFromCipher(sample.getMobileCipher());
             registerPairs(pairs, evidenceByPair, ids, "MOBILE_HASH", masked);
         }
-        for (CustomerRepository.DuplicateIdentityGroup group : customerRepository.findDuplicateIdentityGroups(tenantId)) {
+        for (CustomerRepository.DuplicateIdentityGroup group : customerRepository.findDuplicateIdentityGroups(
+                tenantId, query.scopeType(), query.teamIds(), query.selfId())) {
+            if (group.customerIds().size() < 2) {
+                continue;
+            }
             registerPairs(pairs, evidenceByPair, group.customerIds(), "IDENTITY",
                     CustomerApplicationService.maskExternalId(group.externalId()));
         }
@@ -205,29 +218,36 @@ public class MergeApplicationService {
     @Transactional
     public MergeCandidateItemResponse confirm(long tenantId, CurrentUser user, long caseId, long version,
                                               String reason) {
-        MergeCase mergeCase = requireOpenCase(tenantId, user, caseId, version);
-        if (!MergeCase.STATUS_REVIEWING.equals(mergeCase.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "仅 REVIEWING 状态可确认合并");
-        }
+        MergeCase mergeCase = mergeCaseRepository.findByIdForUpdate(tenantId, caseId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "合并单不存在"));
         long primaryId = mergeCase.getPrimaryCustomerId();
         long secondaryId = mergeCase.getSecondaryCustomerId();
         long firstLock = Math.min(primaryId, secondaryId);
         long secondLock = Math.max(primaryId, secondaryId);
         Customer first = customerRepository.findByIdForUpdate(tenantId, firstLock)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "客户不存在或不可见"));
-        Customer second = customerRepository.findByIdForUpdate(tenantId, secondLock)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "客户不存在或不可见"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "合并单不存在或不可见"));
+        Customer second = firstLock == secondLock ? first : customerRepository.findByIdForUpdate(tenantId, secondLock)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "合并单不存在或不可见"));
         Customer primary = first.getId() == primaryId ? first : second;
         Customer secondary = first.getId() == secondaryId ? first : second;
-        if (primary.isDeleted() || secondary.isDeleted()) {
-            throw new BusinessException(ErrorCode.CONFLICT, "客户已归档，无法执行合并");
-        }
         DataScope scope = scopeSupport.scope(user);
         if (!scopeSupport.isVisible(scope, user, primary) || !scopeSupport.isVisible(scope, user, secondary)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "合并单不存在或不可见");
         }
+        if (!Objects.equals(mergeCase.getVersion(), version)) {
+            throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+        }
+        if (!mergeCase.isOpen()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "合并单已终结（当前状态 " + mergeCase.getStatus() + "）");
+        }
+        if (!MergeCase.STATUS_REVIEWING.equals(mergeCase.getStatus())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "仅 REVIEWING 状态可确认合并");
+        }
+        if (primary.isDeleted() || secondary.isDeleted()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "客户已归档，无法执行合并");
+        }
 
-        snapshotSecondaryResources(tenantId, caseId, primaryId, secondaryId);
+        MergeOrderResourceSnapshot resources = snapshotSecondaryResources(tenantId, caseId, primaryId, secondaryId);
 
         // identity：与主客户完全同 (type,app,externalId) 的去重删除，其余改挂主客户（规避唯一键冲突）
         Set<String> primaryIdentityKeys = new HashSet<>();
@@ -251,7 +271,8 @@ public class MergeApplicationService {
         int followupsMigrated = followupRepository.reassignCustomer(tenantId, secondaryId, primaryId);
         int tasksMigrated = taskRepository.reassignCustomer(tenantId, secondaryId, primaryId);
         int pointsMigrated = pointsLedgerRepository.reassignCustomer(tenantId, secondaryId, primaryId);
-        customerOrderOperations.reassignCustomer(tenantId, secondaryId, primaryId);
+        customerOrderOperations.reassignSpecific(tenantId, resources.orderIds(), resources.entitlementIds(),
+                secondaryId, primaryId);
         long pointsBalance = pointsLedgerRepository.sumDelta(tenantId, primaryId);
         customerRepository.refreshPointsCached(tenantId, primaryId, Math.toIntExact(pointsBalance));
 
@@ -287,7 +308,7 @@ public class MergeApplicationService {
         return toResponse(tenantId, after);
     }
 
-    private void snapshotSecondaryResources(long tenantId, long caseId, long primaryId, long secondaryId) {
+    private MergeOrderResourceSnapshot snapshotSecondaryResources(long tenantId, long caseId, long primaryId, long secondaryId) {
         Set<String> primaryIdentityKeys = new HashSet<>();
         for (CustomerIdentity identity : identityRepository.findByCustomerId(tenantId, primaryId)) {
             primaryIdentityKeys.add(identityKey(identity));
@@ -320,6 +341,7 @@ public class MergeApplicationService {
         for (Long entitlementId : resources.entitlementIds()) {
             snapshotRepository.insert(tenantId, new MergeResourceSnapshot(null, caseId, "ENTITLEMENT", entitlementId.toString()));
         }
+        return resources;
     }
 
     // ========== 内部 ==========

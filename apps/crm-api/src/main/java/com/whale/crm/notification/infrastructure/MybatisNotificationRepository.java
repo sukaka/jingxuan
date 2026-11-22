@@ -26,6 +26,11 @@ public class MybatisNotificationRepository implements NotificationRepository {
     }
 
     @Override
+    public boolean employeeActive(long tenantId, long staffUserId) {
+        return mapper.employeeActive(tenantId, staffUserId) > 0;
+    }
+
+    @Override
     public Optional<Notification> findByDedupeKey(long tenantId, long recipientUserId, String dedupeKey) {
         return Optional.ofNullable(mapper.selectByDedupeKey(tenantId, recipientUserId, dedupeKey));
     }

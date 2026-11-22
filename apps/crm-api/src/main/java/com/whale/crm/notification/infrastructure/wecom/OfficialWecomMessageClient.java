@@ -34,7 +34,8 @@ public class OfficialWecomMessageClient implements WecomMessageClient {
                                       ObjectMapper objectMapper) {
         this(properties, tokens, objectMapper, new OkHttpClient.Builder()
                 .connectTimeout(properties.connectTimeoutMs(), TimeUnit.MILLISECONDS)
-                .readTimeout(properties.readTimeoutMs(), TimeUnit.MILLISECONDS).build());
+                .readTimeout(properties.readTimeoutMs(), TimeUnit.MILLISECONDS)
+                .followRedirects(false).build());
     }
 
     public OfficialWecomMessageClient(WecomMessageProperties properties, WecomMessageTokenService tokens,
@@ -50,6 +51,9 @@ public class OfficialWecomMessageClient implements WecomMessageClient {
         if (command == null || command.wecomUserId() == null || command.wecomUserId().isBlank()
                 || properties.agentId() == null || properties.agentId() <= 0) {
             return result(WecomSendResult.Status.FAILED, "WECOM_MESSAGE_CONFIG_INVALID");
+        }
+        if (properties.allowedTenantId() <= 0 || command.tenantId() != properties.allowedTenantId()) {
+            return result(WecomSendResult.Status.FAILED, "WECOM_MESSAGE_TENANT_FORBIDDEN");
         }
         final Request request;
         try {

@@ -15,6 +15,7 @@ import CustomerAvatar from './customer/CustomerAvatar.vue'
 import { formatDateTime } from './customer/shared'
 import { useReferenceNames } from './references'
 import { aiIntentLabel } from '../utils/aiIntent'
+import { shanghaiTimeString } from '../utils/date'
 
 interface Conversation { id: string; customerId: number | null; externalUserid: string | null; staffUserId: number | null; conversationType: 'DIRECT' | 'ROOM'; messages: WecomMessageView[] }
 interface ConversationMessage { id: number; senderType: string; senderWecomUserid: string | null; sentAt: string; content: string; mediaAssets?: WecomMediaAssetView[]; recalledAt?: string | null }
@@ -33,6 +34,10 @@ const activeJob = ref<AiJob | null>(null), aiLoading = ref(false), aiError = ref
 const confirmVisible = ref(false), confirming = ref(false)
 const confirmForm = reactive({ title: '', description: '', dueAt: '', reason: '' })
 let pollTimer: ReturnType<typeof setTimeout> | undefined
+let disposed = false
+let conversationSeq = 0
+let analyzeSeq = 0
+let pollToken = 0
 const selected = computed(() => conversations.value.find((item) => item.id === selectedId.value) || null)
 const hasInsight = computed(() => activeJob.value?.status === 'PROPOSED' && activeJob.value.insight)
 function conversationName(item: Conversation) { return item.conversationType === 'ROOM' ? roomNames.value[item.id] || `群聊 · ${item.id}` : item.customerId ? customerNames.value[item.customerId] || `客户 #${item.customerId}` : `待匹配 · ${item.externalUserid}` }
@@ -41,25 +46,31 @@ function senderLabel(message: ConversationMessage) {
   if (selected.value?.conversationType === 'ROOM') return `${message.senderType === 'EMPLOYEE' ? '员工' : '外部参与人'} · ${message.senderWecomUserid || '身份未显示'}`
   return message.senderType === 'EMPLOYEE' ? '管家' : '客户'
 }
-function time(value: string) { return value.slice(11, 16) }
+function time(value: string) { return shanghaiTimeString(value) }
 function errorText(error: unknown) { return error instanceof Error ? error.message : '操作失败，请稍后重试' }
 function statusLabel(status: string) { return ({ QUEUED: '排队等待', RUNNING: '分析中', RETRY: '等待重试', PROPOSED: '待人工确认', FAILED: '分析失败', CONFIRMED: '已生成待办', REJECTED: '已驳回' } as Record<string, string>)[status] || '未知任务状态' }
 function intentLabel(type: string) { return aiIntentLabel(type) }
 function riskLabel(value: string) { return ({ COMPLAINT: '投诉风险', REFUND_REQUEST: '退款诉求', SERVICE_CLAIM: '服务完成陈述', URGENT: '需优先复核' } as Record<string, string>)[value] || '未知风险' }
 function actionLabel(value: string) { return ({ VERIFY_BALANCE: '核实剩余权益', ASK_PREFERRED_INSTITUTION: '确认意向机构', CREATE_FOLLOWUP_DRAFT: '生成回访草稿', VERIFY_SERVICE_RECORD: '核实服务记录', OFFER_HUMAN_SUPPORT: '转人工支持', VERIFY_PAYMENT_RECORD: '核实支付记录' } as Record<string, string>)[value] || '未知操作' }
-function stopPolling() { if (pollTimer) clearTimeout(pollTimer); pollTimer = undefined }
-async function loadLatest(conversationId: string) {
+function stopPolling() { pollToken += 1; if (pollTimer) clearTimeout(pollTimer); pollTimer = undefined }
+async function loadLatest(conversationId: string, seq: number) {
   if (!auth.hasPermission('ai:read')) return
   try {
     const result = await listAiJobs({ conversationId, page: 1, size: 1 })
+    if (disposed || seq !== conversationSeq || selectedId.value !== conversationId) return
     activeJob.value = result.items[0] || null
     aiError.value = ''
-  } catch (error) { activeJob.value = null; aiError.value = errorText(error) }
+  } catch (error) {
+    if (disposed || seq !== conversationSeq || selectedId.value !== conversationId) return
+    activeJob.value = null; aiError.value = errorText(error)
+  }
 }
 async function selectConversation(id: string) {
   stopPolling()
+  const seq = ++conversationSeq
   selectedId.value = id
   activeJob.value = null
+  aiLoading.value = false
   aiError.value = ''
   messages.value = []
   contentError.value = ''
@@ -68,6 +79,7 @@ async function selectConversation(id: string) {
   contentLoading.value = true
   try {
     const results = await Promise.allSettled(conversation.messages.map((message) => getWecomMessageContent(message.id)))
+    if (disposed || seq !== conversationSeq || selectedId.value !== id) return
     messages.value = results.flatMap((result, index) => result.status === 'fulfilled' ? [{
       id: conversation.messages[index].id,
       senderType: conversation.messages[index].senderType,
@@ -78,8 +90,10 @@ async function selectConversation(id: string) {
       recalledAt: result.value.recalledAt ?? null,
     }] : [])
     if (results.some((result) => result.status === 'rejected')) contentError.value = '部分内容未获授权或暂不可读取，未展示旧全文'
-    if (conversation.conversationType !== 'ROOM') await loadLatest(id)
-  } finally { contentLoading.value = false }
+    if (conversation.conversationType !== 'ROOM') await loadLatest(id, seq)
+  } finally {
+    if (!disposed && seq === conversationSeq) contentLoading.value = false
+  }
 }
 async function analyze() {
   const conversation = selected.value
@@ -88,21 +102,35 @@ async function analyze() {
   const ids = conversation.messages.filter((item) => item.messageType === 'TEXT').map((item) => item.id)
   if (!ids.length) { aiError.value = '当前会话没有可分析的授权文本'; return }
   stopPolling()
+  const seq = conversationSeq
+  const analyzeToken = ++analyzeSeq
+  const targetId = conversation.id
   aiLoading.value = true
   aiError.value = ''
   try {
-    activeJob.value = await createAiJob(ids, `ai-job:${crypto.randomUUID()}`)
-    poll(activeJob.value.id)
-  } catch (error) { aiError.value = errorText(error) } finally { aiLoading.value = false }
+    const job = await createAiJob(ids, `ai-job:${crypto.randomUUID()}`)
+    if (disposed || seq !== conversationSeq || analyzeToken !== analyzeSeq || selectedId.value !== targetId) return
+    activeJob.value = job
+    poll(job.id)
+  } catch (error) {
+    if (!disposed && seq === conversationSeq && analyzeToken === analyzeSeq) aiError.value = errorText(error)
+  } finally {
+    if (!disposed && seq === conversationSeq && analyzeToken === analyzeSeq) aiLoading.value = false
+  }
 }
 function poll(id: number) {
   stopPolling()
+  if (disposed) return
+  const token = pollToken
   pollTimer = setTimeout(async () => {
     try {
       const job = await getAiJob(id)
+      if (disposed || token !== pollToken) return
       activeJob.value = job
       if (['QUEUED', 'RUNNING', 'RETRY'].includes(job.status)) poll(id)
-    } catch (error) { aiError.value = errorText(error) }
+    } catch (error) {
+      if (!disposed && token === pollToken) aiError.value = errorText(error)
+    }
   }, 1000)
 }
 function openConfirm() {
@@ -135,12 +163,18 @@ async function copyDraft() {
   if (!text) return
   try { await navigator.clipboard.writeText(text); ElMessage.success('话术草稿已复制，不会自动发送') } catch { ElMessage.error('复制失败，请手动选择文本') }
 }
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  disposed = true
+  conversationSeq += 1
+  analyzeSeq += 1
+  stopPolling()
+})
 onMounted(async () => {
   if (!canRead.value) return
   loading.value = true
   try {
     const [messagePage, contactRows] = await Promise.all([listWecomMessages({ page: 1, size: 100 }), listWecomContacts()])
+    if (disposed) return
     contacts.value = contactRows
     const groups = new Map<string, Conversation>()
     messagePage.items.forEach((message) => {
@@ -154,18 +188,20 @@ onMounted(async () => {
       .sort((a, b) => (b.messages.at(-1)?.archiveSeq || 0) - (a.messages.at(-1)?.archiveSeq || 0))
     const roomCorpIds = [...new Set(messagePage.items.filter((item) => item.conversationType === 'ROOM').map((item) => item.corpId))]
     const roomResults = await Promise.allSettled(roomCorpIds.map(listWecomRooms))
+    if (disposed) return
     roomResults.forEach((result) => {
       if (result.status === 'fulfilled') result.value.forEach((room) => { roomNames.value[room.roomId] = room.displayName || `群聊 · ${room.roomId}` })
     })
     const ids = [...new Set(messagePage.items.flatMap((item) => item.customerId ? [item.customerId] : []))]
     const names = await Promise.allSettled(ids.map((id) => getCustomer(id)))
+    if (disposed) return
     names.forEach((result, index) => { if (result.status === 'fulfilled') customerNames.value[ids[index]] = result.value.displayName || result.value.nickname || `客户 #${ids[index]}` })
     if (conversations.value.length) {
       const requested = typeof route?.query?.conversation === 'string' ? route.query.conversation : ''
       await selectConversation(conversations.value.some((item) => item.id === requested) ? requested : conversations.value[0].id)
     }
-  } catch (error) { errorMessage.value = errorText(error) }
-  finally { loading.value = false }
+  } catch (error) { if (!disposed) errorMessage.value = errorText(error) }
+  finally { if (!disposed) loading.value = false }
 })
 </script>
 

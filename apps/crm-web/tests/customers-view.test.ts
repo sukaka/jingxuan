@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
 import { listCustomers, listMergeCandidates } from '../src/api/customer'
 import { useAuthStore } from '../src/stores/auth'
@@ -107,6 +107,10 @@ describe('CustomersView 客户中心', () => {
     vi.mocked(listMergeCandidates).mockReset().mockResolvedValue({ items: [], total: 0, page: 1, size: 1 })
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('列表渲染 11 列客户资料，且不出现明文手机号', async () => {
     vi.mocked(listCustomers).mockResolvedValue(samplePage)
     const wrapper = mountView(managerUser)
@@ -135,7 +139,7 @@ describe('CustomersView 客户中心', () => {
     expect(wrapper.find('.crm-avatar').exists()).toBe(true)
   })
 
-  it('四项统计分别使用客户筛选和查重接口返回的总数', async () => {
+  it('具备 customer:merge 权限时展示全部四项统计；无 customer:merge 时不请求查重接口且不把 S/A/跟进 KPI 归零', async () => {
     vi.mocked(listCustomers).mockImplementation(async (query) => {
       if (query.tierCode === 'S') return { ...samplePage, total: 12, size: 1 }
       if (query.tierCode === 'A') return { ...samplePage, total: 8, size: 1 }
@@ -143,15 +147,28 @@ describe('CustomersView 客户中心', () => {
       return samplePage
     })
     vi.mocked(listMergeCandidates).mockResolvedValue({ items: [], total: 2, page: 1, size: 1 })
-    const wrapper = mountView(managerUser)
-    await flushPromises()
 
-    expect(wrapper.findAll('.proto-stat-card .number').map((value) => value.text())).toEqual([
+    const withMerge = mountView({ ...managerUser, permissions: [...managerUser.permissions, 'customer:merge'] })
+    await flushPromises()
+    expect(withMerge.findAll('.proto-stat-card .number').map((value) => value.text())).toEqual([
       '12 位',
       '8 位',
       '3 条',
       '2 组',
     ])
+    expect(listMergeCandidates).toHaveBeenCalledWith({ status: 'SUGGESTED', page: 1, size: 1 })
+    withMerge.unmount()
+
+    vi.mocked(listMergeCandidates).mockClear()
+    const withoutMerge = mountView(managerUser)
+    await flushPromises()
+    expect(listMergeCandidates).not.toHaveBeenCalled()
+    expect(withoutMerge.findAll('.proto-stat-card .number').map((value) => value.text())).toEqual([
+      '12 位',
+      '8 位',
+      '3 条',
+    ])
+    expect(withoutMerge.find('[data-testid="customer-merge-link"]').exists()).toBe(false)
     expect(listCustomers).toHaveBeenCalledWith({ tierCode: 'S', page: 1, size: 1 })
     expect(listCustomers).toHaveBeenCalledWith({ tierCode: 'A', page: 1, size: 1 })
     expect(listCustomers).toHaveBeenCalledWith({
@@ -159,7 +176,7 @@ describe('CustomersView 客户中心', () => {
       page: 1,
       size: 1,
     })
-    expect(listMergeCandidates).toHaveBeenCalledWith({ status: 'SUGGESTED', page: 1, size: 1 })
+    withoutMerge.unmount()
   })
 
   it('加载失败展示错误态而非崩溃', async () => {
@@ -226,5 +243,25 @@ describe('CustomersView 客户中心', () => {
     await flushPromises()
 
     expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({ page: 1, tierCode: 'D' }))
+  })
+
+  it('北京时间凌晨（UTC 前一日 16:30Z）仍按 Asia/Shanghai 日期判定逾期跟进', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-25T16:30:00Z'))
+    vi.mocked(listCustomers).mockResolvedValue({
+      items: [{
+        ...samplePage.items[0],
+        lastFollowupAt: '2026-10-25T16:30:00Z',
+        nextFollowupAt: '2026-10-25T16:30:00Z',
+      }],
+      total: 1,
+      page: 1,
+      size: 20,
+    })
+    const wrapper = mountView(managerUser)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('2026-10-26')
+    expect(wrapper.text()).toContain('已到期')
   })
 })

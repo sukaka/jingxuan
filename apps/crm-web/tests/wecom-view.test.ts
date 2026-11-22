@@ -17,6 +17,7 @@ import {
   syncWecomArchive,
   syncWecomContacts,
 } from '../src/api/wecom'
+import { createAiJob, listAiJobs } from '../src/api/ai'
 import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
 import WecomArchiveView from '../src/views/WecomArchiveView.vue'
@@ -34,6 +35,12 @@ vi.mock('../src/api/wecom', () => ({
   linkWecomContact: vi.fn(),
 }))
 vi.mock('../src/api/customer', () => ({ listCustomers: vi.fn(), getCustomer: vi.fn() }))
+vi.mock('../src/api/ai', () => ({
+  listAiJobs: vi.fn(),
+  createAiJob: vi.fn(),
+  getAiJob: vi.fn(),
+  confirmAiJob: vi.fn(),
+}))
 vi.mock('../src/api/wecomRoom', () => ({
   listWecomRooms: vi.fn().mockResolvedValue([{ corpId: 'MOCK-CORP-001', roomId: 'wr-synthetic', displayName: '开发群聊', enabled: true, archivable: true, membershipConfirmedAt: '2026-11-13T08:00:00Z', version: 0, participants: [] }]),
 }))
@@ -367,6 +374,7 @@ describe('WecomArchiveView 三栏会话工作区', () => {
     vi.mocked(getWecomMessageContent).mockResolvedValue({ messageRef: 901, messageType: 'TEXT', sentAt: message.sentAt, content: 'Mock 授权归档文本' })
     vi.mocked(getCustomer).mockResolvedValue(customerDetail)
     vi.mocked(listCustomers).mockResolvedValue({ items: [customer], total: 1, page: 1, size: 20 })
+    vi.mocked(listAiJobs).mockResolvedValue({ items: [], total: 0, page: 1, size: 1 })
   })
 
   it('三栏页面读取真实会话与客户，展示真实 AI 空状态并隐藏无权限操作', async () => {
@@ -510,5 +518,84 @@ describe('WecomArchiveView 三栏会话工作区', () => {
   it('AI 操作按钮清除相邻左边距，保持全宽左右对齐', () => {
     expect(workspaceSource).toMatch(/\.ai-panel \.el-button\{width:100%;margin-top:10px\}/)
     expect(workspaceSource).toMatch(/\.ai-panel \.el-button \+ \.el-button\{margin-left:0\}/)
+  })
+
+  it('快速切换会话时丢弃过期响应，且发送时间按 Asia/Shanghai 展示', async () => {
+    const firstMsg: WecomMessageView = { ...message, archiveSeq: 102, conversationId: 'CONV-A', sentAt: '2026-10-25T01:05:00Z' }
+    const secondMsg: WecomMessageView = {
+      ...message, id: 902, msgId: 'MSG-2', archiveSeq: 101, customerId: null,
+      externalUserid: 'EXT-B', conversationId: 'CONV-B', sentAt: '2026-10-25T02:10:00Z',
+    }
+    vi.mocked(listWecomMessages).mockResolvedValue({ items: [firstMsg, secondMsg], total: 2, page: 1, size: 100 })
+    let resolveFirst!: (v: { messageRef: number; messageType: string; sentAt: string; content: string }) => void
+    vi.mocked(getWecomMessageContent).mockImplementation((id) => {
+      if (id === 901) {
+        return new Promise((res) => { resolveFirst = res })
+      }
+      return Promise.resolve({ messageRef: 902, messageType: 'TEXT', sentAt: secondMsg.sentAt, content: '会话B内容' })
+    })
+
+    const wrapper = mountWorkspace(['wecom:read'])
+    await flushPromises()
+
+    const convB = wrapper.findAll('.chat-contact').find((item) => item.text().includes('EXT-B'))!
+    await convB.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('会话B内容')
+    expect(wrapper.text()).toContain('10:10')
+
+    // 迟到的会话 A 响应不应覆盖当前会话 B
+    resolveFirst({ messageRef: 901, messageType: 'TEXT', sentAt: firstMsg.sentAt, content: '迟到的会话A' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('会话B内容')
+    expect(wrapper.text()).not.toContain('迟到的会话A')
+  })
+
+  it('生成 AI 分析期间切换会话会解除 ai-analyze 的加载锁定且不串入旧任务', async () => {
+    const firstMsg: WecomMessageView = { ...message, id: 901, archiveSeq: 102, customerId: 42, conversationId: 'CONV-A' }
+    const secondMsg: WecomMessageView = {
+      ...message, id: 902, msgId: 'MSG-2', archiveSeq: 101, customerId: 43,
+      externalUserid: 'EXT-B', conversationId: 'CONV-B',
+    }
+    vi.mocked(listWecomMessages).mockResolvedValue({ items: [firstMsg, secondMsg], total: 2, page: 1, size: 100 })
+    vi.mocked(getCustomer).mockImplementation(async (id) => ({ ...customerDetail, id, displayName: id === 42 ? '客户A' : '客户B' }))
+    vi.mocked(getWecomMessageContent).mockImplementation(async (id) => ({
+      messageRef: id, messageType: 'TEXT', sentAt: message.sentAt, content: id === 901 ? '会话A消息' : '会话B消息',
+    }))
+    let resolveAiJob!: (value: Awaited<ReturnType<typeof createAiJob>>) => void
+    vi.mocked(createAiJob).mockReturnValueOnce(new Promise((res) => { resolveAiJob = res }))
+
+    const wrapper = mountWorkspace(['wecom:read', 'ai:read', 'ai:write'])
+    await flushPromises()
+
+    await wrapper.get('[data-testid="ai-analyze"]').trigger('click')
+    expect(wrapper.get('[data-testid="ai-analyze"]').classes()).toContain('is-loading')
+
+    const convB = wrapper.findAll('.chat-contact').find((item) => item.text().includes('客户B'))!
+    await convB.trigger('click')
+    await flushPromises()
+
+    const analyzeBtn = wrapper.get('[data-testid="ai-analyze"]')
+    expect(analyzeBtn.classes()).not.toContain('is-loading')
+    expect(analyzeBtn.attributes('disabled')).toBeUndefined()
+
+    resolveAiJob({
+      id: 88,
+      customerId: 42,
+      conversationId: 'CONV-A',
+      status: 'QUEUED',
+      provider: null,
+      modelName: null,
+      errorMasked: null,
+      insight: null,
+      taskId: null,
+      version: 0,
+      createdAt: '2026-10-25T01:00:00Z',
+    } as never)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="ai-analyze"]').classes()).not.toContain('is-loading')
+    expect(wrapper.get('[data-testid="ai-analyze"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).not.toContain('排队等待')
   })
 })

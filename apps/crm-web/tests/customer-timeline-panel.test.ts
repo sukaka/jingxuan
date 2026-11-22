@@ -58,4 +58,27 @@ describe('CustomerTimelinePanel', () => {
     expect(wrapper.text()).toContain('客户不存在或不可见')
     expect(wrapper.find('[data-testid="timeline-empty"]').exists()).toBe(false)
   })
+
+  it('切换 customerId 时丢弃旧客户延迟响应，不污染新客户时间线', async () => {
+    let resolveA!: (value: { items: CustomerTimelineItem[]; nextCursor: string | null }) => void
+    vi.mocked(getCustomerTimeline)
+      .mockImplementationOnce(() => new Promise((res) => { resolveA = res }))
+      .mockResolvedValueOnce({
+        items: [{ ...items[0], eventKey: 'B1', summary: '客户B真实时间线' }],
+        nextCursor: null,
+      })
+
+    const wrapper = mount(CustomerTimelinePanel, {
+      props: { customerId: 10 },
+      global: { plugins: [ElementPlus] },
+    })
+    await wrapper.setProps({ customerId: 20 })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('客户B真实时间线')
+    resolveA({ items: [{ ...items[0], eventKey: 'A1', summary: '客户A过期时间线' }], nextCursor: null })
+    await flushPromises()
+    expect(wrapper.text()).toContain('客户B真实时间线')
+    expect(wrapper.text()).not.toContain('客户A过期时间线')
+  })
 })

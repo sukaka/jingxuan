@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 角色与权限目录管理。权限集合覆盖式替换；因认证层每请求实时解析，变更对下一请求立即生效。
@@ -73,9 +74,16 @@ public class RoleApplicationService {
                                               UpdateRolePermissionsRequest request) {
         SysRole role = roleRepository.findRoleById(tenantId, roleId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "角色不存在或不可见"));
+        boolean actorIsAdmin = roleRepository.findActiveRoleCodes(tenantId, actorUserId).contains("ADMIN");
+        if ("ADMIN".equals(role.getRoleCode()) && !actorIsAdmin) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅 ADMIN 角色可修改 ADMIN 角色权限");
+        }
         List<String> codes = request.permissionCodes() == null
                 ? List.of()
                 : request.permissionCodes().stream().distinct().toList();
+        if ("ADMIN".equals(role.getRoleCode()) && !codes.contains("user:write")) {
+            throw new BusinessException(ErrorCode.CONFLICT, "不能移除 ADMIN 角色的 user:write 权限");
+        }
         List<String> existingCodes = roleRepository.findExistingPermissionCodes(tenantId, codes);
         if (existingCodes.size() != codes.size()) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请求参数校验失败",
@@ -83,6 +91,15 @@ public class RoleApplicationService {
         }
 
         List<String> before = roleRepository.findPermissionCodesByRoleId(tenantId, roleId);
+        if (!actorIsAdmin) {
+            Set<String> actorPermissions = Set.copyOf(roleRepository.findActivePermissionCodes(tenantId, actorUserId));
+            if (!actorPermissions.containsAll(before)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "不能修改包含超出当前用户权限范围的角色");
+            }
+            if (!actorPermissions.containsAll(codes)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "不能授予超出当前用户权限范围的权限");
+            }
+        }
         roleRepository.replaceRolePermissions(tenantId, roleId, codes);
         List<String> after = roleRepository.findPermissionCodesByRoleId(tenantId, roleId);
 

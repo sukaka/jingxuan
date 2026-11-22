@@ -35,14 +35,19 @@ public class MybatisCatalogRepository implements CatalogRepository {
     public Optional<Project> findProjectByCode(long tenantId, String code) {
         return Optional.ofNullable(mapper.selectProjectByCode(tenantId, code));
     }
-    public void insertProject(Project project) { mapper.insertProject(com.whale.crm.platform.context.TenantContext.currentTenantId(), project); }
-    public int updateProject(Project project) { return mapper.updateProject(com.whale.crm.platform.context.TenantContext.currentTenantId(), project); }
-
-    public List<ProductPackage> searchPackages(long tenantId, String keyword, String status, int offset, int size) {
-        return mapper.searchPackages(tenantId, keyword, status, offset, size);
+    public void insertProject(long tenantId, Project project) {
+        mapper.insertProject(tenantId, project);
     }
-    public long countPackages(long tenantId, String keyword, String status) {
-        return mapper.countPackages(tenantId, keyword, status);
+    public int updateProject(long tenantId, Project project) {
+        return mapper.updateProject(tenantId, project);
+    }
+
+    public List<ProductPackage> searchPackages(long tenantId, String keyword, String status,
+                                               Set<Long> institutionIds, int offset, int size) {
+        return mapper.searchPackages(tenantId, keyword, status, institutionIds, offset, size);
+    }
+    public long countPackages(long tenantId, String keyword, String status, Set<Long> institutionIds) {
+        return mapper.countPackages(tenantId, keyword, status, institutionIds);
     }
     public Optional<ProductPackage> findPackage(long tenantId, long id) {
         return Optional.ofNullable(mapper.selectPackage(tenantId, id));
@@ -53,25 +58,42 @@ public class MybatisCatalogRepository implements CatalogRepository {
     public Optional<ProductPackage> findPackageByCode(long tenantId, String code) {
         return Optional.ofNullable(mapper.selectPackageByCode(tenantId, code));
     }
-    public void insertPackage(ProductPackage productPackage) { mapper.insertPackage(com.whale.crm.platform.context.TenantContext.currentTenantId(), productPackage); }
-    public int updatePackage(ProductPackage productPackage) { return mapper.updatePackage(com.whale.crm.platform.context.TenantContext.currentTenantId(), productPackage); }
+    public void insertPackage(long tenantId, ProductPackage productPackage) {
+        mapper.insertPackage(tenantId, productPackage);
+    }
+    public int updatePackage(long tenantId, ProductPackage productPackage) {
+        return mapper.updatePackage(tenantId, productPackage);
+    }
 
-    public List<PackageVersion> findVersions(long tenantId, long packageId) { return mapper.selectVersions(tenantId, packageId); }
+    public List<PackageVersion> findVersions(long tenantId, long packageId) {
+        return mapper.selectVersions(tenantId, packageId);
+    }
+    public List<PackageVersion> findVersionsByInstitutionIds(long tenantId, long packageId, Set<Long> institutionIds) {
+        return mapper.selectVersionsByInstitutionIds(tenantId, packageId, institutionIds);
+    }
     public Optional<PackageVersion> findVersion(long tenantId, long id) { return Optional.ofNullable(mapper.selectVersion(tenantId, id)); }
     public Optional<PackageVersion> findVersionForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectVersionForUpdate(tenantId, id)); }
     public int nextVersionNo(long tenantId, long packageId) { return mapper.nextVersionNo(tenantId, packageId); }
-    public void insertVersion(PackageVersion version) { mapper.insertVersion(com.whale.crm.platform.context.TenantContext.currentTenantId(), version); }
-    public int updateVersionDraft(PackageVersion version) { return mapper.updateVersionDraft(com.whale.crm.platform.context.TenantContext.currentTenantId(), version); }
+    public void insertVersion(long tenantId, PackageVersion version) {
+        mapper.insertVersion(tenantId, version);
+    }
+    public int updateVersionDraft(long tenantId, PackageVersion version) {
+        return mapper.updateVersionDraft(tenantId, version);
+    }
     public int updateVersionStatus(long tenantId, long id, long expectedVersion, String fromStatus, String toStatus) {
         return mapper.updateVersionStatus(tenantId, id, expectedVersion, fromStatus, toStatus);
     }
 
     public List<PackageProject> findVersionProjects(long tenantId, long packageVersionId) { return mapper.selectVersionProjects(tenantId, packageVersionId); }
     public void deleteVersionProjects(long tenantId, long packageVersionId) { mapper.deleteVersionProjects(tenantId, packageVersionId); }
-    public void insertVersionProject(PackageProject item) { mapper.insertVersionProject(com.whale.crm.platform.context.TenantContext.currentTenantId(), item); }
+    public void insertVersionProject(long tenantId, PackageProject item) {
+        mapper.insertVersionProject(tenantId, item);
+    }
     public List<com.whale.crm.product.domain.PackageSelectionGroup> findSelectionGroups(long tenantId, long packageVersionId) { return mapper.selectSelectionGroups(tenantId, packageVersionId); }
     public void deleteSelectionGroups(long tenantId, long packageVersionId) { mapper.deleteSelectionGroups(tenantId, packageVersionId); }
-    public void insertSelectionGroup(com.whale.crm.product.domain.PackageSelectionGroup group) { mapper.insertSelectionGroup(com.whale.crm.platform.context.TenantContext.currentTenantId(), group); }
+    public void insertSelectionGroup(long tenantId, com.whale.crm.product.domain.PackageSelectionGroup group) {
+        mapper.insertSelectionGroup(tenantId, group);
+    }
 
     public List<Sku> searchSkus(long tenantId, String keyword, String status, Long packageId, Set<Long> institutionIds, int offset, int size) {
         return mapper.searchSkus(tenantId, keyword, status, packageId, institutionIds, offset, size);
@@ -82,8 +104,12 @@ public class MybatisCatalogRepository implements CatalogRepository {
     public List<Sku> findSkusByVersion(long tenantId, long packageVersionId) { return mapper.selectSkusByVersion(tenantId, packageVersionId); }
     public Optional<Sku> findSku(long tenantId, long id) { return Optional.ofNullable(mapper.selectSku(tenantId, id)); }
     public Optional<Sku> findSkuByCode(long tenantId, String code) { return Optional.ofNullable(mapper.selectSkuByCode(tenantId, code)); }
-    public void insertSku(Sku sku) { mapper.insertSku(com.whale.crm.platform.context.TenantContext.currentTenantId(), sku); }
-    public int updateSku(Sku sku) { return mapper.updateSku(com.whale.crm.platform.context.TenantContext.currentTenantId(), sku); }
+    public void insertSku(long tenantId, Sku sku) {
+        mapper.insertSku(tenantId, sku);
+    }
+    public int updateSku(long tenantId, Sku sku) {
+        return mapper.updateSku(tenantId, sku);
+    }
     public int updateSkuStatus(long tenantId, long id, long expectedVersion, String status, Instant at) {
         return mapper.updateSkuStatus(tenantId, id, expectedVersion, status, at);
     }
@@ -97,8 +123,14 @@ public class MybatisCatalogRepository implements CatalogRepository {
         return mapper.countInstitutions(tenantId, keyword, status, institutionIds);
     }
     public List<Institution> findInstitutionsByIds(long tenantId, Set<Long> ids) { return mapper.selectInstitutionsByIds(tenantId, ids); }
+    public List<Institution> findActiveInstitutionsByIds(long tenantId, Set<Long> ids) {
+        return mapper.selectActiveInstitutionsByIds(tenantId, ids);
+    }
     public long countActiveInstitutionsByIds(long tenantId, Set<Long> ids) { return mapper.countActiveInstitutionsByIds(tenantId, ids); }
     public List<Long> findInstitutionIdsBySku(long tenantId, long skuId) { return mapper.selectInstitutionIdsBySku(tenantId, skuId); }
+    public List<Long> findActiveInstitutionIdsBySku(long tenantId, long skuId) {
+        return mapper.selectActiveInstitutionIdsBySku(tenantId, skuId);
+    }
     public void deleteSkuInstitutions(long tenantId, long skuId) { mapper.deleteSkuInstitutions(tenantId, skuId); }
     public void insertSkuInstitution(long tenantId, long skuId, long institutionId) { mapper.insertSkuInstitution(tenantId, skuId, institutionId); }
 }

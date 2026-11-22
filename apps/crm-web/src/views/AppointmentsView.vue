@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Appointment, AppointmentDetail, RedemptionDetail } from '../api/fulfillment'
 import {
@@ -38,7 +39,11 @@ const STATUS_TABS = [
   { label: '历史 · 未到院', value: 'NO_SHOW' },
 ]
 
+const ALLOWED_STATUSES = new Set(STATUS_TABS.map((tab) => tab.value).filter(Boolean))
+
+const route = useRoute()
 const auth = useAuthStore()
+const customerFilterInput = ref<{ focus?: () => void } | null>(null)
 const canWrite = computed(() => auth.hasPermission('appointment:write'))
 const canCancel = computed(() => canWrite.value && auth.user?.userType !== 'INSTITUTION')
 const canConfirm = computed(() => auth.hasPermission('appointment:confirm'))
@@ -211,7 +216,47 @@ async function handleRedemptionSaved(saved: RedemptionDetail) {
   }
 }
 
+function queryValue(q: Record<string, unknown> | undefined, key: string): string | undefined {
+  if (!q) return undefined
+  const raw = q[key]
+  const val = Array.isArray(raw) ? raw[0] : raw
+  if (typeof val === 'string') return val
+  if (typeof val === 'number') return String(val)
+  return undefined
+}
+
+function applyRouteQuery(prevQuery?: Record<string, unknown>) {
+  const q = route?.query as Record<string, unknown> | undefined
+  if (!q) return
+  const rawStatus = queryValue(q, 'status')
+  if (rawStatus !== undefined && ALLOWED_STATUSES.has(rawStatus)) {
+    query.status = rawStatus
+  } else if (prevQuery && queryValue(prevQuery, 'status') && !rawStatus) {
+    query.status = ''
+  }
+  const rawInstitutionId = queryValue(q, 'institutionId')
+  if (rawInstitutionId !== undefined && rawInstitutionId !== '') {
+    const parsedId = Number(rawInstitutionId)
+    if (Number.isSafeInteger(parsedId) && parsedId > 0) {
+      query.institutionId = parsedId
+    }
+  } else if (prevQuery && queryValue(prevQuery, 'institutionId')) {
+    query.institutionId = undefined
+  }
+  const rawFocus = queryValue(q, 'focus')
+  if (rawFocus === 'search') {
+    void nextTick(() => customerFilterInput.value?.focus?.())
+  }
+}
+
+watch(() => route?.query, (_next, prev) => {
+  applyRouteQuery(prev as Record<string, unknown> | undefined)
+  query.page = 1
+  void load()
+})
+
 onMounted(() => {
+  applyRouteQuery()
   void load()
 })
 </script>
@@ -222,7 +267,7 @@ onMounted(() => {
       <template #actions><el-button v-if="canWrite" @click="createVisible = true">新建预约</el-button><el-button disabled title="独立核销申请接口待后续开放">提交核销申请 · 待接口</el-button></template>
     </PageHeader>
     <PageCard>
-      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input-number v-model="query.customerId" :min="1" :controls="false" placeholder="客户 ID" /><el-input-number v-model="query.institutionId" :min="1" :controls="false" placeholder="机构 ID" /><el-select v-model="query.status" placeholder="全部预约状态" clearable @change="changeStatus"><el-option v-for="tab in STATUS_TABS" :key="tab.value" :label="tab.label" :value="tab.value" /></el-select><el-button type="primary" @click="search">查询</el-button><el-button @click="reset">重置</el-button></div><span class="proto-note">只有机构授权操作员能形成正式「机构已确认」状态</span></div>
+      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input-number ref="customerFilterInput" v-model="query.customerId" :min="1" :controls="false" placeholder="客户 ID" data-testid="appointment-customer-filter" /><el-input-number v-model="query.institutionId" :min="1" :controls="false" placeholder="机构 ID" data-testid="appointment-institution-filter" /><el-select v-model="query.status" placeholder="全部预约状态" clearable data-testid="appointment-status-filter" @change="changeStatus"><el-option v-for="tab in STATUS_TABS" :key="tab.value" :label="tab.label" :value="tab.value" /></el-select><el-button type="primary" @click="search">查询</el-button><el-button @click="reset">重置</el-button></div><span class="proto-note">只有机构授权操作员能形成正式「机构已确认」状态</span></div>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
       <AppointmentPrototypeTabs :appointments="appointments" :loading="loading" @detail="openDetail" />
       <el-pagination v-model:current-page="query.page" v-model:page-size="query.size" :total="total" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="query.page=1;load()" />

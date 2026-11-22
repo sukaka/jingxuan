@@ -1,5 +1,19 @@
 package com.whale.crm.customer;
 
+import com.whale.crm.customer.api.dto.CreateMergeCaseRequest;
+import com.whale.crm.customer.api.dto.CustomerSegmentCriteria;
+import com.whale.crm.customer.api.dto.MergeReversalActionRequest;
+import com.whale.crm.customer.api.dto.MergeReversalResponse;
+import com.whale.crm.customer.application.MergeApplicationService;
+import com.whale.crm.customer.application.MergeReversalApplicationService;
+import com.whale.crm.customer.batchtag.api.dto.BatchTagJobActionRequest;
+import com.whale.crm.customer.batchtag.api.dto.BatchTagJobDetailResponse;
+import com.whale.crm.customer.batchtag.api.dto.BatchTagSourceRequest;
+import com.whale.crm.customer.batchtag.api.dto.CreateBatchTagJobRequest;
+import com.whale.crm.customer.batchtag.api.dto.PreviewBatchTagJobRequest;
+import com.whale.crm.customer.batchtag.application.BatchTagJobApplicationService;
+import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.support.AbstractMysqlIT;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,6 +24,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,6 +45,14 @@ class BatchTagJobApiIT extends AbstractMysqlIT {
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private org.springframework.context.ApplicationContext applicationContext;
+    @Autowired
+    private BatchTagJobApplicationService batchTagJobService;
+    @Autowired
+    private MergeApplicationService mergeService;
+    @Autowired
+    private MergeReversalApplicationService mergeReversalService;
+    @Autowired
+    private CurrentUserService currentUserService;
 
     @BeforeEach
     void tagDictionaries() {
@@ -267,6 +294,86 @@ class BatchTagJobApiIT extends AbstractMysqlIT {
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/v1/batch-tag-jobs").cookie(institution.cookies()))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void concurrentBatchTagExecuteAndMergeReversalApproveSerializeWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        for (int round = 0; round < 10; round++) {
+            String primaryCity = city("mrp-" + round);
+            String secondaryCity = city("mrs-" + round);
+            long primary = customer(admin, "BT-MR-主-" + round, primaryCity);
+            long secondary = customer(admin, "BT-MR-从-" + round, secondaryCity);
+            tagOnCustomer(admin, secondary, "VIP");
+
+            String previewId = batchTagJobService.preview(1L, adminUser,
+                    new PreviewBatchTagJobRequest(ADD, List.of("V34_VIP"),
+                            new BatchTagSourceRequest("FILTER", null,
+                                    new CustomerSegmentCriteria(List.of(secondaryCity), null, null, null, null, null),
+                                    null),
+                            1, 20),
+                    key("bt-mr-prev-" + round)).previewId();
+            long jobId = batchTagJobService.create(1L, adminUser,
+                    new CreateBatchTagJobRequest(previewId), key("bt-mr-create-" + round)).job().id();
+
+            long caseId = mergeService.createCase(1L, adminUser,
+                    new CreateMergeCaseRequest(primary, secondary, "打标更正并发-" + round)).id();
+            mergeService.review(1L, adminUser, caseId, 0L, "打标更正并发复核-" + round);
+            mergeService.confirm(1L, adminUser, caseId, 1L, "打标更正并发确认-" + round);
+            long reversalId = mergeReversalService.request(adminUser, caseId,
+                    new MergeReversalActionRequest("打标更正并发申请-" + round, null),
+                    key("bt-mr-rev-req-" + round)).id();
+
+            String executeKey = key("bt-mr-exec-" + round);
+            String approveKey = key("bt-mr-app-" + round);
+            String approveReason = "打标更正并发审批-" + round;
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+            Outcome<BatchTagJobDetailResponse> batchOutcome;
+            Outcome<MergeReversalResponse> approveOutcome;
+            try (var executor = Executors.newFixedThreadPool(2)) {
+                Future<Outcome<BatchTagJobDetailResponse>> batchFuture = executor.submit(() ->
+                        runWithLatch(ready, start, () ->
+                                batchTagJobService.execute(1L, adminUser, jobId,
+                                        new BatchTagJobActionRequest(0L), executeKey)));
+                Future<Outcome<MergeReversalResponse>> approveFuture = executor.submit(() ->
+                        runWithLatch(ready, start, () ->
+                                mergeReversalService.approve(adminUser, reversalId,
+                                        new MergeReversalActionRequest(approveReason, 0L), approveKey)));
+                assertThat(ready.await(15, TimeUnit.SECONDS)).isTrue();
+                start.countDown();
+                batchOutcome = batchFuture.get(25, TimeUnit.SECONDS);
+                approveOutcome = approveFuture.get(25, TimeUnit.SECONDS);
+            }
+
+            assertThat(batchOutcome.error()).isNull();
+            assertThat(approveOutcome.error()).isNull();
+            assertThat(approveOutcome.value().status()).isEqualTo("EXECUTED");
+            assertThat(batchOutcome.value().job().failedCount()).isZero();
+            assertThat(batchOutcome.value().job().status()).isIn("SUCCEEDED", "PARTIAL_FAILED");
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_merge_reversal WHERE id=?",
+                    String.class, reversalId)).isEqualTo("EXECUTED");
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_merge_case WHERE id=?",
+                    String.class, caseId)).isEqualTo("REVERSED");
+            assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM crm_customer WHERE id=?",
+                    Integer.class, secondary)).isZero();
+        }
+    }
+
+    private <T> Outcome<T> runWithLatch(CountDownLatch ready, CountDownLatch start, Callable<T> action) {
+        ready.countDown();
+        try {
+            if (!start.await(15, TimeUnit.SECONDS)) {
+                return new Outcome<>(null, new IllegalStateException("start latch timed out"));
+            }
+            return new Outcome<>(action.call(), null);
+        } catch (Throwable ex) {
+            return new Outcome<>(null, ex);
+        }
+    }
+
+    private record Outcome<T>(T value, Throwable error) {
     }
 
     private org.springframework.test.web.servlet.ResultActions preview(

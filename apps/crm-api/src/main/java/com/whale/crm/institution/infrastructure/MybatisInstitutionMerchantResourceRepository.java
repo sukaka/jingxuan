@@ -19,8 +19,8 @@ public class MybatisInstitutionMerchantResourceRepository implements Institution
     }
 
     @Override
-    public void insert(InstitutionMerchantResource resource) {
-        mapper.insert(com.whale.crm.platform.context.TenantContext.currentTenantId(), resource);
+    public void insert(long tenantId, InstitutionMerchantResource resource) {
+        mapper.insert(tenantId, resource);
     }
 
     @Override

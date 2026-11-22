@@ -32,6 +32,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -136,6 +137,9 @@ public class AiJobApplicationService {
         if (!job.version().equals(request.version())) {
             throw new BusinessException(ErrorCode.CONFLICT, "AI 任务已被他人处理，请刷新后重试");
         }
+        if (!"CONFIRM".equals(request.decision()) && !"REJECT".equals(request.decision())) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "decision 必须为 CONFIRM 或 REJECT");
+        }
         Long taskId = null;
         String target = "REJECT".equals(request.decision()) ? "REJECTED" : "CONFIRMED";
         if ("CONFIRM".equals(request.decision())) {
@@ -152,8 +156,11 @@ public class AiJobApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "AI 任务状态已变化，请刷新后重试");
         }
         AiJob after = repository.findById(user.tenantId(), id).orElseThrow();
+        Map<String, Object> afterSnapshot = new LinkedHashMap<>();
+        afterSnapshot.put("status", after.status());
+        afterSnapshot.put("taskId", taskId);
         auditService.record(user.tenantId(), user.userId(), "AI_JOB_" + target, "AI_JOB", Long.toString(id),
-                Map.of("status", job.status()), Map.of("status", after.status(), "taskId", taskId), request.reason());
+                Map.of("status", job.status()), afterSnapshot, request.reason());
         return view(after);
     }
 

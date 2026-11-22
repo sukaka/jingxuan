@@ -30,8 +30,14 @@ public class KnowledgeWorkerClient {
         this.mapper = mapper;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.token = token;
-        this.http = new OkHttpClient.Builder().connectTimeout(3, TimeUnit.SECONDS)
-                .readTimeout(timeoutMs, TimeUnit.MILLISECONDS).writeTimeout(timeoutMs, TimeUnit.MILLISECONDS).build();
+        long boundedTimeoutMs = Math.max(1_000L, Math.min(300_000L, timeoutMs));
+        this.http = new OkHttpClient.Builder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(boundedTimeoutMs, TimeUnit.MILLISECONDS)
+                .writeTimeout(boundedTimeoutMs, TimeUnit.MILLISECONDS)
+                .build();
     }
 
     public void testConnection(ProviderConfig providerConfig, long tenantId, String requestId) {
@@ -42,8 +48,11 @@ public class KnowledgeWorkerClient {
             Request request = new Request.Builder().url(baseUrl + "/api/v1/knowledge/chat")
                     .header("X-AI-Internal-Token", token).header("X-Request-Id", traceId)
                     .post(RequestBody.create(mapper.writeValueAsString(payload), JSON)).build();
+            int boundedTimeoutSeconds = Math.max(1, Math.min(300, providerConfig.timeoutSeconds()));
             OkHttpClient client = http.newBuilder()
-                    .readTimeout(providerConfig.timeoutSeconds(), TimeUnit.SECONDS).build();
+                    .readTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+                    .writeTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+                    .build();
             try (var response = client.newCall(request).execute()) {
                 String body = response.body() == null ? "" : response.body().string();
                 if (!response.isSuccessful()) {
@@ -100,7 +109,11 @@ public class KnowledgeWorkerClient {
             Request request = new Request.Builder().url(baseUrl + path)
                     .header("X-AI-Internal-Token", token).header("X-Request-Id", requestId)
                     .post(RequestBody.create(mapper.writeValueAsString(payload), JSON)).build();
-            OkHttpClient client = http.newBuilder().readTimeout(config.timeoutSeconds(), TimeUnit.SECONDS).build();
+            int boundedTimeoutSeconds = Math.max(1, Math.min(300, config.timeoutSeconds()));
+            OkHttpClient client = http.newBuilder()
+                    .readTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+                    .writeTimeout(boundedTimeoutSeconds, TimeUnit.SECONDS)
+                    .build();
             try (var response = client.newCall(request).execute()) {
                 String body = response.body() == null ? "" : response.body().string();
                 if (!response.isSuccessful()) {

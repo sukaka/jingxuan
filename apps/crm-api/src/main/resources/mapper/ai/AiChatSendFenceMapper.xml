@@ -31,6 +31,10 @@
     UPDATE crm_ai_chat_send_fence SET in_flight=0,finished_at=#{now},version=version+1,updated_at=#{now}
     WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND in_flight=1
   </update>
+  <update id="releaseForRetry">
+    UPDATE crm_ai_chat_send_fence SET in_flight=0,finished_at=NULL,version=version+1,updated_at=#{now}
+    WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND in_flight=1
+  </update>
   <update id="recover">
     UPDATE crm_ai_chat_send_fence SET in_flight=0,finished_at=#{now},version=version+1,updated_at=#{now}
     WHERE tenant_id=#{tenantId} AND run_id=#{runId} AND in_flight=1

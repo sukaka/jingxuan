@@ -25,6 +25,7 @@ import com.whale.crm.product.application.CatalogApplicationService;
 import com.whale.crm.trading.application.FulfillmentTradingOperations;
 import com.whale.crm.trading.application.OutboxService;
 import com.whale.crm.trading.domain.FulfillmentEntitlementView;
+import com.whale.crm.trading.domain.LockedEntitlementBatch;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -148,12 +149,13 @@ public class AppointmentApplicationService {
     private AppointmentOptionsResponse toOptionsResponse(long tenantId, CurrentUser user, long customerId,
                                                          List<FulfillmentEntitlementView> entitlements,
                                                          Long onlyInstitutionId) {
-        Set<Long> institutionIds = new LinkedHashSet<>();
-        entitlements.forEach(view -> institutionIds.addAll(view.institutionIds()));
+        Set<Long> targetInstitutionIds = new LinkedHashSet<>();
+        entitlements.forEach(view -> targetInstitutionIds.addAll(view.institutionIds()));
+        if (onlyInstitutionId != null) {
+            targetInstitutionIds.retainAll(Set.of(onlyInstitutionId));
+        }
         List<AppointmentOptionsResponse.InstitutionOption> institutions = catalogService
-                .institutions(tenantId, user, null, "ACTIVE", 1, 100).items().stream()
-                .filter(institution -> institutionIds.contains(institution.id()))
-                .filter(institution -> onlyInstitutionId == null || onlyInstitutionId.equals(institution.id()))
+                .activeInstitutionsByIds(tenantId, user, targetInstitutionIds).stream()
                 .map(institution -> new AppointmentOptionsResponse.InstitutionOption(
                         institution.id(), institution.fullName(), institution.shortName()))
                 .toList();
@@ -221,20 +223,25 @@ public class AppointmentApplicationService {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "同一权益批次在预约中只能出现一次");
             }
         }
+        List<FulfillmentTradingOperations.AppointmentLockCommand> lockCommands = items.stream()
+                .map(item -> new FulfillmentTradingOperations.AppointmentLockCommand(
+                        item.entitlementId(), customer.getId(), request.institutionId(),
+                        item.count(), request.scheduledAt()))
+                .toList();
+        LockedEntitlementBatch locked = tradingOperations.requireAppointmentEntitlements(tenantId, lockCommands);
         String temporaryNo = "TMP-A-" + UUID.randomUUID();
         Appointment input = new Appointment(null, temporaryNo, customer.getId(), request.institutionId(),
                 customer.getOwnerStaffId(), customer.getTeamId(), request.scheduledAt(), request.remark(),
                 "PENDING_INSTITUTION", user.userId(), null, null);
-        repository.insertAppointment(input);
+        repository.insertAppointment(tenantId, input);
         Appointment created = repository.findAppointmentByNo(tenantId, temporaryNo).orElseThrow();
         repository.backfillAppointmentNo(tenantId, created.id(), String.format("A%012d", created.id()));
         for (AppointmentItemRequest item : items) {
-            FulfillmentEntitlementView view = tradingOperations.requireAppointmentEntitlement(tenantId,
-                    item.entitlementId(), customer.getId(), request.institutionId(), item.count(), request.scheduledAt());
-            repository.insertAppointmentItem(new AppointmentItem(null, created.id(), item.entitlementId(),
+            FulfillmentEntitlementView view = locked.viewsByEntitlementId().get(item.entitlementId());
+            repository.insertAppointmentItem(tenantId, new AppointmentItem(null, created.id(), item.entitlementId(),
                     view.entitlement().projectId(), item.count(), null, null));
         }
-        repository.insertAppointmentHistory(new AppointmentHistory(null, created.id(), "NONE",
+        repository.insertAppointmentHistory(tenantId, new AppointmentHistory(null, created.id(), "NONE",
                 "PENDING_INSTITUTION", user.userId(), "创建预约", null));
         outboxService.append(tenantId, "appointment.created.v1:" + created.id(), "appointment.created.v1",
                 "appointment", Long.toString(created.id()), Map.of("appointmentId", created.id(),
@@ -274,7 +281,7 @@ public class AppointmentApplicationService {
                 transition.toStatus()) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "预约已被其他操作修改，请重试");
         }
-        repository.insertAppointmentHistory(new AppointmentHistory(null, appointmentId, before.status(),
+        repository.insertAppointmentHistory(tenantId, new AppointmentHistory(null, appointmentId, before.status(),
                 transition.toStatus(), user.userId(), request.reason(), null));
         long newVersion = request.version() + 1;
         outboxService.append(tenantId, "appointment.status.changed.v1:" + appointmentId + ":" + newVersion,
@@ -306,9 +313,7 @@ public class AppointmentApplicationService {
     }
 
     private void requireActiveInstitution(long tenantId, CurrentUser user, long institutionId) {
-        boolean active = catalogService.institutions(tenantId, user, null, "ACTIVE", 1, 100).items().stream()
-                .anyMatch(institution -> institution.id().equals(institutionId));
-        if (!active) {
+        if (catalogService.activeInstitutionsByIds(tenantId, user, Set.of(institutionId)).isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "预约机构不存在或未启用");
         }
     }

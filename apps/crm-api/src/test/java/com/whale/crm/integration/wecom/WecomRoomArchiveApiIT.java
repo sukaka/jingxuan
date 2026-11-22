@@ -7,6 +7,7 @@ import com.whale.crm.integration.wecom.adapter.WecomArchiveNativeClient;
 import com.whale.crm.integration.wecom.domain.WecomMessage;
 import com.whale.crm.integration.wecom.domain.WecomRepository;
 import com.whale.crm.platform.support.AbstractMysqlIT;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -67,7 +68,7 @@ class WecomRoomArchiveApiIT extends AbstractMysqlIT {
         when(keyService.decryptRandomKey(anyString(), anyInt())).thenReturn("synthetic-random-key");
         objects.clear();
         plaintext.clear();
-        jdbcTemplate.update("DELETE FROM crm_wecom_data_gap WHERE tenant_id=1 AND corp_id=?", CORP);
+        cleanupArchiveFixtures();
         doAnswer(invocation -> {
             objects.put(invocation.getArgument(0), invocation.getArgument(1, byte[].class));
             return null;
@@ -78,6 +79,20 @@ class WecomRoomArchiveApiIT extends AbstractMysqlIT {
                 + "VALUES (1,?,'staff-2',2,1),(1,?,'staff-3',3,1) ON DUPLICATE KEY UPDATE enabled=1", CORP, CORP);
         jdbcTemplate.update("INSERT INTO crm_wecom_archive_member (tenant_id,corp_id,staff_user_id,enabled,source_code) "
                 + "VALUES (1,?,2,1,'OFFICIAL') ON DUPLICATE KEY UPDATE enabled=1,source_code='OFFICIAL'", CORP);
+    }
+
+    @AfterEach
+    void tearDown() {
+        cleanupArchiveFixtures();
+    }
+
+    private void cleanupArchiveFixtures() {
+        jdbcTemplate.update("DELETE ma FROM crm_wecom_media_asset ma "
+                + "JOIN crm_wecom_message m ON m.id=ma.message_id WHERE ma.tenant_id=1 AND m.corp_id=?", CORP);
+        jdbcTemplate.update("DELETE FROM crm_wecom_recall_event WHERE tenant_id=1 AND corp_id=?", CORP);
+        jdbcTemplate.update("DELETE FROM crm_wecom_message WHERE tenant_id=1 AND corp_id=?", CORP);
+        jdbcTemplate.update("DELETE FROM crm_wecom_data_gap WHERE tenant_id=1 AND corp_id=?", CORP);
+        jdbcTemplate.update("DELETE FROM crm_wecom_cursor WHERE tenant_id=1 AND corp_id=?", CORP);
     }
 
     @Test

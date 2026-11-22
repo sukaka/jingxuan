@@ -10,6 +10,7 @@ import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.idempotency.IdempotencyRecord;
 import com.whale.crm.platform.idempotency.IdempotencyService;
 import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.web.ApiResponse;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.trading.api.dto.PaymentConfirmRequest;
@@ -24,6 +25,7 @@ import com.whale.crm.trading.domain.TradingRepository;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -93,21 +95,46 @@ public class PaymentApplicationService {
         if (replay.isPresent()) {
             return orderService.detail(tenantId, user, orderId);
         }
-        try {
-            return transactionTemplate.execute(status -> doConfirm(tenantId, user, orderId, request, key, payload,
-                    scope, verificationMethod, auditReason));
-        } catch (DuplicateKeyException ex) {
-            return transactionTemplate.execute(status -> replayAfterDuplicate(tenantId, user, orderId, request,
-                    key, payload, scope));
+        boolean outerTxActive = TransactionSynchronizationManager.isActualTransactionActive();
+        Long knownCustomerId = outerTxActive ? null : lookupOrderCustomerId(tenantId, orderId);
+        int maxAttempts = outerTxActive ? 1 : 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            long targetCustomerId = knownCustomerId != null ? knownCustomerId : lookupOrderCustomerId(tenantId, orderId);
+            try {
+                return transactionTemplate.execute(status -> doConfirm(tenantId, user, orderId, targetCustomerId,
+                        request, key, payload, scope, verificationMethod, auditReason));
+            } catch (OrderCustomerChangedException ex) {
+                knownCustomerId = ex.newCustomerId();
+                if (attempt == maxAttempts) {
+                    throw new BusinessException(ErrorCode.CONFLICT, "订单所属客户正在合并变更，请稍后重试");
+                }
+            } catch (DuplicateKeyException ex) {
+                return transactionTemplate.execute(status -> replayAfterDuplicate(tenantId, user, orderId, request,
+                        key, payload, scope));
+            }
         }
+        throw new BusinessException(ErrorCode.CONFLICT, "订单所属客户正在合并变更，请稍后重试");
     }
 
-    private OrderFulfillmentView doConfirm(long tenantId, CurrentUser user, long orderId,
+    private OrderFulfillmentView doConfirm(long tenantId, CurrentUser user, long orderId, long targetCustomerId,
                                            PaymentConfirmRequest request, String key, String payload,
                                            String scope, String verificationMethod, String auditReason) {
+        try {
+            scopeSupport.requireVisibleForUpdate(tenantId, targetCustomerId, user);
+        } catch (BusinessException ex) {
+            if (ex.errorCode() == ErrorCode.NOT_FOUND) {
+                Order current = repository.findOrderForUpdate(tenantId, orderId).orElse(null);
+                if (current != null && !Long.valueOf(targetCustomerId).equals(current.customerId())) {
+                    throw new OrderCustomerChangedException(current.customerId());
+                }
+            }
+            throw ex;
+        }
         Order before = repository.findOrderForUpdate(tenantId, orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "订单不存在"));
-        scopeSupport.requireVisible(tenantId, before.customerId(), user);
+        if (!Long.valueOf(targetCustomerId).equals(before.customerId())) {
+            throw new OrderCustomerChangedException(before.customerId());
+        }
         if (idempotencyService.lookup(tenantId, scope, key, payload).isPresent()) {
             return orderService.detail(tenantId, user, orderId);
         }
@@ -131,14 +158,14 @@ public class PaymentApplicationService {
         PaymentTxn input = new PaymentTxn(null, orderId, request.paymentChannel(), before.receiverType(),
                 request.externalTradeNo(), request.amountFen(), "CONFIRMED", Instant.now(), user.userId(),
                 request.voucherFileId(), request.evidenceRef(), verificationMethod, null, null);
-        repository.insertPayment(input);
+        repository.insertPayment(tenantId, input);
         PaymentTxn payment = repository.findPaymentByTradeNo(tenantId, request.paymentChannel(), request.externalTradeNo())
                 .orElseThrow();
         if (repository.updateOrderStatus(tenantId, orderId, before.version(), "PENDING_PAYMENT", "PAID",
                 request.amountFen(), request.paidAt()) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "订单已被其他流程修改，请核对后重试");
         }
-        repository.insertStatusHistory(new OrderStatusHistory(null, orderId, before.status(), "PAID", user.userId(),
+        repository.insertStatusHistory(tenantId, new OrderStatusHistory(null, orderId, before.status(), "PAID", user.userId(),
                 "PAYMENT_CONFIRMED", payment.id().toString(), auditReason, null));
 
         List<OrderItem> items = repository.findOrderItems(tenantId, orderId);
@@ -159,6 +186,11 @@ public class PaymentApplicationService {
     private void grantEntitlements(long tenantId, CurrentUser user, Order order, PaymentTxn payment, OrderItem item) {
         try {
             JsonNode snapshot = objectMapper.readTree(item.entitlementSnapshot());
+            if ("USE_N".equals(snapshot.path("selectionMode").asText())) {
+                throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
+                        "Q01 选择规则未确认，USE_N 订单不能发放权益",
+                        List.of(new ApiResponse.ErrorDetail("Q01", "USE_N 共享次数池规则待运营确认")));
+            }
             for (JsonNode project : snapshot.path("projectSnapshots")) {
                 int granted = project.path("grantCount").asInt();
                 if (granted <= 0) {
@@ -167,14 +199,14 @@ public class PaymentApplicationService {
                 Entitlement entitlement = new Entitlement(null, order.customerId(), item.id(), project.path("projectId").asLong(),
                         null, granted, granted, 0, parseDate(snapshot.path("validFrom").asText(null)),
                         parseDate(snapshot.path("validTo").asText(null)), "AVAILABLE", null, null);
-                repository.insertEntitlement(entitlement);
+                repository.insertEntitlement(tenantId, entitlement);
                 Entitlement persisted = repository.findEntitlementsByOrderItemIds(tenantId, List.of(item.id())).stream()
                         .filter(row -> row.projectId().equals(entitlement.projectId())).findFirst().orElseThrow();
                 String key = "entitlement.grant:" + order.id() + ":" + item.id() + ":" + entitlement.projectId();
-                repository.insertLedger(new EntitlementLedgerEntry(null, persisted.id(), "GRANT", granted, "PAYMENT",
+                repository.insertLedger(tenantId, new EntitlementLedgerEntry(null, persisted.id(), "GRANT", granted, "PAYMENT",
                         payment.id().toString(), key, user.userId(), "支付确认发放", null, null));
             }
-        } catch (DuplicateKeyException ex) {
+        } catch (BusinessException | DuplicateKeyException ex) {
             throw ex;
         } catch (Exception ex) {
             throw new IllegalStateException("权益快照解析失败", ex);
@@ -219,7 +251,26 @@ public class PaymentApplicationService {
         }
     }
 
+    private long lookupOrderCustomerId(long tenantId, long orderId) {
+        return repository.findOrder(tenantId, orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "订单不存在"))
+                .customerId();
+    }
+
     private LocalDate parseDate(String value) {
         return value == null || value.isBlank() ? null : LocalDate.parse(value);
+    }
+
+    private static final class OrderCustomerChangedException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+        private final long newCustomerId;
+
+        private OrderCustomerChangedException(long newCustomerId) {
+            this.newCustomerId = newCustomerId;
+        }
+
+        private long newCustomerId() {
+            return newCustomerId;
+        }
     }
 }

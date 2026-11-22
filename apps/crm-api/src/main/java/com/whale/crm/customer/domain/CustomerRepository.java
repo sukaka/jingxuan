@@ -60,14 +60,16 @@ public interface CustomerRepository {
     int countByMobileHash(long tenantId, String mobileHash);
 
     /**
-     * 查重扫描：同 mobile_hash 且未归档的客户组（hash → 客户 id 升序列表）。
+     * 查重扫描：同 mobile_hash 且未归档、且在调用方数据范围内的客户组（hash → 客户 id 升序列表）。
      */
-    List<DuplicateMobileGroup> findDuplicateMobileGroups(long tenantId);
+    List<DuplicateMobileGroup> findDuplicateMobileGroups(long tenantId, String scopeType, List<Long> teamIds,
+                                                         long selfId);
 
     /**
-     * 查重扫描：同 identity external_id 跨客户的分组（external_id → 客户 id 升序列表，剔除已归档）。
+     * 查重扫描：同 identity external_id 跨客户、且在调用方数据范围内的分组（external_id → 客户 id 升序列表，剔除已归档）。
      */
-    List<DuplicateIdentityGroup> findDuplicateIdentityGroups(long tenantId);
+    List<DuplicateIdentityGroup> findDuplicateIdentityGroups(long tenantId, String scopeType, List<Long> teamIds,
+                                                             long selfId);
 
     /**
      * 查重候选分组投影。

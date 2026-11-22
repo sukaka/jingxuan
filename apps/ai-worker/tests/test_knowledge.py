@@ -151,13 +151,22 @@ def test_dify_adapter_does_not_follow_redirects(monkeypatch):
 
 def test_http_url_requires_explicit_internal_opt_in(monkeypatch):
     monkeypatch.setattr(settings, "ai_dify_allow_http", False)
+    monkeypatch.setattr(settings, "ai_dify_allowed_hosts", "")
     with pytest.raises(AiKnowledgeError, match="HTTPS"):
         validate_dify_base_url("http://127.0.0.1:8080/v1")
 
     monkeypatch.setattr(settings, "ai_dify_allow_http", True)
+    with pytest.raises(AiKnowledgeError, match="内网"):
+        validate_dify_base_url("http://127.0.0.1:8080/v1")
+    with pytest.raises(AiKnowledgeError, match="元数据|链路本地"):
+        validate_dify_base_url("http://169.254.169.254/v1")
+
+    monkeypatch.setattr(settings, "ai_dify_allowed_hosts", "127.0.0.1")
     assert validate_dify_base_url("http://127.0.0.1:8080/v1/") == "http://127.0.0.1:8080/v1"
     with pytest.raises(AiKnowledgeError, match="内网"):
         validate_dify_base_url("http://8.8.8.8/v1")
+    with pytest.raises(AiKnowledgeError, match="元数据|链路本地"):
+        validate_dify_base_url("http://169.254.169.254/v1")
 
 
 @pytest.mark.parametrize("url", [

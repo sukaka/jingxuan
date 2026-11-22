@@ -166,7 +166,7 @@
   <select id="selectConfirmedMergeTarget" resultType="long">
     SELECT primary_customer_id FROM crm_merge_case
     WHERE tenant_id=#{tenantId} AND secondary_customer_id=#{secondaryCustomerId} AND status='CONFIRMED'
-    ORDER BY id DESC LIMIT 1 FOR UPDATE
+    ORDER BY id DESC LIMIT 1
   </select>
 
   <resultMap id="OperationMemberMap" type="com.whale.crm.customer.domain.CustomerListRow">

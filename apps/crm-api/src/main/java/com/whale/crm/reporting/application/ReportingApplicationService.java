@@ -139,13 +139,21 @@ public class ReportingApplicationService {
                         fact.checkedInAppointmentCount(), fact.redemptionBatchCount(), fact.redeemedCustomerCount(),
                         fact.redeemedCount(), fact.paidFen(), operationsConversionRates()))
                 .toList();
+        boolean canReadPendingReconciliation = !query.scope().empty()
+                && "ALL".equals(query.scope().scopeType())
+                && hasPermission(user, "settlement:read")
+                && isAllScope(dataScopeService.scopeFor(user, DataScopeService.RESOURCE_INSTITUTION));
         List<OperationsReportResponse.InstitutionRow> institutionRows = institutionFacts.stream()
-                .map(fact -> new OperationsReportResponse.InstitutionRow(fact.institutionId(), fact.institutionName(),
-                        fact.confirmedAppointmentCount(), fact.serviceCompletedCount(), fact.checkedInCustomerCount(),
-                        fact.checkedInAppointmentCount(), fact.redemptionBatchCount(), fact.redeemedCustomerCount(),
-                        fact.redeemedCount(), fact.pendingReconciliationFen(),
-                        fact.pendingReconciliationFen() == null ? "PENDING_VERIFICATION" : "VERIFIED",
-                        operationsConversionRates()))
+                .map(fact -> {
+                    Long pendingFen = canReadPendingReconciliation ? fact.pendingReconciliationFen() : null;
+                    return new OperationsReportResponse.InstitutionRow(fact.institutionId(), fact.institutionName(),
+                            fact.confirmedAppointmentCount(), fact.serviceCompletedCount(),
+                            fact.checkedInCustomerCount(), fact.checkedInAppointmentCount(),
+                            fact.redemptionBatchCount(), fact.redeemedCustomerCount(),
+                            fact.redeemedCount(), pendingFen,
+                            pendingFen == null ? "PENDING_VERIFICATION" : "VERIFIED",
+                            operationsConversionRates());
+                })
                 .toList();
         return new OperationsReportResponse(query.window().from(), query.window().to(), query.window().fromUtc(),
                 query.window().toUtcExclusive(), query.window().timeZone(), query.criteria().sourceSystem(),
@@ -231,6 +239,10 @@ public class ReportingApplicationService {
                 query.criteria().receiverType(), query.criteria().metricVersion(), sourceWatermark, threshold,
                 query.window().periodDays(), "MANUAL_REVIEW_ONLY", qualityRules(threshold), rows, total, page, size,
                 drillDownItems, drillDown.type(), drillDown.limit());
+    }
+
+    private boolean isAllScope(DataScope scope) {
+        return scope != null && scope.type() == DataScope.ScopeType.ALL;
     }
 
     private ReportQuery query(long tenantId, CurrentUser user, ReportCriteria criteria, int page, int size) {

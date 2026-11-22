@@ -174,6 +174,56 @@ class CustomerSegmentApiIT extends AbstractMysqlIT {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void updateAndDeleteEnforceCreatorOrAllScopeWhileMembersRemainReadable() throws Exception {
+        AuthCookies admin = login("admin");
+        AuthCookies manager1 = login("manager1");
+        AuthCookies manager2 = login("manager2");
+
+        String adminCreated = createSegment(admin, "H-SEC-09-admin-" + UUID.randomUUID(),
+                Map.of("cityCodes", List.of("BJ")), key("seg-admin"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long adminSegId = objectMapper.readTree(adminCreated).at("/data/id").asLong();
+
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/customer-segments/{id}", adminSegId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "越权修改", "filters", Map.of(), "version", 0))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(manager1.withAuth(delete("/api/v1/customer-segments/{id}?version=0", adminSegId)))
+                .andExpect(status().isForbidden());
+
+        String m1Name = "H-SEC-09-m1-" + UUID.randomUUID();
+        String m1Created = createSegment(manager1, m1Name,
+                Map.of("cityCodes", List.of("SH")), key("seg-m1"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long m1SegId = objectMapper.readTree(m1Created).at("/data/id").asLong();
+
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/customer-segments/{id}", m1SegId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", m1Name + "-upd", "filters", Map.of("cityCodes", List.of("SH")),
+                                "version", 0))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.version").value(1));
+
+        mockMvc.perform(manager2.withAuth(patch("/api/v1/customer-segments/{id}", m1SegId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", "manager2越权", "filters", Map.of(), "version", 1))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(manager2.withAuth(delete("/api/v1/customer-segments/{id}?version=1", m1SegId)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(admin.withAuth(patch("/api/v1/customer-segments/{id}", m1SegId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("name", m1Name + "-admin", "filters", Map.of("tierCodes", List.of("A")),
+                                "version", 1))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.version").value(2));
+        mockMvc.perform(admin.withAuth(delete("/api/v1/customer-segments/{id}?version=2", m1SegId)))
+                .andExpect(status().isOk());
+    }
+
     private org.springframework.test.web.servlet.ResultActions createSegment(
             AuthCookies user, String name, Map<String, Object> filters, String idempotencyKey) throws Exception {
         return mockMvc.perform(user.withAuth(post("/api/v1/customer-segments"))

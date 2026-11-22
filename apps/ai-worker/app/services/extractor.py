@@ -9,6 +9,7 @@ from app.config import settings
 from app.schemas import ExtractionRequest, FollowupDraft, Insight
 from app.services.evidence import validate_evidence
 from app.services.prompt import extraction_messages
+from app.services.ssrf import PinnedHTTPTransport, Resolver, UnsafeOutboundUrlError, validate_outbound_base_url
 
 
 class AiExtractionError(Exception):
@@ -137,20 +138,42 @@ class OpenAICompatibleExtractor:
         model: str,
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float | None = None,
+        resolver: Resolver | None = None,
     ):
         if not base_url or not api_key or not model:
             raise AiExtractionError("AI_PROVIDER_NOT_CONFIGURED", "AI 模型供应商配置不完整", 503)
-        self.base_url = base_url.rstrip("/")
+        self.base_url = base_url.strip().rstrip("/")
         self.api_key = api_key
         self.model = model
         self.transport = transport
-        self.timeout_seconds = settings.ai_timeout_seconds if timeout_seconds is None else timeout_seconds
+        raw_timeout = settings.ai_timeout_seconds if timeout_seconds is None else timeout_seconds
+        self.timeout_seconds = max(0.01, min(300.0, float(raw_timeout)))
+        self.resolver = resolver
 
     def extract(self, request: ExtractionRequest) -> tuple[Insight, str, str]:
         try:
-            with httpx.Client(timeout=self.timeout_seconds, transport=self.transport) as client:
+            endpoint = validate_outbound_base_url(
+                self.base_url,
+                allow_http=settings.ai_allow_http,
+                allowed_hosts=settings.ai_allowed_hosts,
+                label="AI baseUrl",
+                resolver=self.resolver,
+                resolve_dns=self.transport is None or self.resolver is not None,
+            )
+        except UnsafeOutboundUrlError as exc:
+            raise AiExtractionError("AI_PROVIDER_NOT_CONFIGURED", str(exc), 503) from exc
+
+        owned_transport = self.transport is None
+        transport = self.transport or PinnedHTTPTransport(endpoint.host, endpoint.pinned_ips)
+        try:
+            with httpx.Client(
+                timeout=self.timeout_seconds,
+                transport=transport,
+                follow_redirects=False,
+                trust_env=False,
+            ) as client:
                 response = client.post(
-                    f"{self.base_url}/chat/completions",
+                    f"{endpoint.url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     json={"model": self.model, "messages": extraction_messages(request), "response_format": {"type": "json_object"}, "temperature": 0},
                 )
@@ -162,3 +185,6 @@ class OpenAICompatibleExtractor:
             raise AiExtractionError("AI_PROVIDER_FAILED", "AI 模型服务暂时不可用") from exc
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
             raise AiExtractionError("AI_OUTPUT_INVALID", "AI 输出未通过结构或证据校验") from exc
+        finally:
+            if owned_transport:
+                transport.close()

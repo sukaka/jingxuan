@@ -5,8 +5,10 @@ import com.whale.crm.integration.youzan.application.YouzanManagementService;
 import com.whale.crm.integration.youzan.domain.YouzanSyncIssue;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.web.PageResponse;
+import com.whale.crm.risk.api.dto.RiskSyncResponse;
 import com.whale.crm.risk.application.RiskCaseRegistrationService;
 import com.whale.crm.risk.application.RiskSourceSynchronizer;
+import com.whale.crm.risk.domain.RiskCase;
 import com.whale.crm.risk.domain.RiskSourceRecord;
 import com.whale.crm.settlement.application.ReconciliationService;
 import com.whale.crm.settlement.api.dto.ReconciliationResponse;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -56,11 +59,19 @@ class RiskSourceSynchronizerTest {
                 null, null, 1000L, 900L, "订单实付与支付流水不一致");
         when(reconciliationService.reconcile(eq(1L), eq(ADMIN), eq(null)))
                 .thenReturn(new ReconciliationResponse(Instant.now(), 1, List.of(cash)));
+        RiskCase dummy = new RiskCase(1L, 1L, "RC-1", "PAYMENT_MISMATCH", "HIGH", "YOUZAN_SYNC_ISSUE",
+                "91", "OPEN", null, "{}", null, null, Instant.now(), Instant.now(), 0L);
+        when(registrationService.registerOutcome(any(), eq(null)))
+                .thenReturn(new RiskCaseRegistrationService.RegistrationResult(dummy, true))
+                .thenReturn(new RiskCaseRegistrationService.RegistrationResult(dummy, false));
 
-        synchronizer.sync(ADMIN);
+        RiskSyncResponse response = synchronizer.sync(ADMIN);
 
+        assertThat(response.createdCount()).isEqualTo(1);
+        assertThat(response.updatedCount()).isZero();
+        assertThat(response.syncedAt()).isNotNull();
         ArgumentCaptor<RiskSourceRecord> sources = ArgumentCaptor.forClass(RiskSourceRecord.class);
-        verify(registrationService, times(2)).register(sources.capture(), eq(null));
+        verify(registrationService, times(2)).registerOutcome(sources.capture(), eq(null));
         assertThat(sources.getAllValues()).extracting(RiskSourceRecord::sourceRef).containsExactly("91", "71");
         RiskSourceRecord youzan = sources.getAllValues().getFirst();
         assertThat(youzan.sourceType()).isEqualTo("YOUZAN_SYNC_ISSUE");

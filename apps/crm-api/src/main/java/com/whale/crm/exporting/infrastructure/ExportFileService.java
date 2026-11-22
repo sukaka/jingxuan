@@ -14,11 +14,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.UUID;
 
 @Service
 public class ExportFileService {
@@ -56,16 +58,21 @@ public class ExportFileService {
         String objectKey = "export/" + job.getTenantId() + "/" + job.getJobNo() + ".csv";
         FileMetadata existing = repository.findByObjectKey(job.getTenantId(), objectKey).orElse(null);
         if (existing != null) {
-            requireMatchingExisting(existing, job, inspection);
-            requireClean(scanner.scan(temporary));
-            PrivateObjectStorage.ObjectStat stat = storage.stat(objectKey);
-            requireStat(stat, inspection);
-            return existing;
+            requireJobIdentity(existing, job);
+            if (isReusable(existing, inspection)) {
+                requireClean(scanner.scan(temporary));
+                PrivateObjectStorage.ObjectStat stat = storage.stat(objectKey);
+                requireStat(stat, inspection);
+                return existing;
+            }
+            objectKey = "export/" + job.getTenantId() + "/" + job.getJobNo() + "-" + UUID.randomUUID() + ".csv";
         }
 
         boolean uploaded = false;
         try {
-            storage.putObject(objectKey, Files.readAllBytes(temporary), CSV_MIME + ";charset=UTF-8");
+            try (InputStream input = Files.newInputStream(temporary)) {
+                storage.putObject(objectKey, input, inspection.sizeBytes(), CSV_MIME + ";charset=UTF-8");
+            }
             uploaded = true;
             PrivateObjectStorage.ObjectStat stat = storage.stat(objectKey);
             requireStat(stat, inspection);
@@ -115,15 +122,19 @@ public class ExportFileService {
         return storage;
     }
 
-    private void requireMatchingExisting(FileMetadata metadata, ExportJob job,
-                                         FileContentInspector.Inspection inspection) {
+    private void requireJobIdentity(FileMetadata metadata, ExportJob job) {
         if (!CLASSIFICATION.equals(metadata.classification()) || metadata.institutionId() != null
-                || !"CLEAN".equals(metadata.scanStatus()) || !Objects.equals(metadata.uploadedBy(), job.getRequestedBy())
-                || !Objects.equals(metadata.sha256(), inspection.sha256())
-                || metadata.sizeBytes() != inspection.sizeBytes() || metadata.expiresAt() == null
-                || !metadata.expiresAt().isAfter(Instant.now())) {
+                || !Objects.equals(metadata.uploadedBy(), job.getRequestedBy())) {
             throw new BusinessException(ErrorCode.CONFLICT, "恢复导出时文件元数据不一致");
         }
+    }
+
+    private boolean isReusable(FileMetadata metadata, FileContentInspector.Inspection inspection) {
+        return "CLEAN".equals(metadata.scanStatus())
+                && Objects.equals(metadata.sha256(), inspection.sha256())
+                && Objects.equals(metadata.sizeBytes(), inspection.sizeBytes())
+                && metadata.expiresAt() != null
+                && metadata.expiresAt().isAfter(Instant.now());
     }
 
     private void requireStat(PrivateObjectStorage.ObjectStat stat, FileContentInspector.Inspection inspection) {

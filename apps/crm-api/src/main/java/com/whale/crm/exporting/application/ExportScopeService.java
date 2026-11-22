@@ -32,10 +32,10 @@ public class ExportScopeService {
     public ExportScope executionScope(CurrentUser user, ExportType type, StoredExportScope stored) {
         ExportScope current = baseScope(user, type);
         ExportScope effective = stored.requested().intersect(current);
-        validateRestriction(type, effective, stored.restriction());
         if (effective.kind() == ExportScope.Kind.NONE) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "当前账号已没有该导出任务的数据范围");
         }
+        validateRestriction(type, effective, stored.restriction());
         return effective;
     }
 

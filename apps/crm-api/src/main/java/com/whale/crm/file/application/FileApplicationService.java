@@ -23,18 +23,21 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 public class FileApplicationService {
     private static final Logger log = LoggerFactory.getLogger(FileApplicationService.class);
+    private static final Set<String> IMAGE_OR_PDF_MIMES = Set.of("application/pdf", "image/jpeg", "image/png");
+    private static final int COPY_BUFFER_BYTES = 8192;
 
     private final FileRepository repository;
     private final ObjectProvider<PrivateObjectStorage> storageProvider;
@@ -101,20 +104,29 @@ public class FileApplicationService {
         Path temporary = null;
         FileMetadata scanned;
         try {
+            long maxAllowed = properties.getMaxFileSizeBytes();
+            long expectedSize = before.sizeBytes() == null ? -1L : before.sizeBytes();
+            requireValid(expectedSize > 0 && expectedSize <= maxAllowed, "SIZE_MISMATCH");
             PrivateObjectStorage.ObjectStat stat = storage.stat(before.objectKey());
+            if (stat == null) {
+                throw new IllegalStateException("Object stat missing");
+            }
+            String normalizedStatEtag = normalizeEtag(stat.etag());
+            requireValid(!normalizedStatEtag.isEmpty()
+                    && normalizedStatEtag.equals(normalizeEtag(request.etag())), "ETAG_MISMATCH");
+            requireValid(stat.sizeBytes() > 0 && stat.sizeBytes() <= maxAllowed
+                    && stat.sizeBytes() == expectedSize, "SIZE_MISMATCH");
             temporary = Files.createTempFile("crm-file-inspect-", ".tmp");
             try (InputStream input = storage.getObject(before.objectKey())) {
-                Files.copy(input, temporary, StandardCopyOption.REPLACE_EXISTING);
+                copyBounded(input, temporary, expectedSize, maxAllowed);
             }
             FileContentInspector.Inspection inspection = inspector.inspect(temporary,
                     FileClassification.MATERIAL == classification, before.mimeType());
-            requireValid(!normalizeEtag(stat.etag()).isEmpty()
-                    && normalizeEtag(stat.etag()).equals(normalizeEtag(request.etag())), "ETAG_MISMATCH");
-            requireValid(inspection.sizeBytes() == before.sizeBytes() && stat.sizeBytes() == before.sizeBytes(), "SIZE_MISMATCH");
+            requireValid(inspection.sizeBytes() == expectedSize, "SIZE_MISMATCH");
             requireValid(inspection.sha256().equalsIgnoreCase(before.sha256()), "HASH_MISMATCH");
             requireValid(inspection.mimeType().equals(before.mimeType()), "MIME_MISMATCH");
-            if (normalizeEtag(stat.etag()).length() == 32) {
-                requireValid(normalizeEtag(stat.etag()).equalsIgnoreCase(inspection.md5()), "ETAG_MISMATCH");
+            if (normalizedStatEtag.length() == 32) {
+                requireValid(normalizedStatEtag.equalsIgnoreCase(inspection.md5()), "ETAG_MISMATCH");
             }
             if (classification.pdfOnly()) {
                 requireValid("application/pdf".equals(inspection.mimeType()), "INVALID_PDF");
@@ -140,22 +152,27 @@ public class FileApplicationService {
                     : transactionTemplate.execute(status -> repository.updateScanStatus(tenantId, before.id(),
                             before.version() + 2, scanStatus, lastError)));
             if (marked != 1) {
+                deleteObjectQuietly(storage, before.objectKey(), before.id());
                 throw new BusinessException(ErrorCode.CONFLICT, "文件扫描状态已变化");
             }
             scanned = Objects.requireNonNull(requireFile(tenantId, before.id()));
             auditService.record(tenantId, user.userId(), "FILE_UPLOAD_COMPLETE", "FILE", before.id().toString(),
-                null, auditSnapshot(scanned), lastError == null ? classification.name() : lastError);
+                    null, auditSnapshot(scanned), lastError == null ? classification.name() : lastError);
             if (result != ClamAvScanner.ScanResult.CLEAN) {
+                deleteObjectQuietly(storage, before.objectKey(), before.id());
                 throw new BusinessException(ErrorCode.CONFLICT, "文件未通过安全扫描");
             }
+            deleteObjectQuietly(storage, before.objectKey(), before.id());
             return FileMetadataResponse.from(scanned);
         } catch (FileContentInspector.FileContentException ex) {
             markCompletionError(before, ex.code());
+            deleteObjectQuietly(storage, before.objectKey(), before.id());
             throw new BusinessException(ErrorCode.CONFLICT, ex.code());
         } catch (BusinessException ex) {
             throw ex;
         } catch (IOException | RuntimeException ex) {
             markCompletionError(before, "STORAGE_ERROR");
+            deleteObjectQuietly(storage, before.objectKey(), before.id());
             throw new BusinessException(ErrorCode.CONFLICT, "对象读取或校验失败");
         } finally {
             deleteTemporary(temporary);
@@ -279,18 +296,41 @@ public class FileApplicationService {
         PrivateObjectStorage storage = storage();
         Path temporary = null;
         try {
+            long maxAllowed = properties.getMaxFileSizeBytes();
+            long expectedSize = metadata.sizeBytes() == null ? -1L : metadata.sizeBytes();
+            requireValid(expectedSize > 0 && expectedSize <= maxAllowed, "SIZE_MISMATCH");
+            PrivateObjectStorage.ObjectStat stat = storage.stat(metadata.objectKey());
+            if (stat == null) {
+                throw new IllegalStateException("Object stat missing");
+            }
+            String normalizedStatEtag = normalizeEtag(stat.etag());
+            if (metadata.etag() != null && !metadata.etag().isBlank()) {
+                requireValid(!normalizedStatEtag.isEmpty()
+                        && normalizedStatEtag.equals(normalizeEtag(metadata.etag())), "ETAG_MISMATCH");
+            }
+            requireValid(stat.sizeBytes() > 0 && stat.sizeBytes() <= maxAllowed
+                    && stat.sizeBytes() == expectedSize, "SIZE_MISMATCH");
             temporary = Files.createTempFile("crm-file-legacy-", ".tmp");
             try (InputStream input = storage.getObject(metadata.objectKey())) {
-                Files.copy(input, temporary, StandardCopyOption.REPLACE_EXISTING);
+                copyBounded(input, temporary, expectedSize, maxAllowed);
             }
             FileClassification classification = FileClassification.valueOf(metadata.classification());
             FileContentInspector.Inspection inspection = inspector.inspect(temporary,
                     classification == FileClassification.MATERIAL, metadata.mimeType());
-            requireValid(inspection.sizeBytes() == metadata.sizeBytes(), "SIZE_MISMATCH");
+            requireValid(inspection.sizeBytes() == expectedSize, "SIZE_MISMATCH");
             requireValid(inspection.sha256().equalsIgnoreCase(metadata.sha256()), "HASH_MISMATCH");
             requireValid(inspection.mimeType().equals(metadata.mimeType()), "MIME_MISMATCH");
+            if (normalizedStatEtag.length() == 32) {
+                requireValid(normalizedStatEtag.equalsIgnoreCase(inspection.md5()), "ETAG_MISMATCH");
+            }
             requireValid(!classification.pdfOnly() || "application/pdf".equals(inspection.mimeType()), "INVALID_PDF");
-            requireValid(scanner.scan(temporary) == ClamAvScanner.ScanResult.CLEAN, "SCAN_FAILED");
+            ClamAvScanner.ScanResult scanResult = scanner.scan(temporary);
+            if (scanResult == ClamAvScanner.ScanResult.FOUND) {
+                throw new FileContentInspector.FileContentException("CLAMAV_FOUND");
+            }
+            if (scanResult != ClamAvScanner.ScanResult.CLEAN) {
+                throw new FileContentInspector.FileContentException("SCAN_FAILED");
+            }
             int updated = publishSealed(storage, metadata, temporary, metadata.version(), "CLEAN");
             if (updated != 1) {
                 FileMetadata current = requireFile(metadata.tenantId(), metadata.id());
@@ -299,10 +339,21 @@ public class FileApplicationService {
                 }
                 throw new BusinessException(ErrorCode.CONFLICT, "文件状态已变化");
             }
+            deleteObjectQuietly(storage, metadata.objectKey(), metadata.id());
             return requireFile(metadata.tenantId(), metadata.id());
         } catch (BusinessException ex) {
             throw ex;
-        } catch (IOException | FileContentInspector.FileContentException | RuntimeException ex) {
+        } catch (FileContentInspector.FileContentException ex) {
+            if (!"SCAN_FAILED".equals(ex.code())) {
+                deleteObjectQuietly(storage, metadata.objectKey(), metadata.id());
+            }
+            log.warn("旧文件安全校验失败 fileId={}, code={}", metadata.id(), ex.code());
+            throw new BusinessException(ErrorCode.CONFLICT, "旧文件安全校验失败");
+        } catch (IOException | RuntimeException ex) {
+            FileMetadata current = repository.findById(metadata.tenantId(), metadata.id()).orElse(null);
+            if (current != null && "CLEAN".equals(current.scanStatus()) && current.objectKey().startsWith("sealed/")) {
+                return current;
+            }
             log.warn("旧文件安全校验失败 fileId={}", metadata.id(), ex);
             throw new BusinessException(ErrorCode.CONFLICT, "旧文件安全校验失败");
         } finally {
@@ -355,6 +406,10 @@ public class FileApplicationService {
         }
         if (classification.pdfOnly() && !"application/pdf".equals(request.mimeType())) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "该文件类别仅接受PDF");
+        }
+        if (classification != FileClassification.MATERIAL && !classification.pdfOnly()
+                && !IMAGE_OR_PDF_MIMES.contains(request.mimeType())) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "该文件类别仅接受 PDF、JPEG 或 PNG");
         }
         String name = request.originalName();
         if (name.contains("/") || name.contains("\\") || name.chars().anyMatch(Character::isISOControl)) {
@@ -409,6 +464,38 @@ public class FileApplicationService {
     private Map<String, Object> auditSnapshot(FileMetadata metadata) {
         return Map.of("fileId", metadata.id(), "classification", metadata.classification(),
                 "scanStatus", metadata.scanStatus());
+    }
+
+    private void copyBounded(InputStream input, Path target, long expectedBytes, long maxAllowedBytes)
+            throws IOException, FileContentInspector.FileContentException {
+        if (expectedBytes <= 0 || expectedBytes > maxAllowedBytes) {
+            throw new FileContentInspector.FileContentException("SIZE_MISMATCH");
+        }
+        byte[] buffer = new byte[COPY_BUFFER_BYTES];
+        long total = 0L;
+        try (OutputStream out = Files.newOutputStream(target)) {
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) {
+                    if (total > expectedBytes - read) {
+                        throw new FileContentInspector.FileContentException("SIZE_MISMATCH");
+                    }
+                    out.write(buffer, 0, read);
+                    total += read;
+                }
+            }
+        }
+        if (total != expectedBytes) {
+            throw new FileContentInspector.FileContentException("SIZE_MISMATCH");
+        }
+    }
+
+    private void deleteObjectQuietly(PrivateObjectStorage storage, String objectKey, long fileId) {
+        try {
+            storage.deleteObject(objectKey);
+        } catch (RuntimeException ex) {
+            log.warn("清理私有对象失败 fileId={}", fileId, ex);
+        }
     }
 
     private void deleteTemporary(Path temporary) {

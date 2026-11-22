@@ -2,13 +2,16 @@ package com.whale.crm.integration.wecom;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.whale.crm.platform.support.AbstractMysqlIT;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.time.Instant;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -16,16 +19,41 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest(properties = "app.outbox.relay.enabled=false")
+@SpringBootTest(properties = {"app.outbox.relay.enabled=false", "app.scheduling.enabled=false"})
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class WecomSyncPolicyApiIT extends AbstractMysqlIT {
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
     private AuthCookies admin;
     private AuthCookies manager;
+    private long maxSyncRunIdBeforeTest;
 
     @BeforeAll
     void setUp() throws Exception {
         admin = login("admin");
         manager = login("manager1");
+    }
+
+    @BeforeEach
+    void cleanBefore() {
+        cleanupSyncPolicy();
+        Long maxId = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(MAX(id), 0) FROM crm_wecom_contact_sync_run WHERE tenant_id=1 AND corp_id='MOCK-CORP-001'",
+                Long.class);
+        maxSyncRunIdBeforeTest = maxId != null ? maxId : 0L;
+    }
+
+    @AfterEach
+    void cleanAfter() {
+        cleanupSyncPolicy();
+        jdbcTemplate.update(
+                "DELETE FROM crm_wecom_contact_sync_run WHERE tenant_id=1 AND corp_id='MOCK-CORP-001' AND id>?",
+                maxSyncRunIdBeforeTest);
+    }
+
+    private void cleanupSyncPolicy() {
+        jdbcTemplate.update("DELETE FROM crm_wecom_sync_policy WHERE tenant_id=1 AND corp_id='MOCK-CORP-001'");
+        jdbcTemplate.update("DELETE FROM crm_idempotency_record WHERE tenant_id=1 AND scope_code='wecom.sync.policy'");
     }
 
     @Test

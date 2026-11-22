@@ -10,6 +10,8 @@ public interface MergeCaseRepository {
 
     Optional<MergeCase> findById(long tenantId, long id);
 
+    Optional<MergeCase> findByIdForUpdate(long tenantId, long id);
+
     boolean existsPair(long tenantId, long primaryCustomerId, long secondaryCustomerId);
 
     /**

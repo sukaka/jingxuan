@@ -40,14 +40,14 @@ public class WecomMappingApplicationService {
 
     @Transactional(readOnly = true)
     public List<WecomMappingResponse> list(long tenantId, CurrentUser user) {
-        requireAccess(tenantId, user, "notification:delivery:read");
+        requireAnyAccess(tenantId, user, "wecom:mapping:manage", "notification:delivery:read");
         return repository.findWecomMappings(tenantId).stream().map(WecomMappingResponse::from).toList();
     }
 
     @Transactional
     public WecomMappingResponse create(long tenantId, CurrentUser user, CreateWecomMappingRequest request,
                                        String idempotencyKey) {
-        requireAccess(tenantId, user, "notification:delivery:retry");
+        requireAccess(tenantId, user, "wecom:mapping:manage");
         WecomMapping mapping = new WecomMapping(0, tenantId, request.corpId().strip(), request.wecomUserid().strip(),
                 request.staffUserId(), false, request.messageEnabled(), 0);
         requireActiveEmployee(tenantId, mapping.staffUserId());
@@ -73,7 +73,7 @@ public class WecomMappingApplicationService {
     @Transactional
     public WecomMappingResponse update(long tenantId, CurrentUser user, long id, UpdateWecomMappingRequest request,
                                        String idempotencyKey) {
-        requireAccess(tenantId, user, "notification:delivery:retry");
+        requireAccess(tenantId, user, "wecom:mapping:manage");
         WecomMapping requested = new WecomMapping(id, tenantId, request.corpId().strip(), request.wecomUserid().strip(),
                 request.staffUserId(), false, request.messageEnabled(), request.version());
         String payload = payloadOf(requested);
@@ -88,6 +88,12 @@ public class WecomMappingApplicationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "企微通知映射不存在"));
         if (before.version() != request.version()) {
             throw new BusinessException(ErrorCode.CONFLICT, "映射已被他人修改，请刷新后重试");
+        }
+        if (before.archiveEnabled() && (!before.corpId().equals(requested.corpId())
+                || !before.wecomUserid().equals(requested.wecomUserid())
+                || before.staffUserId() != requested.staffUserId())) {
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "已启用归档或登录同步的企微映射不允许修改企业ID、企微成员ID或关联员工，仅可调整通知开关");
         }
         requireActiveEmployee(tenantId, requested.staffUserId());
         try {
@@ -106,7 +112,7 @@ public class WecomMappingApplicationService {
     }
 
     private void requireActiveEmployee(long tenantId, long staffUserId) {
-        if (!repository.recipientActive(tenantId, staffUserId)) {
+        if (!repository.employeeActive(tenantId, staffUserId)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "员工不存在、跨租户或已停用");
         }
     }
@@ -148,5 +154,17 @@ public class WecomMappingApplicationService {
         if (!user.permissions().contains(permission)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "没有企微通知映射管理权限");
         }
+    }
+
+    private void requireAnyAccess(long tenantId, CurrentUser user, String... permissions) {
+        if (tenantId != user.tenantId()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "跨租户访问被拒绝");
+        }
+        for (String permission : permissions) {
+            if (user.permissions().contains(permission)) {
+                return;
+            }
+        }
+        throw new BusinessException(ErrorCode.FORBIDDEN, "没有企微通知映射管理权限");
     }
 }

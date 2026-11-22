@@ -103,11 +103,16 @@ public class CustomerTierReviewService {
         String action = approve ? "approve" : "reject";
         String scope = "customer:tier:review:" + action;
         String payload = reviewId + "|" + request.version() + "|" + request.reason().strip();
-        CustomerTierDowngradeReview review = repository.findReviewForUpdate(tenantId, reviewId)
+        CustomerTierDowngradeReview initial = repository.findReview(tenantId, reviewId)
                 .orElseThrow(() -> notFound("降级复核单不存在或不可见"));
-        Customer customer = customerRepository.findByIdForUpdate(tenantId, review.customerId())
+        Customer customer = customerRepository.findByIdForUpdate(tenantId, initial.customerId())
                 .orElseThrow(() -> notFound("客户不存在或不可见"));
         if (!scopeSupport.isVisible(scopeSupport.scope(user), user, customer)) {
+            throw notFound("降级复核单不存在或不可见");
+        }
+        CustomerTierDowngradeReview review = repository.findReviewForUpdate(tenantId, reviewId)
+                .orElseThrow(() -> notFound("降级复核单不存在或不可见"));
+        if (!Objects.equals(review.customerId(), customer.getId())) {
             throw notFound("降级复核单不存在或不可见");
         }
         Optional<IdempotencyRecord> replay = idempotencyService.lookup(tenantId, scope, idempotencyKey, payload);

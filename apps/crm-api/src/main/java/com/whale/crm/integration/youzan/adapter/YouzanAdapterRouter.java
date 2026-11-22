@@ -2,7 +2,6 @@ package com.whale.crm.integration.youzan.adapter;
 
 import com.whale.crm.integration.config.application.IntegrationRuntimeConfigService;
 import com.whale.crm.integration.youzan.domain.YouzanConfigRepository;
-import com.whale.crm.platform.context.TenantContext;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -35,8 +34,8 @@ public class YouzanAdapterRouter {
         return mock == null ? disabledAdapter : mock;
     }
 
-    public YouzanAdapter adapter() {
-        if (runtimeConfig.youzanRealEnabled(TenantContext.currentTenantId())) {
+    public YouzanAdapter webhookAdapter(long tenantId) {
+        if (runtimeConfig.youzanRealEnabled(tenantId)) {
             return DisabledYouzanAdapter.officialWebhookOnly();
         }
         MockYouzanAdapter mock = mockAdapter.getIfAvailable();

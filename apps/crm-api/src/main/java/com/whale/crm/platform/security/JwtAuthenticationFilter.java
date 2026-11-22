@@ -90,9 +90,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private String resolveToken(HttpServletRequest request) {
+        return resolveToken(request, properties.tokenCookieName());
+    }
+
+    public static String resolveToken(HttpServletRequest request, String tokenCookieName) {
         if (request.getCookies() != null) {
             for (Cookie cookie : request.getCookies()) {
-                if (properties.tokenCookieName().equals(cookie.getName()) && !cookie.getValue().isBlank()) {
+                if (tokenCookieName.equals(cookie.getName()) && !cookie.getValue().isBlank()) {
                     return cookie.getValue();
                 }
             }

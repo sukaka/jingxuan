@@ -1,5 +1,6 @@
 package com.whale.crm.ai.application;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.ai.api.dto.AiReplyDecisionRequest;
@@ -37,6 +38,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class AiReplySuggestionService {
+    private static final String CHAT_CONTEXT_COUNT_KEY = "_chat_context_count";
     private static final Set<String> FACT_CODES = Set.of("customer_name", "manager_name", "project_name",
             "total_count", "used_count", "remaining_count", "last_visit_date", "last_writeoff_date",
             "appointment_date", "appointment_time", "institution_name", "institution_address", "doctor_name",
@@ -48,6 +50,7 @@ public class AiReplySuggestionService {
     private final AiProviderConfigService providerConfigService;
     private final QuickReplyPreviewService previewService;
     private final QuickReplyFactsProvider factsProvider;
+    private final AiReplyChatContextProvider chatContextProvider;
     private final QuickReplyTextMasker masker;
     private final CustomerScopeSupport scopeSupport;
     private final AiChatDelegationSafety safety;
@@ -59,6 +62,7 @@ public class AiReplySuggestionService {
     public AiReplySuggestionService(AiReplySuggestionRepository repository, AiWorkerClient workerClient,
                                     AiProviderConfigService providerConfigService,
                                     QuickReplyPreviewService previewService, QuickReplyFactsProvider factsProvider,
+                                    AiReplyChatContextProvider chatContextProvider,
                                     QuickReplyTextMasker masker, CustomerScopeSupport scopeSupport,
                                     AiChatDelegationSafety safety, AesGcmCipher cipher, AuditService auditService,
                                     ObjectMapper objectMapper, PlatformTransactionManager transactionManager) {
@@ -67,6 +71,7 @@ public class AiReplySuggestionService {
         this.providerConfigService = providerConfigService;
         this.previewService = previewService;
         this.factsProvider = factsProvider;
+        this.chatContextProvider = chatContextProvider;
         this.masker = masker;
         this.scopeSupport = scopeSupport;
         this.safety = safety;
@@ -86,16 +91,20 @@ public class AiReplySuggestionService {
         }
         QuickReplyTemplate template = previewService.requireAiTemplate(user, request.templateId());
         Map<String, Object> facts = safeFacts(factsProvider.load(user.tenantId(), user, request.customerId()));
+        List<AiWorkerClient.MessageInput> recentMessages = chatContextProvider.loadRecentConsentedMessages(
+                user, request.customerId());
+        int chatContextCount = recentMessages.size();
         AiWorkerClient.ReplyGenerationResult generated;
         try {
             generated = workerClient.generateReply(UUID.randomUUID().toString(), request.customerId(), template.scene(),
-                    facts, instruction, providerConfigService.workerConfig(user.tenantId()));
+                    facts, instruction, recentMessages, providerConfigService.workerConfig(user.tenantId()));
         } catch (AiWorkerException ex) {
             ErrorCode code = ex.getMessage() != null && (ex.getMessage().contains("未启用") || ex.getMessage().contains("配置不完整"))
                     ? ErrorCode.AI_PROVIDER_DISABLED : ErrorCode.AI_PROVIDER_FAILED;
             throw new BusinessException(code, ex.getMessage() == null ? "AI 回复生成失败，请稍后重试" : ex.getMessage());
         }
         ValidatedReply candidate = validate(generated, template.scene(), facts);
+        Map<String, Object> persistedFactsSnapshot = factsSnapshot(facts, chatContextCount);
         try {
             AiReplySuggestion saved = transactions.execute(status -> {
                 var existing = repository.findByGenerationKey(user.tenantId(), user.userId(), key);
@@ -106,7 +115,8 @@ public class AiReplySuggestionService {
                 previewService.requireAiTemplate(user, request.templateId());
                 scopeSupport.requireVisible(user.tenantId(), request.customerId(), user);
                 AiReplySuggestion input = new AiReplySuggestion(null, user.tenantId(), template.id(), request.customerId(),
-                        user.userId(), template.scene(), json(facts), requestHash, key, cipher.encrypt(candidate.reply()),
+                        user.userId(), template.scene(), json(persistedFactsSnapshot), requestHash, key,
+                        cipher.encrypt(candidate.reply()),
                         candidate.reason(), json(candidate.usedFactCodes()), candidate.provider(), candidate.model(),
                         candidate.promptVersion(), candidate.confidence(), "PROPOSED", false, false, null, null,
                         null, null, null, null, null, null, 0);
@@ -240,12 +250,36 @@ public class AiReplySuggestionService {
     }
 
     private AiReplySuggestionResponse view(AiReplySuggestion suggestion) {
+        int chatContextCount = extractChatContextCount(suggestion.factsSnapshotJson());
         return new AiReplySuggestionResponse(suggestion.id(), suggestion.templateId(), suggestion.customerId(),
                 suggestion.scene(), cipher.decrypt(suggestion.replyCipher()), suggestion.reasonMasked(),
                 stringList(suggestion.usedFactCodesJson()), suggestion.provider(), suggestion.modelName(),
                 suggestion.promptVersion(), suggestion.confidence(), suggestion.status(), suggestion.accepted(),
                 suggestion.edited(), cipher.decrypt(suggestion.finalContentCipher()), suggestion.createdAt(),
-                suggestion.decisionAt(), suggestion.version());
+                suggestion.decisionAt(), suggestion.version(), chatContextCount > 0, chatContextCount);
+    }
+
+    private Map<String, Object> factsSnapshot(Map<String, Object> facts, int chatContextCount) {
+        Map<String, Object> snapshot = new LinkedHashMap<>(facts);
+        if (chatContextCount > 0) {
+            snapshot.put(CHAT_CONTEXT_COUNT_KEY, chatContextCount);
+        }
+        return snapshot;
+    }
+
+    private int extractChatContextCount(String factsSnapshotJson) {
+        if (factsSnapshotJson == null || factsSnapshotJson.isBlank()) {
+            return 0;
+        }
+        try {
+            var node = objectMapper.readTree(factsSnapshotJson);
+            if (node != null && node.isObject() && node.has(CHAT_CONTEXT_COUNT_KEY)) {
+                return Math.max(0, node.path(CHAT_CONTEXT_COUNT_KEY).asInt(0));
+            }
+            return 0;
+        } catch (JsonProcessingException ex) {
+            return 0;
+        }
     }
 
     private List<String> stringList(String json) {
@@ -266,6 +300,7 @@ public class AiReplySuggestionService {
     }
 
     private Map<String, Object> auditSnapshot(AiReplySuggestion suggestion) {
+        int chatContextCount = extractChatContextCount(suggestion.factsSnapshotJson());
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("customerId", suggestion.customerId());
         snapshot.put("templateId", suggestion.templateId());
@@ -276,6 +311,8 @@ public class AiReplySuggestionService {
         snapshot.put("promptVersion", suggestion.promptVersion());
         snapshot.put("accepted", suggestion.accepted());
         snapshot.put("edited", suggestion.edited());
+        snapshot.put("chatContextIncluded", chatContextCount > 0);
+        snapshot.put("chatContextCount", chatContextCount);
         return snapshot;
     }
 

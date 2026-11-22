@@ -220,27 +220,35 @@
 
   <select id="operationsInstitutions" resultType="com.whale.crm.reporting.domain.ReportingRepository$OperationsInstitutionFactRow">
     WITH operations_facts AS (<include refid="operationsFactUnion"/>),
-    enriched AS (<include refid="operationsEnrichedFacts"/>)
+    enriched AS (<include refid="operationsEnrichedFacts"/>),
+    filtered_enriched AS (
+      SELECT * FROM enriched e
+      WHERE e.institution_id IS NOT NULL
+        <if test="query.criteria.institutionId != null">AND e.institution_id = #{query.criteria.institutionId}</if>
+        <if test="query.criteria.staffUserId != null">AND e.staff_id = #{query.criteria.staffUserId}</if>
+        <if test="query.scope.scopeType == 'SELF'">AND e.staff_id = #{query.scope.selfId}</if>
+    ),
+    institution_batches AS (
+      SELECT DISTINCT fe.institution_id, sb.id AS batch_id,
+             CASE WHEN sb.amount_status = 'VERIFIED'
+                  THEN sb.net_payable_fen - sb.paid_fen ELSE NULL END AS pending_fen
+      FROM filtered_enriched fe
+      INNER JOIN crm_settlement_line sl ON sl.tenant_id = #{query.tenantId} AND sl.redemption_id = fe.parent_id
+      INNER JOIN crm_settlement_batch sb ON sb.tenant_id = sl.tenant_id AND sb.id = sl.settlement_batch_id
+      WHERE fe.fact_type = 'REDEMPTION'
+    ),
+    institution_pending AS (
+      SELECT institution_id, SUM(pending_fen) AS pending_reconciliation_fen
+      FROM institution_batches
+      GROUP BY institution_id
+    )
     SELECT e.institution_id AS institutionId,
            COALESCE(MAX(i.short_name), MAX(i.full_name)) AS institutionName,
            <include refid="operationsInstitutionAggregates"/>,
-           SUM(outstanding.pending_fen) AS pendingReconciliationFen
-    FROM enriched e
+           MAX(ip.pending_reconciliation_fen) AS pendingReconciliationFen
+    FROM filtered_enriched e
     LEFT JOIN crm_institution i ON i.tenant_id = #{query.tenantId} AND i.id = e.institution_id
-    LEFT JOIN (
-      SELECT sl.tenant_id, sl.redemption_id,
-             SUM(CASE WHEN sb.amount_status = 'VERIFIED'
-                      THEN sb.net_payable_fen - sb.paid_fen ELSE NULL END) AS pending_fen
-      FROM crm_settlement_line sl
-      INNER JOIN crm_settlement_batch sb ON sb.tenant_id = sl.tenant_id AND sb.id = sl.settlement_batch_id
-      WHERE sl.tenant_id = #{query.tenantId}
-      GROUP BY sl.tenant_id, sl.redemption_id
-    ) outstanding ON outstanding.tenant_id = #{query.tenantId}
-      AND outstanding.redemption_id = e.parent_id AND e.fact_type = 'REDEMPTION'
-    WHERE e.institution_id IS NOT NULL
-      <if test="query.criteria.institutionId != null">AND e.institution_id = #{query.criteria.institutionId}</if>
-      <if test="query.criteria.staffUserId != null">AND e.staff_id = #{query.criteria.staffUserId}</if>
-      <if test="query.scope.scopeType == 'SELF'">AND e.staff_id = #{query.scope.selfId}</if>
+    LEFT JOIN institution_pending ip ON ip.institution_id = e.institution_id
     GROUP BY e.institution_id
     ORDER BY e.institution_id
   </select>

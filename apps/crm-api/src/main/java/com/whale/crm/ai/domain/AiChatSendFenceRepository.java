@@ -20,5 +20,7 @@ public interface AiChatSendFenceRepository {
 
     int finish(long tenantId, long runId, long expectedVersion, Instant now);
 
+    int releaseForRetry(long tenantId, long runId, long expectedVersion, Instant now);
+
     int recover(long tenantId, long runId, Instant now);
 }

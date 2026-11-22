@@ -1,5 +1,7 @@
 package com.whale.crm.campaign.domain;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,9 +25,24 @@ public interface CampaignRepository {
                                         Long businessOwnerUserId, int offset, int size);
     long countChannels(long tenantId, String keyword, String status, String channelType, Long businessOwnerUserId);
     Optional<PartnerChannel> findChannel(long tenantId, long id);
+    Optional<PartnerChannel> findChannelForUpdate(long tenantId, long id);
     Optional<PartnerChannel> findChannelByNo(long tenantId, String channelNo);
     void insertChannel(long tenantId, PartnerChannel channel);
     int updateChannel(long tenantId, PartnerChannel channel);
+    int updateChannelStatus(long tenantId, long id, long version, String status);
+    int updateChannelFinancials(long tenantId, long id, long version, BigDecimal commissionPercent,
+                                String settlementMethod, String paymentAccountNameCipher,
+                                String paymentAccountNoCipher, String paymentBankName);
     int countActiveEmployee(long tenantId, long userId);
     List<ChannelOwnerOption> listActiveChannelOwners(long tenantId);
+
+    void insertChannelChangeRequest(long tenantId, ChannelChangeRequest request);
+    Optional<ChannelChangeRequest> findChannelChangeRequest(long tenantId, long id);
+    Optional<ChannelChangeRequest> findChannelChangeRequestForUpdate(long tenantId, long id);
+    Optional<ChannelChangeRequest> findActiveChannelChangeRequest(long tenantId, long channelId);
+    List<ChannelChangeRequest> searchChannelChangeRequests(long tenantId, Long channelId, String status,
+                                                           int offset, int size);
+    long countChannelChangeRequests(long tenantId, Long channelId, String status);
+    int updateChannelChangeRequestStatus(long tenantId, long id, long version, String fromStatus, String toStatus,
+                                         long reviewerUserId, Instant reviewedAt, String reviewComment);
 }

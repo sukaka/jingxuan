@@ -30,6 +30,10 @@
   <select id="recipientActive" resultType="int">
     SELECT COUNT(*) FROM sys_user WHERE tenant_id=#{tenantId} AND id=#{recipientUserId} AND status='ACTIVE'
   </select>
+  <select id="employeeActive" resultType="int">
+    SELECT COUNT(*) FROM sys_user
+    WHERE tenant_id=#{tenantId} AND id=#{staffUserId} AND user_type='EMPLOYEE' AND status='ACTIVE'
+  </select>
   <select id="selectByDedupeKey" resultType="com.whale.crm.notification.domain.Notification">
     SELECT <include refid="notificationColumns"/> FROM crm_notification
     WHERE tenant_id=#{tenantId} AND recipient_user_id=#{recipientUserId} AND dedupe_key=#{dedupeKey}
@@ -172,5 +176,6 @@
     UPDATE crm_wecom_staff_account SET corp_id=#{corpId},wecom_userid=#{wecomUserid},
       staff_user_id=#{staffUserId},message_enabled=#{messageEnabled},version=version+1
     WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+      AND (enabled=0 OR (corp_id=#{corpId} AND wecom_userid=#{wecomUserid} AND staff_user_id=#{staffUserId}))
   </update>
 </mapper>

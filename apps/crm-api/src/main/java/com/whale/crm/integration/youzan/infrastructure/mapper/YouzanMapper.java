@@ -1,5 +1,6 @@
 package com.whale.crm.integration.youzan.infrastructure.mapper;
 
+import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.integration.youzan.domain.YouzanCustomerLink;
 import com.whale.crm.integration.youzan.domain.YouzanEvent;
 import com.whale.crm.integration.youzan.domain.YouzanOrderMap;
@@ -27,13 +28,19 @@ public interface YouzanMapper {
     List<YouzanEvent> selectPendingEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                                           @Param("retryBefore") Instant retryBefore, @Param("limit") int limit);
     long countEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
+    long countScopedEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                           @Param("scope") CustomerScopeSupport.ScopeQuery scope);
     long countTodayEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
+    long countScopedTodayEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                                @Param("scope") CustomerScopeSupport.ScopeQuery scope);
     long countCampaignOrders(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
+    long countScopedCampaignOrders(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                                   @Param("scope") CustomerScopeSupport.ScopeQuery scope);
     List<YouzanEvent> selectLatestOrderEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
-                                              @Param("linkedOnly") boolean linkedOnly,
+                                              @Param("scope") CustomerScopeSupport.ScopeQuery scope,
                                               @Param("offset") int offset, @Param("size") int size);
     long countDistinctExternalOrders(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
-                                     @Param("linkedOnly") boolean linkedOnly);
+                                     @Param("scope") CustomerScopeSupport.ScopeQuery scope);
     int updateEventStatus(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
                           @Param("status") String status, @Param("lastError") String lastError,
                           @Param("nextRetryAt") Instant nextRetryAt, @Param("processedAt") Instant processedAt,
@@ -47,6 +54,8 @@ public interface YouzanMapper {
     List<YouzanOrderMap> selectOrderMaps(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                                          @Param("offset") int offset, @Param("size") int size);
     long countOrderMaps(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
+    long countScopedOrderMaps(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                              @Param("scope") CustomerScopeSupport.ScopeQuery scope);
     int updateOrderMapTime(@Param("tenantId") long tenantId, @Param("id") long id,
                            @Param("version") long version, @Param("externalUpdatedAt") Instant externalUpdatedAt);
 
@@ -62,6 +71,8 @@ public interface YouzanMapper {
                                           @Param("externalCustomerId") String externalCustomerId);
     YouzanCustomerLink selectCustomerLinkForUpdate(@Param("tenantId") long tenantId, @Param("id") long id);
     List<YouzanCustomerLink> selectCustomerLinks(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
+    List<YouzanCustomerLink> selectScopedCustomerLinks(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                                                       @Param("scope") CustomerScopeSupport.ScopeQuery scope);
     void insertCustomerLink(@Param("tenantId") long tenantId, @Param("entity") YouzanCustomerLink entity);
     int updateCustomerLink(@Param("tenantId") long tenantId, @Param("id") long id,
                            @Param("version") long version, @Param("customerId") long customerId,
@@ -73,7 +84,12 @@ public interface YouzanMapper {
                                               @Param("issueType") String issueType);
     List<YouzanSyncIssue> selectIssues(@Param("tenantId") long tenantId, @Param("status") String status,
                                        @Param("offset") int offset, @Param("size") int size);
+    List<YouzanSyncIssue> selectScopedIssues(@Param("tenantId") long tenantId, @Param("status") String status,
+                                             @Param("scope") CustomerScopeSupport.ScopeQuery scope,
+                                             @Param("offset") int offset, @Param("size") int size);
     long countIssues(@Param("tenantId") long tenantId, @Param("status") String status);
+    long countScopedIssues(@Param("tenantId") long tenantId, @Param("status") String status,
+                           @Param("scope") CustomerScopeSupport.ScopeQuery scope);
     void insertIssue(@Param("tenantId") long tenantId, @Param("entity") YouzanSyncIssue entity);
     int updateIssueStatus(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
                           @Param("status") String status, @Param("attempts") int attempts,

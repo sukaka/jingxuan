@@ -3,6 +3,7 @@ package com.whale.crm.ai;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.whale.crm.ai.application.AiWorkerClient;
 import com.whale.crm.ai.application.AiWorkerException;
+import com.whale.crm.file.infrastructure.PrivateObjectStorage;
 import com.whale.crm.platform.security.crypto.AesGcmCipher;
 import com.whale.crm.platform.support.AbstractMysqlIT;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,13 +14,22 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -33,16 +43,28 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class AiReplySuggestionApiIT extends AbstractMysqlIT {
+    private static final AtomicLong ARCHIVE_SEQ = new AtomicLong(900_000L);
     @MockitoBean
     private AiWorkerClient workerClient;
+    @MockitoBean
+    private PrivateObjectStorage objectStorage;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private AesGcmCipher cipher;
+    private final Map<String, byte[]> encryptedObjects = new ConcurrentHashMap<>();
 
     @BeforeEach
-    void mockReplies() {
-        when(workerClient.generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(),
+    void mockReplies() throws Exception {
+        encryptedObjects.clear();
+        when(objectStorage.getObject(anyString())).thenAnswer(invocation -> {
+            byte[] bytes = encryptedObjects.get(invocation.getArgument(0, String.class));
+            if (bytes == null) {
+                throw new IllegalStateException("missing test object");
+            }
+            return new ByteArrayInputStream(bytes);
+        });
+        when(workerClient.generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(), anyList(),
                 nullable(AiWorkerClient.ProviderConfig.class))).thenAnswer(invocation -> {
             Map<String, Object> facts = invocation.getArgument(3);
             String scene = invocation.getArgument(2);
@@ -71,10 +93,12 @@ class AiReplySuggestionApiIT extends AbstractMysqlIT {
         assertThat(generated.at("/reply").asText()).contains("共10次", "已使用4次", "还剩6次");
         assertThat(generated.at("/accepted").asBoolean()).isFalse();
         assertThat(generated.at("/usedFactCodes").toString()).contains("remaining_count");
+        assertThat(generated.at("/chatContextIncluded").asBoolean()).isFalse();
+        assertThat(generated.at("/chatContextCount").asInt()).isZero();
 
         org.mockito.ArgumentCaptor<Map<String, Object>> facts = org.mockito.ArgumentCaptor.forClass(Map.class);
         verify(workerClient).generateReply(anyString(), org.mockito.ArgumentMatchers.eq(fixture.customerId()),
-                org.mockito.ArgumentMatchers.eq("PACKAGE_REMAINING"), facts.capture(), anyString(),
+                org.mockito.ArgumentMatchers.eq("PACKAGE_REMAINING"), facts.capture(), anyString(), anyList(),
                 nullable(AiWorkerClient.ProviderConfig.class));
         assertThat(facts.getValue()).containsEntry("remaining_count", 6L);
         assertThat(facts.getValue().get("order_no").toString()).contains("138****8000")
@@ -92,7 +116,7 @@ class AiReplySuggestionApiIT extends AbstractMysqlIT {
                 .header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON).content(json(body)));
         assertThat(replay.at("/id").asLong()).isEqualTo(generated.at("/id").asLong());
         verify(workerClient, times(1)).generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(),
-                nullable(AiWorkerClient.ProviderConfig.class));
+                anyList(), nullable(AiWorkerClient.ProviderConfig.class));
         Map<String, Object> changed = new LinkedHashMap<>(body);
         changed.put("instruction", "另一种要求");
         mockMvc.perform(admin.withAuth(post("/api/v1/ai/replies/generate")).header("Idempotency-Key", key)
@@ -102,6 +126,8 @@ class AiReplySuggestionApiIT extends AbstractMysqlIT {
                 .cookie(admin.cookies()));
         assertThat(history).hasSize(1);
         assertThat(history.get(0).at("/id").asLong()).isEqualTo(generated.at("/id").asLong());
+        assertThat(history.get(0).at("/chatContextIncluded").asBoolean()).isFalse();
+        assertThat(history.get(0).at("/chatContextCount").asInt()).isZero();
     }
 
     @Test
@@ -203,27 +229,97 @@ class AiReplySuggestionApiIT extends AbstractMysqlIT {
         AuthCookies admin = login("admin");
         Fixture fixture = newFixture();
         long before = countSuggestions();
-        when(workerClient.generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(),
+        when(workerClient.generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(), anyList(),
                 nullable(AiWorkerClient.ProviderConfig.class))).thenReturn(result("PACKAGE_REMAINING",
                 "测试客户您好，还剩99次。", List.of("remaining_count")));
         mockMvc.perform(admin.withAuth(post("/api/v1/ai/replies/generate"))
                         .header("Idempotency-Key", key("fake-number")).contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of("customerId", fixture.customerId(), "templateId", templateId()))))
                 .andExpect(status().isBadGateway()).andExpect(jsonPath("$.code").value("AI_PROVIDER_FAILED"));
-        when(workerClient.generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(),
+        when(workerClient.generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(), anyList(),
                 nullable(AiWorkerClient.ProviderConfig.class))).thenReturn(result("PACKAGE_REMAINING",
                 "已为您预约成功。", List.of()));
         mockMvc.perform(admin.withAuth(post("/api/v1/ai/replies/generate"))
                         .header("Idempotency-Key", key("unsafe-claim")).contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of("customerId", fixture.customerId(), "templateId", templateId()))))
                 .andExpect(status().isBadGateway());
-        when(workerClient.generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(),
+        when(workerClient.generateReply(anyString(), anyLong(), anyString(), anyMap(), anyString(), anyList(),
                 nullable(AiWorkerClient.ProviderConfig.class))).thenThrow(new AiWorkerException("AI 模型服务未启用", true));
         mockMvc.perform(admin.withAuth(post("/api/v1/ai/replies/generate"))
                         .header("Idempotency-Key", key("provider-disabled")).contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of("customerId", fixture.customerId(), "templateId", templateId()))))
                 .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("AI_PROVIDER_DISABLED"));
         assertThat(countSuggestions()).isEqualTo(before);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void consentedArchivedChatContextIsIncludedAndFallsBackWhenConsentRevoked() throws Exception {
+        AuthCookies admin = login("admin");
+        Fixture fixture = newFixture();
+        jdbcTemplate.update("INSERT INTO crm_wecom_archive_member (tenant_id,corp_id,staff_user_id,enabled,source_code) "
+                + "VALUES (1,'MOCK-CORP-001',2,1,'MOCK') ON DUPLICATE KEY UPDATE enabled=1");
+        Instant base = Instant.parse("2026-11-20T08:00:00Z");
+        insertArchivedMessage(fixture, "TEXT", "CUSTOMER", base.plusSeconds(10),
+                "我想问一下剩余次数，联系电话13900139000", null);
+        insertArchivedMessage(fixture, "TEXT", "EMPLOYEE", base.plusSeconds(20),
+                "好的，马上为您核实套餐余次", null);
+        insertArchivedMessage(fixture, "TEXT", "CUSTOMER", base.plusSeconds(30),
+                "这条消息已撤回，不应被读取", base.plusSeconds(35));
+        insertArchivedMessage(fixture, "IMAGE", "CUSTOMER", base.plusSeconds(40),
+                "图片占位，不应作为文本上下文", null);
+
+        JsonNode withContext = generate(admin, fixture, key("consented-chat"));
+        assertThat(withContext.at("/chatContextIncluded").asBoolean()).isTrue();
+        assertThat(withContext.at("/chatContextCount").asInt()).isEqualTo(2);
+
+        org.mockito.ArgumentCaptor<List<AiWorkerClient.MessageInput>> messagesCaptor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(workerClient).generateReply(anyString(), org.mockito.ArgumentMatchers.eq(fixture.customerId()),
+                org.mockito.ArgumentMatchers.eq("PACKAGE_REMAINING"), anyMap(), anyString(),
+                messagesCaptor.capture(), nullable(AiWorkerClient.ProviderConfig.class));
+        assertThat(messagesCaptor.getValue()).hasSize(2);
+        assertThat(messagesCaptor.getValue().get(0).senderType()).isEqualTo("CUSTOMER");
+        assertThat(messagesCaptor.getValue().get(0).text())
+                .contains("139****9000")
+                .doesNotContain("13900139000");
+        assertThat(messagesCaptor.getValue().get(1).senderType()).isEqualTo("EMPLOYEE");
+        assertThat(messagesCaptor.getValue().get(1).text()).contains("核实套餐余次");
+
+        String snapshot = jdbcTemplate.queryForObject(
+                "SELECT facts_snapshot_json FROM crm_ai_reply_suggestion WHERE id=?", String.class,
+                withContext.at("/id").asLong());
+        assertThat(objectMapper.readTree(snapshot).path("_chat_context_count").asInt()).isEqualTo(2);
+        assertThat(snapshot).doesNotContain("13900139000", "已撤回", "核实套餐余次");
+
+        JsonNode history = data(get("/api/v1/ai/replies").param("customerId", Long.toString(fixture.customerId()))
+                .cookie(admin.cookies()));
+        assertThat(history.get(0).at("/chatContextIncluded").asBoolean()).isTrue();
+        assertThat(history.get(0).at("/chatContextCount").asInt()).isEqualTo(2);
+
+        // Revoke customer archive consent -> must fall back cleanly to CRM-facts-only without reading chat
+        jdbcTemplate.update("UPDATE crm_wecom_contact SET consent_status='REVOKED' WHERE tenant_id=1 "
+                + "AND corp_id='MOCK-CORP-001' AND external_userid=?", fixture.externalUserid());
+        JsonNode revoked = generate(admin, fixture, key("revoked-chat"));
+        assertThat(revoked.at("/chatContextIncluded").asBoolean()).isFalse();
+        assertThat(revoked.at("/chatContextCount").asInt()).isZero();
+    }
+
+    private void insertArchivedMessage(Fixture fixture, String messageType, String senderType, Instant sentAt,
+                                       String text, Instant recalledAt) throws Exception {
+        String key = "wecom/1/MOCK-CORP-001/" + UUID.randomUUID() + ".json.enc";
+        String raw = objectMapper.writeValueAsString(Map.of("messageType", messageType, "text", text));
+        byte[] encrypted = cipher.encrypt(raw).getBytes(StandardCharsets.UTF_8);
+        String sha256 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(encrypted));
+        encryptedObjects.put(key, encrypted);
+        long seq = ARCHIVE_SEQ.incrementAndGet();
+        jdbcTemplate.update("INSERT INTO crm_wecom_message (tenant_id,corp_id,msg_id,archive_seq,archive_scope,"
+                        + "customer_id,external_userid,staff_user_id,conversation_type,conversation_id,message_type,"
+                        + "sender_type,sent_at,content_object_key,content_sha256,consent_snapshot,status,recalled_at) "
+                        + "VALUES (1,'MOCK-CORP-001',?,?,'MOCK_ARCHIVE',?,?,2,'DIRECT',?,?,?, ?,?,?, 'GRANTED','STORED',?)",
+                "ai-ctx-msg-" + seq, seq, fixture.customerId(), fixture.externalUserid(),
+                "conv-" + fixture.externalUserid(), messageType, senderType, Timestamp.from(sentAt), key, sha256,
+                recalledAt == null ? null : Timestamp.from(recalledAt));
     }
 
     private AiWorkerClient.ReplyGenerationResult result(String scene, String reply, List<String> factCodes) {

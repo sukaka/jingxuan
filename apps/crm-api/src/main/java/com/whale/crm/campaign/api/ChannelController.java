@@ -1,10 +1,13 @@
 package com.whale.crm.campaign.api;
 
+import com.whale.crm.campaign.api.dto.ChannelFinancialChangeRequestResponse;
+import com.whale.crm.campaign.api.dto.CreateChannelFinancialChangeRequest;
 import com.whale.crm.campaign.api.dto.CreateChannelRequest;
+import com.whale.crm.campaign.api.dto.PartnerChannelResponse;
+import com.whale.crm.campaign.api.dto.ToggleChannelStatusRequest;
 import com.whale.crm.campaign.api.dto.UpdateChannelRequest;
 import com.whale.crm.campaign.application.CampaignApplicationService;
 import com.whale.crm.campaign.domain.ChannelOwnerOption;
-import com.whale.crm.campaign.domain.PartnerChannel;
 import com.whale.crm.platform.context.TenantContext;
 import com.whale.crm.platform.security.SecuritySupport;
 import com.whale.crm.platform.web.ApiResponse;
@@ -25,9 +28,12 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @Validated
 @RestController
@@ -41,7 +47,7 @@ public class ChannelController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('channel:read')")
-    public ApiResponse<PageResponse<PartnerChannel>> search(
+    public ApiResponse<PageResponse<PartnerChannelResponse>> search(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) @Size(max = 64) String keyword,
@@ -55,26 +61,60 @@ public class ChannelController {
 
     @GetMapping("/owner-options")
     @PreAuthorize("hasAuthority('channel:read')")
-    public ApiResponse<java.util.List<ChannelOwnerOption>> ownerOptions(HttpServletRequest request) {
+    public ApiResponse<List<ChannelOwnerOption>> ownerOptions(HttpServletRequest request) {
         return ApiResponse.ok(service.channelOwnerOptions(TenantContext.currentTenantId(),
                 SecuritySupport.requireCurrentUser()), requestId(request));
     }
 
     @PostMapping
     @PreAuthorize("hasAuthority('channel:write')")
-    public ResponseEntity<ApiResponse<PartnerChannel>> create(@Valid @RequestBody CreateChannelRequest body,
-                                                              HttpServletRequest request) {
-        PartnerChannel created = service.createChannel(TenantContext.currentTenantId(),
+    public ResponseEntity<ApiResponse<PartnerChannelResponse>> create(@Valid @RequestBody CreateChannelRequest body,
+                                                                      HttpServletRequest request) {
+        PartnerChannelResponse created = service.createChannel(TenantContext.currentTenantId(),
                 SecuritySupport.requireCurrentUser(), body);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(created, requestId(request)));
     }
 
     @PatchMapping("/{id}")
     @PreAuthorize("hasAuthority('channel:write')")
-    public ApiResponse<PartnerChannel> update(@PathVariable long id, @Valid @RequestBody UpdateChannelRequest body,
-                                              HttpServletRequest request) {
+    public ApiResponse<PartnerChannelResponse> update(@PathVariable long id,
+                                                      @Valid @RequestBody UpdateChannelRequest body,
+                                                      HttpServletRequest request) {
         return ApiResponse.ok(service.updateChannel(TenantContext.currentTenantId(),
                 SecuritySupport.requireCurrentUser(), id, body), requestId(request));
+    }
+
+    @PostMapping("/{id}/status")
+    @PreAuthorize("hasAuthority('channel:write')")
+    public ApiResponse<PartnerChannelResponse> toggleStatus(@PathVariable long id,
+                                                            @Valid @RequestBody ToggleChannelStatusRequest body,
+                                                            HttpServletRequest request) {
+        return ApiResponse.ok(service.toggleChannelStatus(TenantContext.currentTenantId(),
+                SecuritySupport.requireCurrentUser(), id, body), requestId(request));
+    }
+
+    @PostMapping("/{id}/financial-change-requests")
+    @PreAuthorize("hasAuthority('channel:write')")
+    public ResponseEntity<ApiResponse<ChannelFinancialChangeRequestResponse>> createFinancialChangeRequest(
+            @PathVariable long id,
+            @Valid @RequestBody CreateChannelFinancialChangeRequest body,
+            @RequestHeader(name = "Idempotency-Key", required = true) @Size(min = 1, max = 128) String idempotencyKey,
+            HttpServletRequest request) {
+        ChannelFinancialChangeRequestResponse created = service.createFinancialChangeRequest(
+                TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser(), id, body, idempotencyKey);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(created, requestId(request)));
+    }
+
+    @GetMapping("/{id}/financial-change-requests")
+    @PreAuthorize("hasAnyAuthority('channel:read', 'channel:approve_finance')")
+    public ApiResponse<PageResponse<ChannelFinancialChangeRequestResponse>> listFinancialChangeRequests(
+            @PathVariable long id,
+            @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            @RequestParam(required = false) @Size(max = 32) String status,
+            HttpServletRequest request) {
+        return ApiResponse.ok(service.channelFinancialChangeRequests(TenantContext.currentTenantId(),
+                SecuritySupport.requireCurrentUser(), id, status, page, size), requestId(request));
     }
 
     private String requestId(HttpServletRequest request) {

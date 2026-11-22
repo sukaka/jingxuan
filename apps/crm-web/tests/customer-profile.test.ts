@@ -183,4 +183,27 @@ describe('CustomerDetailDrawer 基础档案', () => {
     expect(wrapper.text()).toContain('档案加载失败:网络不可用')
     expect(wrapper.find('.profile-card').exists()).toBe(false)
   })
+
+  it('关闭抽屉或切换客户时清空旧客户详情并忽略过期响应', async () => {
+    const wrapper = await mountProfile()
+    expect(wrapper.text()).toContain('沈梦琪')
+
+    await wrapper.setProps({ modelValue: false })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('沈梦琪')
+
+    let resolveLate!: (value: CustomerDetail) => void
+    vi.mocked(getCustomer)
+      .mockImplementationOnce(() => new Promise((res) => { resolveLate = res }))
+      .mockResolvedValueOnce({ ...detail, id: 3, customerNo: 'C0000001003', displayName: '新客户王五' })
+    await wrapper.setProps({ modelValue: true, customerId: 2 })
+    await wrapper.setProps({ customerId: 3 })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('新客户王五')
+    resolveLate({ ...detail, id: 2, customerNo: 'C0000001002', displayName: '过期客户李四' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('新客户王五')
+    expect(wrapper.text()).not.toContain('过期客户李四')
+  })
 })

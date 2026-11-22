@@ -1,5 +1,6 @@
 package com.whale.crm.integration.youzan.infrastructure;
 
+import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.integration.youzan.domain.YouzanCustomerLink;
 import com.whale.crm.integration.youzan.domain.YouzanEvent;
 import com.whale.crm.integration.youzan.domain.YouzanOrderMap;
@@ -33,10 +34,13 @@ public class MybatisYouzanRepository implements YouzanRepository {
     public Optional<YouzanEvent> findEventForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectEventForUpdate(tenantId, id)); }
     public List<YouzanEvent> findPendingEvents(long tenantId, String shopId, Instant retryBefore, int limit) { return mapper.selectPendingEvents(tenantId, shopId, retryBefore, limit); }
     public long countEvents(long tenantId, String shopId) { return mapper.countEvents(tenantId, shopId); }
+    public long countScopedEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedEvents(tenantId, shopId, scope); }
     public long countTodayEvents(long tenantId, String shopId) { return mapper.countTodayEvents(tenantId, shopId); }
+    public long countScopedTodayEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedTodayEvents(tenantId, shopId, scope); }
     public long countCampaignOrders(long tenantId, String shopId) { return mapper.countCampaignOrders(tenantId, shopId); }
-    public List<YouzanEvent> findLatestOrderEvents(long tenantId, String shopId, boolean linkedOnly, int offset, int size) { return mapper.selectLatestOrderEvents(tenantId, shopId, linkedOnly, offset, size); }
-    public long countDistinctExternalOrders(long tenantId, String shopId, boolean linkedOnly) { return mapper.countDistinctExternalOrders(tenantId, shopId, linkedOnly); }
+    public long countScopedCampaignOrders(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedCampaignOrders(tenantId, shopId, scope); }
+    public List<YouzanEvent> findLatestOrderEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope, int offset, int size) { return mapper.selectLatestOrderEvents(tenantId, shopId, scope, offset, size); }
+    public long countDistinctExternalOrders(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countDistinctExternalOrders(tenantId, shopId, scope); }
     public int updateEventStatus(long tenantId, long id, long version, String status, String lastError,
                                  Instant nextRetryAt, Instant processedAt, Long orderId) {
         return mapper.updateEventStatus(tenantId, id, version, status, lastError, nextRetryAt, processedAt, orderId);
@@ -47,25 +51,29 @@ public class MybatisYouzanRepository implements YouzanRepository {
     public Optional<YouzanOrderMap> findOrderMapForUpdate(long tenantId, String shopId, String externalOrderNo) { return Optional.ofNullable(mapper.selectOrderMapForUpdate(tenantId, shopId, externalOrderNo)); }
     public List<YouzanOrderMap> findOrderMaps(long tenantId, String shopId, int offset, int size) { return mapper.selectOrderMaps(tenantId, shopId, offset, size); }
     public long countOrderMaps(long tenantId, String shopId) { return mapper.countOrderMaps(tenantId, shopId); }
+    public long countScopedOrderMaps(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedOrderMaps(tenantId, shopId, scope); }
     public int updateOrderMapTime(long tenantId, long id, long version, Instant externalUpdatedAt) { return mapper.updateOrderMapTime(tenantId, id, version, externalUpdatedAt); }
 
     public Optional<YouzanSkuMapping> findSkuMapping(long tenantId, String shopId, String externalSkuId) { return Optional.ofNullable(mapper.selectSkuMapping(tenantId, shopId, externalSkuId)); }
     public Optional<YouzanSkuMapping> findSkuMappingForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectSkuMappingForUpdate(tenantId, id)); }
     public List<YouzanSkuMapping> findSkuMappings(long tenantId, String shopId) { return mapper.selectSkuMappings(tenantId, shopId); }
-    public void insertSkuMapping(YouzanSkuMapping e) { mapper.insertSkuMapping(com.whale.crm.platform.context.TenantContext.currentTenantId(), e); }
+    public void insertSkuMapping(long tenantId, YouzanSkuMapping e) { mapper.insertSkuMapping(tenantId, e); }
     public int updateSkuMapping(long tenantId, long id, long version, long crmSkuId, String status) { return mapper.updateSkuMapping(tenantId, id, version, crmSkuId, status); }
 
     public Optional<YouzanCustomerLink> findCustomerLink(long tenantId, String shopId, String externalCustomerId) { return Optional.ofNullable(mapper.selectCustomerLink(tenantId, shopId, externalCustomerId)); }
     public Optional<YouzanCustomerLink> findCustomerLinkForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectCustomerLinkForUpdate(tenantId, id)); }
     public List<YouzanCustomerLink> findCustomerLinks(long tenantId, String shopId) { return mapper.selectCustomerLinks(tenantId, shopId); }
-    public void insertCustomerLink(YouzanCustomerLink e) { mapper.insertCustomerLink(com.whale.crm.platform.context.TenantContext.currentTenantId(), e); }
+    public List<YouzanCustomerLink> findScopedCustomerLinks(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.selectScopedCustomerLinks(tenantId, shopId, scope); }
+    public void insertCustomerLink(long tenantId, YouzanCustomerLink e) { mapper.insertCustomerLink(tenantId, e); }
     public int updateCustomerLink(long tenantId, long id, long version, long customerId, String reason) { return mapper.updateCustomerLink(tenantId, id, version, customerId, reason); }
 
     public Optional<YouzanSyncIssue> findIssue(long tenantId, long id) { return Optional.ofNullable(mapper.selectIssue(tenantId, id)); }
     public Optional<YouzanSyncIssue> findIssueForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectIssueForUpdate(tenantId, id)); }
     public Optional<YouzanSyncIssue> findIssueByEventAndType(long tenantId, long eventId, String issueType) { return Optional.ofNullable(mapper.selectIssueByEventAndType(tenantId, eventId, issueType)); }
     public List<YouzanSyncIssue> findIssues(long tenantId, String status, int offset, int size) { return mapper.selectIssues(tenantId, status, offset, size); }
+    public List<YouzanSyncIssue> findScopedIssues(long tenantId, String status, CustomerScopeSupport.ScopeQuery scope, int offset, int size) { return mapper.selectScopedIssues(tenantId, status, scope, offset, size); }
     public long countIssues(long tenantId, String status) { return mapper.countIssues(tenantId, status); }
+    public long countScopedIssues(long tenantId, String status, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedIssues(tenantId, status, scope); }
     public void insertIssue(long tenantId, YouzanSyncIssue e) { mapper.insertIssue(tenantId, e); }
     public int updateIssueStatus(long tenantId, long id, long version, String status, int attempts,
                                  String lastError, Instant nextRetryAt, Instant resolvedAt, Long resolvedBy) {

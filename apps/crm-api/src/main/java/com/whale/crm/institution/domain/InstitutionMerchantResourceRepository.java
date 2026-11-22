@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface InstitutionMerchantResourceRepository {
-    void insert(InstitutionMerchantResource resource);
+    void insert(long tenantId, InstitutionMerchantResource resource);
     Optional<InstitutionMerchantResource> findByResourceNo(long tenantId, String resourceNo);
     Optional<InstitutionMerchantResource> find(long tenantId, long id);
     Optional<InstitutionMerchantResource> findForUpdate(long tenantId, long id);

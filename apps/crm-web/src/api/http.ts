@@ -12,8 +12,21 @@ const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete'])
 
 /** 登录接口本身不要求 CSRF(尚无会话),其余写方法必须携带 X-CSRF-Token 且等于 CRM_CSRF Cookie */
 const CSRF_EXEMPT_PATHS = new Set(['/auth/login'])
+const UNAUTHORIZED_IGNORED_PATHS = new Set(['/auth/login', '/auth/me', '/auth/logout'])
 
-/** 统一 axios 实例,后端 API 前缀 /api/v1(dev 下由 vite 代理到 http://localhost:8080) */
+let unauthorizedHandler: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler
+}
+
+function isIgnoredUnauthorizedPath(url?: string): boolean {
+  const path = (url ?? '').split('?')[0] ?? ''
+  const normalized = path.startsWith('/api/v1') ? path.slice('/api/v1'.length) : path
+  return UNAUTHORIZED_IGNORED_PATHS.has(normalized)
+}
+
+/** 统一 axios 实例,后端 API 前缀 /api/v1 */
 export const http = axios.create({
   baseURL: '/api/v1',
   timeout: 10000,
@@ -50,7 +63,7 @@ export function normalizeApiError(error: unknown): ApiError {
         return new ApiError({
           status: 0,
           code: 'NETWORK_ERROR',
-          message: '无法连接后端服务,请确认后端已启动(http://localhost:8080)',
+          message: '无法连接后端服务，请确认后端已启动或稍后重试',
         })
       }
       const code = body.code ?? (status === 401 ? 'UNAUTHORIZED' : `HTTP_${status}`)
@@ -70,7 +83,7 @@ export function normalizeApiError(error: unknown): ApiError {
       return new ApiError({
         status: 0,
         code: 'NETWORK_ERROR',
-        message: '无法连接后端服务,请确认后端已启动(http://localhost:8080)',
+        message: '无法连接后端服务，请确认后端已启动或稍后重试',
       })
     }
   }
@@ -95,5 +108,11 @@ http.interceptors.response.use(
     }
     return response
   },
-  (error: unknown) => Promise.reject(normalizeApiError(error)),
+  (error: unknown) => {
+    const apiError = normalizeApiError(error)
+    if (apiError.status === 401 && axios.isAxiosError(error) && !isIgnoredUnauthorizedPath(error.config?.url)) {
+      unauthorizedHandler?.()
+    }
+    return Promise.reject(apiError)
+  },
 )

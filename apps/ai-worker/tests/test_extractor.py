@@ -49,7 +49,7 @@ def test_openai_compatible_adapter_parses_strict_json():
         assert body["response_format"] == {"type": "json_object"}
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(insight())}}]})
 
-    extractor = OpenAICompatibleExtractor("http://model.local/v1", "test-key", "test-model", transport=httpx.MockTransport(handler))
+    extractor = OpenAICompatibleExtractor("https://model.example.test/v1", "test-key", "test-model", transport=httpx.MockTransport(handler))
     result, provider, model = extractor.extract(request())
     assert result.insight_type == "APPOINTMENT_INTENT"
     assert provider == "openai_compatible"
@@ -58,14 +58,14 @@ def test_openai_compatible_adapter_parses_strict_json():
 
 def test_request_provider_config_takes_precedence_over_environment(monkeypatch):
     monkeypatch.setattr(settings, "ai_provider", "mock")
-    monkeypatch.setattr(settings, "ai_base_url", "http://environment.local/v1")
+    monkeypatch.setattr(settings, "ai_base_url", "https://environment.example.test/v1")
     monkeypatch.setattr(settings, "ai_api_key", "environment-key")
     monkeypatch.setattr(settings, "ai_model", "environment-model")
     monkeypatch.setattr(settings, "ai_timeout_seconds", 30)
     data = request().model_dump(mode="json")
     data["provider_config"] = {
         "provider": "openai_compatible",
-        "base_url": "https://request.local/v1/",
+        "base_url": "https://request.example.test/v1/",
         "api_key": "request-secret-key",
         "model": "request-model",
         "timeout_seconds": 7.5,
@@ -73,7 +73,7 @@ def test_request_provider_config_takes_precedence_over_environment(monkeypatch):
     configured_request = ExtractionRequest.model_validate(data)
 
     def handler(req: httpx.Request) -> httpx.Response:
-        assert str(req.url) == "https://request.local/v1/chat/completions"
+        assert str(req.url) == "https://request.example.test/v1/chat/completions"
         assert req.headers["Authorization"] == "Bearer request-secret-key"
         assert req.extensions["timeout"] == {"connect": 7.5, "read": 7.5, "write": 7.5, "pool": 7.5}
         body = json.loads(req.content)
@@ -109,7 +109,7 @@ def test_request_disabled_provider_takes_precedence_over_environment():
 
 def test_openai_compatible_adapter_rejects_invalid_output():
     transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"choices": [{"message": {"content": "not-json"}}]}))
-    extractor = OpenAICompatibleExtractor("http://model.local/v1", "test-key", "test-model", transport=transport)
+    extractor = OpenAICompatibleExtractor("https://model.example.test/v1", "test-key", "test-model", transport=transport)
     with pytest.raises(AiExtractionError, match="结构或证据校验"):
         extractor.extract(request())
 
@@ -131,7 +131,7 @@ def test_real_adapter_rejects_high_risk_classification_without_review_evidence(i
     transport = httpx.MockTransport(lambda _: httpx.Response(200, json={
         "choices": [{"message": {"content": json.dumps(unsafe)}}],
     }))
-    extractor = OpenAICompatibleExtractor("http://model.local/v1", "test-key", "test-model", transport=transport)
+    extractor = OpenAICompatibleExtractor("https://model.example.test/v1", "test-key", "test-model", transport=transport)
     with pytest.raises(AiExtractionError, match="结构或证据校验"):
         extractor.extract(request())
 

@@ -73,7 +73,7 @@ public class CatalogApplicationService {
         Project input = new Project(null, request.projectCode().strip(), request.projectName().strip(),
                 blankToNull(request.categoryCode()), request.listPriceFen(), "ACTIVE", null, null);
         try {
-            repository.insertProject(input);
+            repository.insertProject(tenantId, input);
         } catch (DuplicateKeyException ex) {
             throw new BusinessException(ErrorCode.CONFLICT, "项目编码已存在");
         }
@@ -87,7 +87,7 @@ public class CatalogApplicationService {
         Project before = requireProject(tenantId, id);
         Project input = new Project(id, before.projectCode(), request.projectName().strip(),
                 blankToNull(request.categoryCode()), request.listPriceFen(), request.status(), before.createdAt(), request.version());
-        if (repository.updateProject(input) == 0) {
+        if (repository.updateProject(tenantId, input) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "项目已被他人修改，请刷新后重试");
         }
         Project after = requireProject(tenantId, id);
@@ -96,10 +96,12 @@ public class CatalogApplicationService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<ProductPackage> packages(long tenantId, String keyword, String status, int page, int size) {
+    public PageResponse<ProductPackage> packages(long tenantId, CurrentUser user, String keyword, String status,
+                                                 int page, int size) {
+        Set<Long> scope = institutionScope(user);
         int offset = (page - 1) * size;
-        return new PageResponse<>(repository.searchPackages(tenantId, keyword, status, offset, size),
-                repository.countPackages(tenantId, keyword, status), page, size);
+        return new PageResponse<>(repository.searchPackages(tenantId, keyword, status, scope, offset, size),
+                repository.countPackages(tenantId, keyword, status, scope), page, size);
     }
 
     @Transactional
@@ -110,7 +112,7 @@ public class CatalogApplicationService {
         ProductPackage input = new ProductPackage(null, request.packageCode().strip(), request.packageName().strip(),
                 "ACTIVE", null, null);
         try {
-            repository.insertPackage(input);
+            repository.insertPackage(tenantId, input);
         } catch (DuplicateKeyException ex) {
             throw new BusinessException(ErrorCode.CONFLICT, "套餐编码已存在");
         }
@@ -124,7 +126,7 @@ public class CatalogApplicationService {
         ProductPackage before = requirePackage(tenantId, id);
         ProductPackage input = new ProductPackage(id, before.packageCode(), request.packageName().strip(),
                 request.status(), before.createdAt(), request.version());
-        if (repository.updatePackage(input) == 0) {
+        if (repository.updatePackage(tenantId, input) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "套餐已被他人修改，请刷新后重试");
         }
         if ("INACTIVE".equals(request.status())) {
@@ -136,9 +138,20 @@ public class CatalogApplicationService {
     }
 
     @Transactional(readOnly = true)
-    public List<PackageVersion> versions(long tenantId, long packageId) {
+    public List<PackageVersion> versions(long tenantId, CurrentUser user, long packageId) {
         requirePackage(tenantId, packageId);
-        return repository.findVersions(tenantId, packageId);
+        Set<Long> scope = institutionScope(user);
+        if (scope == null) {
+            return repository.findVersions(tenantId, packageId);
+        }
+        if (scope.isEmpty()) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "套餐不存在或不适用于本机构");
+        }
+        List<PackageVersion> result = repository.findVersionsByInstitutionIds(tenantId, packageId, scope);
+        if (result.isEmpty()) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "套餐不存在或不适用于本机构");
+        }
+        return result;
     }
 
     @Transactional
@@ -147,6 +160,9 @@ public class CatalogApplicationService {
         repository.findPackageForUpdate(tenantId, packageId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "套餐不存在"));
         List<PackageProject> items = validateProjects(tenantId, request.projects());
+        if (!"CHOOSE_N".equals(request.selectionMode())) {
+            validateDistinctProjects(items);
+        }
         List<PackageSelectionGroup> groups = validateSelectionGroups(request.selectionMode(), request.choiceCount(),
                 items, request.groups());
         int versionNo = repository.nextVersionNo(tenantId, packageId);
@@ -154,17 +170,17 @@ public class CatalogApplicationService {
                 request.choiceCount(), blankToNull(request.selectionRules()), "DRAFT", null, null);
         PackageVersion created;
         try {
-            repository.insertVersion(input);
+            repository.insertVersion(tenantId, input);
             created = repository.findVersions(tenantId, packageId).stream()
                     .filter(item -> item.versionNo().equals(versionNo)).findFirst().orElseThrow();
             for (PackageSelectionGroup group : groups) {
-                repository.insertSelectionGroup(new PackageSelectionGroup(null, created.id(), group.groupCode(),
+                repository.insertSelectionGroup(tenantId, new PackageSelectionGroup(null, created.id(), group.groupCode(),
                         group.groupName(), group.minSelections(), group.maxSelections(), group.sortOrder(), null));
             }
             for (PackageProject item : items) {
-                repository.insertVersionProject(new PackageProject(null, created.id(), item.projectId(), null, null, null,
-                        null, null, item.grantCount(), item.selectionWeight(), item.allocationPriceFen(),
-                        item.optionGroup(), item.referencePriceFen(), null));
+                repository.insertVersionProject(tenantId, new PackageProject(null, created.id(), item.projectId(),
+                        null, null, null, null, null, item.grantCount(), item.selectionWeight(),
+                        item.allocationPriceFen(), item.optionGroup(), item.referencePriceFen(), null));
             }
         } catch (DuplicateKeyException ex) {
             throw new BusinessException(ErrorCode.CONFLICT, "版本或项目配置重复");
@@ -179,10 +195,27 @@ public class CatalogApplicationService {
         PackageVersion before = requireVersion(tenantId, id);
         requireDraft(before);
         validateSelection(request.selectionMode(), request.choiceCount());
+        List<PackageProject> projects = repository.findVersionProjects(tenantId, id);
+        for (PackageProject project : projects) {
+            if (!"ACTIVE".equals(project.projectStatus())) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "子项目已停用: " + project.projectName());
+            }
+        }
+        if (!"CHOOSE_N".equals(request.selectionMode())) {
+            validateDistinctProjects(projects);
+        } else {
+            List<PackageSelectionGroup> groups = repository.findSelectionGroups(tenantId, id);
+            if (!groups.isEmpty()) {
+                PackageSelectionRules.validateConfiguration(groups, projects);
+            }
+        }
         PackageVersion input = new PackageVersion(id, before.packageId(), before.versionNo(), request.selectionMode(),
                 request.choiceCount(), blankToNull(request.selectionRules()), before.status(), before.createdAt(), request.version());
-        if (repository.updateVersionDraft(input) == 0) {
+        if (repository.updateVersionDraft(tenantId, input) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "版本已被修改或已激活，不能覆盖快照");
+        }
+        if (!"CHOOSE_N".equals(request.selectionMode())) {
+            repository.deleteSelectionGroups(tenantId, id);
         }
         PackageVersion after = requireVersion(tenantId, id);
         audit(tenantId, user, "PACKAGE_VERSION_UPDATE", "PACKAGE_VERSION", id, before, after);
@@ -195,6 +228,9 @@ public class CatalogApplicationService {
         PackageVersion before = requireVersion(tenantId, id);
         requireDraft(before);
         List<PackageProject> items = validateProjects(tenantId, request.projects());
+        if (!"CHOOSE_N".equals(before.selectionMode())) {
+            validateDistinctProjects(items);
+        }
         List<PackageSelectionGroup> groups = request.groups() == null
                 ? repository.findSelectionGroups(tenantId, id)
                 : validateSelectionGroups(before.selectionMode(), before.choiceCount(), items, request.groups());
@@ -214,11 +250,11 @@ public class CatalogApplicationService {
             repository.deleteVersionProjects(tenantId, id);
             repository.deleteSelectionGroups(tenantId, id);
             for (PackageSelectionGroup group : groups) {
-                repository.insertSelectionGroup(new PackageSelectionGroup(null, id, group.groupCode(), group.groupName(),
+                repository.insertSelectionGroup(tenantId, new PackageSelectionGroup(null, id, group.groupCode(), group.groupName(),
                         group.minSelections(), group.maxSelections(), group.sortOrder(), null));
             }
             for (PackageProject item : items) {
-                repository.insertVersionProject(new PackageProject(null, id, item.projectId(), null, null, null,
+                repository.insertVersionProject(tenantId, new PackageProject(null, id, item.projectId(), null, null, null,
                         null, null, item.grantCount(), item.selectionWeight(), item.allocationPriceFen(),
                         item.optionGroup(), item.referencePriceFen(), null));
             }
@@ -236,6 +272,11 @@ public class CatalogApplicationService {
         requireDraft(before);
         List<PackageProject> projects = repository.findVersionProjects(tenantId, id);
         List<PackageSelectionGroup> groups = repository.findSelectionGroups(tenantId, id);
+        if ("USE_N".equals(before.selectionMode())) {
+            throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
+                    "Q01 选择规则未确认，USE_N 仅作历史模板，不能激活或发放权益",
+                    List.of(new ApiResponse.ErrorDetail("Q01", "USE_N 共享次数池规则待运营确认")));
+        }
         if (!CatalogRules.canActivate(before, projects, groups)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "激活前必须配置有效子项目、次数和选择模式");
         }
@@ -265,38 +306,57 @@ public class CatalogApplicationService {
     @Transactional(readOnly = true)
     public PackageVersionSnapshot snapshot(long tenantId, CurrentUser user, long id) {
         PackageVersion version = requireVersion(tenantId, id);
-        ProductPackage productPackage = requirePackage(tenantId, version.packageId());
-        List<PackageProject> projects = repository.findVersionProjects(tenantId, id);
-        List<PackageSelectionGroup> groups = repository.findSelectionGroups(tenantId, id);
-        Set<Long> institutionScope = institutionScope(user);
-        List<Sku> skus = repository.findSkusByVersion(tenantId, id);
-        if (institutionScope != null) {
-            skus = skus.stream().filter(sku -> {
-                Set<Long> ids = new HashSet<>(repository.findInstitutionIdsBySku(tenantId, sku.id()));
-                return ids.stream().anyMatch(institutionScope::contains);
-            }).toList();
-            if (skus.isEmpty()) {
-                throw new BusinessException(ErrorCode.NOT_FOUND, "套餐版本不存在或不适用于本机构");
-            }
-        }
-        Set<Long> institutionIds = new LinkedHashSet<>();
-        for (Sku sku : skus) {
-            institutionIds.addAll(repository.findInstitutionIdsBySku(tenantId, sku.id()));
-        }
-        if (institutionScope != null) {
-            institutionIds.retainAll(institutionScope);
-        }
-        List<Institution> institutions = institutionIds.isEmpty() ? List.of() : repository.findInstitutionsByIds(tenantId, institutionIds);
-        return new PackageVersionSnapshot(id, productPackage.id(), productPackage.packageCode(), productPackage.packageName(),
-                version.versionNo(), version.selectionMode(), version.choiceCount(), version.selectionRules(), version.status(),
-                version.version(), CatalogRules.rulesStatus(version, groups), CatalogRules.allocationStatus(projects),
-                CatalogRules.entitlementIssuable(version, projects, groups), projects, skus, institutions, groups);
+        return buildSnapshot(tenantId, user, version, null);
     }
 
     @Transactional(readOnly = true)
     public PackageVersionSnapshot snapshotBySku(long tenantId, CurrentUser user, long skuId) {
         Sku sku = requireSku(tenantId, skuId);
-        return snapshot(tenantId, user, sku.packageVersionId());
+        PackageVersion version = requireVersion(tenantId, sku.packageVersionId());
+        return buildSnapshot(tenantId, user, version, sku);
+    }
+
+    private PackageVersionSnapshot buildSnapshot(long tenantId, CurrentUser user, PackageVersion version, Sku targetSku) {
+        ProductPackage productPackage = requirePackage(tenantId, version.packageId());
+        List<PackageProject> projects = repository.findVersionProjects(tenantId, version.id());
+        List<PackageSelectionGroup> groups = repository.findSelectionGroups(tenantId, version.id());
+        Set<Long> institutionScope = institutionScope(user);
+        List<Sku> skus;
+        Set<Long> institutionIds = new LinkedHashSet<>();
+        if (targetSku != null) {
+            skus = List.of(targetSku);
+            institutionIds.addAll(repository.findActiveInstitutionIdsBySku(tenantId, targetSku.id()));
+            if (institutionScope != null) {
+                institutionIds.retainAll(institutionScope);
+                if (institutionIds.isEmpty()) {
+                    throw new BusinessException(ErrorCode.NOT_FOUND, "SKU 不存在或不适用于本机构");
+                }
+            }
+        } else {
+            skus = repository.findSkusByVersion(tenantId, version.id());
+            if (institutionScope != null) {
+                skus = skus.stream().filter(sku -> {
+                    Set<Long> ids = new HashSet<>(repository.findActiveInstitutionIdsBySku(tenantId, sku.id()));
+                    return ids.stream().anyMatch(institutionScope::contains);
+                }).toList();
+                if (skus.isEmpty()) {
+                    throw new BusinessException(ErrorCode.NOT_FOUND, "套餐版本不存在或不适用于本机构");
+                }
+            }
+            for (Sku sku : skus) {
+                institutionIds.addAll(repository.findActiveInstitutionIdsBySku(tenantId, sku.id()));
+            }
+            if (institutionScope != null) {
+                institutionIds.retainAll(institutionScope);
+            }
+        }
+        List<Institution> institutions = institutionIds.isEmpty() ? List.of()
+                : repository.findActiveInstitutionsByIds(tenantId, institutionIds);
+        return new PackageVersionSnapshot(version.id(), productPackage.id(), productPackage.packageCode(),
+                productPackage.packageName(), version.versionNo(), version.selectionMode(), version.choiceCount(),
+                version.selectionRules(), version.status(), version.version(),
+                CatalogRules.rulesStatus(version, groups), CatalogRules.allocationStatus(projects),
+                CatalogRules.entitlementIssuable(version, projects, groups), projects, skus, institutions, groups);
     }
 
     @Transactional(readOnly = true)
@@ -318,7 +378,7 @@ public class CatalogApplicationService {
         Sku input = new Sku(null, request.skuCode().strip(), request.packageVersionId(), null, null, null, null,
                 request.specName().strip(), request.salePriceFen(), "INACTIVE", null, null, null, null);
         try {
-            repository.insertSku(input);
+            repository.insertSku(tenantId, input);
             Sku created = repository.findSkuByCode(tenantId, input.skuCode()).orElseThrow();
             for (Long institutionId : institutionIds) {
                 repository.insertSkuInstitution(tenantId, created.id(), institutionId);
@@ -347,7 +407,7 @@ public class CatalogApplicationService {
         Sku input = new Sku(id, before.skuCode(), before.packageVersionId(), null, null, null, null,
                 request.specName().strip(), request.salePriceFen(), before.status(), before.onSaleAt(), before.offSaleAt(),
                 before.createdAt(), request.version());
-        if (repository.updateSku(input) == 0) {
+        if (repository.updateSku(tenantId, input) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "SKU 已被他人修改，请刷新后重试");
         }
         repository.deleteSkuInstitutions(tenantId, id);
@@ -423,6 +483,19 @@ public class CatalogApplicationService {
                 repository.countInstitutions(tenantId, keyword, status, scope), page, size);
     }
 
+    @Transactional(readOnly = true)
+    public List<Institution> activeInstitutionsByIds(long tenantId, CurrentUser user, Set<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> targetIds = new LinkedHashSet<>(ids);
+        Set<Long> scope = institutionScope(user);
+        if (scope != null) {
+            targetIds.retainAll(scope);
+        }
+        return targetIds.isEmpty() ? List.of() : repository.findActiveInstitutionsByIds(tenantId, targetIds);
+    }
+
     private List<PackageProject> validateProjects(long tenantId, List<PackageProjectItemRequest> requests) {
         List<PackageProject> result = new ArrayList<>();
         Set<String> unique = new HashSet<>();
@@ -445,6 +518,15 @@ public class CatalogApplicationService {
                     referencePrice, null));
         }
         return result;
+    }
+
+    private void validateDistinctProjects(List<PackageProject> projects) {
+        Set<Long> projectIds = new HashSet<>();
+        for (PackageProject project : projects) {
+            if (!projectIds.add(project.projectId())) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "同一版本中子项目不能重复配置");
+            }
+        }
     }
 
     private List<PackageSelectionGroup> validateSelectionGroups(String selectionMode, int choiceCount,

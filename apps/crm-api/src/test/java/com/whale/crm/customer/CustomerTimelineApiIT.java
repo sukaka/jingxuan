@@ -74,6 +74,43 @@ class CustomerTimelineApiIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
+    @Test
+    void timelineOmitsUnauthorizedDomainSectionsWithoutReturningForbidden() throws Exception {
+        AuthCookies admin = login("admin");
+        AuthCookies finance = login("finance1");
+        AuthCookies operation = login("operation1");
+        long customerId = customer(admin);
+        Instant base = Instant.now().minus(2, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS);
+        followup(admin, customerId, base);
+        mockMvc.perform(admin.withAuth(post("/api/v1/tasks"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("customerId", customerId, "taskType", "FOLLOWUP",
+                                "title", "H-SEC-09权限过滤任务", "description", "不应暴露给无task:read账号"))))
+                .andExpect(status().isCreated());
+        domainFixtures(customerId, base);
+
+        Set<String> financeTypes = timelineTypes(finance, customerId);
+        assertThat(financeTypes).contains("OWNERSHIP", "TIER", "ORDER", "REDEMPTION", "REFUND");
+        assertThat(financeTypes).doesNotContain("FOLLOWUP", "INTENT", "BLOCKER", "NEXT_FOLLOWUP",
+                "TASK", "APPOINTMENT", "COMPLAINT");
+
+        Set<String> operationTypes = timelineTypes(operation, customerId);
+        assertThat(operationTypes).contains("OWNERSHIP", "TIER", "ORDER", "COMPLAINT");
+        assertThat(operationTypes).doesNotContain("FOLLOWUP", "INTENT", "BLOCKER", "NEXT_FOLLOWUP",
+                "TASK", "APPOINTMENT", "REDEMPTION", "REFUND");
+    }
+
+    private Set<String> timelineTypes(AuthCookies actor, long customerId) throws Exception {
+        String body = mockMvc.perform(get("/api/v1/customers/{id}/timeline?size=50", customerId)
+                        .cookie(actor.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items").isArray())
+                .andReturn().getResponse().getContentAsString();
+        Set<String> types = new LinkedHashSet<>();
+        objectMapper.readTree(body).at("/data/items").forEach(item -> types.add(item.at("/type").asText()));
+        return types;
+    }
+
     private long customer(AuthCookies admin) throws Exception {
         String body = mockMvc.perform(admin.withAuth(post("/api/v1/customers"))
                         .header("Idempotency-Key", "v33-timeline-customer-" + UUID.randomUUID())

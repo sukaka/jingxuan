@@ -99,6 +99,14 @@ public class AiChatSendFenceService {
         fenceRepository.finish(authorization.tenantId(), authorization.runId(), authorization.version(), clock.instant());
     }
 
+    public void releaseForRetry(Authorization authorization) {
+        if (authorization == null) {
+            return;
+        }
+        fenceRepository.releaseForRetry(authorization.tenantId(), authorization.runId(), authorization.version(),
+                clock.instant());
+    }
+
     public void recover(long tenantId, long runId) {
         fenceRepository.recover(tenantId, runId, clock.instant());
     }

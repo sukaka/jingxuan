@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { claimRiskCase, closeRiskCase, getRiskCase, listRiskCases, resolveRiskCase } from '../api/risk'
+import { claimRiskCase, closeRiskCase, getRiskCase, listRiskCases, resolveRiskCase, syncRiskCases } from '../api/risk'
 import type { RiskCase, RiskCaseDetail } from '../api/risk'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import PageCard from '../components/prototype/PageCard.vue'
@@ -18,6 +18,7 @@ const canOpenYouzanSync = computed(() => canRead.value && auth.hasPermission('or
 const rows = ref<RiskCase[]>([])
 const total = ref(0)
 const loading = ref(false)
+const syncing = ref(false)
 const loaded = ref(false)
 const errorMessage = ref('')
 const query = reactive({ keyword: '', status: '', severity: '', riskType: '', page: 1, size: 20 })
@@ -167,6 +168,22 @@ function resetQuery() {
   void load(1)
 }
 
+async function handleSync() {
+  if (!canWrite.value || syncing.value) return
+  syncing.value = true
+  errorMessage.value = ''
+  try {
+    await syncRiskCases(crypto.randomUUID())
+    if (destroyed) return
+    ElMessage.success('已触发风控异常同步，正在刷新台账')
+    await load(1)
+  } catch (error) {
+    if (!destroyed) errorMessage.value = errorText(error, '风控同步失败，请重试')
+  } finally {
+    if (!destroyed) syncing.value = false
+  }
+}
+
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detailError = ref('')
@@ -265,6 +282,7 @@ onBeforeUnmount(() => {
   <div class="proto-page risks-page">
     <PageHeader title="异常订单 / 风控台账" description="集中承接同步、订单、映射、退款、权益与核销异常；认领、处理和关闭必须留理由并保留追加历史">
       <template #actions>
+        <el-button v-if="canWrite" type="primary" :loading="syncing" data-testid="risk-sync-button" @click="handleSync">同步风控异常</el-button>
         <RouterLink v-if="canOpenYouzanSync" to="/integrations/youzan" class="el-button" data-testid="risk-youzan-sync">有赞同步</RouterLink>
       </template>
     </PageHeader>

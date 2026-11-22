@@ -48,6 +48,23 @@
     LIMIT 2
   </select>
 
+  <!-- 认证引导查询：按组织编码定位有效租户，限 2 行用于检测编码歧义 -->
+  <select id="selectActiveTenantIdsByOrgCode" resultType="long">
+    SELECT DISTINCT tenant_id
+    FROM sys_org
+    WHERE org_code = #{orgCode} AND status = 'ACTIVE'
+    ORDER BY tenant_id ASC
+    LIMIT 2
+  </select>
+
+  <!-- 认证引导查询：按租户与登录名精确定位 -->
+  <select id="selectByTenantAndUsernameForAuth" resultMap="SysUserMap">
+    SELECT <include refid="userColumns"/>
+    FROM sys_user
+    WHERE tenant_id = #{tenantId} AND username = #{username}
+    LIMIT 1
+  </select>
+
   <!-- 认证引导查询：令牌校验按全局主键定位 -->
   <select id="selectByIdForAuth" resultMap="SysUserMap">
     SELECT <include refid="userColumns"/>

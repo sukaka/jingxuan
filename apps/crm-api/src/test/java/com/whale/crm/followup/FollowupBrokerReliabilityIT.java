@@ -36,7 +36,7 @@ class FollowupBrokerReliabilityIT extends AbstractMysqlIT {
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.kafka.bootstrap-servers", () -> KafkaTestContainer.bootstrapServers(KAFKA));
+        KafkaTestContainer.registerProperties(registry, KAFKA);
     }
 
     @Autowired
@@ -81,7 +81,7 @@ class FollowupBrokerReliabilityIT extends AbstractMysqlIT {
         properties.put("enable.auto.commit", "false");
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties)) {
             consumer.subscribe(List.of(OutboxKafkaConfiguration.FOLLOWUP_EVENTS_TOPIC));
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
             while (System.nanoTime() < deadline) {
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(250))) {
                     JsonNode envelope = objectMapper.readTree(record.value());

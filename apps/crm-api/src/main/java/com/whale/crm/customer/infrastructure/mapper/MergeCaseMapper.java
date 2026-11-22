@@ -12,6 +12,8 @@ public interface MergeCaseMapper {
 
     MergeCase selectById(@Param("tenantId") long tenantId, @Param("id") long id);
 
+    MergeCase selectByIdForUpdate(@Param("tenantId") long tenantId, @Param("id") long id);
+
     int countPair(@Param("tenantId") long tenantId, @Param("primaryCustomerId") long primaryCustomerId,
                   @Param("secondaryCustomerId") long secondaryCustomerId);
 

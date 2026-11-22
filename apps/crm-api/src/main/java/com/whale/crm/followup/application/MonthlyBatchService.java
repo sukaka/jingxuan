@@ -78,6 +78,7 @@ public class MonthlyBatchService {
     @Transactional
     public MonthlyBatchResponse create(long tenantId, CurrentUser user,
                                        CreateMonthlyBatchRequest request, String idempotencyKey) {
+        requireAllScope(user);
         YearMonth orderMonth = parseMonth(request.orderMonth());
         String key = requireKey(idempotencyKey);
         String payload = canonical(request);
@@ -125,6 +126,7 @@ public class MonthlyBatchService {
 
     @Transactional(readOnly = true)
     public MonthlyBatchResponse detail(long tenantId, CurrentUser user, long batchId) {
+        requireAllScope(user);
         FollowupBatch batch = repository.findBatchById(tenantId, batchId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "回访批次不存在或不可见"));
         List<FollowupBatchItem> items = repository.findItems(tenantId, batchId);
@@ -151,6 +153,7 @@ public class MonthlyBatchService {
 
     private MonthlyBatchResponse execute(long tenantId, CurrentUser user, long batchId,
                                          MonthlyBatchActionRequest request, String idempotencyKey, boolean retry) {
+        requireAllScope(user);
         detail(tenantId, user, batchId);
         String scope = retry ? RETRY_SCOPE : EXECUTE_SCOPE;
         String key = requireKey(idempotencyKey);
@@ -189,6 +192,13 @@ public class MonthlyBatchService {
 
     private LocalDateTime utcStart(YearMonth month) {
         return LocalDateTime.ofInstant(month.atDay(1).atStartOfDay(BUSINESS_ZONE).toInstant(), java.time.ZoneOffset.UTC);
+    }
+
+    private void requireAllScope(CurrentUser user) {
+        DataScope scope = scopeSupport.scope(user);
+        if (scope == null || scope.type() != DataScope.ScopeType.ALL) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅全量数据范围账号可创建或执行月度回访批次");
+        }
     }
 
     private YearMonth parseMonth(String value) {

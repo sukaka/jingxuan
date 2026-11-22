@@ -13,8 +13,11 @@ public interface LoginSessionMapper {
 
     LoginSession selectByTokenHash(@Param("tokenHash") String tokenHash);
 
-    int revokeByTokenHash(@Param("tokenHash") String tokenHash, @Param("revokedAt") Instant revokedAt);
+    int revokeByTokenHash(@Param("tenantId") long tenantId, @Param("userId") long userId,
+                          @Param("tokenHash") String tokenHash, @Param("revokedAt") Instant revokedAt);
 
     int revokeAllByUserId(@Param("tenantId") long tenantId, @Param("userId") long userId,
                           @Param("revokedAt") Instant revokedAt);
+
+    int deleteExpiredBefore(@Param("cutoff") Instant cutoff, @Param("limit") int limit);
 }

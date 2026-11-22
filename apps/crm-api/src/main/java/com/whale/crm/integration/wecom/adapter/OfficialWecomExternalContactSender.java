@@ -27,7 +27,7 @@ public class OfficialWecomExternalContactSender implements ExternalContactMessag
 
     private final boolean officialEnabled;
     private final WecomOfficialProperties properties;
-    private final WecomTokenService tokens;
+    private final WecomTokenService tokenService;
     private final WecomContactSyncRepository contacts;
     private final com.whale.crm.integration.config.application.IntegrationRuntimeConfigService runtimeConfigService;
     private final ObjectMapper objectMapper;
@@ -36,21 +36,22 @@ public class OfficialWecomExternalContactSender implements ExternalContactMessag
     @Autowired
     public OfficialWecomExternalContactSender(
             @Value("${app.wecom.external-contact.official-enabled:false}") boolean officialEnabled,
-            WecomOfficialProperties properties, WecomTokenService tokens, WecomContactSyncRepository contacts,
+            WecomOfficialProperties properties, WecomTokenService tokenService, WecomContactSyncRepository contacts,
             com.whale.crm.integration.config.application.IntegrationRuntimeConfigService runtimeConfigService,
             ObjectMapper objectMapper) {
-        this(officialEnabled, properties, tokens, contacts, runtimeConfigService, objectMapper,
+        this(officialEnabled, properties, tokenService, contacts, runtimeConfigService, objectMapper,
                 new OkHttpClient.Builder().connectTimeout(properties.connectTimeoutMs(), TimeUnit.MILLISECONDS)
-                        .readTimeout(properties.readTimeoutMs(), TimeUnit.MILLISECONDS).build());
+                        .readTimeout(properties.readTimeoutMs(), TimeUnit.MILLISECONDS)
+                        .followRedirects(false).build());
     }
 
     OfficialWecomExternalContactSender(boolean officialEnabled, WecomOfficialProperties properties,
-                                       WecomTokenService tokens, WecomContactSyncRepository contacts,
+                                       WecomTokenService tokenService, WecomContactSyncRepository contacts,
                                        com.whale.crm.integration.config.application.IntegrationRuntimeConfigService runtimeConfigService,
                                        ObjectMapper objectMapper, OkHttpClient http) {
         this.officialEnabled = officialEnabled;
         this.properties = properties;
-        this.tokens = tokens;
+        this.tokenService = tokenService;
         this.contacts = contacts;
         this.runtimeConfigService = runtimeConfigService;
         this.objectMapper = objectMapper;
@@ -66,6 +67,10 @@ public class OfficialWecomExternalContactSender implements ExternalContactMessag
                 || command.text() == null || command.text().isBlank()
                 || command.text().getBytes(StandardCharsets.UTF_8).length > MAX_TEXT_BYTES) {
             return result(WecomSendResult.Status.FAILED, "WECOM_EXTERNAL_CONTACT_TEXT_INVALID");
+        }
+        if (properties.allowedTenantId() <= 0 || command.tenantId() != properties.allowedTenantId()
+                || properties.corpId() == null || !properties.corpId().equals(command.corpId())) {
+            return result(WecomSendResult.Status.FAILED, "WECOM_EXTERNAL_CONTACT_TENANT_FORBIDDEN");
         }
         if (!runtimeConfigService.wecomOfficialEnabled(command.tenantId())) {
             return result(WecomSendResult.Status.FAILED, "WECOM_EXTERNAL_CONTACT_OFFICIAL_DISABLED");
@@ -91,7 +96,7 @@ public class OfficialWecomExternalContactSender implements ExternalContactMessag
             payload.put("client_msgid", command.idempotencyKey());
             payload.set("text", text);
             HttpUrl url = HttpUrl.get(properties.apiBaseUrl() + "/cgi-bin/externalcontact/message/send")
-                    .newBuilder().addQueryParameter("access_token", tokens.token()).build();
+                    .newBuilder().addQueryParameter("access_token", tokenService.token()).build();
             request = new Request.Builder().url(url)
                     .post(RequestBody.create(objectMapper.writeValueAsString(payload), JSON)).build();
         } catch (com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException ex) {
@@ -107,7 +112,7 @@ public class OfficialWecomExternalContactSender implements ExternalContactMessag
             JsonNode body = objectMapper.readTree(raw);
             int code = body.path("errcode").asInt(-1);
             if (refreshToken && (code == 40014 || code == 42001)) {
-                tokens.refresh();
+                tokenService.refresh();
                 return execute(command, wecomUserId, false);
             }
             if (code == 45009 || response.code() == 429) {

@@ -53,7 +53,8 @@ public class PackageController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) @Size(max = 64) String keyword,
             @RequestParam(required = false) String status, HttpServletRequest request) {
-        return ApiResponse.ok(service.packages(TenantContext.currentTenantId(), keyword, status, page, size), requestId(request));
+        return ApiResponse.ok(service.packages(TenantContext.currentTenantId(),
+                SecuritySupport.requireCurrentUser(), keyword, status, page, size), requestId(request));
     }
 
     @PostMapping("/packages")
@@ -74,7 +75,8 @@ public class PackageController {
     @GetMapping("/packages/{id}/versions")
     @PreAuthorize("hasAuthority('product:read')")
     public ApiResponse<List<PackageVersion>> versions(@PathVariable long id, HttpServletRequest request) {
-        return ApiResponse.ok(service.versions(TenantContext.currentTenantId(), id), requestId(request));
+        return ApiResponse.ok(service.versions(TenantContext.currentTenantId(),
+                SecuritySupport.requireCurrentUser(), id), requestId(request));
     }
 
     @PostMapping("/packages/{id}/versions")

@@ -101,7 +101,7 @@ beforeEach(() => {
     writable: true,
     value: vi.fn(() => ({ finished: Promise.resolve(), cancel: vi.fn() })),
   })
-  vi.mocked(getOperationsDashboard).mockResolvedValue(dashboard())
+  vi.mocked(getOperationsDashboard).mockReset().mockResolvedValue(dashboard())
 })
 
 afterEach(() => {

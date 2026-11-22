@@ -79,8 +79,8 @@ class InstitutionSecurityBoundaryApiIT extends AbstractMysqlIT {
         long requestId = request.at("/id").asLong();
         assertThat(request.at("/status").asText()).isEqualTo("PENDING_REVIEW");
         assertThat(request.at("/currentStep").asText()).isEqualTo("FINANCE");
-        assertThat(request.at("/beforeMasked/value").asText()).isEqualTo("****8866");
-        assertThat(request.at("/afterMasked/value").asText()).isEqualTo("****9999");
+        assertThat(request.at("/beforeMasked").isNull()).isTrue();
+        assertThat(request.at("/afterMasked").isNull()).isTrue();
         String requestCipher = queryString(
                 "SELECT after_cipher FROM crm_profile_change_request WHERE tenant_id=1 AND id=?", requestId);
         assertAesGcmJson(requestCipher, NEW_TAX);
@@ -90,6 +90,8 @@ class InstitutionSecurityBoundaryApiIT extends AbstractMysqlIT {
 
         JsonNode changeDetail = data(get("/api/v1/institution-change-requests/" + requestId)
                 .cookie(finance.cookies()));
+        assertThat(changeDetail.at("/beforeMasked/value").asText()).isEqualTo("****8866");
+        assertThat(changeDetail.at("/afterMasked/value").asText()).isEqualTo("****9999");
         assertNoSecrets(changeDetail.toString(), OLD_TAX, NEW_TAX, oldCipher, requestCipher);
         JsonNode beforeApproval = data(get("/api/v1/institution-profiles/" + institutionId)
                 .cookie(finance.cookies()));
@@ -386,8 +388,12 @@ class InstitutionSecurityBoundaryApiIT extends AbstractMysqlIT {
 
         JsonNode own = data(changeRequest(operator1, body, key("own-scope")));
         long requestId = own.at("/id").asLong();
-        assertThat(own.at("/afterMasked/value").asText()).isEqualTo("****7777");
+        assertThat(own.at("/beforeMasked").isNull()).isTrue();
+        assertThat(own.at("/afterMasked").isNull()).isTrue();
         assertThat(own.toString()).doesNotContain(crossPlaintext);
+        JsonNode financeView = data(get("/api/v1/institution-change-requests/" + requestId)
+                .cookie(finance.cookies()));
+        assertThat(financeView.at("/afterMasked/value").asText()).isEqualTo("****7777");
         assertThat(queryLong("SELECT requested_by FROM crm_profile_change_request WHERE tenant_id=1 AND id=?", requestId))
                 .isEqualTo(10L);
         mockMvc.perform(get("/api/v1/institution-change-requests/" + requestId).cookie(operator2.cookies()))
@@ -458,6 +464,220 @@ class InstitutionSecurityBoundaryApiIT extends AbstractMysqlIT {
         assertManagerFields(search);
         assertNoSecrets(search.toString(), OLD_BANK, OLD_TAX, "合成结款主体", "合成银行", "初始保投产",
                 bankCipher, taxCipher, bankNameCipher);
+    }
+
+    @Test
+    void hSec09Part3ChangeRequestResponsesRedactCommercialAndFinanceFieldsByRole() throws Exception {
+        long institutionId = newActiveProfile();
+        AuthCookies operation = login("operation1");
+        long evidenceFileId = insertFileObject(1L, "CHANGE_EVIDENCE", institutionId, "CLEAN");
+        long contractFileId = insertFileObject(1L, "CONTRACT", institutionId, "CLEAN");
+
+        JsonNode rateReq = data(changeRequest(business, institutionId, "onlineRate", new BigDecimal("0.21"), 1,
+                "IT-HSEC09-RATE", key("hsec09-rate")));
+        long rateReqId = rateReq.at("/id").asLong();
+
+        JsonNode bankReq = data(changeRequest(business, Map.of(
+                "institutionId", institutionId,
+                "fieldCode", "bankAccount",
+                "newValue", "6222000000005555",
+                "baseVersion", 1,
+                "reason", "IT-HSEC09-BANK",
+                "evidenceFileId", evidenceFileId), key("hsec09-bank")));
+        long bankReqId = bankReq.at("/id").asLong();
+        assertThat(bankReq.at("/beforeMasked").isNull()).isTrue();
+        assertThat(bankReq.at("/afterMasked").isNull()).isTrue();
+        assertThat(bankReq.at("/evidenceFileId").isNull()).isTrue();
+
+        JsonNode dayReq = data(changeRequest(business, institutionId, "settlementDay", "15", 1,
+                "IT-HSEC09-DAY", key("hsec09-day")));
+        long dayReqId = dayReq.at("/id").asLong();
+
+        long contractId = data(business.withAuth(post("/api/v1/institution-contracts"))
+                .header("Idempotency-Key", key("hsec09-contract"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("institutionId", institutionId, "contractNo",
+                        "IT-HSEC09-" + UUID.randomUUID().toString().substring(0, 8),
+                        "title", "边界测试合同", "contractType", "SERVICE", "startDate", "2026-01-01",
+                        "fileId", contractFileId, "amountFen", 10000))))
+                .at("/id").asLong();
+        long contractReqId = data(business.withAuth(post("/api/v1/institution-contracts/" + contractId + "/activation-requests"))
+                .header("Idempotency-Key", key("hsec09-contract-act"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("baseVersion", 0, "reason", "IT-HSEC09-CONTRACT",
+                        "evidenceFileId", evidenceFileId))))
+                .at("/id").asLong();
+
+        // MANAGER sees null for commercial & finance fields and null evidenceFileId on CONTRACT_ACTIVATION,
+        // while settlementDay remains visible; full response contains zero forbidden fields.
+        JsonNode managerList = root(get("/api/v1/institution-change-requests?institutionId=" + institutionId)
+                .cookie(manager.cookies()));
+        assertManagerFields(managerList);
+        assertNoSecrets(managerList.toString(), OLD_BANK, "6222000000005555", "****8866", "****5555");
+        JsonNode managerRate = data(get("/api/v1/institution-change-requests/" + rateReqId).cookie(manager.cookies()));
+        assertThat(managerRate.at("/beforeMasked").isNull()).isTrue();
+        assertThat(managerRate.at("/afterMasked").isNull()).isTrue();
+        assertThat(managerRate.at("/evidenceFileId").isNull()).isTrue();
+        JsonNode managerBank = data(get("/api/v1/institution-change-requests/" + bankReqId).cookie(manager.cookies()));
+        assertThat(managerBank.at("/beforeMasked").isNull()).isTrue();
+        assertThat(managerBank.at("/afterMasked").isNull()).isTrue();
+        assertThat(managerBank.at("/evidenceFileId").isNull()).isTrue();
+        JsonNode managerDay = data(get("/api/v1/institution-change-requests/" + dayReqId).cookie(manager.cookies()));
+        assertThat(managerDay.at("/afterMasked/value").asText()).isEqualTo("15");
+        JsonNode managerContract = data(get("/api/v1/institution-change-requests/" + contractReqId)
+                .cookie(manager.cookies()));
+        assertThat(managerContract.at("/afterMasked/status").asText()).isEqualTo("ACTIVE");
+        assertThat(managerContract.at("/evidenceFileId").isNull()).isTrue();
+
+        // OPERATION (!finance) sees commercial onlineRate, but NOT finance bankAccount
+        JsonNode opRate = data(get("/api/v1/institution-change-requests/" + rateReqId).cookie(operation.cookies()));
+        assertThat(opRate.at("/afterMasked/value").asText()).isEqualTo("0.21");
+        JsonNode opBank = data(get("/api/v1/institution-change-requests/" + bankReqId).cookie(operation.cookies()));
+        assertThat(opBank.at("/beforeMasked").isNull()).isTrue();
+        assertThat(opBank.at("/afterMasked").isNull()).isTrue();
+        assertThat(opBank.at("/evidenceFileId").isNull()).isTrue();
+
+        // FINANCE sees masked bankAccount + evidenceFileId
+        JsonNode finBank = data(get("/api/v1/institution-change-requests/" + bankReqId).cookie(finance.cookies()));
+        assertThat(finBank.at("/beforeMasked/value").asText()).isEqualTo("****8866");
+        assertThat(finBank.at("/afterMasked/value").asText()).isEqualTo("****5555");
+        assertThat(finBank.at("/evidenceFileId").asLong()).isEqualTo(evidenceFileId);
+    }
+
+    @Test
+    void hBug06ApprovingSettlementNameAndBooleanFieldsPersistsPlaintextAndTinyint() throws Exception {
+        long institutionId = newActiveProfile();
+
+        // 1. settlementName -> plaintext stored in crm_institution.settlement_name
+        long nameReqId = data(changeRequest(business, institutionId, "settlementName", "新版结款主体明文", 1,
+                "IT-HBUG06-NAME", key("hbug06-name"))).at("/id").asLong();
+        review(finance, nameReqId, "finance-review", 0, "APPROVE", key("hbug06-name-approve"), 200);
+        assertThat(queryString("SELECT settlement_name FROM crm_institution WHERE tenant_id=1 AND id=?",
+                institutionId)).isEqualTo("新版结款主体明文");
+
+        // 2. chargesFee -> false stored as 0 in TINYINT(1)
+        long feeReqId = data(changeRequest(business, institutionId, "chargesFee", false, 2,
+                "IT-HBUG06-FEE", key("hbug06-fee"))).at("/id").asLong();
+        review(admin, feeReqId, "market-review", 0, "APPROVE", key("hbug06-fee-market"), 200);
+        review(finance, feeReqId, "finance-review", 1, "APPROVE", key("hbug06-fee-finance"), 200);
+        assertThat(queryInt("SELECT charges_fee FROM crm_institution WHERE tenant_id=1 AND id=?", institutionId))
+                .isZero();
+
+        // 3. guaranteeRoi -> false stored as 0, then true stored as 1 in TINYINT(1)
+        long roiReqId = data(changeRequest(business, institutionId, "guaranteeRoi", false, 3,
+                "IT-HBUG06-ROI-0", key("hbug06-roi-0"))).at("/id").asLong();
+        review(admin, roiReqId, "market-review", 0, "APPROVE", key("hbug06-roi0-market"), 200);
+        review(finance, roiReqId, "finance-review", 1, "APPROVE", key("hbug06-roi0-finance"), 200);
+        assertThat(queryInt("SELECT guarantee_roi FROM crm_institution WHERE tenant_id=1 AND id=?", institutionId))
+                .isZero();
+
+        long roiTrueReqId = data(changeRequest(business, institutionId, "guaranteeRoi", true, 4,
+                "IT-HBUG06-ROI-1", key("hbug06-roi-1"))).at("/id").asLong();
+        review(admin, roiTrueReqId, "market-review", 0, "APPROVE", key("hbug06-roi1-market"), 200);
+        review(finance, roiTrueReqId, "finance-review", 1, "APPROVE", key("hbug06-roi1-finance"), 200);
+        assertThat(queryInt("SELECT guarantee_roi FROM crm_institution WHERE tenant_id=1 AND id=?", institutionId))
+                .isEqualTo(1);
+
+        JsonNode profile = data(get("/api/v1/institution-profiles/" + institutionId).cookie(finance.cookies()));
+        assertThat(profile.at("/settlementName").asText()).isEqualTo("新版结款主体明文");
+        assertThat(profile.at("/chargesFee").asBoolean()).isFalse();
+        assertThat(profile.at("/guaranteeRoi").asBoolean()).isTrue();
+    }
+
+    @Test
+    void mBe01RealFileInstitutionOperationsEnforcesOwnershipClassificationScanStatusAndTenant() throws Exception {
+        long inst1 = newActiveProfile();
+        long inst2 = newActiveProfile();
+
+        long inst1ContractClean = insertFileObject(1L, "CONTRACT", inst1, "CLEAN");
+        long inst1QualClean = insertFileObject(1L, "QUALIFICATION", inst1, "CLEAN");
+        long inst1EvidenceClean = insertFileObject(1L, "CHANGE_EVIDENCE", inst1, "CLEAN");
+        long inst1ContractPending = insertFileObject(1L, "CONTRACT", inst1, "PENDING");
+        long inst2ContractClean = insertFileObject(1L, "CONTRACT", inst2, "CLEAN");
+        long inst2EvidenceClean = insertFileObject(1L, "CHANGE_EVIDENCE", inst2, "CLEAN");
+        long tenant2File = insertFileObject(2L, "CONTRACT", null, "CLEAN");
+
+        // Wrong institution -> 403 FORBIDDEN
+        mockMvc.perform(business.withAuth(post("/api/v1/institution-contracts"))
+                        .header("Idempotency-Key", key("mbe01-wrong-inst-contract"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("institutionId", inst1, "contractNo", "MBE01-1",
+                                "title", "越权机构合同", "contractType", "SERVICE", "startDate", "2026-01-01",
+                                "fileId", inst2ContractClean, "amountFen", 100))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(changeRequest(business, Map.of(
+                        "institutionId", inst1, "fieldCode", "fullName", "newValue", "跨机构凭证",
+                        "baseVersion", 1, "reason", "IT-MBE01", "evidenceFileId", inst2EvidenceClean),
+                key("mbe01-wrong-inst-evidence")))
+                .andExpect(status().isForbidden());
+
+        // Wrong classification -> 409 CONFLICT
+        mockMvc.perform(business.withAuth(post("/api/v1/institution-contracts"))
+                        .header("Idempotency-Key", key("mbe01-wrong-class-contract"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("institutionId", inst1, "contractNo", "MBE01-2",
+                                "title", "错类合同", "contractType", "SERVICE", "startDate", "2026-01-01",
+                                "fileId", inst1QualClean, "amountFen", 100))))
+                .andExpect(status().isConflict());
+        mockMvc.perform(business.withAuth(post("/api/v1/institution-qualifications"))
+                        .header("Idempotency-Key", key("mbe01-wrong-class-qual"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("institutionId", inst1, "qualificationType", "BUSINESS_LICENSE",
+                                "title", "错类资质", "licenseNo", "LIC-1", "fileId", inst1ContractClean))))
+                .andExpect(status().isConflict());
+        mockMvc.perform(changeRequest(business, Map.of(
+                        "institutionId", inst1, "fieldCode", "fullName", "newValue", "错类凭证",
+                        "baseVersion", 1, "reason", "IT-MBE01", "evidenceFileId", inst1ContractClean),
+                key("mbe01-wrong-class-evidence")))
+                .andExpect(status().isConflict());
+
+        // Non-CLEAN (PENDING) -> 409 CONFLICT
+        mockMvc.perform(business.withAuth(post("/api/v1/institution-contracts"))
+                        .header("Idempotency-Key", key("mbe01-pending"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("institutionId", inst1, "contractNo", "MBE01-3",
+                                "title", "未扫描合同", "contractType", "SERVICE", "startDate", "2026-01-01",
+                                "fileId", inst1ContractPending, "amountFen", 100))))
+                .andExpect(status().isConflict());
+
+        // Cross-tenant file -> 404 NOT_FOUND
+        mockMvc.perform(business.withAuth(post("/api/v1/institution-contracts"))
+                        .header("Idempotency-Key", key("mbe01-cross-tenant"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("institutionId", inst1, "contractNo", "MBE01-4",
+                                "title", "跨租户文件", "contractType", "SERVICE", "startDate", "2026-01-01",
+                                "fileId", tenant2File, "amountFen", 100))))
+                .andExpect(status().isNotFound());
+
+        // Valid matching institutionId + FileClassification + CLEAN -> 201
+        mockMvc.perform(business.withAuth(post("/api/v1/institution-contracts"))
+                        .header("Idempotency-Key", key("mbe01-valid-contract"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("institutionId", inst1, "contractNo", "MBE01-OK-" + UUID.randomUUID().toString().substring(0, 6),
+                                "title", "合法合同", "contractType", "SERVICE", "startDate", "2026-01-01",
+                                "fileId", inst1ContractClean, "amountFen", 100))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(business.withAuth(post("/api/v1/institution-qualifications"))
+                        .header("Idempotency-Key", key("mbe01-valid-qual"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("institutionId", inst1, "qualificationType", "BUSINESS_LICENSE",
+                                "title", "合法资质", "licenseNo", "LIC-OK", "fileId", inst1QualClean))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(changeRequest(business, Map.of(
+                        "institutionId", inst1, "fieldCode", "fullName", "newValue", "合法凭证名称",
+                        "baseVersion", 1, "reason", "IT-MBE01-OK", "evidenceFileId", inst1EvidenceClean),
+                key("mbe01-valid-evidence")))
+                .andExpect(status().isCreated());
+    }
+
+    private long insertFileObject(long tenantId, String classification, Long institutionId, String scanStatus) {
+        String objectKey = "sealed/" + tenantId + "/it-mbe01-" + UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO crm_file_object (tenant_id,object_key,mime_type,size_bytes,sha256,"
+                        + "classification,institution_id,scan_status,uploaded_by) VALUES (?,?,?,?,?,?,?,?,?)",
+                tenantId, objectKey, "application/pdf", 128L,
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                classification, institutionId, scanStatus, 1L);
+        return queryLong("SELECT id FROM crm_file_object WHERE tenant_id=? AND object_key=?", tenantId, objectKey);
     }
 
     private long newActiveProfile() throws Exception {

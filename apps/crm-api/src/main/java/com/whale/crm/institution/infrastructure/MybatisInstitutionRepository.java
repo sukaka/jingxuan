@@ -23,7 +23,7 @@ public class MybatisInstitutionRepository implements InstitutionRepository {
         this.mapper = mapper;
     }
 
-    public void insertProfile(InstitutionProfile e) { mapper.insertProfile(com.whale.crm.platform.context.TenantContext.currentTenantId(), e); }
+    public void insertProfile(long tenantId, InstitutionProfile e) { mapper.insertProfile(tenantId, e); }
     public Optional<InstitutionProfile> findProfileByNo(long tenantId, String no) { return Optional.ofNullable(mapper.selectProfileByNo(tenantId, no)); }
     public Optional<InstitutionProfile> findProfile(long tenantId, long id) { return Optional.ofNullable(mapper.selectProfile(tenantId, id)); }
     public Optional<InstitutionProfile> findProfileForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectProfileForUpdate(tenantId, id)); }
@@ -41,7 +41,7 @@ public class MybatisInstitutionRepository implements InstitutionRepository {
     public int applyProfileField(long tenantId, long id, long version, String fieldCode, String value) { return mapper.applyProfileField(tenantId, id, version, fieldCode, value); }
     public int touchInstitution(long tenantId, long id, long version) { return mapper.touchInstitution(tenantId, id, version); }
 
-    public void insertContract(InstitutionContract e) { mapper.insertContract(com.whale.crm.platform.context.TenantContext.currentTenantId(), e); }
+    public void insertContract(long tenantId, InstitutionContract e) { mapper.insertContract(tenantId, e); }
     public Optional<InstitutionContract> findContractByKey(long tenantId, String no, int version) { return Optional.ofNullable(mapper.selectContractByKey(tenantId, no, version)); }
     public Optional<InstitutionContract> findContract(long tenantId, long id) { return Optional.ofNullable(mapper.selectContract(tenantId, id)); }
     public Optional<InstitutionContract> findContractForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectContractForUpdate(tenantId, id)); }
@@ -52,7 +52,7 @@ public class MybatisInstitutionRepository implements InstitutionRepository {
     public long countContracts(long tenantId, InstitutionScope scope, long institutionId, String status) { return mapper.countContracts(tenantId, scope, institutionId, status); }
     public int updateContractStatus(long tenantId, long id, long version, String from, String to) { return mapper.updateContractStatus(tenantId, id, version, from, to); }
 
-    public void insertQualification(InstitutionQualification e) { mapper.insertQualification(com.whale.crm.platform.context.TenantContext.currentTenantId(), e); }
+    public void insertQualification(long tenantId, InstitutionQualification e) { mapper.insertQualification(tenantId, e); }
     public Optional<InstitutionQualification> findQualification(long tenantId, long id) { return Optional.ofNullable(mapper.selectQualification(tenantId, id)); }
     public Optional<InstitutionQualification> findQualificationForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectQualificationForUpdate(tenantId, id)); }
     public Optional<InstitutionQualification> findLatestQualification(long tenantId, long institutionId, long fileId, String title) {
@@ -68,7 +68,7 @@ public class MybatisInstitutionRepository implements InstitutionRepository {
         return mapper.updateQualificationStatus(tenantId, id, version, from, to, reviewerId, reviewedAt);
     }
 
-    public void insertChange(ProfileChangeRequest e) { mapper.insertChange(com.whale.crm.platform.context.TenantContext.currentTenantId(), e); }
+    public void insertChange(long tenantId, ProfileChangeRequest e) { mapper.insertChange(tenantId, e); }
     public Optional<ProfileChangeRequest> findChange(long tenantId, long id) { return Optional.ofNullable(mapper.selectChange(tenantId, id)); }
     public Optional<ProfileChangeRequest> findChangeForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectChangeForUpdate(tenantId, id)); }
     public Optional<ProfileChangeRequest> findActiveChange(long tenantId, String target) { return Optional.ofNullable(mapper.selectActiveChange(tenantId, target)); }
@@ -85,6 +85,6 @@ public class MybatisInstitutionRepository implements InstitutionRepository {
                             String currentStep, String activeTarget) {
         return mapper.rebaseChange(tenantId, id, version, baseVersion, targetVersion, currentStep, activeTarget);
     }
-    public void insertStep(ProfileChangeStep e) { mapper.insertStep(com.whale.crm.platform.context.TenantContext.currentTenantId(), e); }
+    public void insertStep(long tenantId, ProfileChangeStep e) { mapper.insertStep(tenantId, e); }
     public List<ProfileChangeStep> findSteps(long tenantId, long id) { return mapper.selectSteps(tenantId, id); }
 }

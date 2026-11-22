@@ -19,7 +19,7 @@ public interface WecomMapper {
     String ROOM_COVERED_STAFF = " SELECT 1 FROM crm_wecom_room_participant covered "
             + "JOIN crm_wecom_staff_account sa ON sa.tenant_id=covered.tenant_id AND sa.corp_id=covered.corp_id AND sa.wecom_userid=covered.wecom_userid AND sa.staff_user_id=covered.staff_user_id AND sa.enabled=1 "
             + "JOIN crm_wecom_archive_member am ON am.tenant_id=covered.tenant_id AND am.corp_id=covered.corp_id AND am.staff_user_id=covered.staff_user_id AND am.enabled=1 "
-            + "JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.status='ACTIVE' "
+            + "JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.user_type='EMPLOYEE' AND su.status='ACTIVE' "
             + "WHERE covered.tenant_id=m.tenant_id AND covered.corp_id=m.corp_id AND covered.room_id=m.conversation_id AND covered.participant_type='STAFF' AND covered.status='ACTIVE' ";
     String ROOM_CURRENT_CONSENT = " NOT EXISTS (SELECT 1 FROM crm_wecom_room_participant rpe "
             + "WHERE rpe.tenant_id=m.tenant_id AND rpe.corp_id=m.corp_id AND rpe.room_id=m.conversation_id AND rpe.participant_type='EXTERNAL' "
@@ -28,7 +28,7 @@ public interface WecomMapper {
             + ROOM_COVERED_STAFF + "AND covered.staff_user_id=rc.staff_user_id))) ";
     String MESSAGE_COLUMNS = "m.id,m.corp_id AS corpId,m.msg_id AS msgId,m.archive_seq AS archiveSeq,m.customer_id AS customerId,m.external_userid AS externalUserid,m.staff_user_id AS staffUserId,m.conversation_id AS conversationId,m.message_type AS messageType,m.sender_type AS senderType,m.sent_at AS sentAt,m.content_object_key AS contentObjectKey,m.content_sha256 AS contentSha256,m.consent_snapshot AS consentSnapshot,m.consent_evidence_ref AS consentEvidenceRef,m.status,m.recalled_at AS recalledAt,m.recall_message_id AS recallMessageId,"
             + "CASE WHEN m.conversation_type='DIRECT' THEN c.consent_status WHEN " + ROOM_CURRENT_CONSENT + " THEN 'GRANTED' ELSE 'REVOKED' END AS currentConsentStatus,"
-            + "m.version,m.conversation_type AS conversationType,m.sender_wecom_userid AS senderWecomUserid,m.sender_staff_user_id AS senderStaffUserId,m.room_roster_version AS roomRosterVersion";
+            + "m.version,m.conversation_type AS conversationType,m.sender_wecom_userid AS senderWecomUserid,m.sender_staff_user_id AS senderStaffUserId,m.room_roster_version AS roomRosterVersion,m.archive_scope AS archiveScope";
     String MESSAGE_JOINS = " FROM crm_wecom_message m LEFT JOIN crm_wecom_contact c ON c.tenant_id=m.tenant_id AND c.corp_id=m.corp_id AND c.external_userid=m.external_userid AND c.staff_user_id=m.staff_user_id AND m.conversation_type='DIRECT' ";
     String CURRENTLY_READABLE = " m.consent_snapshot='GRANTED' AND ((m.conversation_type='DIRECT' AND c.consent_status='GRANTED' AND EXISTS (SELECT 1 FROM crm_wecom_archive_member am WHERE am.tenant_id=m.tenant_id AND am.corp_id=m.corp_id AND am.staff_user_id=m.staff_user_id AND am.enabled=1)) OR (m.conversation_type='ROOM' AND EXISTS (" + ROOM_COVERED_STAFF + ") AND " + ROOM_CURRENT_CONSENT + ")) ";
     String CUSTOMER_STAFF_SCOPE = """
@@ -117,7 +117,7 @@ public interface WecomMapper {
                                        @Param("scopeType") String scopeType, @Param("teamIds") List<Long> teamIds,
                                        @Param("selfId") long selfId);
 
-    @Insert("INSERT INTO crm_wecom_message (tenant_id,corp_id,msg_id,archive_seq,customer_id,external_userid,staff_user_id,conversation_type,conversation_id,message_type,sender_type,sender_wecom_userid,sender_staff_user_id,sent_at,content_object_key,content_sha256,consent_snapshot,consent_evidence_ref,room_roster_version,status) VALUES (#{tenantId},#{e.corpId},#{e.msgId},#{e.archiveSeq},#{e.customerId},#{e.externalUserid},#{e.staffUserId},#{e.conversationType},#{e.conversationId},#{e.messageType},#{e.senderType},#{e.senderWecomUserid},#{e.senderStaffUserId},#{e.sentAt},#{e.contentObjectKey},#{e.contentSha256},#{e.consentSnapshot},#{e.consentEvidenceRef},#{e.roomRosterVersion},#{e.status})")
+    @Insert("INSERT INTO crm_wecom_message (tenant_id,corp_id,msg_id,archive_seq,archive_scope,customer_id,external_userid,staff_user_id,conversation_type,conversation_id,message_type,sender_type,sender_wecom_userid,sender_staff_user_id,sent_at,content_object_key,content_sha256,consent_snapshot,consent_evidence_ref,room_roster_version,status) VALUES (#{tenantId},#{e.corpId},#{e.msgId},#{e.archiveSeq},#{e.archiveScope},#{e.customerId},#{e.externalUserid},#{e.staffUserId},#{e.conversationType},#{e.conversationId},#{e.messageType},#{e.senderType},#{e.senderWecomUserid},#{e.senderStaffUserId},#{e.sentAt},#{e.contentObjectKey},#{e.contentSha256},#{e.consentSnapshot},#{e.consentEvidenceRef},#{e.roomRosterVersion},#{e.status})")
     void insertMessage(@Param("tenantId") long tenantId, @Param("e") WecomMessage message);
 
     @Update("UPDATE crm_wecom_message SET recalled_at=#{recalledAt},recall_message_id=#{recallMessageId},version=version+1 WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND msg_id=#{msgId} AND version=#{version} AND recalled_at IS NULL")

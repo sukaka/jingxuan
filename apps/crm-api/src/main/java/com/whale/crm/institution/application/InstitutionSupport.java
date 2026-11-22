@@ -2,6 +2,7 @@ package com.whale.crm.institution.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.whale.crm.file.domain.FileClassification;
 import com.whale.crm.institution.api.dto.ChangeRequestResponse;
 import com.whale.crm.institution.api.dto.InstitutionProfileResponse;
 import com.whale.crm.institution.api.dto.QualificationResponse;
@@ -24,9 +25,16 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class InstitutionSupport {
+    private static final Set<String> COMMERCIAL_FIELDS = Set.of(
+            "settlementType", "onlineRate", "offlineRate", "platformRate", "otherRateRule",
+            "chargesFee", "depositFen", "guaranteeRoi", "roiTerms");
+    private static final Set<String> FINANCE_FIELDS = Set.of(
+            "settlementName", "bankName", "bankAccount", "taxId");
+
     private final DataScopeService dataScopeService;
     private final InstitutionAccessSupport institutionAccess;
     private final AesGcmCipher cipher;
@@ -114,10 +122,30 @@ public class InstitutionSupport {
                 qualification.createdAt(), qualification.version());
     }
 
-    public ChangeRequestResponse response(ProfileChangeRequest request, List<ProfileChangeStep> steps) {
+    public ChangeRequestResponse response(ProfileChangeRequest request, List<ProfileChangeStep> steps, CurrentUser user) {
+        boolean managerOnly = (user.roles().contains("MANAGER") || user.roles().contains("MANAGER_LEAD"))
+                && !user.roles().contains("ADMIN");
+        boolean finance = user.permissions().contains("institution:approve_finance");
+        boolean hideValues = false;
+        boolean hideEvidence = false;
+        if ("PROFILE_FIELD".equals(request.changeType())) {
+            String fieldCode = request.fieldCode();
+            boolean isCommercial = COMMERCIAL_FIELDS.contains(fieldCode);
+            boolean isFinance = FINANCE_FIELDS.contains(fieldCode);
+            if ((managerOnly && (isCommercial || isFinance)) || (!finance && isFinance)) {
+                hideValues = true;
+                hideEvidence = true;
+            }
+        } else if (managerOnly && ("CONTRACT_ACTIVATION".equals(request.changeType())
+                || "QUALIFICATION_REVIEW".equals(request.changeType()))) {
+            hideEvidence = true;
+        }
         return new ChangeRequestResponse(request.id(), request.institutionId(), request.changeType(),
                 request.fieldCode(), request.targetId(), request.baseVersion(), request.targetVersion(),
-                json(request.beforeMasked()), json(request.afterMasked()), request.reason(), request.evidenceFileId(),
+                hideValues ? null : json(request.beforeMasked()),
+                hideValues ? null : json(request.afterMasked()),
+                request.reason(),
+                hideEvidence ? null : request.evidenceFileId(),
                 request.status(), request.currentStep(), request.requestedBy(), request.requestedAt(),
                 request.completedAt(), request.version(), steps);
     }
@@ -196,7 +224,7 @@ public class InstitutionSupport {
         return Long.parseLong(record.getResourceId());
     }
 
-    public void requireClean(long tenantId, Long fileId) {
+    public void requireClean(long tenantId, long institutionId, Long fileId, FileClassification expectedClassification) {
         if (fileId == null) {
             return;
         }
@@ -204,7 +232,7 @@ public class InstitutionSupport {
         if (operations == null) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "文件扫描服务尚未就绪，不能审核该文件");
         }
-        operations.assertClean(tenantId, fileId);
+        operations.requireClean(tenantId, institutionId, fileId, expectedClassification);
     }
 
     public void requireMerchantResourceClean(long tenantId, Long fileId, long institutionId) {
@@ -215,6 +243,6 @@ public class InstitutionSupport {
         if (operations == null) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "文件扫描服务尚未就绪，不能引用该附件");
         }
-        operations.assertMerchantResourceClean(tenantId, fileId, institutionId);
+        operations.requireClean(tenantId, institutionId, fileId, FileClassification.MERCHANT_RESOURCE);
     }
 }

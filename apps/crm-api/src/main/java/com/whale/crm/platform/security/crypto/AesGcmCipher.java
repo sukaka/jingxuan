@@ -27,6 +27,11 @@ public class AesGcmCipher {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AesGcmCipher(CryptoProperties properties) {
+        if (properties == null || properties.aesKeyBase64() == null
+                || properties.aesKeyBase64().isBlank()
+                || properties.aesKeyBase64().contains("${")) {
+            throw new IllegalStateException("未配置有效的 app.security.crypto.aes-key-base64");
+        }
         byte[] raw;
         try {
             raw = Base64.getDecoder().decode(properties.aesKeyBase64());

@@ -24,7 +24,7 @@ public class OutboxService {
                 OutboxEvent event = new OutboxEvent(null, tenantId, eventId, eventType, 1, aggregateType, aggregateId,
                         aggregateId, objectMapper.writeValueAsString(payload), "NEW", 0, null, null,
                         null, null, null, Instant.now(), 0L);
-                repository.insertOutboxEvent(event);
+                repository.insertOutboxEvent(tenantId, event);
                 return repository.findOutboxByEventId(tenantId, eventId).orElseThrow();
             } catch (Exception ex) {
                 if (ex instanceof RuntimeException runtime && runtime.getCause() instanceof java.sql.SQLException) {

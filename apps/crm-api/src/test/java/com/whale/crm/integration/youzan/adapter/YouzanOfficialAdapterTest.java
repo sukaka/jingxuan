@@ -38,6 +38,8 @@ class YouzanOfficialAdapterTest {
         String sign = md5("client" + raw + "secret");
         assertThat(YouzanOfficialSignature.valid("client", "secret", raw, sign)).isTrue();
         assertThat(YouzanOfficialSignature.valid("client", "secret", raw + " ", sign)).isFalse();
+        assertThat(YouzanOfficialSignature.valid(" ", "secret", raw, md5(" " + raw + "secret"))).isFalse();
+        assertThat(YouzanOfficialSignature.valid("client", "  ", raw, md5("client" + raw + "  "))).isFalse();
     }
 
     @Test
@@ -334,9 +336,9 @@ class YouzanOfficialAdapterTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("该有赞店铺未配置或未启用同步，请先在店铺配置中完成授权测试并启用同步");
 
-        assertThat(router.adapter()).isSameAs(mockAdapter);
+        assertThat(router.webhookAdapter(1L)).isSameAs(mockAdapter);
         when(runtime.youzanRealEnabled(1L)).thenReturn(true);
-        YouzanAdapter officialOnlyAdapter = router.adapter();
+        YouzanAdapter officialOnlyAdapter = router.webhookAdapter(1L);
         assertThat(officialOnlyAdapter).isNotSameAs(mockAdapter);
         assertThat(officialOnlyAdapter.name()).isEqualTo("YOUZAN_OFFICIAL_WEBHOOK_ONLY");
         YouzanVerification verification = officialOnlyAdapter.verifyWebhook("", null);

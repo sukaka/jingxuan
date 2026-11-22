@@ -162,27 +162,38 @@ public class YouzanEventService {
         }
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
         YouzanOrderMap existing = repository.findOrderMap(tenantId, event.shopId(), event.externalOrderNo()).orElse(null);
-        if (existing != null && !event.externalUpdatedAt().isAfter(existing.lastExternalUpdatedAt())) {
-            return complete(tenantId, eventId, raw, existing.crmOrderId(), true, actor(tenantId).userId());
-        }
-        List<OrderItemRequest> items = new ArrayList<>();
-        for (YouzanOrderLine line : event.items()) {
-            var mapping = repository.findSkuMapping(tenantId, event.shopId(), line.externalSkuId());
-            if (mapping.isEmpty() || !"ACTIVE".equals(mapping.get().status()) || line.quantity() == null || line.quantity() <= 0) {
-                throw new ProcessingFailure("MAPPING_FAILED", "外部SKU未映射或数量无效: " + line.externalSkuId());
+        OrderFulfillmentView existingOrder = null;
+        CurrentUser actor = null;
+        if (existing != null) {
+            actor = actor(tenantId);
+            existingOrder = orderService.detail(tenantId, actor, existing.crmOrderId());
+            if (!event.externalUpdatedAt().isAfter(existing.lastExternalUpdatedAt())) {
+                if (!"ORDER_PAID".equals(event.eventType())
+                        || existingOrder == null
+                        || !isUnpaidStatus(existingOrder.order().order().status())) {
+                    return complete(tenantId, eventId, raw, existing.crmOrderId(), true, actor.userId());
+                }
             }
-            items.add(new OrderItemRequest(mapping.get().crmSkuId(), line.quantity()));
         }
-        if (items.isEmpty()) {
-            throw new ProcessingFailure("MAPPING_FAILED", "外部订单缺少商品明细");
-        }
-        YouzanCustomerLink customer = repository.findCustomerLink(tenantId, event.shopId(), event.externalCustomerId())
-                .orElseThrow(() -> new ProcessingFailure("CUSTOMER_UNRESOLVED", "客户尚未人工确认映射"));
-        CurrentUser actor = actor(tenantId);
-        scopeSupport.requireVisible(tenantId, customer.customerId(), actor);
 
         OrderFulfillmentView order;
         if (existing == null) {
+            List<OrderItemRequest> items = new ArrayList<>();
+            for (YouzanOrderLine line : event.items()) {
+                var mapping = repository.findSkuMapping(tenantId, event.shopId(), line.externalSkuId());
+                if (mapping.isEmpty() || !"ACTIVE".equals(mapping.get().status()) || line.quantity() == null || line.quantity() <= 0) {
+                    throw new ProcessingFailure("MAPPING_FAILED", "外部SKU未映射或数量无效: " + line.externalSkuId());
+                }
+                items.add(new OrderItemRequest(mapping.get().crmSkuId(), line.quantity()));
+            }
+            if (items.isEmpty()) {
+                throw new ProcessingFailure("MAPPING_FAILED", "外部订单缺少商品明细");
+            }
+            YouzanCustomerLink customer = repository.findCustomerLink(tenantId, event.shopId(), event.externalCustomerId())
+                    .orElseThrow(() -> new ProcessingFailure("CUSTOMER_UNRESOLVED", "客户尚未人工确认映射"));
+            actor = actor(tenantId);
+            // 先锁 crm_customer 再写 crm_order，与 MergeApplicationService.confirm 保持一致（M3 §3.2）
+            scopeSupport.requireVisibleForUpdate(tenantId, customer.customerId(), actor);
             CreateOrderRequest create = new CreateOrderRequest(customer.customerId(),
                     event.receiverType() == null ? "PLATFORM" : event.receiverType(),
                     event.orderTypeCode() == null ? "REGULAR" : event.orderTypeCode(), event.campaignId(),
@@ -194,6 +205,10 @@ public class YouzanEventService {
             repository.insertOrderMap(tenantId, map);
             existing = repository.findOrderMap(tenantId, event.shopId(), event.externalOrderNo()).orElseThrow();
         } else {
+            if (existingOrder == null) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "内部订单不存在或不可见");
+            }
+            scopeSupport.requireVisibleForUpdate(tenantId, existingOrder.order().order().customerId(), actor);
             order = orderService.detail(tenantId, actor, existing.crmOrderId());
         }
 
@@ -219,6 +234,10 @@ public class YouzanEventService {
             }
         }
         return complete(tenantId, eventId, raw, existing.crmOrderId(), false, actor.userId());
+    }
+
+    private static boolean isUnpaidStatus(String status) {
+        return "DRAFT".equals(status) || "PENDING_PAYMENT".equals(status);
     }
 
     private YouzanEventResponse complete(long tenantId, long eventId, YouzanEvent raw, long orderId, boolean duplicate,

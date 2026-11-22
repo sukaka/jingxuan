@@ -144,7 +144,7 @@ public class MergeReversalApplicationService {
         MergeReversal result = transactions.execute(status -> {
             requireAuthorized(user, reversalId);
             MergeReversal reversal = requireActionable(user.tenantId(), reversalId, request.version(), "MANUAL_REVIEW");
-            MergeCase mergeCase = requireConfirmed(user.tenantId(), reversal.mergeCaseId());
+            MergeCase mergeCase = requireConfirmedForUpdate(user.tenantId(), reversal.mergeCaseId());
             transition(mergeCase, user.userId());
             Instant now = Instant.now();
             update(reversal, "EXECUTED", request.reason(), user.userId(), now, now, reversal.warningMessage(), null);
@@ -179,17 +179,23 @@ public class MergeReversalApplicationService {
 
     private MergeReversalResponse doApprove(CurrentUser user, long reversalId, MergeReversalActionRequest request,
                                             String key, String scope, String payload) {
-        MergeReversal reversal = requireActionable(user.tenantId(), reversalId, request.version(), "REQUESTED");
-        MergeCase mergeCase = requireConfirmed(user.tenantId(), reversal.mergeCaseId());
-        requireVisibleBoth(user, mergeCase);
+        MergeReversal reversal = reversalRepository.findForUpdate(user.tenantId(), reversalId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "更正申请不存在"));
+        MergeCase mergeCase = mergeCaseRepository.findByIdForUpdate(user.tenantId(), reversal.mergeCaseId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "合并单不存在"));
         long primaryId = mergeCase.getPrimaryCustomerId();
         long secondaryId = mergeCase.getSecondaryCustomerId();
-        Customer first = lockCustomer(user.tenantId(), Math.min(primaryId, secondaryId));
-        Customer second = lockCustomer(user.tenantId(), Math.max(primaryId, secondaryId));
+        long firstLock = Math.min(primaryId, secondaryId);
+        long secondLock = Math.max(primaryId, secondaryId);
+        Customer first = lockCustomer(user.tenantId(), firstLock);
+        Customer second = firstLock == secondLock ? first : lockCustomer(user.tenantId(), secondLock);
         Customer primary = first.getId() == primaryId ? first : second;
         Customer secondary = first.getId() == secondaryId ? first : second;
-        requireVisibleBoth(user, mergeCase);
-        if (!primary.getVersion().equals(reversal.primaryVersion()) || !secondary.getVersion().equals(reversal.secondaryVersion())) {
+        requireVisibleBoth(user, primary, secondary);
+        validateActionable(reversal, request.version(), "REQUESTED");
+        validateConfirmed(mergeCase);
+        if (!primary.getVersion().equals(reversal.primaryVersion())
+                || !secondary.getVersion().equals(reversal.secondaryVersion())) {
             throw new BusinessException(ErrorCode.CONFLICT, "客户资料在申请后已变化，请重新评估更正");
         }
         restoreSecondary(secondary);
@@ -255,22 +261,37 @@ public class MergeReversalApplicationService {
     private MergeCase requireConfirmed(long tenantId, long caseId) {
         MergeCase mergeCase = mergeCaseRepository.findById(tenantId, caseId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "合并单不存在"));
+        validateConfirmed(mergeCase);
+        return mergeCase;
+    }
+
+    private MergeCase requireConfirmedForUpdate(long tenantId, long caseId) {
+        MergeCase mergeCase = mergeCaseRepository.findByIdForUpdate(tenantId, caseId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "合并单不存在"));
+        validateConfirmed(mergeCase);
+        return mergeCase;
+    }
+
+    private void validateConfirmed(MergeCase mergeCase) {
         if (!MergeCase.STATUS_CONFIRMED.equals(mergeCase.getStatus())) {
             throw new BusinessException(ErrorCode.CONFLICT, "只有已确认合并才能申请更正");
         }
-        return mergeCase;
     }
 
     private MergeReversal requireActionable(long tenantId, long reversalId, Long version, String expectedStatus) {
         MergeReversal reversal = reversalRepository.findForUpdate(tenantId, reversalId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "更正申请不存在"));
+        validateActionable(reversal, version, expectedStatus);
+        return reversal;
+    }
+
+    private void validateActionable(MergeReversal reversal, Long version, String expectedStatus) {
         if (!expectedStatus.equals(reversal.status())) {
             throw new BusinessException(ErrorCode.CONFLICT, "更正申请状态已变化，请刷新后重试");
         }
         if (version == null || !version.equals(reversal.version())) {
             throw new BusinessException(ErrorCode.CONFLICT, "更正申请版本已变化，请刷新后重试");
         }
-        return reversal;
     }
 
     private void requireVisibleBoth(CurrentUser user, MergeCase mergeCase) {
@@ -281,6 +302,13 @@ public class MergeReversalApplicationService {
             if (!scopeSupport.isVisible(scope, user, customer)) {
                 throw new BusinessException(ErrorCode.NOT_FOUND, "客户不存在或不可见");
             }
+        }
+    }
+
+    private void requireVisibleBoth(CurrentUser user, Customer primary, Customer secondary) {
+        DataScope scope = scopeSupport.scope(user);
+        if (!scopeSupport.isVisible(scope, user, primary) || !scopeSupport.isVisible(scope, user, secondary)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "客户不存在或不可见");
         }
     }
 

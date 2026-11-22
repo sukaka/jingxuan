@@ -8,8 +8,9 @@ RUN apt-get update \
     && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
 WORKDIR /app
 COPY --chown=app:app ${JAR_FILE} /app/app.jar
+ENV SPRING_PROFILES_ACTIVE=prod
 USER app
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=5s --start-period=40s --retries=18 \
   CMD curl --fail --silent http://127.0.0.1:8080/actuator/health/readiness || exit 1
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-Dfile.encoding=UTF-8", "-Duser.timezone=UTC", "-jar", "/app/app.jar"]
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=50", "-Dfile.encoding=UTF-8", "-Duser.timezone=UTC", "-jar", "/app/app.jar"]

@@ -21,6 +21,7 @@ public interface TradingMapper {
     Order selectOrder(@Param("tenantId") long tenantId, @Param("id") long id);
     Order selectOrderByNo(@Param("tenantId") long tenantId, @Param("orderNo") String orderNo);
     Order selectOrderForUpdate(@Param("tenantId") long tenantId, @Param("id") long id);
+    List<Order> selectOrdersForUpdate(@Param("tenantId") long tenantId, @Param("ids") List<Long> ids);
     int updateOrderStatus(@Param("tenantId") long tenantId, @Param("id") long id,
                           @Param("expectedVersion") long expectedVersion, @Param("fromStatus") String fromStatus,
                           @Param("toStatus") String toStatus, @Param("paidFen") Long paidFen, @Param("paidAt") Instant paidAt);
@@ -50,6 +51,8 @@ public interface TradingMapper {
     List<Entitlement> selectEntitlementsByOrderItemIds(@Param("tenantId") long tenantId, @Param("orderItemIds") List<Long> orderItemIds);
     Entitlement selectEntitlement(@Param("tenantId") long tenantId, @Param("id") long id);
     Entitlement selectEntitlementForUpdate(@Param("tenantId") long tenantId, @Param("id") long id);
+    List<Entitlement> selectEntitlementsForUpdate(@Param("tenantId") long tenantId, @Param("ids") List<Long> ids);
+    List<Entitlement> selectEntitlementsByOrderIdsForUpdate(@Param("tenantId") long tenantId, @Param("orderIds") List<Long> orderIds);
     int updateEntitlementBalance(@Param("tenantId") long tenantId, @Param("id") long id,
                                  @Param("expectedVersion") long expectedVersion, @Param("availableCount") int availableCount,
                                  @Param("status") String status, @Param("versionNo") int versionNo);
@@ -74,7 +77,9 @@ public interface TradingMapper {
                                                       @Param("sourceType") String sourceType,
                                                       @Param("sourceRef") String sourceRef);
     List<EntitlementLedgerEntry> selectLedgerByEntitlement(@Param("tenantId") long tenantId, @Param("entitlementId") long entitlementId);
+    List<EntitlementLedgerEntry> selectLedgerByEntitlementForUpdate(@Param("tenantId") long tenantId, @Param("entitlementId") long entitlementId);
     Long sumLedger(@Param("tenantId") long tenantId, @Param("entitlementId") long entitlementId);
+    Long sumLedgerForUpdate(@Param("tenantId") long tenantId, @Param("entitlementId") long entitlementId);
 
     OutboxEvent selectOutboxByEventId(@Param("tenantId") long tenantId, @Param("eventId") String eventId);
     OutboxEvent selectOutboxById(@Param("tenantId") long tenantId, @Param("id") long id);
@@ -97,9 +102,9 @@ public interface TradingMapper {
                         @Param("toCustomerId") long toCustomerId);
     void reassignEntitlements(@Param("tenantId") long tenantId, @Param("fromCustomerId") long fromCustomerId,
                               @Param("toCustomerId") long toCustomerId);
-    @org.apache.ibatis.annotations.Select("SELECT id FROM crm_order WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} ORDER BY id FOR UPDATE")
+    @org.apache.ibatis.annotations.Select("SELECT id FROM crm_order WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} ORDER BY id")
     java.util.List<Long> findOrderIdsByCustomer(@Param("tenantId") long tenantId, @Param("customerId") long customerId);
-    @org.apache.ibatis.annotations.Select("SELECT id FROM crm_entitlement WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} ORDER BY id FOR UPDATE")
+    @org.apache.ibatis.annotations.Select("SELECT id FROM crm_entitlement WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} ORDER BY id")
     java.util.List<Long> findEntitlementIdsByCustomer(@Param("tenantId") long tenantId, @Param("customerId") long customerId);
     @org.apache.ibatis.annotations.Update({"<script>UPDATE crm_order SET customer_id=#{toCustomerId} WHERE tenant_id=#{tenantId} AND customer_id=#{fromCustomerId} AND id IN <foreach item='id' collection='ids' open='(' close=')' separator=','>#{id}</foreach></script>"})
     void reassignSpecificOrders(@Param("tenantId") long tenantId, @Param("ids") java.util.List<Long> ids,

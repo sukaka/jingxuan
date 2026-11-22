@@ -13,6 +13,7 @@ public class IdempotencyRecord {
     private Long id;
     private Long tenantId;
     private String scopeCode;
+    private Long actorUserId;
     private String idempotencyKey;
     private String resourceType;
     private String resourceId;
@@ -42,6 +43,14 @@ public class IdempotencyRecord {
 
     public void setScopeCode(String scopeCode) {
         this.scopeCode = scopeCode;
+    }
+
+    public Long getActorUserId() {
+        return actorUserId;
+    }
+
+    public void setActorUserId(Long actorUserId) {
+        this.actorUserId = actorUserId;
     }
 
     public String getIdempotencyKey() {

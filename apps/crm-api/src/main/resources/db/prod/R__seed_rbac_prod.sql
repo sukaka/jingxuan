@@ -57,7 +57,10 @@ INSERT INTO sys_permission (tenant_id,permission_code,description) VALUES
   (1,'customer:merge_reverse','客户合并更正审批与执行'),
   (1,'notification:read','本人通知查看与已读'),
   (1,'notification:delivery:read','通知投递管理查询'),
-  (1,'notification:delivery:retry','通知投递人工重试')
+  (1,'notification:delivery:retry','通知投递人工重试'),
+  (1,'wecom:mapping:manage','企微员工映射与通知开关管理'),
+  (1,'followup:policy:manage','跟进间隔策略管理'),
+  (1,'channel:approve_finance','合作渠道财务与佣金变更审批')
   ON DUPLICATE KEY UPDATE description=VALUES(description);
 
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
@@ -100,13 +103,14 @@ INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
   SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
   WHERE r.tenant_id=1 AND r.role_code='OPERATION_LEAD'
-    AND p.permission_code IN ('material:review','campaign:review');
+    AND p.permission_code IN ('material:review','campaign:review','followup:policy:manage');
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
   SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
   WHERE r.tenant_id=1 AND r.role_code='FINANCE' AND p.permission_code IN (
     'refund:read','refund:approve','refund:execute','settlement:read','settlement:write',
     'institution:read','institution:approve_finance','order:read','order:confirm_payment',
-    'customer:read','dictionary:read','report:read','audit:read','redemption:approve','redemption:read');
+    'customer:read','dictionary:read','report:read','audit:read','redemption:approve','redemption:read',
+    'channel:approve_finance');
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
   SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
   WHERE r.tenant_id=1 AND r.role_code='INSTITUTION_STAFF' AND p.permission_code IN (
@@ -129,3 +133,12 @@ WHERE p.permission_code='quickreply:view'
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
 SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
 WHERE p.permission_code='quickreply:manage' AND r.role_code IN ('ADMIN','OWNER','OPERATION_LEAD');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='wecom:mapping:manage' AND r.role_code='ADMIN';
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='followup:policy:manage' AND r.role_code IN ('ADMIN','OPERATION_LEAD');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='channel:approve_finance' AND r.role_code IN ('ADMIN','FINANCE');

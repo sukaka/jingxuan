@@ -107,17 +107,18 @@ public class BatchTagJobExecutionService {
     }
 
     private void processItem(BatchTagJob running, long itemId, CurrentUser actor, String leaseOwner) {
-        requireLease(running, leaseOwner);
         BatchTagJobItem item = repository.findItemForUpdate(running.tenantId(), itemId).orElseThrow();
         if (!isWork(item)) {
             return;
         }
         if (!hasWritePermission(running.tenantId(), actor)) {
+            requireLease(running, leaseOwner);
             completeResult(running, item, BatchTagJobItem.SKIPPED, "PERMISSION_REVOKED",
                     "请求人已停用、转为机构账号或客户写权限/数据范围已撤销", null, null, List.of());
             return;
         }
         Customer customer = customerRepository.findByIdForUpdate(running.tenantId(), item.customerId()).orElse(null);
+        requireLease(running, leaseOwner);
         if (customer == null) {
             completeResult(running, item, BatchTagJobItem.SKIPPED, "CUSTOMER_NOT_FOUND",
                     "客户不存在，未进行标签变更", null, null, List.of());

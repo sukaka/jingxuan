@@ -38,14 +38,26 @@ const { institutionLabel } = useReferenceNames()
 const canReverse = computed(() => auth.hasPermission('redemption:reverse'))
 const canApprove = computed(() => auth.hasPermission('redemption:approve'))
 const activeTab = ref('records')
+const redemptionDetails = ref<Record<number, RedemptionDetail>>({})
 const institutionSummaries = computed(() => Object.values(redemptions.value.reduce((groups, row) => {
-  const current = groups[row.institutionId] ?? { institutionId: row.institutionId, records: 0, pending: 0, latest: null as string | null }
+  const current = groups[row.institutionId] ?? {
+    institutionId: row.institutionId,
+    records: 0,
+    postedCount: 0,
+    pending: 0,
+    latest: null as string | null,
+  }
   current.records++
-  if (row.status !== 'POSTED') current.pending++
+  if (row.status === 'POSTED') {
+    const detail = redemptionDetails.value[row.id]
+    current.postedCount += detail ? detail.lines.reduce((sum, line) => sum + line.count, 0) : 0
+  } else if (row.status === 'PENDING_INSTITUTION' || row.status === 'SUBMITTED') {
+    current.pending++
+  }
   if (!current.latest || (row.serviceAt && row.serviceAt > current.latest)) current.latest = row.serviceAt
   groups[row.institutionId] = current
   return groups
-}, {} as Record<number, { institutionId: number; records: number; pending: number; latest: string | null }>)))
+}, {} as Record<number, { institutionId: number; records: number; postedCount: number; pending: number; latest: string | null }>)))
 
 const redemptions = ref<Redemption[]>([])
 const redemptionTotal = ref(0)
@@ -304,13 +316,13 @@ onMounted(() => {
           <span class="crm-muted">项目筛选由后端执行，逐项目明细在只读详情查看</span>
         </div>
         <el-alert v-if="redemptionError" type="error" :title="`核销加载失败：${redemptionError}`" :closable="false" class="crm-table-alert" />
-        <div v-loading="redemptionLoading" class="proto-table-wrap"><RedemptionPrototypeTable :rows="redemptions" :can-reverse="canReverse" @detail="openDetail" @reverse="openReversal" /></div>
+        <div v-loading="redemptionLoading" class="proto-table-wrap"><RedemptionPrototypeTable :rows="redemptions" :can-reverse="canReverse" @detail="openDetail" @reverse="openReversal" @details-loaded="(map) => { redemptionDetails = map }" /></div>
         <h3 class="institution-summary-title">按机构汇总</h3>
         <app-table :data="institutionSummaries">
           <el-table-column label="机构" min-width="120"><template #default="{row}">{{ institutionLabel(row.institutionId) }}</template></el-table-column>
           <el-table-column label="城市" width="90">—</el-table-column>
           <el-table-column label="核销流水" prop="records" width="100" align="right" />
-          <el-table-column label="正式核销次数" prop="records" width="120" align="right" />
+          <el-table-column label="正式核销次数" prop="postedCount" width="120" align="right" />
           <el-table-column label="最近核销" min-width="150"><template #default="{row}">{{ formatDateTime(row.latest) }}</template></el-table-column>
           <el-table-column label="待机构确认" prop="pending" width="110" align="right" />
         </app-table>

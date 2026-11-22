@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { listCustomers } from '../api/customer'
 import { listFollowups } from '../api/followup'
 import type { FollowupItem } from '../api/followup'
@@ -17,6 +17,8 @@ import PageHeader from '../components/prototype/PageHeader.vue'
 import StatCard from '../components/prototype/StatCard.vue'
 import PageCard from '../components/prototype/PageCard.vue'
 import ShellIcon from '../components/shell/ShellIcon.vue'
+import { fetchAllPages, mapWithConcurrency } from '../utils/asyncBatch'
+import { BUSINESS_TIME_ZONE, shanghaiDateString, shanghaiDateTimeMinute, todayInShanghai } from '../utils/date'
 
 const auth = useAuthStore()
 const isManager = computed(() => auth.hasRole('MANAGER') && !auth.hasRole('ADMIN'))
@@ -34,10 +36,15 @@ const monthlyPerformance = ref<PerformanceTotals | null>(null)
 const remainingServices = ref<EntitlementSummary | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
-const today = new Date().toISOString().slice(0, 10)
+const redemptionTruncated = ref(false)
+let loadSeq = 0
+let disposed = false
 const pendingAppointments = computed(() => appointments.value.filter((item) => item.status === 'PENDING_INSTITUTION'))
 const serviceDoneAppointments = computed(() => appointments.value.filter((item) => item.status === 'SERVICE_DONE'))
-const todayAppointments = computed(() => appointments.value.filter((item) => item.scheduledAt?.slice(0, 10) === today && item.status !== 'CANCELED'))
+const todayAppointments = computed(() => {
+  const today = todayInShanghai()
+  return appointments.value.filter((item) => shanghaiDateString(item.scheduledAt) === today && item.status !== 'CANCELED')
+})
 const { loadCustomerNames, customerLabel } = useReferenceNames()
 function priorityLabel(value: string) { return ({ URGENT: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' } as Record<string, string>)[value] || '未知优先级' }
 const APPOINTMENT_STATUS: Record<string, [string, string]> = {
@@ -57,7 +64,12 @@ const managerBuckets = computed(() => [
   { title: '我的客户', value: customersTotal.value, note: '当前数据范围', icon: 'users', path: '/customers' },
   { title: '跟进流水', value: followupTotal.value, note: '独立追加记录', icon: 'chat', path: '/followups' },
 ])
-const todayLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date())
+const todayLabel = new Intl.DateTimeFormat('zh-CN', {
+  month: 'long',
+  day: 'numeric',
+  weekday: 'long',
+  timeZone: BUSINESS_TIME_ZONE,
+}).format(new Date())
 const monthParts = new Intl.DateTimeFormat('en-US', {
   timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit',
 }).formatToParts(new Date())
@@ -82,32 +94,78 @@ const adminNavigation = [
 ]
 
 async function loadDashboard() {
+  const seq = ++loadSeq
   loading.value = true
   errorMessage.value = ''
+  redemptionTruncated.value = false
   try {
     const requests: Promise<void>[] = []
-    if (auth.hasPermission('customer:read')) requests.push(listCustomers({ page: 1, size: 5 }).then((result) => { customersTotal.value = result.total }))
-    if (auth.hasPermission('task:read')) requests.push(listTasks({ page: 1, size: 6, status: 'OPEN' }).then((result) => { tasks.value = result.items; taskTotal.value = result.total }))
-    if (auth.hasPermission('followup:read')) requests.push(listFollowups({ page: 1, size: 5 }).then((result) => { followups.value = result.items; followupTotal.value = result.total }))
-    if (auth.hasPermission('appointment:read')) requests.push(listAppointments({ page: 1, size: 100 }).then((result) => { appointments.value = result.items; appointmentTotal.value = result.total; void loadCustomerNames(result.items.map((item) => item.customerId)) }))
+    if (auth.hasPermission('customer:read')) requests.push(listCustomers({ page: 1, size: 5 }).then((result) => {
+      if (disposed || seq !== loadSeq) return
+      customersTotal.value = result.total
+    }))
+    if (auth.hasPermission('task:read')) requests.push(listTasks({ page: 1, size: 6, status: 'OPEN' }).then((result) => {
+      if (disposed || seq !== loadSeq) return
+      tasks.value = result.items; taskTotal.value = result.total
+    }))
+    if (auth.hasPermission('followup:read')) requests.push(listFollowups({ page: 1, size: 5 }).then((result) => {
+      if (disposed || seq !== loadSeq) return
+      followups.value = result.items; followupTotal.value = result.total
+    }))
+    if (auth.hasPermission('appointment:read')) {
+      if (isInstitution.value) {
+        requests.push(fetchAllPages((page, size) => listAppointments({ page, size }), { size: 100, maxPages: 10 }).then((result) => {
+          if (disposed || seq !== loadSeq) return
+          appointments.value = result.items
+          appointmentTotal.value = result.total
+          void loadCustomerNames(result.items.map((item) => item.customerId))
+        }))
+      } else if (isManager.value) {
+        requests.push(listAppointments({ page: 1, size: 1, status: 'PENDING_INSTITUTION' }).then((result) => {
+          if (disposed || seq !== loadSeq) return
+          appointmentTotal.value = result.total
+        }))
+      }
+    }
     if (isManager.value && auth.hasPermission('report:read')) requests.push(getPerformanceReport({
       from: monthFrom, to: monthTo, timeZone: 'Asia/Shanghai', performanceRole: 'MANAGER', page: 1, size: 1,
-    }).then((result) => { monthlyPerformance.value = result.totals }))
-    if (isManager.value && auth.hasPermission('entitlement:read')) requests.push(getEntitlementSummary()
-      .then((result) => { remainingServices.value = result }))
-    if (isInstitution.value && auth.hasPermission('redemption:read')) requests.push(listRedemptions({ page: 1, size: 100, status: 'POSTED' }).then(async (result) => {
-      const details = await Promise.all(result.items.map((item) => getRedemption(item.id)))
-      redemptionCount.value = details.reduce((sum, detail) => sum + detail.lines.reduce((lineSum, line) => lineSum + line.count, 0), 0)
+    }).then((result) => {
+      if (disposed || seq !== loadSeq) return
+      monthlyPerformance.value = result.totals
     }))
+    if (isManager.value && auth.hasPermission('entitlement:read')) requests.push(getEntitlementSummary()
+      .then((result) => {
+        if (disposed || seq !== loadSeq) return
+        remainingServices.value = result
+      }))
+    if (isInstitution.value && auth.hasPermission('redemption:read')) requests.push(
+      fetchAllPages((page, size) => listRedemptions({ page, size, status: 'POSTED' }), { size: 100, maxPages: 10 })
+        .then(async (result) => {
+          if (disposed || seq !== loadSeq) return
+          redemptionTruncated.value = result.truncated
+          const details = await mapWithConcurrency(result.items, 5, (item) => getRedemption(item.id))
+          if (disposed || seq !== loadSeq) return
+          redemptionCount.value = details.reduce(
+            (sum, entry) => sum + (entry.status === 'fulfilled' ? entry.value.lines.reduce((lineSum, line) => lineSum + line.count, 0) : 0),
+            0,
+          )
+        }),
+    )
     await Promise.all(requests)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '工作台数据加载失败'
+    if (!disposed && seq === loadSeq) {
+      errorMessage.value = error instanceof Error ? error.message : '工作台数据加载失败'
+    }
   } finally {
-    loading.value = false
+    if (!disposed && seq === loadSeq) loading.value = false
   }
 }
-function date(value: string | null) { return value ? value.slice(0, 10) : '待设置' }
-function time(value: string | null) { return value ? value.slice(0, 16).replace('T', ' ') : '待设置' }
+function date(value: string | null) { return shanghaiDateString(value) || '待设置' }
+function time(value: string | null) { return shanghaiDateTimeMinute(value) || '待设置' }
+onBeforeUnmount(() => {
+  disposed = true
+  loadSeq += 1
+})
 onMounted(() => { void loadDashboard() })
 </script>
 
@@ -121,7 +179,7 @@ onMounted(() => { void loadDashboard() })
         <StatCard label="待确认预约" :value="`${pendingAppointments.length} 项`" sub="管家已经选择本机构" icon="calendar" />
         <StatCard label="今日接待" :value="`${todayAppointments.length} 位`" sub="仅本机构预约" icon="users" />
         <StatCard label="待核销确认" :value="`${serviceDoneAppointments.length} 项`" sub="确认后才扣减客户权益" icon="check" />
-        <StatCard label="累计正式核销" :value="redemptionCount === null ? '加载中' : `${redemptionCount} 次`" sub="本机构历史服务流水" icon="activity" />
+        <StatCard label="累计正式核销" :value="redemptionCount === null ? '加载中' : `${redemptionCount} 次`" :sub="redemptionTruncated ? '已按前 1,000 笔历史流水汇总' : '本机构历史服务流水'" icon="activity" />
       </div>
       <div class="proto-two-col">
         <PageCard title="待处理预约" subtitle="机构需要确认是否接诊 / 排期">

@@ -7,6 +7,7 @@ import com.whale.crm.integration.wecom.adapter.MockWecomContactClient;
 import com.whale.crm.integration.wecom.adapter.OfficialWecomContactClient;
 import com.whale.crm.integration.wecom.adapter.WecomAdapterRouter;
 import com.whale.crm.integration.wecom.adapter.WecomContactClientRouter;
+import com.whale.crm.integration.wecom.adapter.WecomOfficialProperties;
 import com.whale.crm.integration.youzan.adapter.DisabledYouzanAdapter;
 import com.whale.crm.integration.youzan.adapter.MockYouzanAdapter;
 import com.whale.crm.integration.youzan.adapter.RealYouzanAdapter;
@@ -44,9 +45,15 @@ class IntegrationRuntimeRouterTest {
         OfficialWecomContactClient official = mock(OfficialWecomContactClient.class);
         MockWecomContactClient mockContact = mock(MockWecomContactClient.class);
         when(runtime.wecomOfficialEnabled(1L)).thenReturn(false, true);
-        WecomContactClientRouter contacts = new WecomContactClientRouter(provider(mockContact), provider(official), runtime);
+        when(runtime.wecomOfficialEnabled(2L)).thenReturn(true);
+        WecomOfficialProperties officialProperties = new WecomOfficialProperties(1L, true, "corp", "secret",
+                "https://qyapi.weixin.qq.com", "token", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+                3000, 10000, 100, 100);
+        WecomContactClientRouter contacts = new WecomContactClientRouter(
+                provider(mockContact), provider(official), officialProperties, runtime);
         assertThat(contacts.client(1L)).isSameAs(mockContact);
         assertThat(contacts.client(1L)).isSameAs(official);
+        assertThat(contacts.client(2L)).isNull();
 
         DisabledWecomAdapter disabled = mock(DisabledWecomAdapter.class);
         MockWecomAdapter mockArchive = mock(MockWecomAdapter.class);

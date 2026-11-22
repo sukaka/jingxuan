@@ -22,6 +22,7 @@ export interface LoginRequest {
   password: string
   captchaId: string
   captchaAnswer: string
+  tenantCode?: string
 }
 
 export interface CaptchaResponse {

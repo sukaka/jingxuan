@@ -36,7 +36,7 @@ public class ComplaintEventConsumer {
     private static final Set<String> WECOM_REQUIRED = Set.of("messageRef", "corpId", "msgId", "archiveSeq",
             "contentObjectKey", "sentAt");
     private static final Set<String> WECOM_FIELDS = Set.of("messageRef", "corpId", "msgId", "archiveSeq",
-            "conversationId", "customerId", "contentObjectKey", "sentAt");
+            "conversationId", "conversationType", "customerId", "roomRosterVersion", "contentObjectKey", "sentAt");
     private static final Set<String> FOLLOWUP_REQUIRED = Set.of("followupId", "customerId", "sourceVersion",
             "staffUserId", "contactAt");
     private static final Set<String> FOLLOWUP_FIELDS = Set.of("followupId", "customerId", "sourceVersion",
@@ -115,6 +115,8 @@ public class ComplaintEventConsumer {
         String msgId = requiredText(payload, "msgId", 192);
         long archiveSeq = positive(payload, "archiveSeq");
         String objectKey = requiredText(payload, "contentObjectKey", 255);
+        String conversationType = optionalConversationType(payload);
+        Long roomRosterVersion = optionalRoomRosterVersion(payload);
         instant(payload.path("sentAt").asText());
         transactions.executeWithoutResult(status -> {
             if (!inbox(tenantId, group, eventId)) {
@@ -125,9 +127,14 @@ public class ComplaintEventConsumer {
             if (!corpId.equals(message.corpId()) || !msgId.equals(message.msgId())
                     || message.archiveSeq() == null || message.archiveSeq() != archiveSeq
                     || !objectKey.equals(message.contentObjectKey())
+                    || (conversationType != null && !conversationType.equals(message.conversationType()))
+                    || (payload.has("roomRosterVersion") && !Objects.equals(roomRosterVersion, message.roomRosterVersion()))
                     || (payload.has("customerId") && !payload.path("customerId").isNull()
                     && !Objects.equals(payload.path("customerId").asLong(), message.customerId()))) {
                 throw new IllegalArgumentException("企微事件与已归档消息不一致");
+            }
+            if (!"DIRECT".equals(message.conversationType())) {
+                return;
             }
             detectionService.detectWecom(tenantId, messageId, null);
         });
@@ -170,8 +177,8 @@ public class ComplaintEventConsumer {
 
     private void validateEnvelope(JsonNode envelope) {
         requirePayload(envelope, ENVELOPE_REQUIRED, ENVELOPE_FIELDS);
-        String eventId = requiredText(envelope, "event_id", 64);
-        if (!eventId.equals(requiredText(envelope, "correlation_id", 64))
+        String eventId = requiredText(envelope, "event_id", 192);
+        if (!eventId.equals(requiredText(envelope, "correlation_id", 192))
                 || envelope.path("event_version").asInt() != 1) {
             throw new IllegalArgumentException("客诉事件版本或 correlation_id 无效");
         }
@@ -211,6 +218,32 @@ public class ComplaintEventConsumer {
             throw new IllegalArgumentException("客诉事件 " + field + " 无效");
         }
         return value;
+    }
+
+    private String optionalConversationType(JsonNode payload) {
+        if (!payload.has("conversationType")) {
+            return null;
+        }
+        JsonNode value = payload.path("conversationType");
+        if (!value.isTextual()) {
+            throw new IllegalArgumentException("客诉事件 conversationType 无效");
+        }
+        String text = value.asText();
+        if (!"DIRECT".equals(text) && !"ROOM".equals(text)) {
+            throw new IllegalArgumentException("客诉事件 conversationType 无效");
+        }
+        return text;
+    }
+
+    private Long optionalRoomRosterVersion(JsonNode payload) {
+        if (!payload.has("roomRosterVersion") || payload.path("roomRosterVersion").isNull()) {
+            return null;
+        }
+        JsonNode value = payload.path("roomRosterVersion");
+        if (!value.isIntegralNumber() || !value.canConvertToLong() || value.asLong() < 0) {
+            throw new IllegalArgumentException("客诉事件 roomRosterVersion 无效");
+        }
+        return value.asLong();
     }
 
     private void instant(String value) {

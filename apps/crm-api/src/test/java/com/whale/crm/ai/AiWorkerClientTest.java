@@ -87,12 +87,32 @@ class AiWorkerClientTest {
         assertThat(body.at("/scene").asText()).isEqualTo("PACKAGE_REMAINING");
         assertThat(body.at("/facts/remaining_count").asInt()).isEqualTo(6);
         assertThat(body.at("/instruction").asText()).isEqualTo("语气简洁");
+        assertThat(body.has("recent_messages")).isFalse();
         assertThat(body.at("/provider_config/provider").asText()).isEqualTo("mock");
         assertThat(result.promptVersion()).isEqualTo("reply-v1");
         assertThat(result.suggestion().reply()).contains("还剩6次");
         assertThat(result.suggestion().confidence()).isEqualByComparingTo("0.86");
         assertThat(result.suggestion().allowFinancialWrite()).isFalse();
         assertThat(result.suggestion().requiresHumanReview()).isTrue();
+    }
+
+    @Test
+    void replyGenerationIncludesRecentMessagesInSnakeCaseWhenProvided() throws Exception {
+        AiWorkerClient.ProviderConfig provider = new AiWorkerClient.ProviderConfig("mock", "", "", "mock", 30);
+        java.time.Instant sentAt = java.time.Instant.parse("2026-11-22T08:30:00Z");
+        List<AiWorkerClient.MessageInput> recent = List.of(
+                new AiWorkerClient.MessageInput("901", "CUSTOMER", sentAt, "请问水光针还剩几次？"));
+
+        client.generateReply("candidate-2", 128L, "PACKAGE_REMAINING",
+                java.util.Map.of("customer_name", "测试客户", "remaining_count", 6),
+                "语气简洁", recent, provider);
+
+        JsonNode body = mapper.readTree(requestBody.get());
+        assertThat(requestPath.get()).isEqualTo("/api/v1/replies/generate");
+        assertThat(body.at("/recent_messages")).hasSize(1);
+        assertThat(body.at("/recent_messages/0/id").asText()).isEqualTo("901");
+        assertThat(body.at("/recent_messages/0/sender_type").asText()).isEqualTo("CUSTOMER");
+        assertThat(body.at("/recent_messages/0/text").asText()).isEqualTo("请问水光针还剩几次？");
     }
 
     @Test

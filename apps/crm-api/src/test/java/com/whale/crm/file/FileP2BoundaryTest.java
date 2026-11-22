@@ -1,5 +1,7 @@
 package com.whale.crm.file;
 
+import com.whale.crm.file.api.dto.UploadCompleteRequest;
+import com.whale.crm.file.api.dto.UploadInitRequest;
 import com.whale.crm.file.application.ClamAvScanner;
 import com.whale.crm.file.application.FileApplicationService;
 import com.whale.crm.file.application.FileContentInspector;
@@ -21,12 +23,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -41,6 +49,8 @@ class FileP2BoundaryTest {
     private FileScopeService scopeService;
     private FileRepository repository;
     private PrivateObjectStorage storage;
+    private ClamAvScanner scanner;
+    private FileProperties properties;
     private FileApplicationService fileService;
 
     @BeforeEach
@@ -50,13 +60,15 @@ class FileP2BoundaryTest {
         scopeService = new FileScopeService(institutionAccess, dataScopeService);
         repository = mock(FileRepository.class);
         storage = mock(PrivateObjectStorage.class);
+        scanner = mock(ClamAvScanner.class);
         @SuppressWarnings("unchecked")
         ObjectProvider<PrivateObjectStorage> storageProvider = mock(ObjectProvider.class);
         when(storageProvider.getIfAvailable()).thenReturn(storage);
-        FileProperties properties = new FileProperties();
+        properties = new FileProperties();
         properties.setEnabled(true);
+        properties.setMaxFileSizeBytes(1024L);
         fileService = new FileApplicationService(repository, storageProvider, mock(FileContentInspector.class),
-                mock(ClamAvScanner.class), scopeService, properties, mock(AuditService.class),
+                scanner, scopeService, properties, mock(AuditService.class),
                 mock(PlatformTransactionManager.class));
     }
 
@@ -201,6 +213,137 @@ class FileP2BoundaryTest {
                 ErrorCode.FORBIDDEN);
 
         verifyNoInteractions(dataScopeService, institutionAccess);
+    }
+
+    @Test
+    void uploadInitRejectsTextMimeForNonMaterialNonPdfClassifications() {
+        CurrentUser finance = employee("order:confirm_payment", "redemption:post", "institution:write");
+        when(dataScopeService.scopeFor(finance, DataScopeService.RESOURCE_CUSTOMER)).thenReturn(DataScope.all());
+        when(dataScopeService.scopeFor(finance, DataScopeService.RESOURCE_INSTITUTION)).thenReturn(DataScope.all());
+
+        for (String classification : java.util.List.of("PAYMENT", "REDEMPTION", "MERCHANT_RESOURCE")) {
+            Long institutionId = "PAYMENT".equals(classification) ? null : 1L;
+            for (String mime : java.util.List.of("text/plain", "text/markdown", "text/x-markdown")) {
+                UploadInitRequest request = new UploadInitRequest("note.txt", mime, 16L,
+                        "a".repeat(64), classification, institutionId);
+                assertBusinessError(() -> fileService.uploadInit(1L, finance, request), ErrorCode.VALIDATION_FAILED);
+            }
+        }
+        verify(storage, never()).presignPut(anyString(), anyInt());
+    }
+
+    @Test
+    void uploadCompleteRejectsOversizedStatBeforeGetObjectAndDeletesStagingObject() {
+        CurrentUser user = employee("institution:write");
+        when(dataScopeService.scopeFor(user, DataScopeService.RESOURCE_INSTITUTION)).thenReturn(DataScope.all());
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        FileMetadata pending = new FileMetadata(51L, 1L, "contract/1/oversize.pdf", "oversize.pdf",
+                "application/pdf", 512L, "a".repeat(64), "CONTRACT", 1L, "PENDING",
+                2L, null, null, null, now, now, 0L);
+        when(repository.findById(1L, 51L)).thenReturn(Optional.of(pending));
+        when(repository.startCompletion(1L, 51L, 0L)).thenReturn(1);
+        when(storage.stat("contract/1/oversize.pdf"))
+                .thenReturn(new PrivateObjectStorage.ObjectStat("b".repeat(32), 2048L, "application/pdf"));
+
+        assertBusinessError(() -> fileService.uploadComplete(1L, user, new UploadCompleteRequest(51L, "b".repeat(32))),
+                ErrorCode.CONFLICT);
+
+        verify(storage, never()).getObject(anyString());
+        verify(scanner, never()).scan(any());
+        verify(storage).deleteObject("contract/1/oversize.pdf");
+    }
+
+    @Test
+    void uploadCompleteAbortsStreamingOnExcessByteWithoutReadingWholeStream() {
+        CurrentUser user = employee("institution:write");
+        when(dataScopeService.scopeFor(user, DataScopeService.RESOURCE_INSTITUTION)).thenReturn(DataScope.all());
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        FileMetadata pending = new FileMetadata(52L, 1L, "contract/1/lying-stream.pdf", "lying.pdf",
+                "application/pdf", 512L, "a".repeat(64), "CONTRACT", 1L, "PENDING",
+                2L, null, null, null, now, now, 0L);
+        when(repository.findById(1L, 52L)).thenReturn(Optional.of(pending));
+        when(repository.startCompletion(1L, 52L, 0L)).thenReturn(1);
+        when(storage.stat("contract/1/lying-stream.pdf"))
+                .thenReturn(new PrivateObjectStorage.ObjectStat("b".repeat(32), 512L, "application/pdf"));
+        AtomicInteger chunksRead = new AtomicInteger();
+        InputStream lyingStream = new InputStream() {
+            @Override
+            public int read() {
+                return 'x';
+            }
+
+            @Override
+            public int read(byte[] b, int off, int len) throws IOException {
+                if (chunksRead.incrementAndGet() > 5) {
+                    throw new AssertionError("Stream was not aborted early");
+                }
+                java.util.Arrays.fill(b, off, off + Math.min(len, 400), (byte) 'x');
+                return Math.min(len, 400);
+            }
+        };
+        when(storage.getObject("contract/1/lying-stream.pdf")).thenReturn(lyingStream);
+
+        assertBusinessError(() -> fileService.uploadComplete(1L, user, new UploadCompleteRequest(52L, "b".repeat(32))),
+                ErrorCode.CONFLICT);
+
+        assertThat(chunksRead.get()).isEqualTo(2);
+        verify(scanner, never()).scan(any());
+        verify(storage).deleteObject("contract/1/lying-stream.pdf");
+    }
+
+    @Test
+    void ensureSealedRejectsOversizedStatAndHandlesConcurrentSealRaceGracefully() {
+        CurrentUser user = employee("institution:read");
+        when(dataScopeService.scopeFor(user, DataScopeService.RESOURCE_INSTITUTION)).thenReturn(DataScope.all());
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+
+        FileMetadata oversizedLegacy = new FileMetadata(61L, 1L, "contract/1/legacy-big.pdf", "big.pdf",
+                "application/pdf", 512L, "a".repeat(64), "CONTRACT", 1L, "CLEAN",
+                2L, "b".repeat(32), null, null, now, now, 1L);
+        when(repository.findById(1L, 61L)).thenReturn(Optional.of(oversizedLegacy));
+        when(storage.stat("contract/1/legacy-big.pdf"))
+                .thenReturn(new PrivateObjectStorage.ObjectStat("b".repeat(32), 2048L, "application/pdf"));
+
+        assertBusinessError(() -> fileService.requireCleanUsable(1L, user, 61L, FileClassification.CONTRACT, 1L),
+                ErrorCode.CONFLICT);
+        verify(storage, never()).getObject("contract/1/legacy-big.pdf");
+        verify(storage).deleteObject("contract/1/legacy-big.pdf");
+
+        FileMetadata racedLegacy = new FileMetadata(62L, 1L, "contract/1/legacy-race.pdf", "race.pdf",
+                "application/pdf", 16L, "a".repeat(64), "CONTRACT", 1L, "CLEAN",
+                2L, "b".repeat(32), null, null, now, now, 1L);
+        FileMetadata alreadySealed = new FileMetadata(62L, 1L, "sealed/1/winner-uuid", "race.pdf",
+                "application/pdf", 16L, "a".repeat(64), "CONTRACT", 1L, "CLEAN",
+                2L, "b".repeat(32), null, null, now, now, 2L);
+        when(repository.findById(1L, 62L)).thenReturn(Optional.of(racedLegacy), Optional.of(alreadySealed));
+        when(storage.stat("contract/1/legacy-race.pdf")).thenThrow(new IllegalStateException("Object already deleted"));
+
+        FileMetadata returned = fileService.requireCleanUsable(1L, user, 62L, FileClassification.CONTRACT, 1L);
+        assertThat(returned.objectKey()).isEqualTo("sealed/1/winner-uuid");
+        verify(storage, never()).deleteObject("contract/1/legacy-race.pdf");
+    }
+
+    @Test
+    void copyBoundedAlsoRejectsShortStreamBeforeInspection() {
+        CurrentUser user = employee("institution:write");
+        when(dataScopeService.scopeFor(user, DataScopeService.RESOURCE_INSTITUTION)).thenReturn(DataScope.all());
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        FileMetadata pending = new FileMetadata(53L, 1L, "contract/1/short-stream.pdf", "short.pdf",
+                "application/pdf", 512L, "a".repeat(64), "CONTRACT", 1L, "PENDING",
+                2L, null, null, null, now, now, 0L);
+        when(repository.findById(1L, 53L)).thenReturn(Optional.of(pending));
+        when(repository.startCompletion(1L, 53L, 0L)).thenReturn(1);
+        when(storage.stat("contract/1/short-stream.pdf"))
+                .thenReturn(new PrivateObjectStorage.ObjectStat("b".repeat(32), 512L, "application/pdf"));
+        when(storage.getObject("contract/1/short-stream.pdf")).thenReturn(new ByteArrayInputStream(new byte[100]));
+        when(repository.updateScanStatus(1L, 53L, 1L, "ERROR", "SIZE_MISMATCH")).thenReturn(1);
+
+        assertBusinessError(() -> fileService.uploadComplete(1L, user, new UploadCompleteRequest(53L, "b".repeat(32))),
+                ErrorCode.CONFLICT);
+
+        verify(scanner, never()).scan(any());
+        verify(storage).deleteObject("contract/1/short-stream.pdf");
+        verify(repository).updateScanStatus(1L, 53L, 1L, "ERROR", "SIZE_MISMATCH");
     }
 
     private CurrentUser employee(String... permissions) {

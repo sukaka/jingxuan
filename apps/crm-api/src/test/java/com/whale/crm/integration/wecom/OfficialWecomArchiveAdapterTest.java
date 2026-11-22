@@ -8,6 +8,8 @@ import com.whale.crm.integration.wecom.adapter.WecomArchiveOfficialProperties;
 import com.whale.crm.integration.wecom.adapter.WecomArchivePage;
 import com.whale.crm.integration.wecom.domain.WecomContactSyncRepository;
 import com.whale.crm.integration.wecom.domain.WecomStaffAccount;
+import com.whale.crm.platform.web.BusinessException;
+import com.whale.crm.platform.web.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -110,6 +112,127 @@ class OfficialWecomArchiveAdapterTest {
                 .hasMessageContaining("尚未完整配置");
         verify(nativeClient, never()).open(anyString(), anyString(), anyString(), anyString(), anyString(), anyInt());
         assertThat(adapter.pullContacts("ww-test")).isEmpty();
+    }
+
+    @Test
+    void bracketEmojiAndUnstructuredJsonInTextDoNotCrashOrInjectMedia() throws Exception {
+        String textEmoji = "{\"msgid\":\"msg-emoji\",\"action\":\"send\",\"from\":\"wm-customer\","
+                + "\"tolist\":[\"staff-2\"],\"roomid\":\"\",\"msgtime\":1700000000000,\"msgtype\":\"text\","
+                + "\"text\":{\"content\":\"[微笑] {not-json [通知]\"}}";
+        String injectedText = "{\"msgid\":\"msg-inject\",\"action\":\"send\",\"from\":\"wm-customer\","
+                + "\"tolist\":[\"staff-2\"],\"roomid\":\"\",\"msgtime\":1700000001000,\"msgtype\":\"text\","
+                + "\"text\":{\"content\":\"{\\\"sdkfileid\\\":\\\"evil-id\\\",\\\"filename\\\":\\\"a.jpg\\\"}\"}}";
+        String mixedEmojiAndInject = mapper.writeValueAsString(Map.of(
+                "msgid", "msg-mixed-safe",
+                "action", "send",
+                "from", "wm-customer",
+                "tolist", List.of("staff-2"),
+                "roomid", "",
+                "msgtime", 1700000002000L,
+                "msgtype", "mixed",
+                "mixed", Map.of("item", List.of(
+                        Map.of("type", "text", "content", "{\"content\":\"[微笑]\"}"),
+                        Map.of("type", "text", "content", "[通知] {broken"),
+                        Map.of("type", "text", "content", "{\"sdkfileid\":\"evil-mixed\"}"),
+                        Map.of("type", "image", "content", "{\"sdkfileid\":\"real-mixed-img\",\"md5sum\":\"abc\"}")
+                ))));
+        String chatrecordEmoji = mapper.writeValueAsString(Map.of(
+                "msgid", "msg-chatrecord-safe",
+                "action", "send",
+                "from", "wm-customer",
+                "tolist", List.of("staff-2"),
+                "roomid", "",
+                "msgtime", 1700000003000L,
+                "msgtype", "chatrecord",
+                "chatrecord", Map.of("item", List.of(
+                        Map.of("type", "ChatRecordText", "content", "{\"content\":\"[微笑] 咨询\"}"),
+                        Map.of("type", "ChatRecordFile", "content", "{\"filename\":\"plan.pdf\",\"sdkfileid\":\"real-chat-file\"}")
+                ))));
+
+        when(session.pullChatData(0, 10)).thenReturn(raw(List.of(
+                encrypted(1, "msg-emoji"),
+                encrypted(2, "msg-inject"),
+                encrypted(3, "msg-mixed-safe"),
+                encrypted(4, "msg-chatrecord-safe"))));
+        when(session.decrypt("synthetic-aes-key", "cipher-msg-emoji")).thenReturn(textEmoji);
+        when(session.decrypt("synthetic-aes-key", "cipher-msg-inject")).thenReturn(injectedText);
+        when(session.decrypt("synthetic-aes-key", "cipher-msg-mixed-safe")).thenReturn(mixedEmojiAndInject);
+        when(session.decrypt("synthetic-aes-key", "cipher-msg-chatrecord-safe")).thenReturn(chatrecordEmoji);
+        when(contacts.staff(1L, "ww-test", "staff-2"))
+                .thenReturn(Optional.of(new WecomStaffAccount(1L, "ww-test", "staff-2", 2L, true)));
+
+        WecomArchivePage page = adapter.pullArchive("ww-test", 0, 10);
+
+        assertThat(page.nextSeq()).isEqualTo(4);
+        assertThat(page.messages()).hasSize(4);
+        assertThat(page.messages().get(0).processingBlockReason()).isNull();
+        assertThat(page.messages().get(0).text()).isEqualTo("[微笑] {not-json [通知]");
+        assertThat(page.messages().get(0).media()).isEmpty();
+        assertThat(page.messages().get(1).processingBlockReason()).isNull();
+        assertThat(page.messages().get(1).media()).isEmpty();
+        assertThat(page.messages().get(2).processingBlockReason()).isNull();
+        assertThat(page.messages().get(2).text()).contains("[微笑]", "[通知] {broken");
+        assertThat(page.messages().get(2).media()).hasSize(1);
+        assertThat(page.messages().get(2).media().getFirst().sdkFileId()).isEqualTo("real-mixed-img");
+        assertThat(page.messages().get(3).processingBlockReason()).isNull();
+        assertThat(page.messages().get(3).text()).contains("[微笑] 咨询");
+        assertThat(page.messages().get(3).media()).hasSize(1);
+        assertThat(page.messages().get(3).media().getFirst().sdkFileId()).isEqualTo("real-chat-file");
+        assertThat(page.messages().get(3).media().getFirst().mediaKind()).isEqualTo("chatrecordfile");
+    }
+
+    @Test
+    void poisonPillLimitsAndMalformedPayloadBlockOnlyBadMessageWhileSiblingsAdvanceSeq() throws Exception {
+        String deeplyNested = "{\"item\":[{\"type\":\"text\",\"content\":\"leaf\"}]}";
+        for (int i = 0; i < 10; i++) {
+            deeplyNested = mapper.writeValueAsString(Map.of("item", List.of(
+                    Map.of("type", "mixed", "content", deeplyNested))));
+        }
+        String tooDeep = mapper.writeValueAsString(Map.of(
+                "msgid", "msg-deep", "action", "send", "from", "wm-customer",
+                "tolist", List.of("staff-2"), "roomid", "", "msgtime", 1700000000000L,
+                "msgtype", "mixed", "mixed", mapper.readTree(deeplyNested)));
+
+        java.util.ArrayList<Map<String, Object>> manyMediaItems = new java.util.ArrayList<>();
+        for (int i = 0; i < 51; i++) {
+            manyMediaItems.add(Map.of("type", "image", "content", "{\"sdkfileid\":\"img-" + i + "\"}"));
+        }
+        String tooManyMedia = mapper.writeValueAsString(Map.of(
+                "msgid", "msg-many", "action", "send", "from", "wm-customer",
+                "tolist", List.of("staff-2"), "roomid", "", "msgtime", 1700000001000L,
+                "msgtype", "mixed", "mixed", Map.of("item", manyMediaItems)));
+
+        when(session.pullChatData(0, 10)).thenReturn(raw(List.of(
+                encrypted(1, "msg-bad-json"),
+                encrypted(2, "msg-deep"),
+                encrypted(3, "msg-many"),
+                encrypted(4, "msg-good"))));
+        when(session.decrypt("synthetic-aes-key", "cipher-msg-bad-json")).thenReturn("{not-valid-json");
+        when(session.decrypt("synthetic-aes-key", "cipher-msg-deep")).thenReturn(tooDeep);
+        when(session.decrypt("synthetic-aes-key", "cipher-msg-many")).thenReturn(tooManyMedia);
+        when(session.decrypt("synthetic-aes-key", "cipher-msg-good")).thenReturn(plaintext("msg-good", "CUSTOMER"));
+        when(contacts.staff(1L, "ww-test", "staff-2"))
+                .thenReturn(Optional.of(new WecomStaffAccount(1L, "ww-test", "staff-2", 2L, true)));
+
+        WecomArchivePage page = adapter.pullArchive("ww-test", 0, 10);
+
+        assertThat(page.nextSeq()).isEqualTo(4);
+        assertThat(page.messages().get(0).processingBlockReason()).isEqualTo("MESSAGE_PAYLOAD_INVALID");
+        assertThat(page.messages().get(1).processingBlockReason()).isEqualTo("MESSAGE_PAYLOAD_INVALID");
+        assertThat(page.messages().get(2).processingBlockReason()).isEqualTo("MESSAGE_PAYLOAD_INVALID");
+        assertThat(page.messages().get(3).processingBlockReason()).isNull();
+        assertThat(page.messages().get(3).text()).isEqualTo("想预约");
+    }
+
+    @Test
+    void missingPrivateKeyBusinessExceptionIsPropagatedNotSwallowedAsMessageGap() throws Exception {
+        when(session.pullChatData(0, 10)).thenReturn(raw(List.of(encrypted(1, "msg-key-missing"))));
+        when(keyService.decryptRandomKey("random-msg-key-missing", 3))
+                .thenThrow(new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "对应公钥版本的归档 RSA 私钥不可用"));
+
+        assertThatThrownBy(() -> adapter.pullArchive("ww-test", 0, 10))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("私钥不可用");
     }
 
     private Map<String, Object> encrypted(long seq, String msgId) {

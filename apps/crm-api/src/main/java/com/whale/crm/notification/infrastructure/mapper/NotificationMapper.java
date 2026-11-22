@@ -14,6 +14,8 @@ import java.util.List;
 public interface NotificationMapper {
     int recipientActive(@Param("tenantId") long tenantId, @Param("recipientUserId") long recipientUserId);
 
+    int employeeActive(@Param("tenantId") long tenantId, @Param("staffUserId") long staffUserId);
+
     Notification selectByDedupeKey(@Param("tenantId") long tenantId, @Param("recipientUserId") long recipientUserId,
                                    @Param("dedupeKey") String dedupeKey);
 

@@ -18,13 +18,15 @@ PROJECT_NAME="whale-crm"
 ALLOW_HTTP=false
 COMMAND="${1:-install}"
 if [[ $# -gt 0 ]]; then shift; fi
+POSITIONAL_ARGS=()
 
 usage() {
   cat <<'EOF'
 用法：
   ./install.sh install --url https://crm.example.com [--files-url https://files.example.com]
   ./install.sh upgrade
-  ./install.sh start|stop|status|logs|backup|create-admin
+  ./install.sh start|stop|status|backup|create-admin
+  ./install.sh logs [服务名 ...]
 
 首次安装参数：
   --url URL                  系统访问地址，生产环境必须使用 HTTPS
@@ -36,6 +38,10 @@ usage() {
   --project-name NAME       Docker Compose 项目名，默认 whale-crm
   --allow-insecure-http     明确允许非本机 HTTP（不建议生产使用）
 
+备份说明（backup / upgrade）：
+  同时备份 MySQL 数据库（backups/crm-*.sql.gz）、MinIO 对象存储（backups/crm-minio-*.tar.gz）
+  及 .env 密钥文件（设置 BACKUP_ENCRYPTION_PASSPHRASE 时加密为 .env.enc）。
+
 本地验证可使用：--url http://127.0.0.1:18080 --site-address http://127.0.0.1 --http-port 18080
 管理员密码只在 initial-admin.txt 中保存，不会打印到终端。
 EOF
@@ -45,20 +51,37 @@ fail() { echo "错误：$*" >&2; exit 1; }
 cleanup() { if [[ -n "$BOOTSTRAP_ENV" ]]; then rm -f "$BOOTSTRAP_ENV"; fi; }
 trap cleanup EXIT
 
+require_opt_arg() {
+  [[ $# -ge 2 && -n "${2:-}" ]] || fail "参数 $1 缺少值，使用 --help 查看帮助"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --url) URL="${2:-}"; shift 2 ;;
-    --site-address) SITE_ADDRESS="${2:-}"; shift 2 ;;
-    --files-url) FILES_URL="${2:-}"; shift 2 ;;
-    --files-site-address) FILES_SITE_ADDRESS="${2:-}"; shift 2 ;;
-    --http-port) HTTP_PORT="${2:-}"; shift 2 ;;
-    --https-port) HTTPS_PORT="${2:-}"; shift 2 ;;
-    --project-name) PROJECT_NAME="${2:-}"; shift 2 ;;
+    --url) require_opt_arg "$@"; URL="$2"; shift 2 ;;
+    --site-address) require_opt_arg "$@"; SITE_ADDRESS="$2"; shift 2 ;;
+    --files-url) require_opt_arg "$@"; FILES_URL="$2"; shift 2 ;;
+    --files-site-address) require_opt_arg "$@"; FILES_SITE_ADDRESS="$2"; shift 2 ;;
+    --http-port) require_opt_arg "$@"; HTTP_PORT="$2"; shift 2 ;;
+    --https-port) require_opt_arg "$@"; HTTPS_PORT="$2"; shift 2 ;;
+    --project-name) require_opt_arg "$@"; PROJECT_NAME="$2"; shift 2 ;;
     --allow-insecure-http) ALLOW_HTTP=true; shift ;;
     -h|--help) usage; exit 0 ;;
-    *) fail "未知参数 $1，使用 --help 查看帮助" ;;
+    -*) fail "未知参数 $1，使用 --help 查看帮助" ;;
+    *) POSITIONAL_ARGS+=("$1"); shift ;;
   esac
 done
+
+if [[ "$COMMAND" == "logs" ]]; then
+  if [[ ${#POSITIONAL_ARGS[@]} -gt 0 ]]; then
+    for svc in "${POSITIONAL_ARGS[@]}"; do
+      [[ "$svc" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail "非法的服务名：$svc"
+    done
+  fi
+elif [[ "$COMMAND" != "-h" && "$COMMAND" != "--help" && "$COMMAND" != "help" ]]; then
+  if [[ ${#POSITIONAL_ARGS[@]} -gt 0 ]]; then
+    fail "命令 $COMMAND 不接受位置参数：${POSITIONAL_ARGS[*]}"
+  fi
+fi
 
 compose() {
   docker compose --env-file "$ENV_FILE" -f "$ROOT/compose.yml" "$@"
@@ -66,7 +89,7 @@ compose() {
 
 require_tools() {
   local tool
-  for tool in docker openssl curl tar gzip sed; do
+  for tool in docker openssl curl tar gzip sed awk; do
     command -v "$tool" >/dev/null 2>&1 || fail "缺少命令 $tool"
   done
   docker compose version >/dev/null 2>&1 || fail "需要 Docker Compose v2 插件"
@@ -81,11 +104,29 @@ set_env() {
   local key="$1"
   local value="$2"
   [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || fail "$key 不能包含换行"
-  value="${value//\\/\\\\}"
-  value="${value//&/\\&}"
-  value="${value//|/\\|}"
-  sed -i.bak "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
-  rm -f "$ENV_FILE.bak"
+  local tmp_env
+  tmp_env="$(mktemp "${ENV_FILE}.XXXXXX")"
+  chmod 600 "$tmp_env"
+  ENV_KEY="$key" ENV_VAL="$value" awk '
+    BEGIN {
+      key = ENVIRON["ENV_KEY"]
+      val = ENVIRON["ENV_VAL"]
+      prefix = key "="
+      replaced = 0
+    }
+    index($0, prefix) == 1 && !replaced {
+      print prefix val
+      replaced = 1
+      next
+    }
+    { print }
+    END {
+      if (!replaced) {
+        print prefix val
+      }
+    }
+  ' "$ENV_FILE" > "$tmp_env"
+  mv "$tmp_env" "$ENV_FILE"
 }
 
 valid_url() {
@@ -251,15 +292,75 @@ check_access() {
 }
 
 backup_database() {
+  local ts="${1:-$(date -u +%Y%m%dT%H%M%SZ)}"
   mkdir -p "$ROOT/backups"
-  local destination="$ROOT/backups/crm-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-  if ! compose exec -T mysql sh -c 'exec mysqldump --single-transaction --quick --routines --triggers --hex-blob -uroot -p"$MYSQL_ROOT_PASSWORD" medical_crm' | gzip > "$destination"; then
+  local destination="$ROOT/backups/crm-${ts}.sql.gz"
+  if ! compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump --single-transaction --quick --routines --triggers --hex-blob -uroot medical_crm' | gzip > "$destination"; then
     rm -f "$destination"
     fail "数据库备份失败，未继续升级"
   fi
   [[ -s "$destination" ]] || { rm -f "$destination"; fail "数据库备份为空，未继续升级"; }
   chmod 600 "$destination"
   echo "数据库备份完成：$destination"
+}
+
+backup_minio() {
+  local ts="${1:-$(date -u +%Y%m%dT%H%M%SZ)}"
+  mkdir -p "$ROOT/backups"
+  local destination="$ROOT/backups/crm-minio-${ts}.tar.gz"
+  local project_name minio_cid volume_name
+  project_name="$(env_value COMPOSE_PROJECT_NAME)"
+  project_name="${project_name:-$PROJECT_NAME}"
+  minio_cid="$(compose ps -q minio 2>/dev/null || true)"
+  if [[ -n "$minio_cid" ]]; then
+    if ! docker run --rm --volumes-from "$minio_cid" --entrypoint sh redis:7.4.2-alpine -c 'tar -C /data -cf - .' | gzip > "$destination"; then
+      rm -f "$destination"
+      fail "MinIO 对象存储备份失败"
+    fi
+  else
+    volume_name="${project_name}_minio_data"
+    if ! docker volume inspect "$volume_name" >/dev/null 2>&1; then
+      fail "未找到 MinIO 容器或数据卷 ($volume_name)，无法备份对象存储"
+    fi
+    if ! docker run --rm -v "${volume_name}:/data:ro" --entrypoint sh redis:7.4.2-alpine -c 'tar -C /data -cf - .' | gzip > "$destination"; then
+      rm -f "$destination"
+      fail "MinIO 对象存储备份失败"
+    fi
+  fi
+  [[ -s "$destination" ]] || { rm -f "$destination"; fail "MinIO 对象存储备份为空"; }
+  gzip -t "$destination" || { rm -f "$destination"; fail "MinIO 备份 gzip 校验失败"; }
+  chmod 600 "$destination"
+  echo "MinIO 对象存储备份完成：$destination"
+}
+
+backup_env() {
+  local ts="${1:-$(date -u +%Y%m%dT%H%M%SZ)}"
+  mkdir -p "$ROOT/backups"
+  if [[ -n "${BACKUP_ENCRYPTION_PASSPHRASE:-}" ]]; then
+    local destination="$ROOT/backups/crm-env-${ts}.env.enc"
+    if ! openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt \
+      -pass env:BACKUP_ENCRYPTION_PASSPHRASE -in "$ENV_FILE" -out "$destination"; then
+      rm -f "$destination"
+      fail ".env 密钥文件加密备份失败"
+    fi
+    chmod 600 "$destination"
+    echo "环境密钥已加密备份：$destination"
+  else
+    local destination="$ROOT/backups/crm-env-${ts}.env"
+    cp "$ENV_FILE" "$destination"
+    chmod 600 "$destination"
+    echo "警告：未设置 BACKUP_ENCRYPTION_PASSPHRASE，已以明文（权限 600）备份 .env 到 ${destination}；" >&2
+    echo "      .env 包含 APP_AES_KEY_BASE64 与 APP_BLIND_INDEX_PEPPER 等核心密钥，建议设置 BACKUP_ENCRYPTION_PASSPHRASE 并将密钥备份与数据库备份分开异地保存。" >&2
+    echo "环境密钥备份完成（未加密，建议尽快离线加密保存）：$destination"
+  fi
+}
+
+backup_all() {
+  local ts
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_database "$ts"
+  backup_minio "$ts"
+  backup_env "$ts"
 }
 
 case "$COMMAND" in
@@ -276,7 +377,7 @@ case "$COMMAND" in
   upgrade)
     require_tools
     load_existing_config
-    backup_database
+    backup_all
     load_images
     render_caddy
     start_stack
@@ -302,8 +403,8 @@ case "$COMMAND" in
     ;;
   logs)
     load_existing_config
-    if [[ -n "${1:-}" ]]; then
-      compose logs --tail "${LOG_LINES:-100}" "$1"
+    if [[ ${#POSITIONAL_ARGS[@]} -gt 0 ]]; then
+      compose logs --tail "${LOG_LINES:-100}" "${POSITIONAL_ARGS[@]}"
     else
       compose logs --tail "${LOG_LINES:-100}"
     fi
@@ -311,7 +412,7 @@ case "$COMMAND" in
   backup)
     require_tools
     load_existing_config
-    backup_database
+    backup_all
     ;;
   create-admin)
     require_tools

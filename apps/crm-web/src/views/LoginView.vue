@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ShellIcon from '../components/shell/ShellIcon.vue'
 import { getCaptcha } from '../api/auth'
@@ -9,11 +9,13 @@ import { ApiError } from '../types/api'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const form = reactive({ username: '', password: '', captchaId: '', captchaAnswer: '' })
+const form = reactive({ username: '', password: '', tenantCode: '', captchaId: '', captchaAnswer: '' })
 const captchaImage = ref('')
 const captchaLoading = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
+const tenantRequired = ref(false)
+const tenantInput = ref<{ focus?: () => void } | null>(null)
 const showDevelopmentBadge = import.meta.env.DEV
 
 async function loadCaptcha() {
@@ -35,6 +37,15 @@ async function loadCaptcha() {
 
 onMounted(() => { void loadCaptcha() })
 
+function isTenantRequiredError(error: unknown): error is ApiError {
+  if (!(error instanceof ApiError)) return false
+  if (error.code === 'AMBIGUOUS_TENANT') return true
+  if (error.code !== 'VALIDATION_FAILED' || !Array.isArray(error.details)) return false
+  return error.details.some(
+    (detail) => typeof detail === 'object' && detail !== null && (detail as { field?: unknown }).field === 'tenantCode',
+  )
+}
+
 async function submit() {
   errorMessage.value = ''
   if (!form.username.trim() || !form.password) {
@@ -47,9 +58,14 @@ async function submit() {
   }
   submitting.value = true
   try {
-    await auth.login(form.username.trim(), form.password, form.captchaId, form.captchaAnswer.trim())
+    await auth.login(form.username.trim(), form.password, form.captchaId, form.captchaAnswer.trim(), form.tenantCode)
+    tenantRequired.value = false
   } catch (error) {
-    if (error instanceof ApiError && error.isUnauthorized) {
+    if (isTenantRequiredError(error)) {
+      tenantRequired.value = true
+      errorMessage.value = error.message || '检测到多个租户存在同名账号，请填写租户编码后重试'
+      void nextTick(() => tenantInput.value?.focus?.())
+    } else if (error instanceof ApiError && error.isUnauthorized) {
       errorMessage.value = error.message || '用户名或密码错误'
     } else if (error instanceof ApiError && error.isNetworkError) {
       errorMessage.value = '无法连接后端服务，请确认后端已启动后重试'
@@ -129,6 +145,18 @@ async function submit() {
               :disabled="submitting"
               required
             />
+          </div>
+          <div class="login-field" :class="{ 'is-highlighted': tenantRequired }">
+            <label for="login-tenant-code">租户编码（可选）</label>
+            <el-input
+              id="login-tenant-code"
+              ref="tenantInput"
+              v-model="form.tenantCode"
+              placeholder="多租户同名账号时填写"
+              autocomplete="organization"
+              :disabled="submitting"
+            />
+            <p v-if="tenantRequired" class="login-captcha-help login-tenant-hint">当前用户名在多个租户中存在，请填写所属租户编码后再登录</p>
           </div>
           <div class="login-field">
             <label for="login-captcha">验证码</label>
@@ -367,6 +395,14 @@ async function submit() {
 
 .login-field :deep(.el-input__wrapper.is-focus) {
   box-shadow: 0 0 0 1px #36ad9f inset, 0 0 0 3px #e7f7f3;
+}
+
+.login-field.is-highlighted :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #d97706 inset, 0 0 0 3px #fef3c7;
+}
+
+.login-tenant-hint {
+  color: #b45309;
 }
 
 .login-captcha-row {

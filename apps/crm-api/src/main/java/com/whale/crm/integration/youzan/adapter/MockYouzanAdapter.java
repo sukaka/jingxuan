@@ -34,8 +34,8 @@ public class MockYouzanAdapter implements YouzanAdapter {
                 || signature.timestamp() == null) {
             return new YouzanVerification(false, "MOCK_SIGNATURE_MISSING");
         }
-        long age = Math.abs(Instant.now().getEpochSecond() - signature.timestamp());
-        if (age > WINDOW_SECONDS) {
+        long now = Instant.now().getEpochSecond();
+        if (signature.timestamp() < now - WINDOW_SECONDS || signature.timestamp() > now + WINDOW_SECONDS) {
             return new YouzanVerification(false, "MOCK_SIGNATURE_EXPIRED");
         }
         String expected = signMock(rawBody, signature.timestamp());

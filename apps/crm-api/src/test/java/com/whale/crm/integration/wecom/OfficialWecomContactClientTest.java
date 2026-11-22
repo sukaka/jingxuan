@@ -8,14 +8,25 @@ import com.whale.crm.integration.wecom.adapter.WecomTokenService;
 import okhttp3.OkHttpClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class OfficialWecomContactClientTest {
     private final ObjectMapper mapper = new ObjectMapper();
@@ -45,7 +56,17 @@ class OfficialWecomContactClientTest {
         WecomOfficialProperties properties = new WecomOfficialProperties(true, "ww-test", "secret-test", base,
                 "token", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", 1000, 1000, 100, 10);
         OkHttpClient http = new OkHttpClient();
-        WecomTokenService tokens = new WecomTokenService(properties, mapper, http);
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        Map<String, String> store = new ConcurrentHashMap<>();
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0)));
+        doAnswer(inv -> {
+            store.put(inv.getArgument(0), inv.getArgument(1));
+            return null;
+        }).when(values).set(anyString(), anyString(), any(Duration.class));
+        WecomTokenService tokens = new WecomTokenService(properties, mapper, http, redis);
         OfficialWecomContactClient client = new OfficialWecomContactClient(properties, tokens, mapper, http);
 
         var first = client.batchGetByUser(List.of("staff-1"), null, 100);
@@ -58,6 +79,7 @@ class OfficialWecomContactClientTest {
         assertThat(batchBody.get()).contains("next-page").contains("\"limit\":100").contains("staff-1");
         assertThat(batches.get()).isEqualTo(2);
         assertThat(tokens.token()).isEqualTo("test-access-token");
+        verify(values).set("wecom:access_token:ww-test", "test-access-token", Duration.ofSeconds(7140));
     }
 
     private void respond(com.sun.net.httpserver.HttpExchange exchange, String body) throws java.io.IOException {

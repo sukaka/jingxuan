@@ -22,13 +22,10 @@ public class MybatisSettlementRepository implements SettlementRepository {
     }
 
     @Override
-    public void insertBatch(long tenantId, SettlementBatch batch) {
-        mapper.insertBatch(tenantId, batch);
-    }
-
-    @Override
-    public Optional<SettlementBatch> findBatchByPeriod(long tenantId, long institutionId, String type, String periodKey) {
-        return Optional.ofNullable(mapper.selectBatchByPeriod(tenantId, institutionId, type, periodKey));
+    public long insertBatch(long tenantId, SettlementBatch batch) {
+        SettlementMapper.BatchInsertCommand command = SettlementMapper.BatchInsertCommand.from(batch);
+        mapper.insertBatch(tenantId, command);
+        return command.getId();
     }
 
     @Override
@@ -68,8 +65,32 @@ public class MybatisSettlementRepository implements SettlementRepository {
     }
 
     @Override
+    public List<SettlementLine> findLinesByRedemptions(long tenantId, List<Long> redemptionIds) {
+        if (redemptionIds == null || redemptionIds.isEmpty()) {
+            return List.of();
+        }
+        return mapper.selectLinesByRedemptions(tenantId, redemptionIds.stream().distinct().sorted().toList());
+    }
+
+    @Override
+    public Optional<Long> lockLineIdByRedemption(long tenantId, long redemptionId) {
+        return Optional.ofNullable(mapper.lockLineIdByRedemption(tenantId, redemptionId));
+    }
+
+    @Override
     public List<SettlementRedemption> lockRedemptions(long tenantId, List<Long> redemptionIds) {
-        return mapper.lockRedemptions(tenantId, redemptionIds);
+        if (redemptionIds == null || redemptionIds.isEmpty()) {
+            return List.of();
+        }
+        return mapper.lockRedemptions(tenantId, redemptionIds.stream().distinct().sorted().toList());
+    }
+
+    @Override
+    public List<Long> findActiveReversalRedemptionIds(long tenantId, List<Long> redemptionIds) {
+        if (redemptionIds == null || redemptionIds.isEmpty()) {
+            return List.of();
+        }
+        return mapper.selectActiveReversalRedemptionIds(tenantId, redemptionIds.stream().distinct().sorted().toList());
     }
 
     @Override

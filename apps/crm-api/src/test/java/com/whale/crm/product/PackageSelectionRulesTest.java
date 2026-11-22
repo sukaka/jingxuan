@@ -1,6 +1,7 @@
 package com.whale.crm.product;
 
 import com.whale.crm.platform.web.BusinessException;
+import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.product.domain.CatalogRules;
 import com.whale.crm.product.domain.PackageOptionSelection;
 import com.whale.crm.product.domain.PackageProject;
@@ -58,13 +59,32 @@ class PackageSelectionRulesTest {
     }
 
     @Test
-    void legacyModesKeepTheirExistingWholeTemplateBehavior() {
+    void fixedModeKeepsWholeTemplateBehaviorAndRejectsInactiveProject() {
         List<PackageProject> projects = List.of(project(101, "MAIN", 80000, 2));
+        List<PackageProject> inactiveProjects = List.of(new PackageProject(null, 1L, 101L, "PRJ-101", "项目 101",
+                "TEST", 80000L, "INACTIVE", 2, 1, 0L, "MAIN", 80000L, 0L));
 
-        assertThat(PackageSelectionRules.select("USE_N", List.of(), projects, null))
+        assertThat(PackageSelectionRules.select("FIXED", List.of(), projects, null))
                 .containsExactlyElementsOf(projects);
         assertThat(CatalogRules.rulesStatus(version("CHOOSE_N"), List.of())).isEqualTo("PENDING_Q01");
         assertThat(CatalogRules.entitlementIssuable(version("CHOOSE_N"), projects, List.of())).isFalse();
+        assertThatThrownBy(() -> PackageSelectionRules.select("FIXED", List.of(), inactiveProjects, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode())
+                .isEqualTo(ErrorCode.CONFLICT);
+    }
+
+    @Test
+    void useNSelectionIsBlockedWithPendingQ01() {
+        List<PackageProject> projects = List.of(project(101, "MAIN", 80000, 2));
+
+        assertThatThrownBy(() -> PackageSelectionRules.select("USE_N", List.of(), projects, null))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException business = (BusinessException) ex;
+                    assertThat(business.errorCode()).isEqualTo(ErrorCode.PENDING_BUSINESS_RULE);
+                    assertThat(business.details()).extracting("field").contains("Q01");
+                });
     }
 
     private PackageVersion version(String mode) {

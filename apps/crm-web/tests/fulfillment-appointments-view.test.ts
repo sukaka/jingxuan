@@ -163,4 +163,64 @@ describe('AppointmentsView 机构履约状态与权限', () => {
 
     expect(document.body.querySelector('[data-testid="appointment-final-redemption"]')).not.toBeNull()
   })
+
+  it('消费路由 query 中的 status 与 institutionId 筛选预约', async () => {
+    const routerModule = await import('vue-router')
+    const router = routerModule.createRouter({
+      history: routerModule.createMemoryHistory(),
+      routes: [{ path: '/appointments', component: AppointmentsView }],
+    })
+    await router.push('/appointments?status=PENDING_INSTITUTION&institutionId=91')
+    await router.isReady()
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    auth.user = makeUser(['appointment:read'])
+    auth.initialized = true
+
+    const wrapper = mount(AppointmentsView, {
+      global: { plugins: [ElementPlus, pinia, router] },
+      attachTo: document.body,
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    expect(listAppointments).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'PENDING_INSTITUTION',
+      institutionId: 91,
+      page: 1,
+    }))
+  })
+
+  it('同路由切换清空 query 中的 status 与 institutionId 时同步重置筛选条件', async () => {
+    const routerModule = await import('vue-router')
+    const router = routerModule.createRouter({
+      history: routerModule.createMemoryHistory(),
+      routes: [{ path: '/appointments', component: AppointmentsView }],
+    })
+    await router.push('/appointments?status=PENDING_INSTITUTION&institutionId=91')
+    await router.isReady()
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    auth.user = makeUser(['appointment:read'])
+    auth.initialized = true
+
+    const wrapper = mount(AppointmentsView, {
+      global: { plugins: [ElementPlus, pinia, router] },
+      attachTo: document.body,
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    vi.mocked(listAppointments).mockClear()
+    await router.push('/appointments')
+    await flushPromises()
+
+    expect(listAppointments).toHaveBeenCalledWith(expect.objectContaining({
+      status: undefined,
+      institutionId: undefined,
+      page: 1,
+    }))
+  })
 })

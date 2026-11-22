@@ -5,9 +5,11 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
 import type { ReconciliationIssue, SettlementBatch, SettlementBatchDetail } from '../src/api/settlement'
-import { getSettlementBatch, getSettlementReconciliation, listSettlementBatches } from '../src/api/settlement'
+import { getSettlementBatch, getSettlementReconciliation, listSettlementBatches, createSettlementBatch } from '../src/api/settlement'
+import { listRedemptions } from '../src/api/fulfillment'
 import { useAuthStore } from '../src/stores/auth'
 import SettlementsView from '../src/views/SettlementsView.vue'
+import SettlementBatchCreateDrawer from '../src/views/settlement/SettlementBatchCreateDrawer.vue'
 import { amountStatusLabel, providerLabel, settlementAmount, settlementPeriodLabel, settlementStatusLabel, settlementTypeLabel } from '../src/views/finance/financeUi'
 
 vi.mock('../src/api/settlement', () => ({
@@ -146,5 +148,59 @@ describe('SettlementsView 待核实金额、权限与对账', () => {
     expect(wrapper.text()).not.toContain('UNKNOWN_CHECK')
     expect(wrapper.text()).toContain('只读检查，不自动修账或补流水')
     expect(wrapper.find('button').text()).not.toContain('修账')
+  })
+
+  it('创建结算批次切换机构时清空旧机构选择与 reserve-selection 残留', async () => {
+    vi.mocked(listRedemptions)
+      .mockResolvedValueOnce({
+        items: [{
+          id: 9001, appointmentId: 1, customerId: 10, institutionId: 1, ownerStaffId: 1, teamId: null,
+          serviceAt: '2026-10-20T10:00:00Z', evidenceRef: 'E1', voucherFileId: null, status: 'POSTED',
+          settlementStatus: 'PENDING_VERIFICATION', idempotencyKey: 'k1', postedBy: 1, postedAt: '2026-10-20T10:00:00Z',
+          createdAt: '2026-10-20T10:00:00Z', version: 0,
+        }],
+        total: 1,
+        page: 1,
+        size: 100,
+      })
+      .mockResolvedValueOnce({
+        items: [{
+          id: 9002, appointmentId: 2, customerId: 11, institutionId: 2, ownerStaffId: 1, teamId: null,
+          serviceAt: '2026-10-21T10:00:00Z', evidenceRef: 'E2', voucherFileId: null, status: 'POSTED',
+          settlementStatus: 'PENDING_VERIFICATION', idempotencyKey: 'k2', postedBy: 1, postedAt: '2026-10-21T10:00:00Z',
+          createdAt: '2026-10-21T10:00:00Z', version: 0,
+        }],
+        total: 1,
+        page: 1,
+        size: 100,
+      })
+    vi.mocked(createSettlementBatch).mockResolvedValue(detail)
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(SettlementBatchCreateDrawer, {
+      props: { modelValue: false },
+      global: { plugins: [ElementPlus, pinia] },
+      attachTo: document.body,
+    })
+    wrappers.push(wrapper)
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    const instComponent = wrapper.getComponent('[data-testid="settlement-institution-id"]') as VueWrapper
+    instComponent.vm.$emit('update:modelValue', 1)
+    await flushPromises()
+    const loadBtn = wrapper.findAll('button').find((b) => b.text().includes('读取该机构正式核销'))!
+    await loadBtn.trigger('click')
+    await flushPromises()
+
+    const table = wrapper.getComponent({ name: 'AppTable' }) as VueWrapper
+    table.vm.$emit('selection-change', [{ id: 9001, institutionId: 1 }])
+    await flushPromises()
+    expect(wrapper.text()).toContain('已选择 1 笔正式核销')
+
+    instComponent.vm.$emit('update:modelValue', 2)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已选择 0 笔正式核销')
   })
 })

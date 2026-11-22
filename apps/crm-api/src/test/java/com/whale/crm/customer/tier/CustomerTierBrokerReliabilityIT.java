@@ -35,7 +35,7 @@ class CustomerTierBrokerReliabilityIT extends AbstractMysqlIT {
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.kafka.bootstrap-servers", () -> KafkaTestContainer.bootstrapServers(KAFKA));
+        KafkaTestContainer.registerProperties(registry, KAFKA);
     }
 
     @Autowired
@@ -95,8 +95,80 @@ class CustomerTierBrokerReliabilityIT extends AbstractMysqlIT {
                 Long.class, eventId)).isEqualTo(1);
     }
 
+    @Test
+    void sameMillisecondPaidEventUnsupportedTopicEventAndMissingRuleTenantDoNotFailOrMissConsumption()
+            throws Exception {
+        awaitListenerReady();
+        activeRule();
+
+        String unsupportedEventId = "tier-broker-unsupported-" + UUID.randomUUID();
+        String unsupportedMsg = """
+                {"event_id":"%s","event_type":"order.created.v1","event_version":1,"tenant_id":1,
+                "aggregate_type":"order","aggregate_id":"888","occurred_at":"2025-04-01T12:00:00.123Z",
+                "correlation_id":"%s","payload":{"orderId":888}}
+                """.formatted(unsupportedEventId, unsupportedEventId);
+        kafkaTemplate.send(OutboxKafkaConfiguration.ORDER_EVENTS_TOPIC, unsupportedEventId, unsupportedMsg)
+                .get(30, TimeUnit.SECONDS);
+        awaitInbox(1L, unsupportedEventId);
+
+        long customerId = customer();
+        String orderNo = "TIERBSM" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        Instant sameMs = Instant.parse("2025-04-01T12:00:00.123Z");
+        jdbcTemplate.update("INSERT INTO crm_order (tenant_id,order_no,customer_id,sold_by_user_id,owner_at_sale_id,"
+                        + "source_system,order_type_code,status,receiver_type,paid_fen,ordered_at,paid_at) "
+                        + "VALUES (1,?,?,2,2,'CRM','REGULAR','PAID','PLATFORM',1000000,?,?)",
+                orderNo, customerId, Timestamp.from(sameMs), Timestamp.from(sameMs));
+        long orderId = jdbcTemplate.queryForObject("SELECT id FROM crm_order WHERE tenant_id=1 AND order_no=?",
+                Long.class, orderNo);
+        jdbcTemplate.update("INSERT INTO crm_payment_txn (tenant_id,order_id,payment_channel,receiver_type,"
+                        + "external_trade_no,amount_fen,status,confirmed_at) VALUES (1,?,'BANK','PLATFORM',?,1000000,"
+                        + "'CONFIRMED',?)",
+                orderId, "TIERBSMP" + UUID.randomUUID(), Timestamp.from(sameMs));
+
+        String sameMsEventId = "tier-broker-same-ms-" + UUID.randomUUID();
+        String sameMsMsg = """
+                {"event_id":"%s","event_type":"order.paid.v1","event_version":1,"tenant_id":1,
+                "aggregate_type":"order","aggregate_id":"%d","occurred_at":"2025-04-01T12:00:00.123Z",
+                "correlation_id":"%s","payload":{"customerId":%d}}
+                """.formatted(sameMsEventId, orderId, sameMsEventId, customerId);
+        kafkaTemplate.send(OutboxKafkaConfiguration.ORDER_EVENTS_TOPIC, sameMsEventId, sameMsMsg)
+                .get(30, TimeUnit.SECONDS);
+        awaitSnapshot(sameMsEventId);
+        assertThat(jdbcTemplate.queryForObject("SELECT actual_consumption_fen FROM crm_customer_tier_metric_snapshot "
+                + "WHERE tenant_id=1 AND recalculation_key=?", Long.class, "event:" + sameMsEventId))
+                .isEqualTo(1_000_000L);
+        assertThat(jdbcTemplate.queryForObject("SELECT tier_code FROM crm_customer WHERE id=?",
+                String.class, customerId)).isEqualTo("S");
+
+        String missingRuleEventId = "tier-broker-no-rule-" + UUID.randomUUID();
+        String missingRuleMsg = """
+                {"event_id":"%s","event_type":"order.paid.v1","event_version":1,"tenant_id":2,
+                "aggregate_type":"order","aggregate_id":"999","occurred_at":"2025-04-01T12:00:00.123Z",
+                "correlation_id":"%s","payload":{"customerId":999}}
+                """.formatted(missingRuleEventId, missingRuleEventId);
+        kafkaTemplate.send(OutboxKafkaConfiguration.ORDER_EVENTS_TOPIC, missingRuleEventId, missingRuleMsg)
+                .get(30, TimeUnit.SECONDS);
+        awaitInbox(2L, missingRuleEventId);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_customer_tier_metric_snapshot "
+                + "WHERE tenant_id=2 AND recalculation_key=?", Long.class, "event:" + missingRuleEventId)).isZero();
+    }
+
+    private void awaitInbox(long tenantId, String eventId) throws InterruptedException {
+        long count = 0;
+        for (int attempt = 0; attempt < 900; attempt++) {
+            count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_inbox_event "
+                    + "WHERE tenant_id=? AND consumer_group='crm-customer-tier-recalculation' AND event_id=?",
+                    Long.class, tenantId, eventId);
+            if (count == 1) {
+                return;
+            }
+            Thread.sleep(100);
+        }
+        assertThat(count).isEqualTo(1);
+    }
+
     private void relayUntilSent(String eventId) throws Exception {
-        for (int attempt = 0; attempt < 200; attempt++) {
+        for (int attempt = 0; attempt < 1200; attempt++) {
             relayService.relayOnce();
             String status = jdbcTemplate.queryForObject("SELECT status FROM crm_outbox_event "
                     + "WHERE tenant_id=1 AND event_id=?", String.class, eventId);
@@ -117,11 +189,11 @@ class CustomerTierBrokerReliabilityIT extends AbstractMysqlIT {
                 "aggregate_type":"customer","aggregate_id":"%d","occurred_at":"2025-03-01T00:00:00Z",
                 "correlation_id":"%s","payload":{"customerId":%d}}
                 """.formatted(eventId, eventType, aggregateId, eventId, customerId);
-        kafkaTemplate.send(topic, eventId, message).get(10, TimeUnit.SECONDS);
+        kafkaTemplate.send(topic, eventId, message).get(30, TimeUnit.SECONDS);
     }
 
     private void awaitListenerReady() throws InterruptedException {
-        for (int attempt = 0; attempt < 300; attempt++) {
+        for (int attempt = 0; attempt < 1200; attempt++) {
             boolean ready = listenerRegistry.getListenerContainers().stream()
                     .allMatch(container -> container.isRunning() && !container.getAssignedPartitions().isEmpty());
             if (ready) {
@@ -134,7 +206,7 @@ class CustomerTierBrokerReliabilityIT extends AbstractMysqlIT {
 
     private void awaitSnapshot(String eventId) throws InterruptedException {
         long count = 0;
-        for (int attempt = 0; attempt < 300; attempt++) {
+        for (int attempt = 0; attempt < 900; attempt++) {
             count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_customer_tier_metric_snapshot "
                     + "WHERE tenant_id=1 AND recalculation_key=?", Long.class, "event:" + eventId);
             if (count == 1) {

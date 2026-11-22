@@ -34,7 +34,7 @@ class WecomH5CardApiIT extends AbstractMysqlIT {
         long id = card.at("/id").asLong();
         assertThat(card.at("/title").asText()).contains("138****8000").doesNotContain("13800138000");
         assertThat(card.at("/link").asText()).startsWith("http://localhost:5173/h5/cards/");
-        assertThat(card.at("/imageUrl").asText()).isEqualTo("http://localhost:5173/h5-card-cover.svg");
+        assertThat(card.at("/imageUrl").asText()).isEqualTo("http://localhost:5173/h5-card-cover.png");
         assertThat(card.at("/status").asText()).isEqualTo("ACTIVE");
         String shareKey = card.at("/link").asText().substring(card.at("/link").asText().lastIndexOf('/') + 1);
         assertThat(shareKey).hasSize(43);
@@ -53,6 +53,7 @@ class WecomH5CardApiIT extends AbstractMysqlIT {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         JsonNode publicCard = objectMapper.readTree(publicBody).path("data");
         assertThat(publicCard.at("/content").asText()).contains("公开介绍");
+        assertThat(publicCard.at("/imageUrl").asText()).isEqualTo("http://localhost:5173/h5-card-cover.png");
         assertThat(publicBody).doesNotContain("customerId", "employeeId", "tenantId", "externalUserid",
                 "external-");
         assertThat(publicBody).doesNotContain("13800138000");

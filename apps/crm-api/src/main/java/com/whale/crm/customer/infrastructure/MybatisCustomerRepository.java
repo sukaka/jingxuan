@@ -98,18 +98,20 @@ public class MybatisCustomerRepository implements CustomerRepository {
     }
 
     @Override
-    public List<DuplicateMobileGroup> findDuplicateMobileGroups(long tenantId) {
-        return customerMapper.selectDuplicatedMobileHashes(tenantId).stream()
+    public List<DuplicateMobileGroup> findDuplicateMobileGroups(long tenantId, String scopeType, List<Long> teamIds,
+                                                                long selfId) {
+        return customerMapper.selectDuplicatedMobileHashes(tenantId, scopeType, teamIds, selfId).stream()
                 .map(hash -> new DuplicateMobileGroup(hash,
-                        customerMapper.selectCustomerIdsByMobileHash(tenantId, hash)))
+                        customerMapper.selectCustomerIdsByMobileHash(tenantId, scopeType, teamIds, selfId, hash)))
                 .toList();
     }
 
     @Override
-    public List<DuplicateIdentityGroup> findDuplicateIdentityGroups(long tenantId) {
-        return customerMapper.selectDuplicatedExternalIds(tenantId).stream()
+    public List<DuplicateIdentityGroup> findDuplicateIdentityGroups(long tenantId, String scopeType,
+                                                                    List<Long> teamIds, long selfId) {
+        return customerMapper.selectDuplicatedExternalIds(tenantId, scopeType, teamIds, selfId).stream()
                 .map(externalId -> new DuplicateIdentityGroup(externalId,
-                        customerMapper.selectCustomerIdsByExternalId(tenantId, externalId)))
+                        customerMapper.selectCustomerIdsByExternalId(tenantId, scopeType, teamIds, selfId, externalId)))
                 .toList();
     }
 }

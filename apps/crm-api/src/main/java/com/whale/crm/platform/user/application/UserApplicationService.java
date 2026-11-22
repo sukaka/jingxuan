@@ -7,6 +7,7 @@ import com.whale.crm.platform.user.api.dto.CreateUserRequest;
 import com.whale.crm.platform.user.api.dto.UpdateUserRequest;
 import com.whale.crm.platform.user.api.dto.UserSummaryResponse;
 import com.whale.crm.platform.user.domain.RoleRepository;
+import com.whale.crm.platform.user.domain.SysRole;
 import com.whale.crm.platform.user.domain.SysUser;
 import com.whale.crm.platform.user.domain.UserListRow;
 import com.whale.crm.platform.user.domain.UserRepository;
@@ -23,6 +24,8 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 用户管理应用服务。所有写操作落审计（脱敏快照，不含密码/哈希）；
@@ -78,7 +81,8 @@ public class UserApplicationService {
         Long orgId = userRepository.findDefaultOrgId(tenantId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "租户下无可用组织"));
         validateTeam(tenantId, request.teamId());
-        validateRoleIds(tenantId, request.roleIds());
+        List<Long> roleIds = request.roleIds() == null ? List.of() : request.roleIds().stream().distinct().toList();
+        validateAssignableRoles(tenantId, actorUserId, roleIds);
 
         SysUser user = new SysUser();
         user.setTenantId(tenantId);
@@ -91,8 +95,8 @@ public class UserApplicationService {
         user.setStatus(SysUser.STATUS_ACTIVE);
         userRepository.insert(user);
 
-        if (request.roleIds() != null && !request.roleIds().isEmpty()) {
-            roleRepository.replaceUserRoles(tenantId, user.getId(), request.roleIds());
+        if (!roleIds.isEmpty()) {
+            roleRepository.replaceUserRoles(tenantId, user.getId(), roleIds);
         }
 
         auditService.record(tenantId, actorUserId, AuditService.ACTION_USER_CREATE, "USER",
@@ -106,6 +110,12 @@ public class UserApplicationService {
     public UserSummaryResponse update(long tenantId, long actorUserId, long userId, UpdateUserRequest request) {
         SysUser existing = userRepository.findById(tenantId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在或不可见"));
+        List<String> targetRoles = roleRepository.findActiveRoleCodes(tenantId, userId);
+        assertActorCanManageTargetUser(tenantId, actorUserId, userId, targetRoles, "修改");
+        if (request.password() != null && request.password().isBlank()) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请求参数校验失败",
+                    List.of(new ApiResponse.ErrorDetail("password", "密码不能为空白字符")));
+        }
         validateTeam(tenantId, request.teamId());
 
         String newPasswordHash = request.password() != null ? passwordEncoder.encode(request.password()) : null;
@@ -135,10 +145,14 @@ public class UserApplicationService {
     public UserSummaryResponse assignRoles(long tenantId, long actorUserId, long userId, AssignRolesRequest request) {
         SysUser existing = userRepository.findById(tenantId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在或不可见"));
-        List<Long> roleIds = request.roleIds() == null ? List.of() : request.roleIds();
-        validateRoleIds(tenantId, roleIds);
-
+        List<Long> roleIds = request.roleIds() == null ? List.of() : request.roleIds().stream().distinct().toList();
         List<String> beforeRoles = roleRepository.findActiveRoleCodes(tenantId, userId);
+        assertActorCanManageTargetUser(tenantId, actorUserId, userId, beforeRoles, "修改");
+        validateAssignableRoles(tenantId, actorUserId, roleIds);
+        if (userId == actorUserId && beforeRoles.contains("ADMIN") && !containsAdminRole(tenantId, roleIds)) {
+            throw new BusinessException(ErrorCode.CONFLICT, "不能移除当前登录管理员自身的 ADMIN 角色");
+        }
+
         roleRepository.replaceUserRoles(tenantId, userId, roleIds);
         List<String> afterRoles = roleRepository.findActiveRoleCodes(tenantId, userId);
 
@@ -154,6 +168,8 @@ public class UserApplicationService {
         if (userId == actorUserId) {
             throw new BusinessException(ErrorCode.CONFLICT, "不能停用当前登录账号");
         }
+        List<String> targetRoles = roleRepository.findActiveRoleCodes(tenantId, userId);
+        assertActorCanManageTargetUser(tenantId, actorUserId, userId, targetRoles, "停用");
         if (!existing.isActive()) {
             throw new BusinessException(ErrorCode.CONFLICT, "用户已处于停用状态");
         }
@@ -161,10 +177,10 @@ public class UserApplicationService {
         loginSessionRepository.revokeAllByUserId(tenantId, userId, Instant.now());
 
         auditService.record(tenantId, actorUserId, AuditService.ACTION_USER_DISABLE, "USER",
-                Long.toString(userId), userSnapshot(existing, roleRepository.findActiveRoleCodes(tenantId, userId)),
+                Long.toString(userId), userSnapshot(existing, targetRoles),
                 Map.of("status", SysUser.STATUS_DISABLED), null);
         SysUser after = userRepository.findById(tenantId, userId).orElseThrow();
-        return toSummary(after, null, roleRepository.findActiveRoleCodes(tenantId, userId));
+        return toSummary(after, null, targetRoles);
     }
 
     private void validateTeam(long tenantId, Long teamId) {
@@ -172,6 +188,56 @@ public class UserApplicationService {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请求参数校验失败",
                     List.of(new ApiResponse.ErrorDetail("teamId", "团队不存在")));
         }
+    }
+
+    private boolean isActorAdmin(long tenantId, long actorUserId) {
+        return roleRepository.findActiveRoleCodes(tenantId, actorUserId).contains("ADMIN");
+    }
+
+    private void assertActorCanManageTargetUser(long tenantId, long actorUserId, long targetUserId,
+                                                List<String> targetRoles, String actionVerb) {
+        if (isActorAdmin(tenantId, actorUserId)) {
+            return;
+        }
+        if (targetRoles.contains("ADMIN")) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅 ADMIN 角色可" + actionVerb + " ADMIN 账号");
+        }
+        Set<String> actorPermissions = Set.copyOf(roleRepository.findActivePermissionCodes(tenantId, actorUserId));
+        List<String> targetPermissions = roleRepository.findActivePermissionCodes(tenantId, targetUserId);
+        if (!actorPermissions.containsAll(targetPermissions)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "不能" + actionVerb + "包含超出当前用户权限范围的账号");
+        }
+    }
+
+    private void validateAssignableRoles(long tenantId, long actorUserId, List<Long> roleIds) {
+        validateRoleIds(tenantId, roleIds);
+        if (roleIds == null || roleIds.isEmpty() || isActorAdmin(tenantId, actorUserId)) {
+            return;
+        }
+        Map<Long, SysRole> rolesById = roleRepository.findAllRoles(tenantId).stream()
+                .collect(Collectors.toMap(SysRole::getId, role -> role));
+        Set<String> actorPermissions = Set.copyOf(roleRepository.findActivePermissionCodes(tenantId, actorUserId));
+        for (Long roleId : roleIds) {
+            SysRole targetRole = rolesById.get(roleId);
+            if (targetRole == null || "ADMIN".equals(targetRole.getRoleCode())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "仅 ADMIN 角色可分配 ADMIN 角色");
+            }
+            List<String> rolePermissions = roleRepository.findPermissionCodesByRoleId(tenantId, roleId);
+            if (!actorPermissions.containsAll(rolePermissions)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "不能分配包含超出当前用户权限范围的角色");
+            }
+        }
+    }
+
+    private boolean containsAdminRole(long tenantId, List<Long> roleIds) {
+        if (roleIds == null || roleIds.isEmpty()) {
+            return false;
+        }
+        Map<Long, SysRole> rolesById = roleRepository.findAllRoles(tenantId).stream()
+                .collect(Collectors.toMap(SysRole::getId, role -> role));
+        return roleIds.stream()
+                .map(rolesById::get)
+                .anyMatch(role -> role != null && "ADMIN".equals(role.getRoleCode()));
     }
 
     private void validateRoleIds(long tenantId, List<Long> roleIds) {

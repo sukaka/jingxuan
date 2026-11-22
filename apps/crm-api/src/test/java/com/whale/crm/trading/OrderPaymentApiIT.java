@@ -1,11 +1,20 @@
 package com.whale.crm.trading;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.whale.crm.customer.api.dto.CreateMergeCaseRequest;
+import com.whale.crm.customer.api.dto.MergeCandidateItemResponse;
+import com.whale.crm.customer.application.MergeApplicationService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.support.AbstractMysqlIT;
+import com.whale.crm.platform.web.BusinessException;
+import com.whale.crm.platform.web.ErrorCode;
+import com.whale.crm.trading.api.dto.CreateOrderRequest;
+import com.whale.crm.trading.api.dto.OrderItemRequest;
+import com.whale.crm.trading.api.dto.OrderReviewRequest;
 import com.whale.crm.trading.api.dto.PaymentConfirmRequest;
 import com.whale.crm.trading.application.EntitlementApplicationService;
+import com.whale.crm.trading.application.OrderApplicationService;
 import com.whale.crm.trading.application.PaymentApplicationService;
 import com.whale.crm.trading.domain.EntitlementDetail;
 import com.whale.crm.trading.domain.OrderFulfillmentView;
@@ -17,14 +26,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,6 +51,10 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private PaymentApplicationService paymentService;
+    @Autowired
+    private OrderApplicationService orderService;
+    @Autowired
+    private MergeApplicationService mergeService;
     @Autowired
     private EntitlementApplicationService entitlementService;
     @Autowired
@@ -773,6 +789,244 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.data.customerCount").value(0));
     }
 
+    @Test
+    void hbiz01_snapshotBySkuIsolatesSingleSkuAndRejectsEmptyOrSuspendedInstitutions() throws Exception {
+        AuthCookies admin = login("admin");
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        JsonNode version = data(admin.withAuth(post("/api/v1/packages/201/versions"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("selectionMode", "FIXED", "choiceCount", 0,
+                        "projects", List.of(Map.of("projectId", 101, "grantCount", 1))))));
+        long versionId = version.at("/id").asLong();
+        mockMvc.perform(admin.withAuth(post("/api/v1/package-versions/" + versionId + "/activate"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isOk());
+
+        JsonNode skuA = data(admin.withAuth(post("/api/v1/skus"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("skuCode", "SKU-ISO-A-" + suffix, "packageVersionId", versionId,
+                        "specName", "机构1专属", "salePriceFen", 1000, "institutionIds", List.of(1)))));
+        long skuAId = skuA.at("/id").asLong();
+        mockMvc.perform(admin.withAuth(post("/api/v1/skus/" + skuAId + "/activate"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isOk());
+
+        JsonNode skuB = data(admin.withAuth(post("/api/v1/skus"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("skuCode", "SKU-ISO-B-" + suffix, "packageVersionId", versionId,
+                        "specName", "机构2同版本兄弟SKU", "salePriceFen", 1000, "institutionIds", List.of(2)))));
+        long skuBId = skuB.at("/id").asLong();
+        mockMvc.perform(admin.withAuth(post("/api/v1/skus/" + skuBId + "/activate"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isOk());
+
+        long customerId = createCustomer(admin, "IT-HBIZ01-" + suffix);
+        long orderId = createOrder(admin, customerId, skuAId, 1, 1000);
+        JsonNode snapshot = orderSnapshot(orderId);
+        List<Long> snapshotInstIds = new ArrayList<>();
+        snapshot.path("institutionIds").forEach(node -> snapshotInstIds.add(node.asLong()));
+        assertThat(snapshotInstIds).containsExactly(1L);
+
+        String instNo = "INST-SUSP-" + suffix;
+        jdbcTemplate.update("INSERT INTO crm_institution (tenant_id,institution_no,full_name,short_name,status,settlement_type) "
+                + "VALUES (1,?,?,'停用测试机构','ACTIVE','MONTHLY')", instNo, "停用测试机构-" + suffix);
+        Long suspendedInstId = jdbcTemplate.queryForObject(
+                "SELECT id FROM crm_institution WHERE tenant_id=1 AND institution_no=?", Long.class, instNo);
+        JsonNode skuSusp = data(admin.withAuth(post("/api/v1/skus"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("skuCode", "SKU-SUSP-" + suffix, "packageVersionId", versionId,
+                        "specName", "待停用机构SKU", "salePriceFen", 1000, "institutionIds", List.of(suspendedInstId)))));
+        long skuSuspId = skuSusp.at("/id").asLong();
+        mockMvc.perform(admin.withAuth(post("/api/v1/skus/" + skuSuspId + "/activate"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isOk());
+        jdbcTemplate.update("UPDATE crm_institution SET status='SUSPENDED' WHERE tenant_id=1 AND id=?", suspendedInstId);
+
+        Map<String, Object> blockedOrder = Map.of("customerId", customerId, "receiverType", "PLATFORM",
+                "orderTypeCode", "REGULAR", "campaignId", 1, "campaignBatchId", 1,
+                "payableFen", 1000, "validTo", "2027-12-31",
+                "items", List.of(Map.of("skuId", skuSuspId, "quantity", 1)));
+        mockMvc.perform(admin.withAuth(post("/api/v1/orders"))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(blockedOrder)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void hbiz02_legacyPendingUseNOrderPaymentConfirmationBlockedWithQ01() throws Exception {
+        AuthCookies admin = login("admin");
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        long customerId = createCustomer(admin, "IT-USEN-PAY-" + suffix);
+        long orderId = createOrder(admin, customerId, 301, 1, 181100);
+        submitOrder(admin, orderId);
+
+        jdbcTemplate.update("UPDATE crm_order_item SET entitlement_snapshot = JSON_SET(entitlement_snapshot, '$.selectionMode', 'USE_N') "
+                + "WHERE tenant_id=1 AND order_id=?", orderId);
+
+        String tradeNo = "IT-USEN-PAY-" + UUID.randomUUID();
+        mockMvc.perform(admin.withAuth(post("/api/v1/orders/" + orderId + "/payment-confirmations"))
+                        .header("Idempotency-Key", tradeNo)
+                        .contentType(MediaType.APPLICATION_JSON).content(paymentJson(tradeNo, 181100)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("PENDING_BUSINESS_RULE"))
+                .andExpect(jsonPath("$.details[0].field").value("Q01"));
+        assertNoPaymentArtifacts(orderId);
+    }
+
+    @Test
+    void mbe08_orderRejectsValidToBeforeTodayInShanghai() throws Exception {
+        AuthCookies admin = login("admin");
+        long customerId = createCustomer(admin, "IT-MBE08-DATE-" + UUID.randomUUID());
+        Map<String, Object> body = Map.of("customerId", customerId, "receiverType", "PLATFORM",
+                "orderTypeCode", "REGULAR", "campaignId", 1, "campaignBatchId", 1,
+                "payableFen", 181100, "validTo", "2020-01-01",
+                "items", List.of(Map.of("skuId", 301, "quantity", 1)));
+        mockMvc.perform(admin.withAuth(post("/api/v1/orders"))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void concurrentOrderCreateAndCustomerMergeSerializeWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        for (int round = 0; round < 10; round++) {
+            long primary = createCustomer(admin, "IT-OM-主-" + round);
+            long secondary = createCustomer(admin, "IT-OM-从-" + round);
+            long caseId = mergeService.createCase(1L, adminUser,
+                    new CreateMergeCaseRequest(primary, secondary, "并发下单合并-" + round)).id();
+            mergeService.review(1L, adminUser, caseId, 0L, "并发下单合并复核-" + round);
+
+            CreateOrderRequest orderRequest = new CreateOrderRequest(
+                    secondary, "PLATFORM", "REGULAR", 1L, 1L, 181100L,
+                    LocalDate.of(2027, 12, 31), List.of(new OrderItemRequest(301L, 1)));
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+            Outcome<OrderFulfillmentView> orderOutcome;
+            Outcome<MergeCandidateItemResponse> mergeOutcome;
+            String reason = "并发下单合并-" + round;
+            try (var executor = Executors.newFixedThreadPool(2)) {
+                Future<Outcome<OrderFulfillmentView>> orderFuture = executor.submit(() ->
+                        runWithLatch(ready, start, () -> orderService.create(1L, adminUser, orderRequest)));
+                Future<Outcome<MergeCandidateItemResponse>> mergeFuture = executor.submit(() ->
+                        runWithLatch(ready, start, () -> mergeService.confirm(1L, adminUser, caseId, 1L, reason)));
+                assertThat(ready.await(15, TimeUnit.SECONDS)).isTrue();
+                start.countDown();
+                orderOutcome = orderFuture.get(25, TimeUnit.SECONDS);
+                mergeOutcome = mergeFuture.get(25, TimeUnit.SECONDS);
+            }
+
+            assertThat(mergeOutcome.error()).isNull();
+            assertThat(mergeOutcome.value().status()).isEqualTo("CONFIRMED");
+            assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM crm_customer WHERE id=?",
+                    Integer.class, secondary)).isEqualTo(1);
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_order WHERE tenant_id=1 AND customer_id=?",
+                    Integer.class, secondary)).isZero();
+
+            if (orderOutcome.error() == null) {
+                long orderId = orderOutcome.value().order().order().id();
+                assertThat(jdbcTemplate.queryForObject("SELECT customer_id FROM crm_order WHERE id=?",
+                        Long.class, orderId)).isEqualTo(primary);
+                assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM crm_merge_resource_snapshot WHERE merge_case_id=? AND resource_type='ORDER' AND resource_key=?",
+                        Integer.class, caseId, Long.toString(orderId))).isEqualTo(1);
+            } else {
+                assertThat(orderOutcome.error())
+                        .isInstanceOf(BusinessException.class)
+                        .satisfies(ex -> assertThat(((BusinessException) ex).errorCode())
+                                .isIn(ErrorCode.NOT_FOUND, ErrorCode.CONFLICT));
+            }
+        }
+    }
+
+    @Test
+    void concurrentPaymentConfirmAndCustomerMergeSerializeWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        for (int round = 0; round < 10; round++) {
+            long primary = createCustomer(admin, "IT-PM-主-" + round);
+            long secondary = createCustomer(admin, "IT-PM-从-" + round);
+            long orderId = orderService.create(1L, adminUser, new CreateOrderRequest(
+                    secondary, "PLATFORM", "REGULAR", 1L, 1L, 181100L,
+                    LocalDate.of(2027, 12, 31), List.of(new OrderItemRequest(301L, 1)))).order().order().id();
+            orderService.submit(1L, adminUser, orderId, new OrderReviewRequest(0L, "待支付"));
+            long caseId = mergeService.createCase(1L, adminUser,
+                    new CreateMergeCaseRequest(primary, secondary, "并发支付合并-" + round)).id();
+            mergeService.review(1L, adminUser, caseId, 0L, "并发支付合并复核-" + round);
+
+            String tradeNo = "IT-PM-TRADE-" + round + "-" + UUID.randomUUID();
+            PaymentConfirmRequest payRequest = new PaymentConfirmRequest(tradeNo, "BANK_TRANSFER", 181100L,
+                    Instant.parse("2026-10-24T03:00:00Z"), "IT-PAY-MERGE-" + round, null);
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+            Outcome<OrderFulfillmentView> payOutcome;
+            Outcome<MergeCandidateItemResponse> mergeOutcome;
+            String reason = "并发支付合并-" + round;
+            try (var executor = Executors.newFixedThreadPool(2)) {
+                Future<Outcome<OrderFulfillmentView>> payFuture = executor.submit(() ->
+                        runWithLatch(ready, start, () -> paymentService.confirm(1L, adminUser, orderId, payRequest, tradeNo)));
+                Future<Outcome<MergeCandidateItemResponse>> mergeFuture = executor.submit(() ->
+                        runWithLatch(ready, start, () -> mergeService.confirm(1L, adminUser, caseId, 1L, reason)));
+                assertThat(ready.await(15, TimeUnit.SECONDS)).isTrue();
+                start.countDown();
+                payOutcome = payFuture.get(25, TimeUnit.SECONDS);
+                mergeOutcome = mergeFuture.get(25, TimeUnit.SECONDS);
+            }
+
+            assertThat(mergeOutcome.error()).isNull();
+            assertThat(mergeOutcome.value().status()).isEqualTo("CONFIRMED");
+            assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM crm_customer WHERE id=?",
+                    Integer.class, secondary)).isEqualTo(1);
+            assertThat(jdbcTemplate.queryForObject("SELECT customer_id FROM crm_order WHERE id=?",
+                    Long.class, orderId)).isEqualTo(primary);
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM crm_merge_resource_snapshot WHERE merge_case_id=? AND resource_type='ORDER' AND resource_key=?",
+                    Integer.class, caseId, Long.toString(orderId))).isEqualTo(1);
+
+            if (payOutcome.error() == null) {
+                assertThat(payOutcome.value().order().order().status()).isEqualTo("PAID");
+                assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_order WHERE id=?",
+                        String.class, orderId)).isEqualTo("PAID");
+                assertThat(jdbcTemplate.queryForObject("SELECT paid_fen FROM crm_order WHERE id=?",
+                        Long.class, orderId)).isEqualTo(181100L);
+                assertThat(jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM crm_entitlement WHERE order_item_id IN (SELECT id FROM crm_order_item WHERE order_id=?)",
+                        Integer.class, orderId)).isEqualTo(1);
+                assertThat(jdbcTemplate.queryForObject(
+                        "SELECT customer_id FROM crm_entitlement WHERE order_item_id IN (SELECT id FROM crm_order_item WHERE order_id=?)",
+                        Long.class, orderId)).isEqualTo(primary);
+                java.sql.Timestamp primaryFirstOrderAt = jdbcTemplate.queryForObject(
+                        "SELECT first_order_at FROM crm_customer WHERE id=?", java.sql.Timestamp.class, primary);
+                java.sql.Timestamp secondaryFirstOrderAt = jdbcTemplate.queryForObject(
+                        "SELECT first_order_at FROM crm_customer WHERE id=?", java.sql.Timestamp.class, secondary);
+                assertThat(primaryFirstOrderAt != null || secondaryFirstOrderAt != null).isTrue();
+            } else {
+                assertThat(payOutcome.error())
+                        .isInstanceOf(BusinessException.class)
+                        .satisfies(ex -> assertThat(((BusinessException) ex).errorCode())
+                                .isIn(ErrorCode.NOT_FOUND, ErrorCode.CONFLICT));
+                assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_order WHERE id=?",
+                        String.class, orderId)).isEqualTo("PENDING_PAYMENT");
+                assertNoPaymentArtifacts(orderId);
+            }
+        }
+    }
+
+    private <T> Outcome<T> runWithLatch(CountDownLatch ready, CountDownLatch start, Callable<T> action) {
+        ready.countDown();
+        try {
+            if (!start.await(15, TimeUnit.SECONDS)) {
+                return new Outcome<>(null, new IllegalStateException("start latch timed out"));
+            }
+            return new Outcome<>(action.call(), null);
+        } catch (Throwable ex) {
+            return new Outcome<>(null, ex);
+        }
+    }
+
+    private record Outcome<T>(T value, Throwable error) {
+    }
+
     private long createCustomer(AuthCookies actor, String nickname) throws Exception {
         return createCustomer(actor, nickname, 2);
     }
@@ -788,7 +1042,7 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
 
     private long createTwoProjectSku(AuthCookies admin, String codePrefix,
                                      long firstAllocationPrice, long secondAllocationPrice) throws Exception {
-        Map<String, Object> versionBody = Map.of("selectionMode", "USE_N", "choiceCount", 2,
+        Map<String, Object> versionBody = Map.of("selectionMode", "FIXED", "choiceCount", 0,
                 "projects", List.of(
                         Map.of("projectId", 101, "grantCount", 2, "allocationPriceFen", firstAllocationPrice),
                         Map.of("projectId", 102, "grantCount", 3, "allocationPriceFen", secondAllocationPrice)));

@@ -2,6 +2,7 @@ package com.whale.crm.customer.tier.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.whale.crm.customer.tier.domain.CustomerTierRepository;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.trading.infrastructure.OutboxKafkaConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -25,13 +26,16 @@ public class CustomerTierEventConsumer {
             "followup.created.v1", "followup.updated.v1", "followup.deleted.v1");
 
     private final CustomerTierRecalculationService recalculationService;
+    private final CustomerTierRepository tierRepository;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactions;
 
-    public CustomerTierEventConsumer(CustomerTierRecalculationService recalculationService, JdbcTemplate jdbcTemplate,
+    public CustomerTierEventConsumer(CustomerTierRecalculationService recalculationService,
+                                     CustomerTierRepository tierRepository, JdbcTemplate jdbcTemplate,
                                      ObjectMapper objectMapper, PlatformTransactionManager transactionManager) {
         this.recalculationService = recalculationService;
+        this.tierRepository = tierRepository;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.transactions = new TransactionTemplate(transactionManager);
@@ -49,19 +53,23 @@ public class CustomerTierEventConsumer {
             JsonNode envelope = objectMapper.readTree(message);
             validateEnvelope(envelope);
             long tenantId = positive(envelope, "tenant_id");
-            long customerId = positive(envelope.path("payload"), "customerId");
             String eventId = envelope.path("event_id").asText();
             String eventType = envelope.path("event_type").asText();
-            String trigger = triggerOf(eventType);
+            String trigger = triggerOrNull(eventType);
+            if (trigger == null) {
+                transactions.executeWithoutResult(status -> insertInbox(tenantId, eventId));
+                return;
+            }
+            long customerId = positive(envelope.path("payload"), "customerId");
             Instant occurredAt = Instant.parse(envelope.path("occurred_at").asText());
             transactions.executeWithoutResult(status -> {
-                try {
-                    jdbcTemplate.update("INSERT INTO crm_inbox_event (tenant_id,consumer_group,event_id,processed_at) "
-                            + "VALUES (?,?,?,CURRENT_TIMESTAMP(3))", tenantId, GROUP, eventId);
-                } catch (DuplicateKeyException ex) {
+                if (!insertInbox(tenantId, eventId)) {
                     return;
                 }
-                recalculationService.recalculate(tenantId, customerId, occurredAt, trigger,
+                if (tierRepository.findActiveRule(tenantId).isEmpty()) {
+                    return;
+                }
+                recalculationService.recalculate(tenantId, customerId, occurredAt.plusMillis(1), trigger,
                         "event:" + eventId, null);
             });
         } catch (BusinessException ex) {
@@ -73,29 +81,34 @@ public class CustomerTierEventConsumer {
         }
     }
 
+    private boolean insertInbox(long tenantId, String eventId) {
+        try {
+            jdbcTemplate.update("INSERT INTO crm_inbox_event (tenant_id,consumer_group,event_id,processed_at) "
+                    + "VALUES (?,?,?,CURRENT_TIMESTAMP(3))", tenantId, GROUP, eventId);
+            return true;
+        } catch (DuplicateKeyException ex) {
+            return false;
+        }
+    }
+
     private void validateEnvelope(JsonNode envelope) {
         if (envelope == null || !envelope.isObject() || envelope.path("event_id").asText().isBlank()
+                || envelope.path("event_type").asText().isBlank()
                 || envelope.path("event_version").asInt() != 1 || !envelope.path("payload").isObject()) {
             throw new IllegalArgumentException("客户分级事件信封无效");
         }
         try {
             Instant.parse(envelope.path("occurred_at").asText());
-            triggerOf(envelope.path("event_type").asText());
         } catch (DateTimeParseException ex) {
             throw new IllegalArgumentException("客户分级事件 occurred_at 无效", ex);
         }
     }
 
-    private String triggerOf(String eventType) {
+    private String triggerOrNull(String eventType) {
         return switch (eventType) {
             case "order.paid.v1", "payment.confirmed.v1" -> "ORDER_PAID";
             case "refund.succeeded.v1" -> "REFUND_SUCCEEDED";
-            default -> {
-                if (FOLLOWUP_EVENTS.contains(eventType)) {
-                    yield "FOLLOWUP";
-                }
-                throw new IllegalArgumentException("不是客户分级支持的触发事件");
-            }
+            default -> FOLLOWUP_EVENTS.contains(eventType) ? "FOLLOWUP" : null;
         };
     }
 

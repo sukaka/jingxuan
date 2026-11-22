@@ -3,7 +3,7 @@ import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
-import { listPackages, listPackageVersions, listProjects, listSkus } from '../src/api/catalog'
+import { getPackageVersionSnapshot, listPackages, listPackageVersions, listProjects, listSkus } from '../src/api/catalog'
 import { useAuthStore } from '../src/stores/auth'
 import ProductsView from '../src/views/ProductsView.vue'
 
@@ -48,6 +48,7 @@ beforeEach(() => {
   vi.mocked(listPackageVersions).mockResolvedValue([version])
   vi.mocked(listProjects).mockResolvedValue({ items: [], total: 0, page: 1, size: 100 })
   vi.mocked(listSkus).mockResolvedValue({ items: skus, total: 2, page: 1, size: 100 })
+  vi.mocked(getPackageVersionSnapshot).mockReset()
 })
 
 afterEach(() => {
@@ -73,12 +74,42 @@ describe('ProductsView 套餐销售规格', () => {
     expect(wrapper.text()).toContain('6次卡')
     expect(wrapper.text()).toContain('399.00')
     expect(wrapper.text()).toContain('从候选子项目中选择，不等于使用次数')
+    expect(wrapper.text()).toContain('Q01 待确认（USE_N 不可发放权益）')
     expect(wrapper.text()).toContain('套餐价不要求等于单品参考价之和')
     expect(wrapper.text()).not.toContain('选 N 项 3')
     expect(wrapper.text()).not.toContain('点击选择查看')
+    expect(wrapper.findAll('button').filter((b) => b.text() === '修改')).toHaveLength(0)
     expect(listSkus).toHaveBeenCalledWith({ page: 1, size: 100 })
     expect(listPackageVersions).toHaveBeenCalledTimes(1)
     expect(listPackageVersions).toHaveBeenCalledWith(201)
+    wrapper.unmount()
+  })
+
+  it('行内新增规格按 row.id 目标切换套餐，且 VersionFormDrawer 默认选择 FIXED 并禁用 USE_N', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore(pinia)
+    auth.user = {
+      userId: 1, username: 'catalog-writer', displayName: '产品编辑账号', userType: 'EMPLOYEE',
+      roles: ['ADMIN'], permissions: ['product:read', 'product:write'],
+    } satisfies AuthUser
+    auth.initialized = true
+    const wrapper = mount(ProductsView, { global: { plugins: [pinia, ElementPlus] }, attachTo: document.body })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').filter((b) => b.text() === '修改').length).toBeGreaterThan(0)
+    await wrapper.get('[data-testid="package-add-version-202"]').trigger('click')
+    await flushPromises()
+
+    const drawer = wrapper.findComponent({ name: 'VersionFormDrawer' })
+    expect(drawer.props('packageId')).toBe(202)
+    expect(document.body.querySelector('[data-testid="version-selection-mode"]')?.textContent).toContain('固定组合')
+
+    await wrapper.get('[data-testid="version-selection-mode"]').trigger('click')
+    await flushPromises()
+    const useNOption = Array.from(document.body.querySelectorAll<HTMLElement>('.el-select-dropdown__item'))
+      .find((item) => item.textContent?.includes('Q01 待确认'))
+    expect(useNOption?.classList.contains('is-disabled')).toBe(true)
     wrapper.unmount()
   })
 })

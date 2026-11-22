@@ -14,7 +14,8 @@ from app.schemas import (
     KnowledgeDocumentSyncRequest,
     KnowledgeDocumentSyncResult,
 )
-from app.services.knowledge import AiKnowledgeError, validate_dify_base_url
+from app.services.knowledge import AiKnowledgeError, validate_dify_endpoint
+from app.services.ssrf import PinnedHTTPTransport, Resolver
 
 
 class DatasetAdapter(Protocol):
@@ -47,11 +48,17 @@ class MockDatasetAdapter:
 
 
 class DifyDatasetAdapter:
-    def __init__(self, config: KnowledgeDatasetConfig, transport: httpx.BaseTransport | None = None):
+    def __init__(
+        self,
+        config: KnowledgeDatasetConfig,
+        transport: httpx.BaseTransport | None = None,
+        resolver: Resolver | None = None,
+    ):
         if not config.base_url.strip() or not config.api_key.strip() or not config.dataset_id.strip():
             raise AiKnowledgeError("AI_PROVIDER_NOT_CONFIGURED", "Dify Dataset 配置不完整", 503)
         self.config = config
         self.transport = transport
+        self.resolver = resolver
 
     def sync(self, request: KnowledgeDocumentSyncRequest) -> KnowledgeDocumentSyncResult:
         if request.document_id:
@@ -111,17 +118,25 @@ class DifyDatasetAdapter:
     def _request(self, method: str, path: str, payload: dict | None = None) -> httpx.Response:
         if not settings.feature_real_dify:
             raise AiKnowledgeError("AI_PROVIDER_DISABLED", "真实 Dify 接入未启用", 503)
-        base_url = validate_dify_base_url(self.config.base_url)
+        endpoint = validate_dify_endpoint(
+            self.config.base_url,
+            resolver=self.resolver,
+            resolve_dns=self.transport is None or self.resolver is not None,
+        )
         dataset_id = quote(self.config.dataset_id, safe="")
+        timeout_seconds = max(0.01, min(300.0, float(self.config.timeout_seconds)))
+        owned_transport = self.transport is None
+        transport = self.transport or PinnedHTTPTransport(endpoint.host, endpoint.pinned_ips)
         try:
             with httpx.Client(
-                timeout=self.config.timeout_seconds,
-                transport=self.transport,
+                timeout=timeout_seconds,
+                transport=transport,
                 follow_redirects=False,
+                trust_env=False,
             ) as client:
                 response = client.request(
                     method,
-                    f"{base_url}/datasets/{dataset_id}{path}",
+                    f"{endpoint.url}/datasets/{dataset_id}{path}",
                     headers={"Authorization": f"Bearer {self.config.api_key}"},
                     json=payload,
                 )
@@ -129,6 +144,9 @@ class DifyDatasetAdapter:
             return response
         except (httpx.HTTPError, OSError) as exc:
             raise AiKnowledgeError("AI_PROVIDER_FAILED", "Dify Dataset 服务暂时不可用") from exc
+        finally:
+            if owned_transport:
+                transport.close()
 
     @staticmethod
     def _map_status(value: str) -> str:

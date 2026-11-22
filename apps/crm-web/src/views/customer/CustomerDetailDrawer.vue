@@ -39,6 +39,8 @@ const legacyFields = ref<LegacyProfileField[]>([])
 const legacyLoading = ref(false)
 const legacyError = ref('')
 let legacyLoadedFor: number | null = null
+let detailSequence = 0
+let legacySequence = 0
 
 function hasLegacyValue(field: LegacyProfileField): boolean {
   return field.availability === 'AVAILABLE' && Boolean(field.value?.trim())
@@ -68,17 +70,22 @@ function legacyValueText(field: LegacyProfileField): string {
 }
 
 async function loadLegacyProfile() {
-  if (props.customerId === null || legacyLoadedFor === props.customerId) return
+  const targetCustomerId = props.customerId
+  if (targetCustomerId === null || !props.modelValue || legacyLoadedFor === targetCustomerId) return
+  const sequence = ++legacySequence
   legacyLoading.value = true
   legacyError.value = ''
   try {
-    legacyFields.value = await getCustomerLegacyProfile(props.customerId)
-    legacyLoadedFor = props.customerId
+    const result = await getCustomerLegacyProfile(targetCustomerId)
+    if (sequence !== legacySequence || !props.modelValue || props.customerId !== targetCustomerId) return
+    legacyFields.value = result
+    legacyLoadedFor = targetCustomerId
   } catch (error) {
+    if (sequence !== legacySequence || !props.modelValue || props.customerId !== targetCustomerId) return
     legacyFields.value = []
     legacyError.value = errorText(error)
   } finally {
-    legacyLoading.value = false
+    if (sequence === legacySequence) legacyLoading.value = false
   }
 }
 
@@ -90,26 +97,43 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : '未知错误'
 }
 
+function resetState() {
+  detail.value = null
+  loading.value = false
+  errorMessage.value = ''
+  legacyFields.value = []
+  legacyLoading.value = false
+  legacyError.value = ''
+  legacyLoadedFor = null
+}
+
 async function load() {
-  if (props.customerId === null) return
+  const targetCustomerId = props.customerId
+  if (targetCustomerId === null || !props.modelValue) return
+  const sequence = ++detailSequence
   loading.value = true
   errorMessage.value = ''
   try {
-    detail.value = await getCustomer(props.customerId)
+    const result = await getCustomer(targetCustomerId)
+    if (sequence !== detailSequence || !props.modelValue || props.customerId !== targetCustomerId) return
+    detail.value = result
   } catch (error) {
+    if (sequence !== detailSequence || !props.modelValue || props.customerId !== targetCustomerId) return
     detail.value = null
     errorMessage.value = errorText(error)
   } finally {
-    loading.value = false
+    if (sequence === detailSequence) loading.value = false
   }
 }
 
 watch(
   () => [props.modelValue, props.customerId],
-  ([visible]) => {
-    if (visible) {
+  ([visible, customerId]) => {
+    detailSequence += 1
+    legacySequence += 1
+    resetState()
+    if (visible && customerId !== null) {
       activeTab.value = props.initialTab || 'overview'
-      legacyLoadedFor = null
       void dicts.load('cities', 'customerSources', 'customerChannels', 'customerStatuses', 'customerTiers')
       void load()
     }

@@ -6,6 +6,7 @@ import com.whale.crm.integration.wecom.domain.WecomStaffAccount;
 import com.whale.crm.integration.wecom.domain.WecomStaffIdentity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -21,18 +22,33 @@ public interface WecomContactSyncMapper {
     @Select("SELECT id,corp_id AS corpId,wecom_userid AS wecomUserid,staff_user_id AS staffUserId,enabled FROM crm_wecom_staff_account WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND wecom_userid=#{wecomUserid}")
     WecomStaffAccount selectStaff(@Param("tenantId") long tenantId, @Param("corpId") String corpId, @Param("wecomUserid") String wecomUserid);
 
-    @Select("SELECT tenant_id AS tenantId,staff_user_id AS staffUserId FROM crm_wecom_staff_account WHERE corp_id=#{corpId} AND wecom_userid=#{wecomUserid} AND enabled=1 ORDER BY tenant_id,id")
-    List<WecomStaffIdentity> selectActiveStaffForAuth(@Param("corpId") String corpId, @Param("wecomUserid") String wecomUserid);
+    @Select("""
+            SELECT sa.tenant_id AS tenantId, sa.staff_user_id AS staffUserId
+            FROM crm_wecom_staff_account sa
+            JOIN sys_user u ON u.tenant_id = sa.tenant_id AND u.id = sa.staff_user_id
+            WHERE sa.tenant_id = #{tenantId} AND sa.corp_id = #{corpId} AND sa.wecom_userid = #{wecomUserid}
+              AND sa.enabled = 1 AND u.user_type = 'EMPLOYEE' AND u.status = 'ACTIVE'
+            ORDER BY sa.id
+            """)
+    List<WecomStaffIdentity> selectActiveStaffForAuth(@Param("tenantId") long tenantId,
+                                                      @Param("corpId") String corpId,
+                                                      @Param("wecomUserid") String wecomUserid);
 
     @Select("SELECT id,corp_id AS corpId,wecom_userid AS wecomUserid,staff_user_id AS staffUserId,enabled FROM crm_wecom_staff_account WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND staff_user_id=#{staffUserId} ORDER BY id")
     List<WecomStaffAccount> selectStaffByUserId(@Param("tenantId") long tenantId, @Param("corpId") String corpId, @Param("staffUserId") long staffUserId);
 
-    @Insert("INSERT INTO crm_wecom_contact_sync_run (tenant_id,corp_id,run_type,status,started_at,created_by) SELECT #{tenantId},#{corpId},#{runType},'RUNNING',#{now},#{actor} FROM dual WHERE NOT EXISTS (SELECT 1 FROM crm_wecom_contact_sync_run WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND status='RUNNING' AND run_type IN ('FULL','RECONCILE') AND #{runType} IN ('FULL','RECONCILE'))")
-    int insertRun(@Param("tenantId") long tenantId, @Param("corpId") String corpId, @Param("runType") String runType,
-                  @Param("actor") Long actor, @Param("now") Instant now);
+    @Update("UPDATE crm_wecom_contact_sync_run SET status='ERROR',error_masked=#{error},finished_at=#{now} "
+            + "WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND status='RUNNING' "
+            + "AND ((lease_until IS NOT NULL AND lease_until<#{now}) "
+            + "OR (lease_until IS NULL AND started_at<#{legacyCutoff}))")
+    int expireStaleRuns(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
+                        @Param("now") Instant now, @Param("legacyCutoff") Instant legacyCutoff,
+                        @Param("error") String error);
 
-    @Select("SELECT LAST_INSERT_ID()")
-    long lastInsertId();
+    @Insert("INSERT INTO crm_wecom_contact_sync_run (tenant_id,corp_id,run_type,status,started_at,lease_until,created_by) "
+            + "VALUES (#{tenantId},#{corpId},#{runType},'RUNNING',#{now},#{leaseUntil},#{actor})")
+    @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
+    int insertRun(RunInsertParam param);
 
     @Update("UPDATE crm_wecom_contact_sync_run SET status=#{status},cursor_value=#{cursor},received_count=#{received},upserted_count=#{upserted},deactivated_count=#{deactivated},error_masked=#{error},finished_at=#{finished} WHERE tenant_id=#{tenantId} AND id=#{id} AND status='RUNNING'")
     int finishRun(@Param("tenantId") long tenantId, @Param("id") long id, @Param("status") String status,
@@ -63,4 +79,83 @@ public interface WecomContactSyncMapper {
     int updateFollowStatus(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
                            @Param("externalUserid") String externalUserid, @Param("staffUserId") long staffUserId,
                            @Param("status") String status);
+
+    final class RunInsertParam {
+        private Long id;
+        private long tenantId;
+        private String corpId;
+        private String runType;
+        private Long actor;
+        private Instant now;
+        private Instant leaseUntil;
+
+        public RunInsertParam() {
+        }
+
+        public RunInsertParam(long tenantId, String corpId, String runType, Long actor,
+                              Instant now, Instant leaseUntil) {
+            this.tenantId = tenantId;
+            this.corpId = corpId;
+            this.runType = runType;
+            this.actor = actor;
+            this.now = now;
+            this.leaseUntil = leaseUntil;
+        }
+
+        public Long getId() {
+            return id;
+        }
+
+        public void setId(Long id) {
+            this.id = id;
+        }
+
+        public long getTenantId() {
+            return tenantId;
+        }
+
+        public void setTenantId(long tenantId) {
+            this.tenantId = tenantId;
+        }
+
+        public String getCorpId() {
+            return corpId;
+        }
+
+        public void setCorpId(String corpId) {
+            this.corpId = corpId;
+        }
+
+        public String getRunType() {
+            return runType;
+        }
+
+        public void setRunType(String runType) {
+            this.runType = runType;
+        }
+
+        public Long getActor() {
+            return actor;
+        }
+
+        public void setActor(Long actor) {
+            this.actor = actor;
+        }
+
+        public Instant getNow() {
+            return now;
+        }
+
+        public void setNow(Instant now) {
+            this.now = now;
+        }
+
+        public Instant getLeaseUntil() {
+            return leaseUntil;
+        }
+
+        public void setLeaseUntil(Instant leaseUntil) {
+            this.leaseUntil = leaseUntil;
+        }
+    }
 }

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Institution, ProductPackage, Sku, SkuQualityReport } from '../api/catalog'
+import type { Institution, PackageVersionSnapshot, ProductPackage, Sku, SkuQualityReport } from '../api/catalog'
 import {
   activateSku,
   disableSku,
@@ -14,6 +14,7 @@ import {
   listSkus,
 } from '../api/catalog'
 import { useAuthStore } from '../stores/auth'
+import { fetchAllPages, mapWithConcurrency } from '../utils/asyncBatch'
 import { fenToYuan } from '../utils/money'
 import SkuFormDrawer from './catalog/SkuFormDrawer.vue'
 import StatusPill from './customer/StatusPill.vue'
@@ -39,6 +40,9 @@ const qualityLoading = ref(false)
 const qualityError = ref('')
 const qualityDetailsVisible = ref(false)
 const query = reactive({ keyword: '', status: '', packageId: undefined as number | undefined, page: 1, size: 20 })
+const snapshotCache = new Map<number, PackageVersionSnapshot>()
+let loadSequence = 0
+let disposed = false
 const QUALITY_TIME_ZONE = 'Asia/Shanghai'
 
 function dateInQualityZone(date: Date): string {
@@ -122,27 +126,44 @@ async function loadQuality() {
 }
 
 async function load() {
+  const sequence = ++loadSequence
   loading.value = true
   errorMessage.value = ''
   try {
     const result = await listSkus(query)
+    if (disposed || sequence !== loadSequence) return
     skus.value = result.items
-    const institutionResults = await Promise.allSettled(result.items.map((item) => listSkuInstitutions(item.id)))
-    institutionNames.value = Object.fromEntries(institutionResults.map((entry, index) => [result.items[index].id,
-      entry.status === 'fulfilled' ? entry.value.map((institution) => institution.fullName) : []]))
-    const snapshotResults = await Promise.allSettled(result.items.map((item) => getPackageVersionSnapshot(item.packageVersionId)))
-    categoryNames.value = Object.fromEntries(snapshotResults.map((entry, index) => [result.items[index].id,
-      entry.status === 'fulfilled'
-        ? [...new Set(entry.value.projects.map((project) => project.categoryCode).filter(Boolean))].join('、')
-        : '']))
     total.value = result.total
     query.page = result.page
     query.size = result.size
+
+    const uniqueVersionIds = [...new Set(result.items.map((item) => item.packageVersionId))]
+    const uncachedVersionIds = uniqueVersionIds.filter((id) => !snapshotCache.has(id))
+    const [institutionResults, snapshotResults] = await Promise.all([
+      mapWithConcurrency(result.items, 5, (item) => listSkuInstitutions(item.id)),
+      mapWithConcurrency(uncachedVersionIds, 5, (versionId) => getPackageVersionSnapshot(versionId)),
+    ])
+    if (disposed || sequence !== loadSequence) return
+
+    institutionNames.value = Object.fromEntries(institutionResults.map((entry, index) => [result.items[index].id,
+      entry.status === 'fulfilled' ? entry.value.map((institution) => institution.fullName) : []]))
+    snapshotResults.forEach((entry, index) => {
+      if (entry.status === 'fulfilled') snapshotCache.set(uncachedVersionIds[index], entry.value)
+    })
+    categoryNames.value = Object.fromEntries(result.items.map((item) => {
+      const snapshot = snapshotCache.get(item.packageVersionId)
+      const categories = snapshot
+        ? [...new Set(snapshot.projects.map((project) => project.categoryCode).filter(Boolean))].join('、')
+        : ''
+      return [item.id, categories]
+    }))
   } catch (error) {
-    errorMessage.value = catalogErrorText(error)
-    skus.value = []
+    if (!disposed && sequence === loadSequence) {
+      errorMessage.value = catalogErrorText(error)
+      skus.value = []
+    }
   } finally {
-    loading.value = false
+    if (!disposed && sequence === loadSequence) loading.value = false
   }
 }
 
@@ -215,8 +236,17 @@ async function showInstitutions(item: Sku) {
   }
 }
 
+onBeforeUnmount(() => {
+  disposed = true
+  loadSequence += 1
+})
+
 onMounted(async () => {
-  const results = await Promise.allSettled([listPackages({ page: 1, size: 100 }), listInstitutions({ page: 1, size: 100 })])
+  const results = await Promise.allSettled([
+    fetchAllPages((page, size) => listPackages({ page, size }), { size: 100, maxPages: 10 }),
+    fetchAllPages((page, size) => listInstitutions({ page, size }), { size: 100, maxPages: 10 }),
+  ])
+  if (disposed) return
   if (results[0].status === 'fulfilled') packages.value = results[0].value.items
   if (results[1].status === 'fulfilled') institutions.value = results[1].value.items
   presetPackageId.value = route.query.packageId ? Number(route.query.packageId) : null

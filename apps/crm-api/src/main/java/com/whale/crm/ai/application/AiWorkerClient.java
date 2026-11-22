@@ -30,8 +30,14 @@ public class AiWorkerClient {
         this.mapper = mapper;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.token = token;
-        this.http = new OkHttpClient.Builder().connectTimeout(3, TimeUnit.SECONDS)
-                .readTimeout(timeoutMs, TimeUnit.MILLISECONDS).writeTimeout(timeoutMs, TimeUnit.MILLISECONDS).build();
+        long boundedTimeoutMs = Math.max(1_000L, Math.min(300_000L, timeoutMs));
+        this.http = new OkHttpClient.Builder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(boundedTimeoutMs, TimeUnit.MILLISECONDS)
+                .writeTimeout(boundedTimeoutMs, TimeUnit.MILLISECONDS)
+                .build();
     }
 
     public ExtractionResult extract(long jobId, long customerId, List<MessageInput> messages,
@@ -64,9 +70,17 @@ public class AiWorkerClient {
     public ReplyGenerationResult generateReply(String suggestionId, long customerId, String scene,
                                                java.util.Map<String, Object> facts, String instruction,
                                                ProviderConfig providerConfig) {
+        return generateReply(suggestionId, customerId, scene, facts, instruction, List.of(), providerConfig);
+    }
+
+    public ReplyGenerationResult generateReply(String suggestionId, long customerId, String scene,
+                                               java.util.Map<String, Object> facts, String instruction,
+                                               List<MessageInput> recentMessages,
+                                               ProviderConfig providerConfig) {
         try {
+            List<MessageInput> safeMessages = recentMessages == null ? List.of() : List.copyOf(recentMessages);
             String json = mapper.writeValueAsString(new ReplyGenerationRequest(suggestionId, Long.toString(customerId),
-                    scene, facts, instruction, providerConfig));
+                    scene, facts, instruction, safeMessages, providerConfig));
             Request request = new Request.Builder().url(baseUrl + "/api/v1/replies/generate")
                     .header("X-AI-Internal-Token", token).post(RequestBody.create(json, JSON)).build();
             try (var response = http.newCall(request).execute()) {
@@ -93,10 +107,19 @@ public class AiWorkerClient {
     public record ReplyGenerationRequest(@JsonProperty("suggestion_id") String suggestionId,
                                          @JsonProperty("customer_id") String customerId, String scene,
                                          java.util.Map<String, Object> facts, String instruction,
+                                         @JsonProperty("recent_messages") @JsonInclude(JsonInclude.Include.NON_EMPTY)
+                                         List<MessageInput> recentMessages,
                                          @JsonProperty("provider_config") @JsonInclude(JsonInclude.Include.NON_NULL)
                                          ProviderConfig providerConfig) {
+        public ReplyGenerationRequest(String suggestionId, String customerId, String scene,
+                                      java.util.Map<String, Object> facts, String instruction,
+                                      ProviderConfig providerConfig) {
+            this(suggestionId, customerId, scene, facts, instruction, List.of(), providerConfig);
+        }
+
         public ReplyGenerationRequest {
             facts = facts == null ? null : java.util.Map.copyOf(facts);
+            recentMessages = recentMessages == null ? List.of() : List.copyOf(recentMessages);
         }
     }
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)

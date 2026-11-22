@@ -11,6 +11,7 @@ import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.crypto.AesGcmCipher;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -19,11 +20,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.InetAddress;
-import java.net.URI;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class DifyKnowledgeConfigService {
@@ -38,13 +39,34 @@ public class DifyKnowledgeConfigService {
     private final KnowledgeWorkerClient workerClient;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactions;
-    private final boolean allowHttp;
+    private final AiOutboundUrlValidator urlValidator;
 
     public DifyKnowledgeConfigService(DifyKnowledgeConfigRepository repository, AesGcmCipher cipher,
                                       IdempotencyService idempotencyService, AuditService auditService,
                                       KnowledgeWorkerClient workerClient, ObjectMapper objectMapper,
                                       PlatformTransactionManager transactionManager,
-                                      @Value("${app.ai.knowledge.allow-http:false}") boolean allowHttp) {
+                                      boolean allowHttp) {
+        this(repository, cipher, idempotencyService, auditService, workerClient, objectMapper, transactionManager,
+                allowHttp, "", InetAddress::getAllByName);
+    }
+
+    @Autowired
+    public DifyKnowledgeConfigService(DifyKnowledgeConfigRepository repository, AesGcmCipher cipher,
+                                      IdempotencyService idempotencyService, AuditService auditService,
+                                      KnowledgeWorkerClient workerClient, ObjectMapper objectMapper,
+                                      PlatformTransactionManager transactionManager,
+                                      @Value("${app.ai.knowledge.allow-http:false}") boolean allowHttp,
+                                      @Value("${app.ai.knowledge.allowed-hosts:}") String allowedHosts) {
+        this(repository, cipher, idempotencyService, auditService, workerClient, objectMapper, transactionManager,
+                allowHttp, allowedHosts, InetAddress::getAllByName);
+    }
+
+    public DifyKnowledgeConfigService(DifyKnowledgeConfigRepository repository, AesGcmCipher cipher,
+                                      IdempotencyService idempotencyService, AuditService auditService,
+                                      KnowledgeWorkerClient workerClient, ObjectMapper objectMapper,
+                                      PlatformTransactionManager transactionManager,
+                                      boolean allowHttp, Set<String> allowedHosts,
+                                      AiOutboundUrlValidator.HostResolver hostResolver) {
         this.repository = repository;
         this.cipher = cipher;
         this.idempotencyService = idempotencyService;
@@ -52,7 +74,17 @@ public class DifyKnowledgeConfigService {
         this.workerClient = workerClient;
         this.objectMapper = objectMapper;
         this.transactions = new TransactionTemplate(transactionManager);
-        this.allowHttp = allowHttp;
+        this.urlValidator = new AiOutboundUrlValidator(allowHttp, allowedHosts, hostResolver);
+    }
+
+    private DifyKnowledgeConfigService(DifyKnowledgeConfigRepository repository, AesGcmCipher cipher,
+                                       IdempotencyService idempotencyService, AuditService auditService,
+                                       KnowledgeWorkerClient workerClient, ObjectMapper objectMapper,
+                                       PlatformTransactionManager transactionManager,
+                                       boolean allowHttp, String allowedHosts,
+                                       AiOutboundUrlValidator.HostResolver hostResolver) {
+        this(repository, cipher, idempotencyService, auditService, workerClient, objectMapper, transactionManager,
+                allowHttp, AiOutboundUrlValidator.parseAllowedHosts(allowedHosts), hostResolver);
     }
 
     @Transactional(readOnly = true)
@@ -159,15 +191,25 @@ public class DifyKnowledgeConfigService {
     public KnowledgeWorkerClient.DatasetProviderConfig datasetWorkerConfig(long tenantId) {
         return repository.find(tenantId)
                 .filter(config -> Boolean.TRUE.equals(config.syncEnabled()) && !"disabled".equals(config.provider()))
-                .map(config -> new KnowledgeWorkerClient.DatasetProviderConfig(config.provider(), config.baseUrl(),
-                        config.datasetApiKeyCipher() == null ? null : cipher.decrypt(config.datasetApiKeyCipher()),
-                        config.datasetId(), config.timeoutSeconds()))
+                .map(config -> {
+                    validateStoredBaseUrl(config.provider(), config.baseUrl());
+                    return new KnowledgeWorkerClient.DatasetProviderConfig(config.provider(), config.baseUrl(),
+                            config.datasetApiKeyCipher() == null ? null : cipher.decrypt(config.datasetApiKeyCipher()),
+                            config.datasetId(), config.timeoutSeconds());
+                })
                 .orElse(null);
     }
 
     private KnowledgeWorkerClient.ProviderConfig workerConfig(DifyKnowledgeConfig config) {
+        validateStoredBaseUrl(config.provider(), config.baseUrl());
         return new KnowledgeWorkerClient.ProviderConfig(config.provider(), config.baseUrl(),
                 config.appApiKeyCipher() == null ? null : cipher.decrypt(config.appApiKeyCipher()), config.timeoutSeconds());
+    }
+
+    private void validateStoredBaseUrl(String provider, String baseUrl) {
+        if (baseUrl != null && !baseUrl.isBlank() && !"disabled".equals(provider) && !"mock".equals(provider)) {
+            validateBaseUrl(baseUrl);
+        }
     }
 
     private void validate(DifyKnowledgeConfigRequest request) {
@@ -195,38 +237,7 @@ public class DifyKnowledgeConfigService {
     }
 
     private void validateBaseUrl(String value) {
-        try {
-            URI uri = URI.create(value);
-            if (uri.getHost() == null || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Dify baseUrl 格式无效");
-            }
-            if ("https".equalsIgnoreCase(uri.getScheme())) {
-                return;
-            }
-            if (!"http".equalsIgnoreCase(uri.getScheme())) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Dify baseUrl 仅支持 HTTPS");
-            }
-            if (!allowHttp) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Dify baseUrl 默认必须使用 HTTPS");
-            }
-            InetAddress[] addresses = InetAddress.getAllByName(uri.getHost());
-            if (addresses.length == 0) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "仅允许明确配置的内网 HTTP 地址");
-            }
-            for (InetAddress address : addresses) {
-                if (!isInternal(address)) {
-                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "仅允许明确配置的内网 HTTP 地址");
-                }
-            }
-        } catch (BusinessException ex) {
-            throw ex;
-        } catch (Exception ex) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Dify baseUrl 格式无效或内网地址不可解析");
-        }
-    }
-
-    private boolean isInternal(InetAddress address) {
-        return address.isLoopbackAddress() || address.isSiteLocalAddress() || address.isLinkLocalAddress();
+        urlValidator.validate(value, "Dify baseUrl");
     }
 
     private DifyKnowledgeConfigResponse view(DifyKnowledgeConfig config) {

@@ -10,7 +10,7 @@ import java.util.List;
  */
 public record UpdateRolePermissionsRequest(
         @NotNull(message = "permissionCodes 必填")
-        List<@Pattern(regexp = "[a-z]+:[a-z_]+", message = "权限代码格式无效") String> permissionCodes) {
+        List<@Pattern(regexp = "[a-z]+(?::[a-z_]+){1,3}", message = "权限代码格式无效") String> permissionCodes) {
     public UpdateRolePermissionsRequest {
         permissionCodes = permissionCodes == null ? null : List.copyOf(permissionCodes);
     }

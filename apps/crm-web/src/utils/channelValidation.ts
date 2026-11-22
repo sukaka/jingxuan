@@ -1,3 +1,7 @@
+export function hasMaskedWildcard(value: string): boolean {
+  return value.includes('*')
+}
+
 export function isValidMainlandMobile(value: string): boolean {
   return /^1[3-9]\d{9}$/.test(value.trim())
 }

@@ -37,17 +37,29 @@
     WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version}
   </update>
 
+  <sql id="packageWhere">
+    WHERE p.tenant_id=#{tenantId}
+    <if test="keyword != null and keyword != ''">AND (p.package_code LIKE CONCAT('%',#{keyword},'%') OR p.package_name LIKE CONCAT('%',#{keyword},'%'))</if>
+    <if test="status != null and status != ''">AND p.status=#{status}</if>
+    <if test="institutionIds != null and institutionIds.size() == 0">AND 1=0</if>
+    <if test="institutionIds != null and institutionIds.size() > 0">
+      AND EXISTS (
+        SELECT 1 FROM crm_package_version pv
+        INNER JOIN crm_sku s ON s.tenant_id=pv.tenant_id AND s.package_version_id=pv.id
+        INNER JOIN crm_sku_institution si ON si.tenant_id=s.tenant_id AND si.sku_id=s.id AND si.status='ACTIVE'
+        WHERE pv.tenant_id=p.tenant_id AND pv.package_id=p.id AND si.institution_id IN
+        <foreach collection="institutionIds" item="iid" open="(" separator="," close=")">#{iid}</foreach>
+      )
+    </if>
+  </sql>
   <select id="searchPackages" resultType="com.whale.crm.product.domain.ProductPackage">
-    SELECT <include refid="packageColumns"/> FROM crm_package
-    WHERE tenant_id=#{tenantId}
-    <if test="keyword != null and keyword != ''">AND (package_code LIKE CONCAT('%',#{keyword},'%') OR package_name LIKE CONCAT('%',#{keyword},'%'))</if>
-    <if test="status != null and status != ''">AND status=#{status}</if>
-    ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+    SELECT <include refid="packageColumns"/> FROM crm_package p
+    <include refid="packageWhere"/>
+    ORDER BY p.id DESC LIMIT #{size} OFFSET #{offset}
   </select>
   <select id="countPackages" resultType="long">
-    SELECT COUNT(*) FROM crm_package WHERE tenant_id=#{tenantId}
-    <if test="keyword != null and keyword != ''">AND (package_code LIKE CONCAT('%',#{keyword},'%') OR package_name LIKE CONCAT('%',#{keyword},'%'))</if>
-    <if test="status != null and status != ''">AND status=#{status}</if>
+    SELECT COUNT(*) FROM crm_package p
+    <include refid="packageWhere"/>
   </select>
   <select id="selectPackage" resultType="com.whale.crm.product.domain.ProductPackage">
     SELECT <include refid="packageColumns"/> FROM crm_package WHERE tenant_id=#{tenantId} AND id=#{id}
@@ -67,6 +79,20 @@
 
   <select id="selectVersions" resultType="com.whale.crm.product.domain.PackageVersion">
     SELECT <include refid="versionColumns"/> FROM crm_package_version WHERE tenant_id=#{tenantId} AND package_id=#{packageId} ORDER BY version_no DESC
+  </select>
+  <select id="selectVersionsByInstitutionIds" resultType="com.whale.crm.product.domain.PackageVersion">
+    SELECT <include refid="versionColumns"/> FROM crm_package_version pv
+    WHERE pv.tenant_id=#{tenantId} AND pv.package_id=#{packageId}
+    <if test="institutionIds == null or institutionIds.size() == 0">AND 1=0</if>
+    <if test="institutionIds != null and institutionIds.size() > 0">
+      AND EXISTS (
+        SELECT 1 FROM crm_sku s
+        INNER JOIN crm_sku_institution si ON si.tenant_id=s.tenant_id AND si.sku_id=s.id AND si.status='ACTIVE'
+        WHERE s.tenant_id=pv.tenant_id AND s.package_version_id=pv.id AND si.institution_id IN
+        <foreach collection="institutionIds" item="iid" open="(" separator="," close=")">#{iid}</foreach>
+      )
+    </if>
+    ORDER BY pv.version_no DESC
   </select>
   <select id="selectVersion" resultType="com.whale.crm.product.domain.PackageVersion">
     SELECT <include refid="versionColumns"/> FROM crm_package_version WHERE tenant_id=#{tenantId} AND id=#{id}
@@ -191,6 +217,12 @@
     <if test="ids != null and ids.size() > 0">AND i.id IN <foreach collection="ids" item="iid" open="(" separator="," close=")">#{iid}</foreach></if>
     ORDER BY i.id
   </select>
+  <select id="selectActiveInstitutionsByIds" resultType="com.whale.crm.product.domain.Institution">
+    SELECT <include refid="institutionColumns"/> FROM crm_institution i WHERE i.tenant_id=#{tenantId} AND i.archived=0 AND i.status='ACTIVE'
+    <if test="ids == null or ids.size() == 0">AND 1=0</if>
+    <if test="ids != null and ids.size() > 0">AND i.id IN <foreach collection="ids" item="iid" open="(" separator="," close=")">#{iid}</foreach></if>
+    ORDER BY i.id
+  </select>
   <select id="countActiveInstitutionsByIds" resultType="long">
     SELECT COUNT(*) FROM crm_institution i WHERE i.tenant_id=#{tenantId} AND i.archived=0 AND i.status='ACTIVE'
     <if test="ids == null or ids.size() == 0">AND 1=0</if>
@@ -198,6 +230,14 @@
   </select>
   <select id="selectInstitutionIdsBySku" resultType="long">
     SELECT institution_id FROM crm_sku_institution WHERE tenant_id=#{tenantId} AND sku_id=#{skuId} AND status='ACTIVE' ORDER BY institution_id
+  </select>
+  <select id="selectActiveInstitutionIdsBySku" resultType="long">
+    SELECT si.institution_id
+    FROM crm_sku_institution si
+    INNER JOIN crm_institution i ON i.tenant_id=si.tenant_id AND i.id=si.institution_id
+    WHERE si.tenant_id=#{tenantId} AND si.sku_id=#{skuId}
+      AND si.status='ACTIVE' AND i.archived=0 AND i.status='ACTIVE'
+    ORDER BY si.institution_id
   </select>
   <delete id="deleteSkuInstitutions">
     DELETE FROM crm_sku_institution WHERE tenant_id=#{tenantId} AND sku_id=#{skuId}

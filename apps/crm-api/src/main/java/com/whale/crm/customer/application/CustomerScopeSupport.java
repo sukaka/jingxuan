@@ -77,11 +77,12 @@ public class CustomerScopeSupport {
      */
     public record ScopeQuery(String scopeType, List<Long> teamIds, long selfId) {
         public ScopeQuery {
-            teamIds = teamIds == null ? null : List.copyOf(teamIds);
+            teamIds = teamIds == null ? null : List.copyOf(teamIds.stream().sorted().toList());
         }
     }
 
     public ScopeQuery queryOf(DataScope scope, CurrentUser user) {
-        return new ScopeQuery(scope.type().name(), List.copyOf(scope.teamIds()), user.userId());
+        List<Long> teamIds = scope.teamIds() == null ? List.of() : scope.teamIds().stream().sorted().toList();
+        return new ScopeQuery(scope.type().name(), teamIds, user.userId());
     }
 }

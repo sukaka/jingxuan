@@ -3,6 +3,7 @@ spring:
     password: ${MYSQL_PASSWORD}
   flyway:
     locations: classpath:db/migration,classpath:db/prod
+    baseline-on-migrate: false
   data:
     redis:
       password: ${REDIS_PASSWORD}
@@ -49,6 +50,7 @@ app:
   refunds:
     mock:
       enabled: false
+      secret: ${REFUND_MOCK_SECRET:}
   ai:
     knowledge:
       sync:

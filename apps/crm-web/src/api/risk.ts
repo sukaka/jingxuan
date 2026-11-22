@@ -58,6 +58,21 @@ export interface RiskResolveRequest {
   resolution: string
 }
 
+export interface RiskSyncResponse {
+  createdCount?: number
+  updatedCount?: number
+  syncedAt?: string
+}
+
+export async function syncRiskCases(idempotencyKey?: string): Promise<RiskSyncResponse | null> {
+  const res = await http.post<ApiResponse<RiskSyncResponse | null>>(
+    '/risks/sync',
+    {},
+    idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  )
+  return res.data.data ?? null
+}
+
 export async function listRiskCases(query: RiskCaseListQuery): Promise<PageResult<RiskCase>> {
   const res = await http.get<ApiResponse<PageResult<RiskCase>>>('/risks', {
     params: {

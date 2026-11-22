@@ -144,4 +144,90 @@ describe('LoginView 真实账号登录', () => {
 
     expect(router.currentRoute.value.path).toBe('/')
   })
+
+  it('遇到 AMBIGUOUS_TENANT 时高亮提示填写租户编码，并在填写后随登录请求提交', async () => {
+    vi.mocked(login)
+      .mockRejectedValueOnce(new ApiError({ status: 400, code: 'AMBIGUOUS_TENANT', message: '多个租户存在同名账号，请填写租户编码' }))
+      .mockResolvedValueOnce(user)
+    const { wrapper, router } = await mountLogin()
+
+    await wrapper.get('#login-username').setValue('operator')
+    await wrapper.get('#login-password').setValue('secret-password')
+    await wrapper.get('#login-captcha').setValue('14')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('多个租户存在同名账号')
+    expect(wrapper.find('.login-field.is-highlighted').exists()).toBe(true)
+
+    await wrapper.get('#login-tenant-code').setValue(' jingxuan ')
+    await wrapper.get('#login-captcha').setValue('15')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(login).toHaveBeenLastCalledWith({
+      username: 'operator',
+      password: 'secret-password',
+      captchaId: 'captcha-test',
+      captchaAnswer: '15',
+      tenantCode: 'jingxuan',
+    })
+    expect(router.currentRoute.value.path).toBe('/customers')
+  })
+
+  it('遇到 M1 后端 VALIDATION_FAILED 且 details 包含 tenantCode 时同样高亮并聚焦租户编码', async () => {
+    vi.mocked(login)
+      .mockRejectedValueOnce(new ApiError({
+        status: 400,
+        code: 'VALIDATION_FAILED',
+        message: '存在多个组织账号，请填写组织编码',
+        details: [{ field: 'tenantCode', message: '请填写组织编码' }],
+      }))
+      .mockResolvedValueOnce(user)
+    const { wrapper, router } = await mountLogin()
+
+    await wrapper.get('#login-username').setValue('operator')
+    await wrapper.get('#login-password').setValue('secret-password')
+    await wrapper.get('#login-captcha').setValue('14')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('存在多个组织账号，请填写组织编码')
+    expect(wrapper.find('.login-field.is-highlighted').exists()).toBe(true)
+    expect(wrapper.find('.login-tenant-hint').exists()).toBe(true)
+
+    await wrapper.get('#login-tenant-code').setValue('ORG_A')
+    await wrapper.get('#login-captcha').setValue('16')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(login).toHaveBeenLastCalledWith({
+      username: 'operator',
+      password: 'secret-password',
+      captchaId: 'captcha-test',
+      captchaAnswer: '16',
+      tenantCode: 'ORG_A',
+    })
+    expect(router.currentRoute.value.path).toBe('/customers')
+  })
+
+  it('非 tenantCode 的 VALIDATION_FAILED 不会误高亮租户编码字段', async () => {
+    vi.mocked(login).mockRejectedValueOnce(new ApiError({
+      status: 400,
+      code: 'VALIDATION_FAILED',
+      message: '验证码格式错误',
+      details: [{ field: 'captchaAnswer', message: '验证码格式错误' }],
+    }))
+    const { wrapper } = await mountLogin()
+
+    await wrapper.get('#login-username').setValue('operator')
+    await wrapper.get('#login-password').setValue('secret-password')
+    await wrapper.get('#login-captcha').setValue('abc')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('验证码格式错误')
+    expect(wrapper.find('.login-field.is-highlighted').exists()).toBe(false)
+    expect(wrapper.find('.login-tenant-hint').exists()).toBe(false)
+  })
 })

@@ -24,6 +24,11 @@ public class MybatisMergeCaseRepository implements MergeCaseRepository {
     }
 
     @Override
+    public Optional<MergeCase> findByIdForUpdate(long tenantId, long id) {
+        return Optional.ofNullable(mergeCaseMapper.selectByIdForUpdate(tenantId, id));
+    }
+
+    @Override
     public boolean existsPair(long tenantId, long primaryCustomerId, long secondaryCustomerId) {
         return mergeCaseMapper.countPair(tenantId, primaryCustomerId, secondaryCustomerId) > 0;
     }

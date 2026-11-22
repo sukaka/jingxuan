@@ -20,6 +20,8 @@ export interface AiReplySuggestion {
   createdAt: string
   decidedAt: string | null
   version: number
+  chatContextIncluded?: boolean
+  chatContextCount?: number
 }
 
 export async function generateAiReply(body: { customerId: number; templateId: number; instruction?: string }, key: string): Promise<AiReplySuggestion> {

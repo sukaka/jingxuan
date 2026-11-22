@@ -79,6 +79,17 @@
     LEFT JOIN sys_user u ON u.tenant_id=c.tenant_id AND u.id=c.business_owner_user_id
     WHERE c.tenant_id=#{tenantId} AND c.id=#{id}
   </select>
+  <select id="selectChannelForUpdate" resultType="com.whale.crm.campaign.domain.PartnerChannel">
+    SELECT c.id,c.channel_no AS channelNo,c.name,c.channel_type AS channelType,c.platform_code AS platformCode,
+      c.commission_percent AS commissionPercent,c.business_owner_user_id AS businessOwnerUserId,
+      NULL AS businessOwnerName,c.real_name AS realName,c.contact_phone_cipher AS contactPhone,
+      c.id_card_number_cipher AS idCardNumber,c.settlement_method AS settlementMethod,
+      c.cooperation_start_date AS cooperationStartDate,c.cooperation_end_date AS cooperationEndDate,
+      c.payment_account_name_cipher AS paymentAccountName,c.payment_account_no_cipher AS paymentAccountNo,
+      c.payment_bank_name AS paymentBankName,c.status,c.remarks,c.created_at AS createdAt,c.version
+    FROM crm_partner_channel c
+    WHERE c.tenant_id=#{tenantId} AND c.id=#{id} FOR UPDATE
+  </select>
   <select id="selectChannelByNo" resultType="com.whale.crm.campaign.domain.PartnerChannel">
     SELECT <include refid="channelColumns"/> FROM crm_partner_channel c
     LEFT JOIN sys_user u ON u.tenant_id=c.tenant_id AND u.id=c.business_owner_user_id
@@ -98,8 +109,69 @@
       business_owner_user_id=#{entity.businessOwnerUserId},real_name=#{entity.realName},contact_phone_cipher=#{entity.contactPhone},id_card_number_cipher=#{entity.idCardNumber},settlement_method=#{entity.settlementMethod},cooperation_start_date=#{entity.cooperationStartDate},cooperation_end_date=#{entity.cooperationEndDate},payment_account_name_cipher=#{entity.paymentAccountName},payment_account_no_cipher=#{entity.paymentAccountNo},payment_bank_name=#{entity.paymentBankName},status=#{entity.status},remarks=#{entity.remarks},version=version+1
     WHERE tenant_id=#{tenantId} AND id=#{entity.id} AND version=#{entity.version}
   </update>
+  <update id="updateChannelStatus">
+    UPDATE crm_partner_channel SET status=#{status},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
+  <update id="updateChannelFinancials">
+    UPDATE crm_partner_channel SET commission_percent=#{commissionPercent},settlement_method=#{settlementMethod},
+      payment_account_name_cipher=#{paymentAccountNameCipher},payment_account_no_cipher=#{paymentAccountNoCipher},
+      payment_bank_name=#{paymentBankName},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version}
+  </update>
   <select id="countActiveEmployee" resultType="int">
     SELECT COUNT(*) FROM sys_user
     WHERE tenant_id=#{tenantId} AND id=#{userId} AND user_type='EMPLOYEE' AND status='ACTIVE'
   </select>
+
+  <sql id="channelChangeColumns">r.id,r.channel_id AS channelId,c.channel_no AS channelNo,c.name AS channelName,r.base_version AS baseVersion,r.before_cipher AS beforeCipher,r.after_cipher AS afterCipher,r.before_masked AS beforeMasked,r.after_masked AS afterMasked,r.reason,r.status,r.requested_by AS requestedBy,ru.display_name AS requestedByName,r.requested_at AS requestedAt,r.reviewer_user_id AS reviewerUserId,vu.display_name AS reviewerName,r.reviewed_at AS reviewedAt,r.review_comment AS reviewComment,r.version</sql>
+  <sql id="channelChangeWhere">
+    WHERE r.tenant_id=#{tenantId}
+    <if test="channelId != null">AND r.channel_id=#{channelId}</if>
+    <if test="status != null and status != ''">AND r.status=#{status}</if>
+  </sql>
+  <insert id="insertChannelChangeRequest">
+    INSERT INTO crm_channel_change_request (tenant_id,channel_id,base_version,before_cipher,after_cipher,before_masked,after_masked,reason,status,requested_by,requested_at)
+    VALUES (#{tenantId},#{entity.channelId},#{entity.baseVersion},#{entity.beforeCipher},#{entity.afterCipher},#{entity.beforeMasked},#{entity.afterMasked},#{entity.reason},#{entity.status},#{entity.requestedBy},#{entity.requestedAt})
+  </insert>
+  <select id="selectChannelChangeRequest" resultType="com.whale.crm.campaign.domain.ChannelChangeRequest">
+    SELECT <include refid="channelChangeColumns"/> FROM crm_channel_change_request r
+    JOIN crm_partner_channel c ON c.tenant_id=r.tenant_id AND c.id=r.channel_id
+    LEFT JOIN sys_user ru ON ru.tenant_id=r.tenant_id AND ru.id=r.requested_by
+    LEFT JOIN sys_user vu ON vu.tenant_id=r.tenant_id AND vu.id=r.reviewer_user_id
+    WHERE r.tenant_id=#{tenantId} AND r.id=#{id}
+  </select>
+  <select id="selectChannelChangeRequestForUpdate" resultType="com.whale.crm.campaign.domain.ChannelChangeRequest">
+    SELECT r.id,r.channel_id AS channelId,NULL AS channelNo,NULL AS channelName,r.base_version AS baseVersion,
+      r.before_cipher AS beforeCipher,r.after_cipher AS afterCipher,r.before_masked AS beforeMasked,
+      r.after_masked AS afterMasked,r.reason,r.status,r.requested_by AS requestedBy,NULL AS requestedByName,
+      r.requested_at AS requestedAt,r.reviewer_user_id AS reviewerUserId,NULL AS reviewerName,
+      r.reviewed_at AS reviewedAt,r.review_comment AS reviewComment,r.version
+    FROM crm_channel_change_request r
+    WHERE r.tenant_id=#{tenantId} AND r.id=#{id} FOR UPDATE
+  </select>
+  <select id="selectActiveChannelChangeRequest" resultType="com.whale.crm.campaign.domain.ChannelChangeRequest">
+    SELECT <include refid="channelChangeColumns"/> FROM crm_channel_change_request r
+    JOIN crm_partner_channel c ON c.tenant_id=r.tenant_id AND c.id=r.channel_id
+    LEFT JOIN sys_user ru ON ru.tenant_id=r.tenant_id AND ru.id=r.requested_by
+    LEFT JOIN sys_user vu ON vu.tenant_id=r.tenant_id AND vu.id=r.reviewer_user_id
+    WHERE r.tenant_id=#{tenantId} AND r.active_channel_id=#{channelId}
+  </select>
+  <select id="searchChannelChangeRequests" resultType="com.whale.crm.campaign.domain.ChannelChangeRequest">
+    SELECT <include refid="channelChangeColumns"/> FROM crm_channel_change_request r
+    JOIN crm_partner_channel c ON c.tenant_id=r.tenant_id AND c.id=r.channel_id
+    LEFT JOIN sys_user ru ON ru.tenant_id=r.tenant_id AND ru.id=r.requested_by
+    LEFT JOIN sys_user vu ON vu.tenant_id=r.tenant_id AND vu.id=r.reviewer_user_id
+    <include refid="channelChangeWhere"/>
+    ORDER BY r.id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countChannelChangeRequests" resultType="long">
+    SELECT COUNT(*) FROM crm_channel_change_request r
+    <include refid="channelChangeWhere"/>
+  </select>
+  <update id="updateChannelChangeRequestStatus">
+    UPDATE crm_channel_change_request
+    SET status=#{toStatus},reviewer_user_id=#{reviewerUserId},reviewed_at=#{reviewedAt},review_comment=#{reviewComment},version=version+1
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status=#{fromStatus}
+  </update>
 </mapper>

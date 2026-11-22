@@ -84,8 +84,27 @@ class OfficialWecomExternalContactSenderTest {
         assertThat(result.errorMasked()).isEqualTo("WECOM_EXTERNAL_CONTACT_RESPONSE_UNKNOWN");
     }
 
+    @Test
+    void disallowedTenantAndMismatchedCorpAreRejectedBeforeTokenOrNetworkCall() {
+        when(runtime.wecomOfficialEnabled(2L)).thenReturn(true);
+        when(runtime.wecomOfficialEnabled(1L)).thenReturn(true);
+        OfficialWecomExternalContactSender sender = new OfficialWecomExternalContactSender(true,
+                properties(true), tokens, contacts, runtime, new ObjectMapper(), http);
+
+        WecomSendResult crossTenant = sender.send(new ExternalContactMessageCommand(2L, "corp", 8L,
+                "external", "正常回复", "run-2"));
+        assertThat(crossTenant.status()).isEqualTo(WecomSendResult.Status.FAILED);
+        assertThat(crossTenant.errorMasked()).isEqualTo("WECOM_EXTERNAL_CONTACT_TENANT_FORBIDDEN");
+
+        WecomSendResult wrongCorp = sender.send(new ExternalContactMessageCommand(1L, "other-corp", 8L,
+                "external", "正常回复", "run-3"));
+        assertThat(wrongCorp.status()).isEqualTo(WecomSendResult.Status.FAILED);
+        assertThat(wrongCorp.errorMasked()).isEqualTo("WECOM_EXTERNAL_CONTACT_TENANT_FORBIDDEN");
+        verifyNoInteractions(tokens, contacts, http);
+    }
+
     private WecomOfficialProperties properties(boolean enabled) {
-        return new WecomOfficialProperties(enabled, "corp", "synthetic-secret",
+        return new WecomOfficialProperties(1L, enabled, "corp", "synthetic-secret",
                 "https://qyapi.weixin.qq.com", null, null, 100, 100, 100, 1);
     }
 }

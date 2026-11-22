@@ -15,6 +15,10 @@ public interface UserMapper {
 
     List<SysUser> selectByUsernameForAuth(@Param("username") String username);
 
+    List<Long> selectActiveTenantIdsByOrgCode(@Param("orgCode") String orgCode);
+
+    SysUser selectByTenantAndUsernameForAuth(@Param("tenantId") long tenantId, @Param("username") String username);
+
     SysUser selectByIdForAuth(@Param("id") long id);
 
     SysUser selectById(@Param("tenantId") long tenantId, @Param("id") long id);

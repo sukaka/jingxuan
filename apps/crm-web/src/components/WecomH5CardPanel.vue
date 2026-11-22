@@ -1,16 +1,33 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { listProjects } from '../api/catalog'
 import type { Project } from '../api/catalog'
 import { createH5Card, disableH5Card, listH5Cards, recordH5CardUsage } from '../api/h5Card'
 import type { H5Card } from '../api/h5Card'
 import { sendH5CardToCurrentChat } from '../services/wecomSdk'
+import type { WecomSendTarget } from '../services/wecomSdk'
 import { useAuthStore } from '../stores/auth'
 import { ApiError } from '../types/api'
+import { copyTextWithFallback } from '../utils/clipboard'
 
-const props = defineProps<{ customerId: number; externalUserid: string; chatEntry: string }>()
+const props = defineProps<{
+  customerId?: number | null
+  externalUserid?: string
+  chatId?: string
+  chatEntry: string
+}>()
+
+const emit = defineEmits<{
+  'context-mismatch': []
+}>()
+
 const auth = useAuthStore()
 const allowed = computed(() => auth.hasPermission('wecom:sidebar:view') && auth.hasPermission('product:read'))
+const hasCustomerContext = computed(() =>
+  typeof props.customerId === 'number' && props.customerId > 0 && Boolean(props.externalUserid?.trim()),
+)
+const isGroupChat = computed(() => props.chatEntry === 'group_chat_tools')
+const isSendableEntry = computed(() => props.chatEntry === 'single_chat_tools' || props.chatEntry === 'group_chat_tools')
 const projects = ref<Project[]>([])
 const history = ref<H5Card[]>([])
 const projectId = ref<number | null>(null)
@@ -30,6 +47,7 @@ let usageKey = ''
 
 const canShare = computed(() => current.value?.status === 'ACTIVE' && !busy.value)
 const projectName = computed(() => projects.value.find((item) => item.id === projectId.value)?.projectName ?? current.value?.projectName ?? '服务项目')
+const previewCoverUrl = computed(() => current.value?.imageUrl || '/h5-card-cover.png')
 
 function errorText(error: unknown): string {
   return error instanceof ApiError || error instanceof Error ? error.message : '操作失败，请重试'
@@ -37,6 +55,16 @@ function errorText(error: unknown): string {
 
 function requestKey(prefix: string): string {
   return `${prefix}-${typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`
+}
+
+function buildSendTarget(): WecomSendTarget | undefined {
+  if (props.chatEntry === 'single_chat_tools' && props.externalUserid?.trim()) {
+    return { expectedExternalUserid: props.externalUserid.trim() }
+  }
+  if (props.chatEntry === 'group_chat_tools' && props.chatId?.trim()) {
+    return { expectedChatId: props.chatId.trim() }
+  }
+  return undefined
 }
 
 function clearGenerated(): void {
@@ -75,11 +103,16 @@ function selectCard(card: H5Card): void {
 
 async function load(): Promise<void> {
   if (!allowed.value) return
-  loading.value = true
+  clearGenerated()
+  history.value = []
   errorMessage.value = ''
+  if (!hasCustomerContext.value) {
+    return
+  }
+  loading.value = true
   try {
     const [projectPage, cards] = await Promise.all([
-      listProjects({ page: 1, size: 100, status: 'ACTIVE' }), listH5Cards(props.customerId),
+      listProjects({ page: 1, size: 100, status: 'ACTIVE' }), listH5Cards(props.customerId!),
     ])
     projects.value = projectPage.items
     history.value = cards
@@ -93,7 +126,7 @@ async function load(): Promise<void> {
 }
 
 async function generate(): Promise<void> {
-  if (!allowed.value || !projectId.value || busy.value) return
+  if (!allowed.value || !hasCustomerContext.value || !projectId.value || busy.value) return
   if (!title.value.trim() || !summary.value.trim() || !content.value.trim()) {
     errorMessage.value = '请填写卡片标题、摘要和公开介绍'
     return
@@ -104,7 +137,7 @@ async function generate(): Promise<void> {
   if (!generationKey) generationKey = requestKey('h5-card-generate')
   try {
     const card = await createH5Card({
-      customerId: props.customerId, projectId: projectId.value, externalUserid: props.externalUserid,
+      customerId: props.customerId!, projectId: projectId.value, externalUserid: props.externalUserid!.trim(),
       title: title.value.trim(), summary: summary.value.trim(), content: content.value.trim(),
     }, generationKey)
     current.value = card
@@ -120,10 +153,10 @@ async function generate(): Promise<void> {
 }
 
 async function recordUsage(status: 'COPIED' | 'SDK_SUCCESS' | 'SDK_FAILED' | 'SDK_UNKNOWN', result: string): Promise<void> {
-  if (!current.value) return
+  if (!current.value || !hasCustomerContext.value) return
   if (!usageKey) usageKey = requestKey('h5-card-usage')
   await recordH5CardUsage(current.value.id, {
-    customerId: props.customerId, sendStatus: status, clientResult: result,
+    customerId: props.customerId!, sendStatus: status, clientResult: result,
   }, usageKey)
   usageKey = ''
 }
@@ -134,10 +167,10 @@ async function copyLink(): Promise<void> {
   errorMessage.value = ''
   feedback.value = ''
   try {
-    await navigator.clipboard.writeText(current.value.link)
+    await copyTextWithFallback(current.value.link)
     try {
-      await recordUsage('COPIED', 'navigator.clipboard:ok')
-      feedback.value = '卡片链接已复制并记录，粘贴前请再次确认当前客户'
+      await recordUsage('COPIED', 'clipboard:ok')
+      feedback.value = '卡片链接已复制并记录，粘贴前请再次确认当前会话'
     } catch (error) {
       errorMessage.value = `链接已复制，但日志记录失败：${errorText(error)}`
     }
@@ -149,21 +182,32 @@ async function copyLink(): Promise<void> {
 }
 
 async function send(): Promise<void> {
-  if (!canShare.value || !current.value || props.chatEntry !== 'single_chat_tools') return
+  if (!canShare.value || !current.value || !isSendableEntry.value) return
   busy.value = true
   errorMessage.value = ''
   feedback.value = ''
   try {
-    const result = await sendH5CardToCurrentChat(current.value)
+    const result = await sendH5CardToCurrentChat(current.value, buildSendTarget())
+    if (result.mismatch) {
+      errorMessage.value = '当前企微会话已切换，已阻止误发，正在刷新上下文'
+      emit('context-mismatch')
+      return
+    }
     try {
       await recordUsage(result.status, result.clientResult)
     } catch (error) {
       errorMessage.value = `企微已返回 ${result.status}，但日志记录失败：${errorText(error)}；请先核实会话，不要直接重复发送`
       return
     }
-    if (result.status === 'SDK_SUCCESS') feedback.value = '企微已确认 H5 卡片发送；这不代表客户已读'
-    else if (result.status === 'SDK_FAILED') feedback.value = '企微返回卡片发送失败，失败结果已记录'
-    else feedback.value = '发送结果未知，请先到会话核实，不要直接重复发送'
+    if (result.status === 'SDK_SUCCESS') {
+      feedback.value = isGroupChat.value
+        ? '企微已确认 H5 卡片发送到当前群聊；这不代表群成员已读'
+        : '企微已确认 H5 卡片发送；这不代表客户已读'
+    } else if (result.status === 'SDK_FAILED') {
+      feedback.value = '企微返回卡片发送失败，失败结果已记录'
+    } else {
+      feedback.value = '发送结果未知，请先到会话核实，不要直接重复发送'
+    }
   } catch (error) {
     errorMessage.value = errorText(error)
   } finally {
@@ -192,6 +236,11 @@ async function disable(): Promise<void> {
   }
 }
 
+watch(
+  () => [props.customerId, props.externalUserid],
+  () => { void load() },
+)
+
 onMounted(() => { void load() })
 </script>
 
@@ -200,9 +249,16 @@ onMounted(() => { void load() })
     <header class="h5-heading"><div><span>H5 · 项目介绍</span><h2>把项目说明分享给客户</h2></div><small>员工手动分享</small></header>
     <p class="h5-boundary">公开页只包含项目介绍，不包含客户档案、订单、剩余次数、员工 ID 或内部备注。</p>
     <div v-if="!allowed" class="h5-empty">当前账号没有项目读取或企微侧边栏权限</div>
+    <div v-else-if="!hasCustomerContext" class="h5-guidance" data-testid="h5-group-no-customer">
+      <strong>{{ isGroupChat ? '请先选择群内已关联的 CRM 客户' : '缺少当前关联客户信息' }}</strong>
+      <p>{{ isGroupChat ? '生成 H5 项目介绍卡片需要绑定一位已建档的 CRM 客户以留存分享审计。请先在群聊成员列表中选择一位已关联客户，再生成并发送到当前群聊。' : '请先在企微客户单聊中关联 CRM 客户，再生成 H5 项目介绍卡片。' }}</p>
+    </div>
     <div v-else-if="loading" class="h5-empty">正在读取可分享项目…</div>
     <template v-else>
       <div v-if="errorMessage" class="h5-alert" role="alert">{{ errorMessage }}</div>
+      <div v-if="isGroupChat" class="h5-group-note" data-testid="h5-group-send-hint">
+        当前处于群聊模式：已关联群内目标客户，生成卡片后可直接发送到当前群聊。
+      </div>
       <div class="h5-editor">
         <label for="h5-project">介绍项目</label>
         <select id="h5-project" v-model.number="projectId" data-testid="h5-project" :disabled="busy" @change="applyProject"><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.projectName }}</option></select>
@@ -218,16 +274,16 @@ onMounted(() => { void load() })
       </div>
 
       <section class="card-preview" aria-label="H5 卡片预览">
-        <img src="/h5-card-cover.svg" alt="服务项目介绍封面">
+        <img :src="previewCoverUrl" data-testid="h5-cover-preview" alt="服务项目介绍封面">
         <div><strong>{{ title || '项目介绍' }}</strong><p>{{ summary || '填写摘要后在此预览' }}</p><span>{{ projectName }}</span></div>
       </section>
       <a v-if="current?.status === 'ACTIVE'" class="public-preview" data-testid="h5-public-preview" :href="current.link" target="_blank" rel="noopener noreferrer">打开公开页预览 <span aria-hidden="true">↗</span></a>
       <div v-if="current" class="snapshot-meta"><span :class="{ disabled: current.status === 'DISABLED' }">{{ current.status === 'ACTIVE' ? '分享快照已生成' : '公开链接已停用' }}</span><small>v{{ current.version }}</small></div>
       <div v-if="current?.status === 'ACTIVE'" class="card-actions">
         <button class="copy-link" type="button" data-testid="h5-copy" :disabled="!canShare" @click="copyLink">复制链接</button>
-        <button v-if="chatEntry === 'single_chat_tools'" class="send-card" type="button" data-testid="h5-send" :disabled="!canShare" @click="send">发送到当前会话</button>
+        <button v-if="isSendableEntry" class="send-card" type="button" data-testid="h5-send" :disabled="!canShare" @click="send">{{ isGroupChat ? '发送到当前群聊' : '发送到当前会话' }}</button>
       </div>
-      <p v-if="current?.status === 'ACTIVE' && chatEntry !== 'single_chat_tools'" class="content-note">当前是客户资料页，可复制链接；请进入客户单聊后发送卡片。</p>
+      <p v-if="current?.status === 'ACTIVE' && !isSendableEntry" class="content-note">当前是客户资料页，可复制链接；请进入客户单聊或群聊后发送卡片。</p>
       <div v-if="current?.status === 'ACTIVE'" class="disable-area">
         <button v-if="!disabling" class="disable-link" type="button" data-testid="h5-show-disable" @click="disabling = true">停用此公开链接</button>
         <div v-else class="disable-form"><label for="h5-disable-reason">停用理由</label><input id="h5-disable-reason" v-model="disableReason" data-testid="h5-disable-reason" maxlength="1000" placeholder="停用后公开页将无法访问"><button type="button" data-testid="h5-disable" :disabled="busy || !disableReason.trim()" @click="disable">确认停用</button></div>
@@ -246,6 +302,10 @@ onMounted(() => { void load() })
 .h5-heading h2 { margin: 6px 0 0; color: #294c3c; font-size: 20px; letter-spacing: -.4px; line-height: 1.35; }
 .h5-heading > small { margin-top: 3px; padding: 4px 6px; border: 1px solid #c6d6cb; border-radius: 5px; color: #547463; font-size: 9px; white-space: nowrap; }
 .h5-boundary { margin: 12px 0 20px; color: #789084; font-size: 11px; line-height: 1.8; }
+.h5-guidance { padding: 18px 16px; border: 1px dashed #c8d8ce; border-radius: 10px; color: #4f6f60; background: #f6faf7; font-size: 11px; line-height: 1.8; }
+.h5-guidance strong { display: block; margin-bottom: 6px; color: #2f5847; font-size: 12px; }
+.h5-guidance p { margin: 0; color: #728b7f; }
+.h5-group-note { margin-bottom: 12px; padding: 9px 11px; border: 1px solid #d5e5dc; border-radius: 8px; color: #3d6b57; background: #eff6f2; font-size: 11px; line-height: 1.7; }
 .h5-editor { display: grid; gap: 8px; }
 .h5-editor label { margin-top: 5px; color: #567363; font-size: 11px; font-weight: 650; }
 .h5-editor input, .h5-editor select, .h5-editor textarea, .disable-form input { box-sizing: border-box; width: 100%; min-height: 39px; padding: 9px 11px; border: 1px solid #d4e1d8; border-radius: 8px; outline: none; color: #345744; background: #fcfefc; font: inherit; font-size: 12px; line-height: 1.75; }

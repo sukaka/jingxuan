@@ -20,6 +20,7 @@ import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -34,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -364,8 +366,10 @@ class FileApiIT extends AbstractMysqlIT {
         Upload upload = initUpload(pdf);
         putObject(upload, pdf);
         data(completeRequest(upload, md5Etag(pdf))).andExpect(status().isOk());
+        assertThat(objects).doesNotContainKey(upload.objectKey());
         jdbcTemplate.update("UPDATE crm_file_object SET object_key=?,version=version+1 WHERE tenant_id=? AND id=?",
                 upload.objectKey(), TENANT_ID, upload.id());
+        putObject(upload, pdf);
         data(get("/api/v1/files/{id}/download", upload.id()).cookie(business.cookies())).andExpect(status().isOk());
         String sealed = (String) fileRow(upload.id()).get("object_key");
         assertThat(sealed).startsWith("sealed/").isNotEqualTo(upload.objectKey());
@@ -381,6 +385,7 @@ class FileApiIT extends AbstractMysqlIT {
         data(completeRequest(upload, md5Etag(pdf))).andExpect(status().isOk());
         jdbcTemplate.update("UPDATE crm_file_object SET object_key=?,version=version+1 WHERE tenant_id=? AND id=?",
                 upload.objectKey(), TENANT_ID, upload.id());
+        putObject(upload, pdf);
         CountDownLatch scanned = new CountDownLatch(2);
         when(scanner.scan(any())).thenAnswer(invocation -> {
             scanned.countDown();
@@ -484,6 +489,126 @@ class FileApiIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.data.mimeType").value("text/markdown"))
                 .andExpect(jsonPath("$.data.scanStatus").value("CLEAN"));
         verify(scanner, times(2)).scan(any());
+    }
+
+    @Test
+    void preDownloadStatAndBoundedStreamCleanUpStagingAndRejectOversizeBeforeTempWrite() throws Exception {
+        byte[] pdf = SyntheticFileFixtures.cleanPdf();
+
+        Upload oversizedStat = initUpload(pdf);
+        putObject(oversizedStat, pdf);
+        statOverrides.put(oversizedStat.objectKey(),
+                new PrivateObjectStorage.ObjectStat(md5Etag(pdf), 4097L, "application/pdf"));
+        mockMvc.perform(completeRequest(oversizedStat, md5Etag(pdf)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+        assertFileError(oversizedStat, "SIZE_MISMATCH");
+        verify(storage, never()).getObject(oversizedStat.objectKey());
+        verify(storage).deleteObject(oversizedStat.objectKey());
+        assertThat(objects).doesNotContainKey(oversizedStat.objectKey());
+
+        Upload etagMismatch = initUpload(pdf);
+        putObject(etagMismatch, pdf);
+        statOverrides.put(etagMismatch.objectKey(),
+                new PrivateObjectStorage.ObjectStat("00000000000000000000000000000000", pdf.length, "application/pdf"));
+        mockMvc.perform(completeRequest(etagMismatch, md5Etag(pdf)))
+                .andExpect(status().isConflict());
+        verify(storage, never()).getObject(etagMismatch.objectKey());
+        verify(storage).deleteObject(etagMismatch.objectKey());
+
+        Upload lyingStream = initUpload(pdf);
+        putObject(lyingStream, pdf);
+        byte[] oversizedPayload = new byte[pdf.length + 128];
+        Arrays.fill(oversizedPayload, (byte) 'A');
+        when(storage.getObject(lyingStream.objectKey())).thenReturn(new ByteArrayInputStream(oversizedPayload));
+        mockMvc.perform(completeRequest(lyingStream, md5Etag(pdf)))
+                .andExpect(status().isConflict());
+        assertFileError(lyingStream, "SIZE_MISMATCH");
+        verify(storage).deleteObject(lyingStream.objectKey());
+        verify(scanner, never()).scan(any());
+
+        Upload legacyOversized = initUpload(pdf);
+        putObject(legacyOversized, pdf);
+        data(completeRequest(legacyOversized, md5Etag(pdf))).andExpect(status().isOk());
+        jdbcTemplate.update("UPDATE crm_file_object SET object_key=?,version=version+1 WHERE tenant_id=? AND id=?",
+                legacyOversized.objectKey(), TENANT_ID, legacyOversized.id());
+        putObject(legacyOversized, pdf);
+        statOverrides.put(legacyOversized.objectKey(),
+                new PrivateObjectStorage.ObjectStat(md5Etag(pdf), 4097L, "application/pdf"));
+        clearInvocations(storage);
+        mockMvc.perform(get("/api/v1/files/{id}/download", legacyOversized.id()).cookie(business.cookies()))
+                .andExpect(status().isConflict());
+        verify(storage, never()).getObject(legacyOversized.objectKey());
+        verify(storage, times(1)).deleteObject(legacyOversized.objectKey());
+        assertThat(objects).doesNotContainKey(legacyOversized.objectKey());
+    }
+
+    @Test
+    void merchantResourceUploadAttachDownloadAndValidationWorkEndToEnd() throws Exception {
+        byte[] png = Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+        mockMvc.perform(initRequest(business, uniqueName("merchant-txt") + ".txt", "text/plain",
+                        16L, sha256(SyntheticFileFixtures.bytes("plain text sample")), "MERCHANT_RESOURCE", INSTITUTION_ID))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        mockMvc.perform(business.withAuth(post("/api/v1/files/upload-init"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("originalName", "missing-inst.png", "mimeType", "image/png",
+                                "sizeBytes", png.length, "sha256", sha256(png),
+                                "classification", "MERCHANT_RESOURCE"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        JsonNode initData = data(initRequest(business, uniqueName("merchant") + ".png", "image/png",
+                        png.length, sha256(png), "MERCHANT_RESOURCE", INSTITUTION_ID))
+                .andExpect(status().isCreated())
+                .andReturnData();
+        Upload upload = new Upload(initData.at("/fileId").asLong(), initData.at("/objectKey").asText(),
+                initData.at("/sha256").asText(), initData.at("/uploadUrl").asText(),
+                Instant.parse(initData.at("/expiresAt").asText()));
+        putObject(upload, png);
+
+        data(completeRequest(upload, md5Etag(png)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.classification").value("MERCHANT_RESOURCE"))
+                .andExpect(jsonPath("$.data.scanStatus").value("CLEAN"));
+
+        JsonNode created = data(business.withAuth(post("/api/v1/institution-profiles/1/merchant-resources"))
+                        .header("Idempotency-Key", "it-mr-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("resourceType", "DOCTOR", "title", "合成展示医生",
+                                "description", "合成测试附件绑定", "fileId", upload.id()))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.fileId").value(upload.id()))
+                .andReturnData();
+        long resourceId = created.at("/id").asLong();
+        try {
+            data(get("/api/v1/files/{id}/download", upload.id()).cookie(operator1.cookies()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.fileId").value(upload.id()));
+        } finally {
+            jdbcTemplate.update("DELETE FROM crm_institution_merchant_resource WHERE tenant_id=? AND id=?",
+                    TENANT_ID, resourceId);
+        }
+    }
+
+    @Test
+    void materialPlainTextWithCommasQuotesNewlinesAndLeadingDashBecomesClean() throws Exception {
+        byte[] textBytes = SyntheticFileFixtures.bytes("- 第一条，含中文逗号\n* 第二条, \"quoted\", \"unclosed\r\n#1 plain");
+        JsonNode initData = data(initRequest(business, uniqueName("plain") + ".txt", "text/plain",
+                        textBytes.length, sha256(textBytes), "MATERIAL", INSTITUTION_ID))
+                .andExpect(status().isCreated())
+                .andReturnData();
+        Upload upload = new Upload(initData.at("/fileId").asLong(), initData.at("/objectKey").asText(),
+                initData.at("/sha256").asText(), initData.at("/uploadUrl").asText(),
+                Instant.parse(initData.at("/expiresAt").asText()));
+        putObject(upload, textBytes);
+
+        mockMvc.perform(completeRequest(upload, md5Etag(textBytes)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mimeType").value("text/plain"))
+                .andExpect(jsonPath("$.data.scanStatus").value("CLEAN"));
     }
 
     @Test

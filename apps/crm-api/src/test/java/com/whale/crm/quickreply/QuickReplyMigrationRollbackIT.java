@@ -1,6 +1,7 @@
 package com.whale.crm.quickreply;
 
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
@@ -10,6 +11,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,10 +20,18 @@ class QuickReplyMigrationRollbackIT {
     private static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
             .withDatabaseName("medical_crm")
             .withUrlParam("connectionTimeZone", "UTC")
-            .withCommand("--log-bin-trust-function-creators=1");
+            .withCommand("--log-bin-trust-function-creators=1")
+            .withTmpFs(Map.of("/var/lib/mysql", "rw,mode=1777"))
+            .withEnv("MYSQL_INITDB_SKIP_TZINFO", "1")
+            .withStartupTimeoutSeconds(600);
 
     static {
         MYSQL.start();
+    }
+
+    @AfterAll
+    static void stopContainer() {
+        MYSQL.stop();
     }
 
     @Test

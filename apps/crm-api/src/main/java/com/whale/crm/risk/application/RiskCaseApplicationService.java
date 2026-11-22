@@ -1,6 +1,7 @@
 package com.whale.crm.risk.application;
 
 import com.whale.crm.platform.audit.application.AuditService;
+import com.whale.crm.platform.idempotency.IdempotencyService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
@@ -11,6 +12,7 @@ import com.whale.crm.risk.api.dto.ResolveRiskCaseRequest;
 import com.whale.crm.risk.api.dto.RiskCaseDetailResponse;
 import com.whale.crm.risk.api.dto.RiskCaseHistoryResponse;
 import com.whale.crm.risk.api.dto.RiskCaseResponse;
+import com.whale.crm.risk.api.dto.RiskSyncResponse;
 import com.whale.crm.risk.domain.RiskCase;
 import com.whale.crm.risk.domain.RiskCaseHistory;
 import com.whale.crm.risk.domain.RiskCaseQuery;
@@ -26,19 +28,23 @@ import java.util.Map;
 
 @Service
 public class RiskCaseApplicationService {
+    private static final String SYNC_IDEMPOTENCY_SCOPE = "risk.sync";
+
     private final RiskCaseRepository repository;
     private final RiskAccessService accessService;
     private final RiskSourceSynchronizer sourceSynchronizer;
     private final AuditService auditService;
+    private final IdempotencyService idempotencyService;
     private final RiskEvidenceMasker masker;
 
     public RiskCaseApplicationService(RiskCaseRepository repository, RiskAccessService accessService,
                                       RiskSourceSynchronizer sourceSynchronizer, AuditService auditService,
-                                      RiskEvidenceMasker masker) {
+                                      IdempotencyService idempotencyService, RiskEvidenceMasker masker) {
         this.repository = repository;
         this.accessService = accessService;
         this.sourceSynchronizer = sourceSynchronizer;
         this.auditService = auditService;
+        this.idempotencyService = idempotencyService;
         this.masker = masker;
     }
 
@@ -49,7 +55,7 @@ public class RiskCaseApplicationService {
         return detail(riskCase);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public PageResponse<RiskCaseResponse> search(CurrentUser user, String status, String severity, String riskType,
                                                  String sourceType, String sourceRef, Long ownerUserId,
                                                  String keyword, int page, int size) {
@@ -57,13 +63,35 @@ public class RiskCaseApplicationService {
         if (page < 1 || size < 1 || size > 100) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "分页参数无效");
         }
-        sourceSynchronizer.sync(user);
         RiskCaseQuery query = new RiskCaseQuery(user.tenantId(), status, severity, riskType, sourceType, sourceRef,
                 ownerUserId, keyword, (page - 1) * size, size);
         List<RiskCase> riskCases = repository.search(query);
         Map<Long, RiskCustomerLink> customerLinks = customerLinks(user.tenantId(), riskCases);
         return new PageResponse<>(riskCases.stream().map(riskCase -> view(riskCase, customerLinks.get(riskCase.id())))
                 .toList(), repository.countSearch(query), page, size);
+    }
+
+    @Transactional
+    public RiskSyncResponse sync(CurrentUser user, String idempotencyKey) {
+        accessService.require(user, "risk:write");
+        String normalizedKey = idempotencyKey == null || idempotencyKey.isBlank() ? null : idempotencyKey.strip();
+        if (normalizedKey != null) {
+            var replay = idempotencyService.lookup(user.tenantId(), SYNC_IDEMPOTENCY_SCOPE,
+                    user.userId(), normalizedKey, "{}");
+            if (replay.isPresent()) {
+                Instant syncedAt = replay.get().getCreatedAt() != null
+                        ? replay.get().getCreatedAt() : Instant.now();
+                return new RiskSyncResponse(0, 0, syncedAt);
+            }
+        }
+        RiskSyncResponse response = sourceSynchronizer.sync(user);
+        if (normalizedKey != null) {
+            idempotencyService.recordSuccess(user.tenantId(), SYNC_IDEMPOTENCY_SCOPE, user.userId(),
+                    normalizedKey, "RISK_SYNC", Long.toString(user.tenantId()), "{}");
+        }
+        auditService.record(user.tenantId(), user.userId(), "RISK_CASE_SYNC", "RISK_SYNC",
+                Long.toString(user.tenantId()), null, response, "手动触发风控来源同步");
+        return response;
     }
 
     @Transactional

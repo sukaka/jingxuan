@@ -78,15 +78,19 @@ function mountView() {
 describe('EntitlementsView 权益列表、搜索与流水', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(listEntitlements).mockResolvedValue({ items: [entitlement], total: 1, page: 1, size: 100 })
+    vi.mocked(listEntitlements).mockResolvedValue({ items: [entitlement], total: 1, page: 1, size: 20 })
     vi.mocked(getEntitlement).mockResolvedValue(detail)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('列表通过详情补充累计核销，关键词只筛选已加载真实数据', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(listEntitlements).toHaveBeenCalledWith({ page: 1, size: 100 })
+    expect(listEntitlements).toHaveBeenCalledWith({ page: 1, size: 20 })
     expect(getEntitlement).toHaveBeenCalledWith(81)
     expect(wrapper.text()).toContain('测试项目')
     expect(wrapper.text()).toContain('客户 #42')
@@ -128,5 +132,25 @@ describe('EntitlementsView 权益列表、搜索与流水', () => {
     expect(document.body.textContent).toContain('-2')
     expect(document.body.textContent).toContain('entitlement.grant:71:711:101')
     expect(document.body.textContent).toContain('当前不开放管家正式核销')
+  })
+
+  it('临近到期（30天）排除已过期和不可用权益', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-25T16:30:00Z')) // 2026-10-26 Asia/Shanghai
+    vi.mocked(listEntitlements).mockResolvedValue({
+      items: [
+        { ...entitlement, id: 1, validTo: '2026-10-25', status: 'AVAILABLE' }, // 已过期
+        { ...entitlement, id: 2, validTo: '2026-11-10', status: 'REVOKED' }, // 非可用状态
+        { ...entitlement, id: 3, validTo: '2026-11-10', status: 'AVAILABLE' }, // 临近到期
+      ],
+      total: 3,
+      page: 1,
+      size: 20,
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    const expiringCard = wrapper.findAll('.proto-stat-card').find((card) => card.text().includes('临近到期'))
+    expect(expiringCard?.text()).toContain('1 项')
   })
 })

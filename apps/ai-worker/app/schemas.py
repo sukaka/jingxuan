@@ -27,10 +27,10 @@ class InstitutionOption(StrictModel):
 
 class AiProviderConfig(StrictModel):
     provider: Literal["disabled", "mock", "openai_compatible"]
-    base_url: str = ""
-    api_key: str = ""
-    model: str = ""
-    timeout_seconds: float = Field(default=30, gt=0)
+    base_url: str = Field(default="", max_length=1024)
+    api_key: str = Field(default="", max_length=512)
+    model: str = Field(default="", max_length=128)
+    timeout_seconds: float = Field(default=30, gt=0, le=300)
 
 
 class ExtractionRequest(StrictModel):
@@ -118,6 +118,7 @@ class ReplyGenerationRequest(StrictModel):
     scene: ReplyScene
     facts: dict[ReplyFactCode, str | int] = Field(default_factory=dict, max_length=15)
     instruction: str = Field(default="", max_length=500)
+    recent_messages: list[ChatMessage] = Field(default_factory=list, max_length=10)
     provider_config: AiProviderConfig | None = None
 
     @field_validator("facts")
@@ -131,6 +132,16 @@ class ReplyGenerationRequest(StrictModel):
             elif not isinstance(value, str) or not value or len(value) > 256 or any(ord(char) < 32 for char in value):
                 raise ValueError("文本事实不能为空、超长或包含控制字符")
         return facts
+
+    @model_validator(mode="after")
+    def validate_recent_messages(self):
+        if self.recent_messages:
+            ids = [message.id for message in self.recent_messages]
+            if len(ids) != len(set(ids)):
+                raise ValueError("聊天上下文消息 ID 不能重复")
+            if sum(len(message.text) for message in self.recent_messages) > 6000:
+                raise ValueError("聊天上下文不能超过 6000 字")
+        return self
 
 
 class ReplySuggestion(StrictModel):

@@ -35,14 +35,16 @@ import com.whale.crm.trading.domain.OrderItem;
 import com.whale.crm.trading.domain.OrderItemSelection;
 import com.whale.crm.trading.domain.OrderStatusHistory;
 import com.whale.crm.trading.domain.TradingRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -52,6 +54,8 @@ import java.util.UUID;
 
 @Service
 public class OrderApplicationService {
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
+
     private final TradingRepository repository;
     private final CatalogApplicationService catalogService;
     private final CampaignApplicationService campaignService;
@@ -59,12 +63,23 @@ public class OrderApplicationService {
     private final CustomerScopeSupport scopeSupport;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
+    @Autowired
     public OrderApplicationService(TradingRepository repository, CatalogApplicationService catalogService,
                                    CampaignApplicationService campaignService,
                                    DictionaryApplicationService dictionaryService,
                                    CustomerScopeSupport scopeSupport, AuditService auditService,
                                    ObjectMapper objectMapper) {
+        this(repository, catalogService, campaignService, dictionaryService, scopeSupport, auditService,
+                objectMapper, Clock.system(BUSINESS_ZONE));
+    }
+
+    OrderApplicationService(TradingRepository repository, CatalogApplicationService catalogService,
+                            CampaignApplicationService campaignService,
+                            DictionaryApplicationService dictionaryService,
+                            CustomerScopeSupport scopeSupport, AuditService auditService,
+                            ObjectMapper objectMapper, Clock clock) {
         this.repository = repository;
         this.catalogService = catalogService;
         this.campaignService = campaignService;
@@ -72,6 +87,7 @@ public class OrderApplicationService {
         this.scopeSupport = scopeSupport;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     @Transactional(readOnly = true)
@@ -130,14 +146,15 @@ public class OrderApplicationService {
 
     private OrderFulfillmentView createInternal(long tenantId, CurrentUser user, CreateOrderRequest request,
                                                 String sourceSystem, String externalShopId, String externalOrderNo) {
-        Customer customer = scopeSupport.requireVisible(tenantId, request.customerId(), user);
-        Instant now = Instant.now();
+        Customer customer = scopeSupport.requireVisibleForUpdate(tenantId, request.customerId(), user);
+        Instant now = clock.instant();
+        LocalDate validFrom = now.atZone(BUSINESS_ZONE).toLocalDate();
         OrderAttributionSnapshot attribution = campaignService.resolveOrderAttribution(tenantId,
                 request.campaignId(), request.campaignBatchId(), request.channelId(), now);
         DictionaryOptionResponse orderType = dictionaryService.requireActiveOption(
                 tenantId, "orderTypes", request.orderTypeCode());
         List<PreparedItem> prepared = request.items().stream()
-                .map(item -> prepareItem(tenantId, user, item, request.validTo())).toList();
+                .map(item -> prepareItem(tenantId, user, item, validFrom, request.validTo())).toList();
         long listAmount = prepared.stream().mapToLong(PreparedItem::listAmountFen).sum();
         if (request.payableFen() > listAmount) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "应付金额不能高于订单原价");
@@ -153,12 +170,12 @@ public class OrderApplicationService {
                 attribution.channelId(), attribution.businessOwnerAtSaleId(), "DRAFT",
                 request.receiverType(), listAmount, listAmount - request.payableFen(), request.payableFen(), 0L, 0L,
                 now, null, null, null);
-        repository.insertOrder(input);
+        repository.insertOrder(tenantId, input);
         Order created = repository.findOrderByNo(tenantId, temporaryNo).orElseThrow();
         String orderNo = String.format("J%012d", created.id());
         repository.backfillOrderNo(tenantId, created.id(), orderNo);
         for (PreparedItem item : prepared) {
-            repository.insertOrderItem(item.toOrderItem(created.id()));
+            repository.insertOrderItem(tenantId, item.toOrderItem(created.id()));
         }
         List<OrderItem> persistedItems = repository.findOrderItems(tenantId, created.id());
         if (persistedItems.size() != prepared.size()) {
@@ -167,11 +184,11 @@ public class OrderApplicationService {
         for (int i = 0; i < prepared.size(); i++) {
             long orderItemId = persistedItems.get(i).id();
             for (OrderItemSelection selection : prepared.get(i).selections()) {
-                repository.insertOrderItemSelection(selection.withOrderItemId(orderItemId));
+                repository.insertOrderItemSelection(tenantId, selection.withOrderItemId(orderItemId));
             }
         }
-        repository.insertStatusHistory(new OrderStatusHistory(null, created.id(), "NONE", "DRAFT", user.userId(),
-                "CREATE", null, null, null));
+        repository.insertStatusHistory(tenantId, new OrderStatusHistory(null, created.id(), "NONE", "DRAFT",
+                user.userId(), "CREATE", null, null, null));
         OrderFulfillmentView after = detail(tenantId, user, created.id());
         auditService.record(tenantId, user.userId(), "ORDER_CREATE", "ORDER", Long.toString(created.id()), null, after, null);
         return after;
@@ -211,7 +228,8 @@ public class OrderApplicationService {
                 repository.findStatusHistory(tenantId, orderId)), entitlements);
     }
 
-    private PreparedItem prepareItem(long tenantId, CurrentUser user, OrderItemRequest request, LocalDate validTo) {
+    private PreparedItem prepareItem(long tenantId, CurrentUser user, OrderItemRequest request,
+                                     LocalDate validFrom, LocalDate validTo) {
         PackageVersionSnapshot snapshot = catalogService.snapshotBySku(tenantId, user, request.skuId());
         Sku sku = snapshot.skus().stream().filter(item -> item.id().equals(request.skuId())).findFirst()
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "SKU 不存在"));
@@ -224,6 +242,12 @@ public class OrderApplicationService {
                         List.of(new ApiResponse.ErrorDetail("Q01", "请配置结构化选项组、选择数和每个项目的次数后再下单")));
             }
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "套餐权益配置不完整，不能创建订单");
+        }
+        if (snapshot.institutions().isEmpty()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "SKU 未配置有效合作机构，不能创建订单");
+        }
+        if (validTo != null && validTo.isBefore(validFrom)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "权益有效期截止日期不能早于生效日期");
         }
         List<PackageOptionSelection> requestedSelections = request.selections() == null ? List.of()
                 : request.selections().stream()
@@ -263,7 +287,7 @@ public class OrderApplicationService {
         entitlementSnapshot.put("referenceAmountFen", referenceAmount);
         entitlementSnapshot.put("referenceDiscountAmountFen", Math.max(0L, referenceAmount - listAmount));
         entitlementSnapshot.put("institutionIds", snapshot.institutions().stream().map(item -> item.id()).toList());
-        entitlementSnapshot.put("validFrom", LocalDate.now(ZoneOffset.UTC).toString());
+        entitlementSnapshot.put("validFrom", validFrom.toString());
         entitlementSnapshot.put("validTo", validTo == null ? null : validTo.toString());
         entitlementSnapshot.put("allocationStatus", allocationStatus);
         long weight = selectedProjects.stream().mapToLong(item -> item.allocationPriceFen() == null ? 0L
@@ -381,7 +405,7 @@ public class OrderApplicationService {
         if (repository.updateOrderStatus(tenantId, before.id(), version, before.status(), toStatus, null, null) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "订单状态或版本已变化，请刷新后重试");
         }
-        repository.insertStatusHistory(new OrderStatusHistory(null, before.id(), before.status(), toStatus,
+        repository.insertStatusHistory(tenantId, new OrderStatusHistory(null, before.id(), before.status(), toStatus,
                 user.userId(), trigger, triggerRef, reason, null));
     }
 

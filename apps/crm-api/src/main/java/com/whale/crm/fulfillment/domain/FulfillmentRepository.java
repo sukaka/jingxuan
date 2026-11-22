@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface FulfillmentRepository {
-    void insertAppointment(Appointment appointment);
+    void insertAppointment(long tenantId, Appointment appointment);
     Optional<Appointment> findAppointmentByNo(long tenantId, String appointmentNo);
     int backfillAppointmentNo(long tenantId, long id, String appointmentNo);
     Optional<Appointment> findAppointment(long tenantId, long id);
@@ -14,12 +14,12 @@ public interface FulfillmentRepository {
                                          Long institutionId, String status, int offset, int size);
     long countAppointments(long tenantId, FulfillmentScope scope, Long customerId, Long institutionId, String status);
     int updateAppointmentStatus(long tenantId, long id, long expectedVersion, String expectedStatus, String toStatus);
-    void insertAppointmentItem(AppointmentItem item);
+    void insertAppointmentItem(long tenantId, AppointmentItem item);
     List<AppointmentItem> findAppointmentItems(long tenantId, long appointmentId);
-    void insertAppointmentHistory(AppointmentHistory history);
+    void insertAppointmentHistory(long tenantId, AppointmentHistory history);
     List<AppointmentHistory> findAppointmentHistory(long tenantId, long appointmentId);
 
-    void insertRedemption(Redemption redemption);
+    void insertRedemption(long tenantId, Redemption redemption);
     Optional<Redemption> findRedemptionByKey(long tenantId, String idempotencyKey);
     Optional<Redemption> findRedemption(long tenantId, long id);
     Optional<Redemption> findRedemptionForUpdate(long tenantId, long id);
@@ -28,13 +28,13 @@ public interface FulfillmentRepository {
                                        Long institutionId, Long projectId, String status, int offset, int size);
     long countRedemptions(long tenantId, FulfillmentScope scope, Long customerId, Long institutionId,
                           Long projectId, String status);
-    void insertRedemptionLine(RedemptionLine line);
+    void insertRedemptionLine(long tenantId, RedemptionLine line);
     List<RedemptionLine> findRedemptionLines(long tenantId, long redemptionId);
     List<RedemptionLine> findPostedLinesByAppointment(long tenantId, long appointmentId);
-    void insertRedemptionHistory(RedemptionStatusHistory history);
+    void insertRedemptionHistory(long tenantId, RedemptionStatusHistory history);
     List<RedemptionStatusHistory> findRedemptionHistory(long tenantId, long redemptionId);
 
-    void insertReversal(RedemptionReversal reversal);
+    void insertReversal(long tenantId, RedemptionReversal reversal);
     Optional<RedemptionReversal> findReversalByRequestKey(long tenantId, String requestKey);
     Optional<RedemptionReversal> findReversal(long tenantId, long id);
     Optional<RedemptionReversal> findReversalForUpdate(long tenantId, long id);
@@ -45,6 +45,6 @@ public interface FulfillmentRepository {
     int updateReversalStatus(long tenantId, long id, long expectedVersion, String expectedStatus, String toStatus,
                              long reviewedBy, Instant reviewedAt, String reviewReason, String reviewKey,
                              Long activeRedemptionId);
-    void insertReversalHistory(RedemptionReversalHistory history);
+    void insertReversalHistory(long tenantId, RedemptionReversalHistory history);
     List<RedemptionReversalHistory> findReversalHistory(long tenantId, long reversalId);
 }

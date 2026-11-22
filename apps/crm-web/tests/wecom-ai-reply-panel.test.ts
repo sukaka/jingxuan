@@ -6,6 +6,7 @@ import type { AiReplySuggestion } from '../src/api/aiReply'
 import { listQuickReplies, recordQuickReplyUsage } from '../src/api/quickReply'
 import type { QuickReplyUsage } from '../src/api/quickReply'
 import { sendTextToCurrentChat } from '../src/services/wecomSdk'
+import { copyTextWithFallback } from '../src/utils/clipboard'
 import WecomAiReplyPanel from '../src/components/WecomAiReplyPanel.vue'
 
 vi.mock('../src/api/aiReply', () => ({
@@ -18,6 +19,7 @@ vi.mock('../src/api/quickReply', () => ({
   recordQuickReplyUsage: vi.fn(),
 }))
 vi.mock('../src/services/wecomSdk', () => ({ sendTextToCurrentChat: vi.fn() }))
+vi.mock('../src/utils/clipboard', () => ({ copyTextWithFallback: vi.fn() }))
 vi.mock('../src/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 
 const template = {
@@ -31,6 +33,13 @@ const proposed: AiReplySuggestion = {
   reason: '基于服务端只读事实', usedFactCodes: ['customer_name', 'remaining_count'], provider: 'mock',
   model: 'mock-reply-rules-v1', promptVersion: 'reply-v1', confidence: 0.86, status: 'PROPOSED', accepted: false,
   edited: false, finalContent: null, createdAt: '2026-11-13T01:00:00Z', decidedAt: null, version: 0,
+  chatContextIncluded: false, chatContextCount: 0,
+}
+const proposedWithChatContext: AiReplySuggestion = {
+  ...proposed,
+  id: 12,
+  chatContextIncluded: true,
+  chatContextCount: 4,
 }
 const wrappers: VueWrapper[] = []
 
@@ -65,21 +74,21 @@ describe('企微 AI 回复面板', () => {
     }))
     vi.mocked(recordQuickReplyUsage).mockResolvedValue({ id: 21, aiSuggestionId: 11 } as QuickReplyUsage)
     vi.mocked(sendTextToCurrentChat).mockResolvedValue({ status: 'SDK_UNKNOWN', clientResult: 'timeout' })
+    vi.mocked(copyTextWithFallback).mockResolvedValue(undefined)
   })
 
   afterEach(() => {
     while (wrappers.length) wrappers.pop()?.unmount()
   })
 
-  it('采纳前不能复制或发送，编辑采纳后日志关联原候选', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  it('采纳前不能复制或发送，编辑采纳后调用兼容复制工具并关联原候选', async () => {
     const wrapper = await mountPanel()
     expect(vi.mocked(listQuickReplies)).toHaveBeenCalledTimes(1)
     expect(wrapper.find('[data-testid="ai-copy"]').exists()).toBe(false)
     await createCandidate(wrapper)
 
     expect(wrapper.get('[data-testid="ai-reply-panel"]').text()).toContain('Mock 演示候选')
+    expect(wrapper.get('[data-testid="ai-chat-context-badge"]').text()).toBe('仅基于 CRM 档案事实')
     expect(wrapper.find('[data-testid="ai-copy"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="ai-send"]').exists()).toBe(false)
     await acceptCandidate(wrapper, '测试客户您好，还剩6次。如需预约请告诉我。')
@@ -90,11 +99,20 @@ describe('企微 AI 回复面板', () => {
     expect(wrapper.get('[data-testid="ai-reply-draft"]').attributes('readonly')).toBeDefined()
     await wrapper.get('[data-testid="ai-copy"]').trigger('click')
     await flushPromises()
-    expect(writeText).toHaveBeenCalledWith('测试客户您好，还剩6次。如需预约请告诉我。')
+    expect(copyTextWithFallback).toHaveBeenCalledWith('测试客户您好，还剩6次。如需预约请告诉我。')
     expect(recordQuickReplyUsage).toHaveBeenCalledWith(1, expect.objectContaining({
       customerId: 1010, originalContent: proposed.reply, finalContent: '测试客户您好，还剩6次。如需预约请告诉我。',
       edited: true, sendStatus: 'COPIED', aiSuggestionId: 11,
     }), expect.any(String))
+  })
+
+  it('展示是否参考已授权存档聊天的透明提示徽章', async () => {
+    vi.mocked(generateAiReply).mockResolvedValueOnce(proposedWithChatContext)
+    const wrapper = await mountPanel()
+    await createCandidate(wrapper)
+
+    expect(wrapper.get('[data-testid="ai-chat-context-badge"]').text()).toBe('已参考最近 4 条已授权存档聊天')
+    expect(wrapper.get('[data-testid="ai-history-12"]').text()).toContain('含 4 条存档聊天')
   })
 
   it('驳回需原因，不复制不发送也不记使用', async () => {
@@ -113,19 +131,36 @@ describe('企微 AI 回复面板', () => {
     expect(recordQuickReplyUsage).not.toHaveBeenCalled()
   })
 
-  it('仅已采纳内容可发送，SDK_UNKNOWN 明确提示先核实会话', async () => {
+  it('仅已采纳内容可发送，携带 expectedExternalUserid 且 SDK_UNKNOWN 明确提示先核实会话', async () => {
     const wrapper = await mountPanel()
     await createCandidate(wrapper)
     await acceptCandidate(wrapper, proposed.reply)
     await wrapper.get('[data-testid="ai-send"]').trigger('click')
     await flushPromises()
 
-    expect(sendTextToCurrentChat).toHaveBeenCalledWith(proposed.reply)
+    expect(sendTextToCurrentChat).toHaveBeenCalledWith(proposed.reply, { expectedExternalUserid: 'external-1001' })
     expect(recordQuickReplyUsage).toHaveBeenCalledWith(1, expect.objectContaining({
       sendStatus: 'SDK_UNKNOWN', aiSuggestionId: 11,
     }), expect.any(String))
     expect(wrapper.text()).toContain('发送结果未知')
     expect(wrapper.text()).toContain('不要直接重复发送')
+  })
+
+  it('发送遇到会话切换 mismatch 时发出 context-mismatch 并不记录伪发送', async () => {
+    vi.mocked(sendTextToCurrentChat).mockResolvedValueOnce({
+      status: 'SDK_FAILED',
+      mismatch: true,
+      clientResult: 'sendChatMessage:fail context_mismatch',
+    })
+    const wrapper = await mountPanel()
+    await createCandidate(wrapper)
+    await acceptCandidate(wrapper, proposed.reply)
+    await wrapper.get('[data-testid="ai-send"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('context-mismatch')).toHaveLength(1)
+    expect(recordQuickReplyUsage).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('已阻止误发')
   })
 
   it('生成失败可用同一幂等键重试，不伪造候选', async () => {
@@ -142,12 +177,13 @@ describe('企微 AI 回复面板', () => {
     expect((wrapper.get('[data-testid="ai-reply-draft"]').element as HTMLTextAreaElement).value).toBe(proposed.reply)
   })
 
-  it('客户资料页不提供发送按钮，历史候选仍可人工查看', async () => {
+  it('客户资料页不提供发送按钮，历史候选仍可人工查看并显示透明来源', async () => {
     vi.mocked(listAiReplyHistory).mockResolvedValue([{ ...proposed, status: 'ACCEPTED', accepted: true, finalContent: proposed.reply, version: 1 }])
     const wrapper = await mountPanel('contact_profile')
     await wrapper.get('[data-testid="ai-history-11"]').trigger('click')
 
     expect((wrapper.get('[data-testid="ai-reply-draft"]').element as HTMLTextAreaElement).value).toBe(proposed.reply)
+    expect(wrapper.get('[data-testid="ai-chat-context-badge"]').text()).toBe('仅基于 CRM 档案事实')
     expect(wrapper.find('[data-testid="ai-copy"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ai-send"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('仅本人可见')

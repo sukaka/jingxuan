@@ -9,6 +9,7 @@ import com.whale.crm.risk.api.dto.CloseRiskCaseRequest;
 import com.whale.crm.risk.api.dto.ResolveRiskCaseRequest;
 import com.whale.crm.risk.api.dto.RiskCaseDetailResponse;
 import com.whale.crm.risk.api.dto.RiskCaseResponse;
+import com.whale.crm.risk.api.dto.RiskSyncResponse;
 import com.whale.crm.risk.application.RiskCaseApplicationService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -58,6 +60,14 @@ public class RiskCaseController {
     @PreAuthorize("hasAuthority('risk:read')")
     public ApiResponse<RiskCaseDetailResponse> get(@PathVariable long id, HttpServletRequest request) {
         return ApiResponse.ok(service.get(SecuritySupport.requireCurrentUser(), id), requestId(request));
+    }
+
+    @PostMapping("/sync")
+    @PreAuthorize("hasAuthority('risk:write')")
+    public ApiResponse<RiskSyncResponse> sync(
+            @RequestHeader(name = "Idempotency-Key", required = false) @Size(min = 1, max = 128) String idempotencyKey,
+            HttpServletRequest request) {
+        return ApiResponse.ok(service.sync(SecuritySupport.requireCurrentUser(), idempotencyKey), requestId(request));
     }
 
     @PostMapping("/{id}/claim")

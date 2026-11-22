@@ -1,14 +1,15 @@
 import { AxiosError, AxiosHeaders } from 'axios'
 import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getDictionaryOptions } from '../src/api/dictionary'
-import { http, normalizeApiError } from '../src/api/http'
+import { http, normalizeApiError, setUnauthorizedHandler } from '../src/api/http'
 import { ApiError } from '../src/types/api'
 
 const originalAdapter = http.defaults.adapter
 
 afterEach(() => {
   http.defaults.adapter = originalAdapter
+  setUnauthorizedHandler(null)
 })
 
 function makeConfig(): InternalAxiosRequestConfig {
@@ -94,6 +95,7 @@ describe('normalizeApiError', () => {
     expect(apiError.status).toBe(0)
     expect(apiError.code).toBe('NETWORK_ERROR')
     expect(apiError.message).toContain('无法连接后端服务')
+    expect(apiError.message).not.toContain('localhost:8080')
     expect(apiError.isNetworkError).toBe(true)
   })
 
@@ -106,6 +108,7 @@ describe('normalizeApiError', () => {
     expect(apiError.status).toBe(0)
     expect(apiError.code).toBe('NETWORK_ERROR')
     expect(apiError.message).toContain('后端已启动')
+    expect(apiError.message).not.toContain('localhost:8080')
     expect(apiError.isNetworkError).toBe(true)
   })
 })
@@ -181,5 +184,27 @@ describe('http 拦截器', () => {
       code: 'ENTITLEMENT_INSUFFICIENT',
       requestId: 'req-409',
     })
+  })
+
+  it('业务接口返回 401 时触发全局未授权处理器，而 /auth/login、/auth/me、/auth/logout 不触发', async () => {
+    const onUnauthorized = vi.fn()
+    setUnauthorizedHandler(onUnauthorized)
+    http.defaults.adapter = async (config) => {
+      throw new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, {}, {
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: {},
+        config,
+        data: { code: 'UNAUTHORIZED', message: 'expired' },
+      })
+    }
+
+    await expect(http.post('/auth/login', {})).rejects.toBeInstanceOf(ApiError)
+    await expect(http.get('/auth/me')).rejects.toBeInstanceOf(ApiError)
+    await expect(http.post('/auth/logout')).rejects.toBeInstanceOf(ApiError)
+    expect(onUnauthorized).not.toHaveBeenCalled()
+
+    await expect(http.get('/customers')).rejects.toBeInstanceOf(ApiError)
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
   })
 })

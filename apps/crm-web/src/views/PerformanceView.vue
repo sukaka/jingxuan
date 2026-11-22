@@ -199,10 +199,10 @@ onMounted(() => { void load() })
             <el-button :type="activePeriod === 'month' ? 'primary' : 'default'" data-testid="performance-period-month" @click="setPeriod('month')">月</el-button>
           </el-button-group>
           <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" class="report-date" @change="changeDateRange" />
-          <el-select v-model="filters.sourceSystem" class="report-source" aria-label="订单来源" @change="query.page = 1; load"><el-option label="全部来源" value="ALL" /><el-option label="手工订单" value="MANUAL" /><el-option label="有赞订单" value="YOUZAN" /></el-select>
-          <el-select v-model="filters.receiverType" class="report-source" aria-label="收款方" @change="query.page = 1; load"><el-option label="全部收款方" value="ALL" /><el-option label="平台收款" value="PLATFORM" /><el-option label="机构收款" value="INSTITUTION" /></el-select>
+          <el-select v-model="filters.sourceSystem" class="report-source" aria-label="订单来源" @change="query.page = 1; load()"><el-option label="全部来源" value="ALL" /><el-option label="手工订单" value="MANUAL" /><el-option label="有赞订单" value="YOUZAN" /></el-select>
+          <el-select v-model="filters.receiverType" class="report-source" aria-label="收款方" @change="query.page = 1; load()"><el-option label="全部收款方" value="ALL" /><el-option label="平台收款" value="PLATFORM" /><el-option label="机构收款" value="INSTITUTION" /></el-select>
           <el-select v-model="filters.drillDownType" class="report-source" aria-label="明细事实类型"><el-option label="支付流水" value="PAYMENT" /><el-option label="成功退款" value="REFUND" /></el-select>
-          <el-button type="primary" :loading="loading" @click="query.page = 1; load">查询</el-button><el-button @click="reset">重置</el-button>
+          <el-button type="primary" :loading="loading" @click="query.page = 1; load()">查询</el-button><el-button @click="reset">重置</el-button>
         </div>
         <span class="proto-note">日为今天、周为本周一至今天、月为本月一日至今天，均按所选时区计算</span>
       </div>

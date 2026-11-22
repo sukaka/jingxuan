@@ -270,6 +270,144 @@ class SettlementApiIT extends AbstractMysqlIT {
                 .isZero();
     }
 
+    @Test
+    void requestedAndApprovedReversalsBlockSettlementAndDisappearFromReconciliationUntilRejected() throws Exception {
+        long institutionId = newInstitution("MONTHLY");
+        long requestedRedemption = newRedemption(institutionId, "POSTED", "2026-10-20T08:00:00Z");
+        long approvedRedemption = newRedemption(institutionId, "POSTED", "2026-10-21T08:00:00Z");
+
+        insertReversal(requestedRedemption, institutionId, "REQUESTED", requestedRedemption);
+        insertReversal(approvedRedemption, institutionId, "APPROVED", approvedRedemption);
+
+        JsonNode beforeReject = data(get("/api/v1/settlements/reconciliation?institutionId=" + institutionId)
+                .cookie(finance.cookies()));
+        assertThat(beforeReject.findValues("resourceId").stream().map(JsonNode::asLong))
+                .doesNotContain(requestedRedemption, approvedRedemption);
+
+        mockMvc.perform(finance.withAuth(post("/api/v1/settlements/batches"))
+                        .header("Idempotency-Key", key("c01-req")).contentType(MediaType.APPLICATION_JSON)
+                        .content(json(createBody(institutionId, "MONTHLY", "2026-10", List.of(requestedRedemption)))))
+                .andExpect(status().isConflict());
+        mockMvc.perform(finance.withAuth(post("/api/v1/settlements/batches"))
+                        .header("Idempotency-Key", key("c01-app")).contentType(MediaType.APPLICATION_JSON)
+                        .content(json(createBody(institutionId, "MONTHLY", "2026-10", List.of(approvedRedemption)))))
+                .andExpect(status().isConflict());
+
+        jdbcTemplate.update("UPDATE crm_redemption_reversal SET status='REJECTED', active_redemption_id=NULL "
+                + "WHERE tenant_id=1 AND redemption_id=?", requestedRedemption);
+
+        JsonNode afterReject = data(get("/api/v1/settlements/reconciliation?institutionId=" + institutionId)
+                .cookie(finance.cookies()));
+        assertThat(afterReject.findValues("resourceId").stream().map(JsonNode::asLong))
+                .contains(requestedRedemption)
+                .doesNotContain(approvedRedemption);
+
+        JsonNode created = data(finance.withAuth(post("/api/v1/settlements/batches"))
+                .header("Idempotency-Key", key("c01-after-reject")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(createBody(institutionId, "MONTHLY", "2026-10", List.of(requestedRedemption)))));
+        assertThat(created.at("/lines/0/redemptionId").asLong()).isEqualTo(requestedRedemption);
+    }
+
+    @Test
+    void verifyDefenseInDepthRejectsBatchIfLineHasActiveReversal() throws Exception {
+        long institutionId = newInstitution("MONTHLY");
+        long redemptionId = newRedemption(institutionId, "POSTED", "2026-10-20T08:00:00Z");
+        long batchId = newBatch(institutionId, redemptionId);
+
+        insertReversal(redemptionId, institutionId, "REQUESTED", redemptionId);
+
+        mockMvc.perform(verification(batchId, 0, 1000, 100, 900))
+                .andExpect(status().isConflict());
+        assertThat(queryString("SELECT status FROM crm_settlement_batch WHERE tenant_id=1 AND id=?", batchId))
+                .isEqualTo("DRAFT");
+    }
+
+    @Test
+    void monthlyAllowsDisjointLateRedemptionsWhileBlockingOverlapAndPerRedemptionDuplicates() throws Exception {
+        long institutionId = newInstitution("MONTHLY");
+        jdbcTemplate.update("UPDATE crm_institution SET settlement_day='8' WHERE tenant_id=1 AND id=?", institutionId);
+        long r1 = newRedemption(institutionId, "POSTED", "2026-10-20T08:00:00Z");
+        long r2 = newRedemption(institutionId, "POSTED", "2026-10-25T08:00:00Z");
+        long r3 = newRedemption(institutionId, "POSTED", "2026-10-26T08:00:00Z");
+
+        JsonNode first = data(finance.withAuth(post("/api/v1/settlements/batches"))
+                .header("Idempotency-Key", key("mbe06-b1")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(createBody(institutionId, "MONTHLY", "2026-10", List.of(r1)))));
+        long batch1Id = first.at("/batch/id").asLong();
+        data(verification(batch1Id, 0, 1000, 100, 900));
+        data(payment(batch1Id, 1, 900, key("MBE06-PAY1"), 9001, "paid-b1"));
+
+        JsonNode second = data(finance.withAuth(post("/api/v1/settlements/batches"))
+                .header("Idempotency-Key", key("mbe06-b2")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(createBody(institutionId, "MONTHLY", "2026-10", List.of(r2)))));
+        long batch2Id = second.at("/batch/id").asLong();
+        assertThat(batch2Id).isNotEqualTo(batch1Id);
+        assertThat(second.at("/batch/periodKey").asText()).isEqualTo("2026-10");
+        assertThat(second.at("/batch/settlementDate").asText()).isEqualTo("2026-10-08");
+
+        mockMvc.perform(finance.withAuth(post("/api/v1/settlements/batches"))
+                        .header("Idempotency-Key", key("mbe06-overlap")).contentType(MediaType.APPLICATION_JSON)
+                        .content(json(createBody(institutionId, "MONTHLY", "2026-10", List.of(r1, r3)))))
+                .andExpect(status().isConflict());
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_settlement_line WHERE tenant_id=1 AND redemption_id=?", r3))
+                .isZero();
+
+        long perInstitution = newInstitution("PER_REDEMPTION");
+        long r4 = newRedemption(perInstitution, "POSTED", "2026-10-20T08:00:00Z");
+        JsonNode per1 = data(finance.withAuth(post("/api/v1/settlements/batches"))
+                .header("Idempotency-Key", key("mbe06-per-1")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(createBody(perInstitution, "PER_REDEMPTION", "REDEMPTION:" + r4, List.of(r4)))));
+        JsonNode perReplay = data(finance.withAuth(post("/api/v1/settlements/batches"))
+                .header("Idempotency-Key", key("mbe06-per-2")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(createBody(perInstitution, "PER_REDEMPTION", "REDEMPTION:" + r4, List.of(r4)))));
+        assertThat(perReplay.at("/batch/id").asLong()).isEqualTo(per1.at("/batch/id").asLong());
+        assertThat(queryInt("SELECT COUNT(*) FROM information_schema.STATISTICS "
+                + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='crm_settlement_batch' "
+                + "AND INDEX_NAME='uk_settlement_batch_per_redemption' AND NON_UNIQUE=0")).isGreaterThanOrEqualTo(1);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO crm_settlement_batch (tenant_id,institution_id,settlement_type,period_key,status,amount_status) "
+                        + "VALUES (1,?,'PER_REDEMPTION',?,'DRAFT','PENDING_VERIFICATION')",
+                perInstitution, "REDEMPTION:" + r4))
+                .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+    }
+
+    @Test
+    void zeroNetPayableBatchClosesToPaidOnZeroFenPaymentAndRejectsInvalidZeroOrNegative() throws Exception {
+        long institutionId = newInstitution("MONTHLY");
+        long rZero = newRedemption(institutionId, "POSTED", "2026-10-20T08:00:00Z");
+        long zeroBatchId = newBatch(institutionId, rZero);
+
+        JsonNode verifiedZero = data(verification(zeroBatchId, 0, 1000, 1000, 0));
+        assertThat(verifiedZero.at("/batch/status").asText()).isEqualTo("CONFIRMED");
+        assertThat(verifiedZero.at("/batch/netPayableFen").asLong()).isZero();
+
+        mockMvc.perform(payment(zeroBatchId, 1, 1, key("ZERO-OVER"), 9001, "over"))
+                .andExpect(status().isConflict());
+        mockMvc.perform(payment(zeroBatchId, 1, -1, key("ZERO-NEG"), 9001, "neg"))
+                .andExpect(status().isBadRequest());
+
+        JsonNode paidZero = data(payment(zeroBatchId, 1, 0, key("ZERO-OK"), 9001, "zero-close"));
+        assertThat(paidZero.at("/batch/status").asText()).isEqualTo("PAID");
+        assertThat(paidZero.at("/batch/paidFen").asLong()).isZero();
+
+        mockMvc.perform(payment(zeroBatchId, 2, 0, key("ZERO-DUP"), 9001, "dup"))
+                .andExpect(status().isConflict());
+
+        long rNonZero = newRedemption(institutionId, "POSTED", "2026-10-21T08:00:00Z");
+        long nonZeroBatchId = newBatch(institutionId, rNonZero);
+        data(verification(nonZeroBatchId, 0, 1000, 100, 900));
+        mockMvc.perform(payment(nonZeroBatchId, 1, 0, key("NONZERO-ZERO"), 9001, "bad-zero"))
+                .andExpect(status().isBadRequest());
+    }
+
+    private void insertReversal(long redemptionId, long institutionId, String status, Long activeRedemptionId) {
+        long customerId = queryLong("SELECT customer_id FROM crm_redemption WHERE tenant_id=1 AND id=?", redemptionId);
+        jdbcTemplate.update("INSERT INTO crm_redemption_reversal (tenant_id,redemption_id,customer_id,institution_id,"
+                        + "owner_staff_id,status,reason,requested_by,requested_at,request_idempotency_key,active_redemption_id) "
+                        + "VALUES (1,?,?,?,2,?,'c01-test',2,NOW(3),?,?)",
+                redemptionId, customerId, institutionId, status, key("rev-row"), activeRedemptionId);
+    }
+
     private long newBatch(long institutionId, long redemptionId) throws Exception {
         return data(finance.withAuth(post("/api/v1/settlements/batches"))
                         .header("Idempotency-Key", key("helper-batch")).contentType(MediaType.APPLICATION_JSON)

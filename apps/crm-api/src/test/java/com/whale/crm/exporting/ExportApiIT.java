@@ -20,6 +20,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
@@ -37,6 +38,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
@@ -85,9 +87,9 @@ class ExportApiIT extends AbstractMysqlIT {
         objects.clear();
         scannedContents.clear();
         doAnswer(invocation -> {
-            objects.put(invocation.getArgument(0), invocation.getArgument(1));
+            objects.put(invocation.getArgument(0), invocation.getArgument(1, InputStream.class).readAllBytes());
             return null;
-        }).when(storage).putObject(anyString(), any(byte[].class), anyString());
+        }).when(storage).putObject(anyString(), any(InputStream.class), anyLong(), anyString());
         doAnswer(invocation -> {
             objects.remove(invocation.getArgument(0));
             return null;
@@ -324,7 +326,29 @@ class ExportApiIT extends AbstractMysqlIT {
 
         clearInvocations(storage);
         assertThat(worker.runOnce()).isZero();
-        verify(storage, never()).putObject(anyString(), any(byte[].class), anyString());
+        verify(storage, never()).putObject(anyString(), any(InputStream.class), anyLong(), anyString());
+
+        long staleFileRecoveryId = createJob(admin, ExportType.CUSTOMER, List.of("customerNo"), unique("旧文件冲突恢复 "),
+                Map.of("customerId", customer.id()), null);
+        String staleJobNo = jdbcTemplate.queryForObject("SELECT job_no FROM crm_export_job WHERE id=?",
+                String.class, staleFileRecoveryId);
+        String firstKey = "export/1/" + staleJobNo + ".csv";
+        jdbcTemplate.update("INSERT INTO crm_file_object (tenant_id,object_key,original_name,mime_type,size_bytes,"
+                        + "sha256,classification,scan_status,uploaded_by,expires_at) VALUES (1,?,?, 'text/csv',1,?,'EXPORT','CLEAN',1,DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 1 DAY))",
+                firstKey, staleJobNo + ".csv", "0".repeat(64));
+        jdbcTemplate.update("UPDATE crm_export_job SET status='RUNNING',lease_owner='crashed-worker',"
+                + "lease_expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=?", staleFileRecoveryId);
+        worker.runOnce();
+        JsonNode staleRecovered = objectMapper.readTree(mockMvc.perform(get("/api/v1/exports/{id}", staleFileRecoveryId)
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCEEDED"))
+                .andExpect(jsonPath("$.data.rowCount").value(1))
+                .andReturn().getResponse().getContentAsString()).get("data");
+        String recoveredKey = jdbcTemplate.queryForObject("SELECT object_key FROM crm_file_object WHERE id=?",
+                String.class, staleRecovered.get("fileId").asLong());
+        assertThat(recoveredKey).startsWith("export/1/" + staleJobNo + "-").endsWith(".csv");
+        assertThat(csv(staleRecovered)).contains(customer.customerNo());
     }
 
     @Test

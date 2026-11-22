@@ -297,4 +297,24 @@ describe('RedemptionsView 原核销与冲正审核', () => {
     expect(wrapper.find('[data-testid="reversal-approve"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="reversal-reject"]').exists()).toBe(false)
   })
+
+  it('按机构汇总区分核销流水笔数、正式核销次数与待机构确认笔数', async () => {
+    const pendingRow: Redemption = { ...posted, id: 702, status: 'PENDING_INSTITUTION' }
+    const rejectedRow: Redemption = { ...posted, id: 703, status: 'REJECTED' }
+    vi.mocked(listRedemptions).mockResolvedValue({ items: [posted, pendingRow, rejectedRow], total: 3, page: 1, size: 20 })
+    vi.mocked(getRedemption).mockImplementation(async (id) => ({
+      ...postedDetail,
+      redemption: id === 701 ? posted : id === 702 ? pendingRow : rejectedRow,
+      lines: id === 701 ? [{ id: 1, redemptionId: 701, appointmentItemId: 1, entitlementId: 81, projectId: 101, count: 5, createdAt: '2026-10-25T03:00:00Z' }] : [],
+    }))
+    const wrapper = mountView(['redemption:read'])
+    await flushPromises()
+
+    const summaryTables = wrapper.findAll('.el-table')
+    const summaryText = summaryTables[1]?.text() ?? ''
+    // 流水笔数 3，正式核销次数 5（来自 POSTED 行明细 lines），待机构确认 1（仅 PENDING_INSTITUTION，不含 REJECTED）
+    expect(summaryText).toContain('3')
+    expect(summaryText).toContain('5')
+    expect(summaryText).toContain('1')
+  })
 })

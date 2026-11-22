@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.net.InetAddress;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
@@ -145,6 +146,57 @@ class DifyKnowledgeConfigServiceTest {
 
         assertThat(response.connectionStatus()).isEqualTo("FAILED");
         assertThat(response.lastErrorMasked()).doesNotContain(API_KEY, "upstream");
+    }
+
+    @Test
+    void ssrfTargetsBlockedAcrossSaveTestConnectionAndDatasetWorkerConfigWhileAllowlistPermitsInternalHost() {
+        service = new DifyKnowledgeConfigService(repository, cipher, idempotencyService, auditService, workerClient,
+                new ObjectMapper().findAndRegisterModules(), transactionManager, true, Set.of("dify.internal"),
+                host -> switch (host) {
+                    case "dify.internal" -> new InetAddress[]{InetAddress.getByName("10.10.1.5")};
+                    case "rebind.example.test" -> new InetAddress[]{InetAddress.getByName("100.64.0.1")};
+                    default -> new InetAddress[]{InetAddress.getByName(host)};
+                });
+
+        for (String blockedUrl : new String[]{
+                "https://127.0.0.1/v1",
+                "https://169.254.169.254/v1",
+                "https://10.0.0.1/v1",
+                "https://[::1]/v1",
+                "https://[fc00::1]/v1",
+                "https://rebind.example.test/v1",
+                "http://127.0.0.1:8080/v1",
+                "http://169.254.169.254/v1"
+        }) {
+            assertThatThrownBy(() -> service.save(admin, new DifyKnowledgeConfigRequest("dify",
+                    blockedUrl, API_KEY, null, null, 30, true, false, 0L), "ssrf-" + blockedUrl))
+                    .isInstanceOf(BusinessException.class);
+        }
+
+        DifyKnowledgeConfig saved = new DifyKnowledgeConfig(1L, 1L, "dify", "http://dify.internal/v1",
+                cipher.encrypt(API_KEY), "ds-1", cipher.encrypt("ds-key"), true, 30, true,
+                "UNVERIFIED", null, null, Instant.now(), Instant.now(), 0L);
+        when(repository.findForUpdate(1L)).thenReturn(Optional.empty());
+        when(repository.find(1L)).thenReturn(Optional.of(saved));
+        assertThat(service.save(admin, new DifyKnowledgeConfigRequest("dify", "http://dify.internal/v1",
+                API_KEY, "ds-1", "ds-key", 30, true, true, 0L), "allowlisted").baseUrl())
+                .isEqualTo("http://dify.internal/v1");
+        assertThat(service.datasetWorkerConfig(1L).baseUrl()).isEqualTo("http://dify.internal/v1");
+
+        DifyKnowledgeConfig poisoned = new DifyKnowledgeConfig(1L, 1L, "dify", "https://169.254.169.254/v1",
+                cipher.encrypt(API_KEY), "ds-1", cipher.encrypt("ds-key"), true, 30, true,
+                "UNVERIFIED", null, null, Instant.now(), Instant.now(), 1L);
+        DifyKnowledgeConfig poisonedFailed = new DifyKnowledgeConfig(1L, 1L, "dify", "https://169.254.169.254/v1",
+                cipher.encrypt(API_KEY), "ds-1", cipher.encrypt("ds-key"), true, 30, true,
+                "FAILED", "知识库地址不允许访问内网或元数据地址", null,
+                poisoned.createdAt(), Instant.now(), 2L);
+        when(repository.find(1L)).thenReturn(
+                Optional.of(poisoned), Optional.of(poisoned), Optional.of(poisonedFailed));
+        assertThatThrownBy(() -> service.datasetWorkerConfig(1L)).isInstanceOf(BusinessException.class);
+        when(repository.updateConnection(eq(1L), eq(1L), eq(1L), eq("FAILED"), anyString(), eq(null))).thenReturn(1);
+        assertThat(service.testConnection(admin, "test-ssrf", "req-ssrf").connectionStatus()).isEqualTo("FAILED");
+        verify(repository).updateConnection(eq(1L), eq(1L), eq(1L), eq("FAILED"), anyString(), eq(null));
+        verify(workerClient, never()).testConnection(any(), anyLong(), anyString());
     }
 
     private DifyKnowledgeConfigRequest request(long version) {

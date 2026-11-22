@@ -1,5 +1,6 @@
 package com.whale.crm.institution.application;
 
+import com.whale.crm.file.domain.FileClassification;
 import com.whale.crm.institution.api.dto.ChangeRequestResponse;
 import com.whale.crm.institution.api.dto.CreateInstitutionProfileRequest;
 import com.whale.crm.institution.api.dto.CreateProfileChangeRequest;
@@ -152,7 +153,7 @@ public class InstitutionProfileService {
                 request.guaranteeRoi() != null && request.guaranteeRoi(), request.roiTerms(), request.settlementName(),
                 support.encrypt(request.bankName()), support.encrypt(request.bankAccount()), support.encrypt(request.taxId()),
                 request.introduction(), null, null);
-        repository.insertProfile(input);
+        repository.insertProfile(tenantId, input);
         InstitutionProfile created = repository.findProfileByNo(tenantId, input.institutionNo()).orElseThrow();
         outboxService.append(tenantId, "institution.profile.created.v1:" + created.id(), "institution.profile.created.v1",
                 "institution", Long.toString(created.id()), Map.of("institutionId", created.id(), "status", created.status()));
@@ -203,7 +204,7 @@ public class InstitutionProfileService {
             throw new BusinessException(ErrorCode.CONFLICT, "只有版本一致的PENDING机构可申请激活");
         }
         requireComplete(profile);
-        support.requireClean(tenantId, request.evidenceFileId());
+        support.requireClean(tenantId, profile.id(), request.evidenceFileId(), FileClassification.CHANGE_EVIDENCE);
         ProfileChangeRequest draft = workflowDraft(profile, "ONBOARDING", null, id,
                 "PENDING", "ACTIVE", request.reason(), request.evidenceFileId(), "MARKET", user);
         ChangeRequestResponse response = changeService.create(tenantId, user, draft);
@@ -221,7 +222,7 @@ public class InstitutionProfileService {
         }
         String normalized = InstitutionFieldPolicy.normalize(request.fieldCode(), request.newValue());
         Object before = InstitutionFieldPolicy.currentValue(profile, request.fieldCode(), support);
-        support.requireClean(tenantId, request.evidenceFileId());
+        support.requireClean(tenantId, profile.id(), request.evidenceFileId(), FileClassification.CHANGE_EVIDENCE);
         String beforeMasked = support.jsonText(Collections.singletonMap("value",
                 support.maskValue(request.fieldCode(), before)));
         String afterMasked = support.jsonText(Collections.singletonMap("value",

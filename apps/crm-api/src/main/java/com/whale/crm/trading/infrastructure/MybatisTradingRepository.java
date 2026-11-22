@@ -24,11 +24,19 @@ public class MybatisTradingRepository implements TradingRepository {
         this.mapper = mapper;
     }
 
-    public void insertOrder(Order order) { mapper.insertOrder(com.whale.crm.platform.context.TenantContext.currentTenantId(), order); }
+    public void insertOrder(long tenantId, Order order) {
+        mapper.insertOrder(tenantId, order);
+    }
     public int backfillOrderNo(long tenantId, long id, String orderNo) { return mapper.backfillOrderNo(tenantId, id, orderNo); }
     public Optional<Order> findOrder(long tenantId, long id) { return Optional.ofNullable(mapper.selectOrder(tenantId, id)); }
     public Optional<Order> findOrderByNo(long tenantId, String orderNo) { return Optional.ofNullable(mapper.selectOrderByNo(tenantId, orderNo)); }
     public Optional<Order> findOrderForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectOrderForUpdate(tenantId, id)); }
+    public List<Order> findOrdersForUpdate(long tenantId, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return mapper.selectOrdersForUpdate(tenantId, ids.stream().distinct().sorted().toList());
+    }
     public int updateOrderStatus(long tenantId, long id, long expectedVersion, String fromStatus, String toStatus, Long paidFen, Instant paidAt) {
         return mapper.updateOrderStatus(tenantId, id, expectedVersion, fromStatus, toStatus, paidFen, paidAt);
     }
@@ -42,20 +50,42 @@ public class MybatisTradingRepository implements TradingRepository {
         return mapper.countOrders(tenantId, scopeType, teamIds, selfId, customerId, status);
     }
 
-    public void insertOrderItem(OrderItem item) { mapper.insertOrderItem(com.whale.crm.platform.context.TenantContext.currentTenantId(), item); }
-    public void insertOrderItemSelection(com.whale.crm.trading.domain.OrderItemSelection selection) { mapper.insertOrderItemSelection(com.whale.crm.platform.context.TenantContext.currentTenantId(), selection); }
+    public void insertOrderItem(long tenantId, OrderItem item) {
+        mapper.insertOrderItem(tenantId, item);
+    }
+    public void insertOrderItemSelection(long tenantId, com.whale.crm.trading.domain.OrderItemSelection selection) {
+        mapper.insertOrderItemSelection(tenantId, selection);
+    }
     public Optional<OrderItem> findOrderItem(long tenantId, long id) { return Optional.ofNullable(mapper.selectOrderItem(tenantId, id)); }
     public List<OrderItem> findOrderItems(long tenantId, long orderId) { return mapper.selectOrderItems(tenantId, orderId); }
-    public void insertPayment(PaymentTxn payment) { mapper.insertPayment(com.whale.crm.platform.context.TenantContext.currentTenantId(), payment); }
+    public void insertPayment(long tenantId, PaymentTxn payment) {
+        mapper.insertPayment(tenantId, payment);
+    }
     public Optional<PaymentTxn> findPaymentByTradeNo(long tenantId, String channel, String tradeNo) { return Optional.ofNullable(mapper.selectPaymentByTradeNo(tenantId, channel, tradeNo)); }
     public List<PaymentTxn> findPaymentsByOrder(long tenantId, long orderId) { return mapper.selectPaymentsByOrder(tenantId, orderId); }
-    public void insertStatusHistory(OrderStatusHistory history) { mapper.insertStatusHistory(com.whale.crm.platform.context.TenantContext.currentTenantId(), history); }
+    public void insertStatusHistory(long tenantId, OrderStatusHistory history) {
+        mapper.insertStatusHistory(tenantId, history);
+    }
     public List<OrderStatusHistory> findStatusHistory(long tenantId, long orderId) { return mapper.selectStatusHistory(tenantId, orderId); }
 
-    public void insertEntitlement(Entitlement entitlement) { mapper.insertEntitlement(com.whale.crm.platform.context.TenantContext.currentTenantId(), entitlement); }
+    public void insertEntitlement(long tenantId, Entitlement entitlement) {
+        mapper.insertEntitlement(tenantId, entitlement);
+    }
     public List<Entitlement> findEntitlementsByOrderItemIds(long tenantId, List<Long> orderItemIds) { return mapper.selectEntitlementsByOrderItemIds(tenantId, orderItemIds); }
     public Optional<Entitlement> findEntitlement(long tenantId, long id) { return Optional.ofNullable(mapper.selectEntitlement(tenantId, id)); }
     public Optional<Entitlement> findEntitlementForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectEntitlementForUpdate(tenantId, id)); }
+    public List<Entitlement> findEntitlementsForUpdate(long tenantId, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return mapper.selectEntitlementsForUpdate(tenantId, ids.stream().distinct().sorted().toList());
+    }
+    public List<Entitlement> findEntitlementsByOrderIdsForUpdate(long tenantId, List<Long> orderIds) {
+        if (orderIds == null || orderIds.isEmpty()) {
+            return List.of();
+        }
+        return mapper.selectEntitlementsByOrderIdsForUpdate(tenantId, orderIds.stream().distinct().sorted().toList());
+    }
     public int updateEntitlementBalance(long tenantId, long id, long expectedVersion, int availableCount, String status, int versionNo) {
         return mapper.updateEntitlementBalance(tenantId, id, expectedVersion, availableCount, status, versionNo);
     }
@@ -73,20 +103,29 @@ public class MybatisTradingRepository implements TradingRepository {
             long tenantId, String scopeType, List<Long> teamIds, long selfId, Long customerId, java.time.LocalDate today) {
         return mapper.summarizeEntitlements(tenantId, scopeType, teamIds, selfId, customerId, today);
     }
-    public void insertLedger(EntitlementLedgerEntry entry) { mapper.insertLedger(com.whale.crm.platform.context.TenantContext.currentTenantId(), entry); }
+    public void insertLedger(long tenantId, EntitlementLedgerEntry entry) {
+        mapper.insertLedger(tenantId, entry);
+    }
     public Optional<EntitlementLedgerEntry> findLedgerByKey(long tenantId, String idempotencyKey) { return Optional.ofNullable(mapper.selectLedgerByKey(tenantId, idempotencyKey)); }
     public List<EntitlementLedgerEntry> findLedgerBySource(long tenantId, String sourceType, String sourceRef) {
         return mapper.selectLedgerBySource(tenantId, sourceType, sourceRef);
     }
     public List<EntitlementLedgerEntry> findLedgerByEntitlement(long tenantId, long entitlementId) { return mapper.selectLedgerByEntitlement(tenantId, entitlementId); }
+    public List<EntitlementLedgerEntry> findLedgerByEntitlementForUpdate(long tenantId, long entitlementId) { return mapper.selectLedgerByEntitlementForUpdate(tenantId, entitlementId); }
     public long sumLedger(long tenantId, long entitlementId) {
         Long value = mapper.sumLedger(tenantId, entitlementId);
+        return value == null ? 0L : value;
+    }
+    public long sumLedgerForUpdate(long tenantId, long entitlementId) {
+        Long value = mapper.sumLedgerForUpdate(tenantId, entitlementId);
         return value == null ? 0L : value;
     }
 
     public Optional<OutboxEvent> findOutboxByEventId(long tenantId, String eventId) { return Optional.ofNullable(mapper.selectOutboxByEventId(tenantId, eventId)); }
     public Optional<OutboxEvent> findOutboxById(long tenantId, long id) { return Optional.ofNullable(mapper.selectOutboxById(tenantId, id)); }
-    public void insertOutboxEvent(OutboxEvent event) { mapper.insertOutboxEvent(event.tenantId(), event); }
+    public void insertOutboxEvent(long tenantId, OutboxEvent event) {
+        mapper.insertOutboxEvent(tenantId, event);
+    }
     public List<Long> findOutboxTenantIds(Instant now) { return mapper.selectOutboxTenantIds(now); }
     public List<OutboxEvent> findPendingOutbox(long tenantId, Instant now, int limit) { return mapper.selectPendingOutbox(tenantId, now, limit); }
     public int claimOutboxEvent(long tenantId, long id, long expectedVersion, String claimOwner, Instant now, Instant claimExpiresAt) {

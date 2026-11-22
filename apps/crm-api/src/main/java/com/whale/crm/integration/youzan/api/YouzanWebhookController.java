@@ -40,14 +40,14 @@ public class YouzanWebhookController extends YouzanBaseController {
             @RequestHeader(name = "X-Youzan-Mock-Signature", required = false) String signature,
             @RequestHeader(name = "X-Youzan-Mock-Timestamp", required = false) Long timestamp,
             HttpServletRequest request) {
-        YouzanVerification verification = adapterRouter.adapter().verifyWebhook(rawBody,
+        long tenantId = TenantContext.currentTenantId();
+        YouzanVerification verification = adapterRouter.webhookAdapter(tenantId).verifyWebhook(rawBody,
                 new YouzanSignature(signature, timestamp));
         if (!verification.valid()) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "有赞Mock签名无效、过期或真实接入未启用");
         }
         try {
             YouzanOrderEvent event = objectMapper.readValue(rawBody, YouzanOrderEvent.class);
-            long tenantId = TenantContext.currentTenantId();
             YouzanEventResponse response = eventService.ingest(tenantId, event, "WEBHOOK", rawBody);
             eventService.processAsync(tenantId, response.id());
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(response, requestId(request)));

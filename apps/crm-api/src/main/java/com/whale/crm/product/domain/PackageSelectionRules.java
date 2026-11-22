@@ -1,5 +1,6 @@
 package com.whale.crm.product.domain;
 
+import com.whale.crm.platform.web.ApiResponse;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 
@@ -59,11 +60,22 @@ public final class PackageSelectionRules {
     public static List<PackageProject> select(String selectionMode, List<PackageSelectionGroup> groups,
                                                List<PackageProject> projects,
                                                List<PackageOptionSelection> selections) {
-        if (!"CHOOSE_N".equals(selectionMode)) {
+        if ("USE_N".equals(selectionMode)) {
+            throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
+                    "Q01 选择规则未确认，USE_N 暂不支持发放权益",
+                    List.of(new ApiResponse.ErrorDetail("Q01", "USE_N 共享次数池规则待运营确认")));
+        }
+        if ("FIXED".equals(selectionMode)) {
             if (selections != null && !selections.isEmpty()) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "固定套餐不能提交自选项目");
             }
+            if (projects.stream().anyMatch(project -> !"ACTIVE".equals(project.projectStatus()))) {
+                throw new BusinessException(ErrorCode.CONFLICT, "所选子项目未上架或已停用，不能创建订单");
+            }
             return List.copyOf(projects);
+        }
+        if (!"CHOOSE_N".equals(selectionMode)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "未知选择模式");
         }
         if (groups.isEmpty()) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "旧版 CHOOSE_N 未配置结构化选项组，不能发放权益");

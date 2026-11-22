@@ -110,9 +110,26 @@ class OfficialWecomMessageClientTest {
         assertThat(result.errorMasked()).contains("INVALID_RECIPIENT");
     }
 
+    @Test
+    void disallowedTenantFailsClosedWithoutCallingServer() throws Exception {
+        startServer();
+        AtomicInteger calls = new AtomicInteger();
+        server.createContext("/", exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, "{\"errcode\":0}");
+        });
+        OfficialWecomMessageClient client = client(1000, 1000);
+
+        WecomSendResult result = client.send(new WecomMessageCommand(2L, 2L, "staff-2", "脱敏标题", "已脱敏内容"));
+
+        assertThat(result.status()).isEqualTo(WecomSendResult.Status.FAILED);
+        assertThat(result.errorMasked()).isEqualTo("WECOM_MESSAGE_TENANT_FORBIDDEN");
+        assertThat(calls.get()).isZero();
+    }
+
     private OfficialWecomMessageClient client(int connectTimeout, int readTimeout) {
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
-        WecomMessageProperties properties = new WecomMessageProperties("OFFICIAL", "ww-test", "synthetic-secret",
+        WecomMessageProperties properties = new WecomMessageProperties(1L, "OFFICIAL", "ww-test", "synthetic-secret",
                 1001L, base, connectTimeout, readTimeout, 60);
         OkHttpClient http = new OkHttpClient.Builder()
                 .connectTimeout(Duration.ofMillis(connectTimeout))

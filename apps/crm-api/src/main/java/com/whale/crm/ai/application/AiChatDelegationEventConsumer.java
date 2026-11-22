@@ -32,7 +32,7 @@ public class AiChatDelegationEventConsumer {
     private static final Set<String> PAYLOAD_REQUIRED = Set.of("messageRef", "corpId", "msgId", "archiveSeq",
             "contentObjectKey", "sentAt");
     private static final Set<String> PAYLOAD_FIELDS = Set.of("messageRef", "corpId", "msgId", "archiveSeq",
-            "conversationId", "customerId", "contentObjectKey", "sentAt");
+            "conversationId", "conversationType", "customerId", "roomRosterVersion", "contentObjectKey", "sentAt");
 
     private final AiChatDelegationService service;
     private final WecomRepository wecomRepository;
@@ -74,6 +74,8 @@ public class AiChatDelegationEventConsumer {
             String msgId = requiredText(payload, "msgId", 192);
             long archiveSeq = positive(payload, "archiveSeq");
             String objectKey = requiredText(payload, "contentObjectKey", 255);
+            String conversationType = optionalConversationType(payload);
+            Long roomRosterVersion = optionalRoomRosterVersion(payload);
             instant(payload.path("sentAt").asText());
             transactions.executeWithoutResult(status -> {
                 if (!inbox(tenantId, eventId)) {
@@ -84,9 +86,14 @@ public class AiChatDelegationEventConsumer {
                 if (!corpId.equals(source.corpId()) || !msgId.equals(source.msgId())
                         || source.archiveSeq() == null || source.archiveSeq() != archiveSeq
                         || !objectKey.equals(source.contentObjectKey())
+                        || (conversationType != null && !conversationType.equals(source.conversationType()))
+                        || (payload.has("roomRosterVersion") && !Objects.equals(roomRosterVersion, source.roomRosterVersion()))
                         || (payload.has("customerId") && !payload.path("customerId").isNull()
                         && !Objects.equals(payload.path("customerId").asLong(), source.customerId()))) {
                     throw new IllegalArgumentException("AI托管企微事件与归档来源不一致");
+                }
+                if (!"DIRECT".equals(source.conversationType())) {
+                    return;
                 }
                 service.receive(tenantId, messageId);
             });
@@ -150,6 +157,32 @@ public class AiChatDelegationEventConsumer {
             throw new IllegalArgumentException("AI托管事件" + field + "无效");
         }
         return value;
+    }
+
+    private String optionalConversationType(JsonNode payload) {
+        if (!payload.has("conversationType")) {
+            return null;
+        }
+        JsonNode value = payload.path("conversationType");
+        if (!value.isTextual()) {
+            throw new IllegalArgumentException("AI托管事件conversationType无效");
+        }
+        String text = value.asText();
+        if (!"DIRECT".equals(text) && !"ROOM".equals(text)) {
+            throw new IllegalArgumentException("AI托管事件conversationType无效");
+        }
+        return text;
+    }
+
+    private Long optionalRoomRosterVersion(JsonNode payload) {
+        if (!payload.has("roomRosterVersion") || payload.path("roomRosterVersion").isNull()) {
+            return null;
+        }
+        JsonNode value = payload.path("roomRosterVersion");
+        if (!value.isIntegralNumber() || !value.canConvertToLong() || value.asLong() < 0) {
+            throw new IllegalArgumentException("AI托管事件roomRosterVersion无效");
+        }
+        return value.asLong();
     }
 
     private void instant(String value) {

@@ -72,8 +72,7 @@
 
   <!-- 数据范围（双保险：Service 已对 NONE/INSTITUTION 短路；此处仍兜底 1=0）。
        TEAM = 本组及授权团队的客户 + 本人持有的客户；ownerId 仅在范围之上收窄。 -->
-  <sql id="scopedWhere">
-    WHERE c.tenant_id = #{tenantId} AND c.deleted = 0
+  <sql id="customerScopeFilter">
     <choose>
       <when test="scopeType == 'ALL'"></when>
       <when test="scopeType == 'TEAM'">
@@ -87,6 +86,11 @@
       </when>
       <otherwise>AND 1 = 0</otherwise>
     </choose>
+  </sql>
+
+  <sql id="scopedWhere">
+    WHERE c.tenant_id = #{tenantId} AND c.deleted = 0
+    <include refid="customerScopeFilter"/>
     <if test="ownerId != null">
       AND c.owner_staff_id = #{ownerId}
     </if>
@@ -213,19 +217,21 @@
     WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND deleted = 0
   </update>
 
-  <!-- 查重扫描：同盲索引（等价手机号）且未归档 -->
+  <!-- 查重扫描：同盲索引（等价手机号）且未归档（按数据范围隔离） -->
   <select id="selectDuplicatedMobileHashes" resultType="string">
-    SELECT mobile_hash
-    FROM crm_customer
-    WHERE tenant_id = #{tenantId} AND mobile_hash IS NOT NULL AND deleted = 0
-    GROUP BY mobile_hash
+    SELECT c.mobile_hash
+    FROM crm_customer c
+    WHERE c.tenant_id = #{tenantId} AND c.mobile_hash IS NOT NULL AND c.deleted = 0
+    <include refid="customerScopeFilter"/>
+    GROUP BY c.mobile_hash
     HAVING COUNT(*) &gt; 1
   </select>
 
   <select id="selectCustomerIdsByMobileHash" resultType="long">
-    SELECT id FROM crm_customer
-    WHERE tenant_id = #{tenantId} AND mobile_hash = #{mobileHash} AND deleted = 0
-    ORDER BY id ASC
+    SELECT c.id FROM crm_customer c
+    WHERE c.tenant_id = #{tenantId} AND c.mobile_hash = #{mobileHash} AND c.deleted = 0
+    <include refid="customerScopeFilter"/>
+    ORDER BY c.id ASC
   </select>
 
   <!-- 电话-是否重复：同盲索引未归档客户计数（原 23 字段"电话-是否重复"的真实计算口径） -->
@@ -234,12 +240,13 @@
     WHERE tenant_id = #{tenantId} AND mobile_hash = #{mobileHash} AND deleted = 0
   </select>
 
-  <!-- 查重扫描：同 external_id 身份映射到多个未归档客户 -->
+  <!-- 查重扫描：同 external_id 身份映射到多个未归档客户（按数据范围隔离） -->
   <select id="selectDuplicatedExternalIds" resultType="string">
     SELECT i.external_id
     FROM crm_customer_identity i
     INNER JOIN crm_customer c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id AND c.deleted = 0
     WHERE i.tenant_id = #{tenantId}
+    <include refid="customerScopeFilter"/>
     GROUP BY i.external_id
     HAVING COUNT(DISTINCT i.customer_id) &gt; 1
   </select>
@@ -249,6 +256,7 @@
     FROM crm_customer_identity i
     INNER JOIN crm_customer c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id AND c.deleted = 0
     WHERE i.tenant_id = #{tenantId} AND i.external_id = #{externalId}
+    <include refid="customerScopeFilter"/>
     ORDER BY i.customer_id ASC
   </select>
 

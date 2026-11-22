@@ -7,7 +7,7 @@
     SELECT 1 FROM crm_wecom_room_participant covered
     JOIN crm_wecom_staff_account sa ON sa.tenant_id=covered.tenant_id AND sa.corp_id=covered.corp_id AND sa.wecom_userid=covered.wecom_userid AND sa.staff_user_id=covered.staff_user_id AND sa.enabled=1
     JOIN crm_wecom_archive_member am ON am.tenant_id=covered.tenant_id AND am.corp_id=covered.corp_id AND am.staff_user_id=covered.staff_user_id AND am.enabled=1
-    JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.status='ACTIVE'
+    JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.user_type='EMPLOYEE' AND su.status='ACTIVE'
     WHERE covered.tenant_id=#{tenantId} AND covered.corp_id=#{corpId} AND covered.room_id=#{roomId} AND covered.status='ACTIVE' AND covered.participant_type='STAFF'
   </sql>
   <select id="findRoom" resultType="com.whale.crm.integration.wecom.domain.WecomRoom">SELECT <include refid="roomColumns"/> FROM crm_wecom_room WHERE tenant_id=#{tenantId} AND corp_id=#{corpId} AND room_id=#{roomId}</select>
@@ -21,7 +21,7 @@
         AND EXISTS (SELECT 1 FROM crm_wecom_room_participant rp
           JOIN crm_wecom_staff_account sa ON sa.tenant_id=rp.tenant_id AND sa.corp_id=rp.corp_id AND sa.wecom_userid=rp.wecom_userid AND sa.staff_user_id=rp.staff_user_id AND sa.enabled=1
           JOIN crm_wecom_archive_member am ON am.tenant_id=rp.tenant_id AND am.corp_id=rp.corp_id AND am.staff_user_id=rp.staff_user_id AND am.enabled=1
-          JOIN sys_user su ON su.tenant_id=rp.tenant_id AND su.id=rp.staff_user_id AND su.status='ACTIVE'
+          JOIN sys_user su ON su.tenant_id=rp.tenant_id AND su.id=rp.staff_user_id AND su.user_type='EMPLOYEE' AND su.status='ACTIVE'
           WHERE rp.tenant_id=r.tenant_id AND rp.corp_id=r.corp_id AND rp.room_id=r.room_id AND rp.participant_type='STAFF' AND rp.status='ACTIVE'
           <choose>
             <when test="scopeType == 'TEAM'">AND (su.id=#{selfId} OR su.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)</when>
@@ -41,12 +41,12 @@
   <select id="countCoveredStaff" resultType="int">SELECT COUNT(DISTINCT covered.staff_user_id) FROM crm_wecom_room_participant covered
     JOIN crm_wecom_staff_account sa ON sa.tenant_id=covered.tenant_id AND sa.corp_id=covered.corp_id AND sa.wecom_userid=covered.wecom_userid AND sa.staff_user_id=covered.staff_user_id AND sa.enabled=1
     JOIN crm_wecom_archive_member am ON am.tenant_id=covered.tenant_id AND am.corp_id=covered.corp_id AND am.staff_user_id=covered.staff_user_id AND am.enabled=1
-    JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.status='ACTIVE'
+    JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.user_type='EMPLOYEE' AND su.status='ACTIVE'
     WHERE covered.tenant_id=#{tenantId} AND covered.corp_id=#{corpId} AND covered.room_id=#{roomId} AND covered.status='ACTIVE' AND covered.participant_type='STAFF'</select>
   <select id="senderCoveredStaff" resultType="boolean">SELECT EXISTS (SELECT 1 FROM crm_wecom_room_participant sender
     JOIN crm_wecom_staff_account sa ON sa.tenant_id=sender.tenant_id AND sa.corp_id=sender.corp_id AND sa.wecom_userid=sender.wecom_userid AND sa.staff_user_id=sender.staff_user_id AND sa.enabled=1
     JOIN crm_wecom_archive_member am ON am.tenant_id=sender.tenant_id AND am.corp_id=sender.corp_id AND am.staff_user_id=sender.staff_user_id AND am.enabled=1
-    JOIN sys_user su ON su.tenant_id=sender.tenant_id AND su.id=sender.staff_user_id AND su.status='ACTIVE'
+    JOIN sys_user su ON su.tenant_id=sender.tenant_id AND su.id=sender.staff_user_id AND su.user_type='EMPLOYEE' AND su.status='ACTIVE'
     WHERE sender.tenant_id=#{tenantId} AND sender.corp_id=#{corpId} AND sender.room_id=#{roomId} AND sender.wecom_userid=#{wecomUserid} AND sender.participant_type='STAFF' AND sender.status='ACTIVE')</select>
   <select id="allExternalConsentGranted" resultType="boolean">SELECT NOT EXISTS (SELECT 1 FROM crm_wecom_room_participant external
     WHERE external.tenant_id=#{tenantId} AND external.corp_id=#{corpId} AND external.room_id=#{roomId} AND external.status='ACTIVE' AND external.participant_type='EXTERNAL'

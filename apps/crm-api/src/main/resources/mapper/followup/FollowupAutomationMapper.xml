@@ -142,17 +142,38 @@
     WHERE tenant_id=#{tenantId} AND batch_id=#{batchId} AND item_id=#{itemId} ORDER BY order_id
   </select>
 
+  <sql id="dueTaskNotScheduled">
+    AND NOT EXISTS (
+      SELECT 1 FROM crm_followup_schedule_job j
+      WHERE j.tenant_id = t.tenant_id
+        AND j.job_type = 'TASK_DUE_NOTIFICATION'
+        AND j.job_key = CONCAT(t.id, ':',
+          CASE
+            WHEN MICROSECOND(t.due_at) = 0 THEN DATE_FORMAT(t.due_at, '%Y-%m-%dT%H:%i:%sZ')
+            ELSE CONCAT(DATE_FORMAT(t.due_at, '%Y-%m-%dT%H:%i:%s.'),
+              LPAD(FLOOR(MICROSECOND(t.due_at) / 1000), 3, '0'), 'Z')
+          END)
+        AND (
+          j.status = 'DONE'
+          OR (j.status = 'RUNNING' AND (j.lease_expires_at IS NULL OR j.lease_expires_at &gt; #{now}))
+          OR (j.status = 'FAILED' AND j.next_retry_at IS NOT NULL AND j.next_retry_at &gt; #{now})
+        )
+    )
+  </sql>
+
   <select id="selectDueTaskTenantIds" resultType="long">
-    SELECT DISTINCT tenant_id FROM crm_task
-    WHERE status IN ('OPEN','PROCESSING') AND source_type IN ('FOLLOWUP','MONTHLY_BATCH')
-      AND assignee_user_id IS NOT NULL AND due_at IS NOT NULL AND due_at&lt;=#{now}
+    SELECT DISTINCT t.tenant_id FROM crm_task t
+    WHERE t.status IN ('OPEN','PROCESSING') AND t.source_type IN ('FOLLOWUP','MONTHLY_BATCH')
+      AND t.assignee_user_id IS NOT NULL AND t.due_at IS NOT NULL AND t.due_at&lt;=#{now}
+    <include refid="dueTaskNotScheduled"/>
   </select>
   <select id="selectDueTasks" resultType="com.whale.crm.followup.domain.DueFollowupTask">
-    SELECT id,tenant_id AS tenantId,customer_id AS customerId,assignee_user_id AS assigneeUserId,due_at AS dueAt
-    FROM crm_task
-    WHERE tenant_id=#{tenantId} AND status IN ('OPEN','PROCESSING') AND source_type IN ('FOLLOWUP','MONTHLY_BATCH')
-      AND assignee_user_id IS NOT NULL AND due_at IS NOT NULL AND due_at&lt;=#{now}
-    ORDER BY id LIMIT #{limit}
+    SELECT t.id,t.tenant_id AS tenantId,t.customer_id AS customerId,t.assignee_user_id AS assigneeUserId,t.due_at AS dueAt
+    FROM crm_task t
+    WHERE t.tenant_id=#{tenantId} AND t.status IN ('OPEN','PROCESSING') AND t.source_type IN ('FOLLOWUP','MONTHLY_BATCH')
+      AND t.assignee_user_id IS NOT NULL AND t.due_at IS NOT NULL AND t.due_at&lt;=#{now}
+    <include refid="dueTaskNotScheduled"/>
+    ORDER BY t.id LIMIT #{limit}
   </select>
   <insert id="insertScheduleJobIgnore">
     INSERT IGNORE INTO crm_followup_schedule_job (tenant_id,job_type,job_key,status)

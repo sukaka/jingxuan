@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.net.InetAddress;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
@@ -87,20 +88,74 @@ class AiProviderConfigServiceTest {
     @Test
     void explicitlyAllowedInternalHttpIsAcceptedButPublicHttpIsNot() {
         service = new AiProviderConfigService(repository, cipher, idempotencyService, auditService, workerClient,
-                new ObjectMapper().findAndRegisterModules(), transactionManager, true, false);
+                new ObjectMapper().findAndRegisterModules(), transactionManager, true, Set.of(), false,
+                host -> new InetAddress[]{InetAddress.getByName(host)});
+        AiProviderConfigRequest internal = new AiProviderConfigRequest("openai_compatible",
+                "http://127.0.0.1:9000/v1", API_KEY, "model", 30, true, 0L);
+        assertThatThrownBy(() -> service.save(admin, internal, "unlisted-http"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内网");
+
+        service = new AiProviderConfigService(repository, cipher, idempotencyService, auditService, workerClient,
+                new ObjectMapper().findAndRegisterModules(), transactionManager, true, Set.of("127.0.0.1"), false,
+                host -> new InetAddress[]{InetAddress.getByName(host)});
         AiProviderConfig saved = new AiProviderConfig(1L, 1L, "openai_compatible", "http://127.0.0.1:9000/v1",
                 cipher.encrypt(API_KEY), "model", 30, true, "UNVERIFIED", null, null,
                 Instant.now(), Instant.now(), 0L);
         when(repository.findForUpdate(1L)).thenReturn(Optional.empty());
         when(repository.find(1L)).thenReturn(Optional.of(saved));
-        AiProviderConfigRequest internal = new AiProviderConfigRequest("openai_compatible",
-                "http://127.0.0.1:9000/v1", API_KEY, "model", 30, true, 0L);
 
         assertThat(service.save(admin, internal, "internal-http").baseUrl()).isEqualTo("http://127.0.0.1:9000/v1");
         assertThatThrownBy(() -> service.save(admin, new AiProviderConfigRequest("openai_compatible",
                 "http://8.8.8.8/v1", API_KEY, "model", 30, true, 0L), "public-http"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("内网");
+        assertThatThrownBy(() -> service.save(admin, new AiProviderConfigRequest("openai_compatible",
+                "http://169.254.169.254/latest/meta-data", API_KEY, "model", 30, true, 0L), "metadata-http"))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void httpsSsrfTargetsAreBlockedOnSaveTestConnectionAndWorkerConfig() {
+        service = new AiProviderConfigService(repository, cipher, idempotencyService, auditService, workerClient,
+                new ObjectMapper().findAndRegisterModules(), transactionManager, false, Set.of("169.254.169.254"),
+                false, host -> switch (host) {
+                    case "rebind.example.test" -> new InetAddress[]{InetAddress.getByName("10.0.0.8")};
+                    case "provider.example.com" -> new InetAddress[]{InetAddress.getByName("93.184.216.34")};
+                    default -> new InetAddress[]{InetAddress.getByName(host)};
+                });
+
+        for (String dangerousUrl : new String[]{
+                "https://127.0.0.1/v1",
+                "https://169.254.169.254/v1",
+                "https://10.0.0.1/v1",
+                "https://[::1]/v1",
+                "https://[fc00::1]/v1",
+                "https://100.64.0.1/v1",
+                "https://224.0.0.1/v1",
+                "https://rebind.example.test/v1",
+                "https://metadata.google.internal/v1"
+        }) {
+            assertThatThrownBy(() -> service.save(admin, new AiProviderConfigRequest("openai_compatible",
+                    dangerousUrl, API_KEY, "model", 30, true, 0L), "ssrf-" + dangerousUrl))
+                    .isInstanceOf(BusinessException.class);
+        }
+
+        AiProviderConfig poisonedStored = new AiProviderConfig(1L, 1L, "openai_compatible",
+                "https://169.254.169.254/v1", cipher.encrypt(API_KEY), "model", 30, true,
+                "UNVERIFIED", null, null, Instant.now(), Instant.now(), 1L);
+        AiProviderConfig poisonedFailed = new AiProviderConfig(1L, 1L, "openai_compatible",
+                "https://169.254.169.254/v1", cipher.encrypt(API_KEY), "model", 30, true,
+                "FAILED", "AI 模型地址不允许访问内网或元数据地址", null,
+                poisonedStored.createdAt(), Instant.now(), 2L);
+        when(repository.find(1L)).thenReturn(
+                Optional.of(poisonedStored), Optional.of(poisonedStored), Optional.of(poisonedFailed));
+        assertThatThrownBy(() -> service.workerConfig(1L)).isInstanceOf(BusinessException.class);
+        when(repository.updateConnection(eq(1L), eq(1L), eq(1L), eq("FAILED"), anyString(), eq(null))).thenReturn(1);
+        var testResp = service.testConnection(admin, "test-ssrf");
+        assertThat(testResp.connectionStatus()).isEqualTo("FAILED");
+        verify(repository).updateConnection(eq(1L), eq(1L), eq(1L), eq("FAILED"), anyString(), eq(null));
+        verify(workerClient, never()).testConnection(any());
     }
 
     @Test

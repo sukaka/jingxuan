@@ -305,4 +305,22 @@ describe('CampaignsView 活动分析与维护', () => {
     expect(instantToShanghaiInput('2026-11-01T01:00:00Z')).toBe('2026-11-01T09:00:00')
     expect(shanghaiInputToInstant(null)).toBeNull()
   })
+
+  it('切换订单来源和点击查询按钮确实触发 loadAnalytics()', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    vi.mocked(getCampaignAnalytics).mockClear()
+
+    const sourceSelect = wrapper.getComponent('.report-source') as VueWrapper
+    sourceSelect.vm.$emit('update:modelValue', 'MANUAL')
+    sourceSelect.vm.$emit('change', 'MANUAL')
+    await flushPromises()
+    expect(getCampaignAnalytics).toHaveBeenCalledWith(expect.objectContaining({ sourceSystem: 'MANUAL', page: 1 }))
+
+    vi.mocked(getCampaignAnalytics).mockClear()
+    const queryBtn = wrapper.findAll('button').find((b) => b.text() === '查询')!
+    await queryBtn.trigger('click')
+    await flushPromises()
+    expect(getCampaignAnalytics).toHaveBeenCalledTimes(1)
+  })
 })

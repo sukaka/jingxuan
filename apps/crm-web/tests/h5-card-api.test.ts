@@ -1,5 +1,5 @@
 import type { AxiosAdapter } from 'axios'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createH5Card, disableH5Card, getPublicH5Card, listH5Cards, recordH5CardUsage } from '../src/api/h5Card'
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, http } from '../src/api/http'
 
@@ -43,5 +43,17 @@ describe('H5 卡片 API 契约', () => {
       const callIndex = index === 0 ? 0 : index + 1
       expect(calls[callIndex]?.headers).toMatchObject({ 'Idempotency-Key': key, [CSRF_HEADER_NAME]: 'h5-csrf' })
     }
+  })
+
+  it.each(['', 'short', '../secret', '..%2Fsecret', 'key-with-query?x=1', 'key#hash'])('拒绝非法 shareKey "%s"，不发起任何 HTTP 请求', async (badKey) => {
+    const adapter = vi.fn()
+    http.defaults.adapter = adapter as unknown as AxiosAdapter
+
+    await expect(getPublicH5Card(badKey)).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 400,
+      code: 'INVALID_SHARE_KEY',
+    })
+    expect(adapter).not.toHaveBeenCalled()
   })
 })

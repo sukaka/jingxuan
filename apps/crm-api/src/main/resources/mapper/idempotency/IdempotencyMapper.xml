@@ -6,6 +6,7 @@
     <id property="id" column="id"/>
     <result property="tenantId" column="tenant_id"/>
     <result property="scopeCode" column="scope_code"/>
+    <result property="actorUserId" column="actor_user_id"/>
     <result property="idempotencyKey" column="idempotency_key"/>
     <result property="resourceType" column="resource_type"/>
     <result property="resourceId" column="resource_id"/>
@@ -15,15 +16,19 @@
   </resultMap>
 
   <select id="selectByKey" resultMap="IdempotencyRecordMap">
-    SELECT id, tenant_id, scope_code, idempotency_key, resource_type, resource_id, status, request_hash, created_at
+    SELECT id, tenant_id, scope_code, actor_user_id, idempotency_key, resource_type, resource_id, status,
+           request_hash, created_at
     FROM crm_idempotency_record
-    WHERE tenant_id = #{tenantId} AND scope_code = #{scopeCode} AND idempotency_key = #{idempotencyKey}
+    WHERE tenant_id = #{tenantId} AND scope_code = #{scopeCode} AND actor_user_id = #{actorUserId}
+      AND idempotency_key = #{idempotencyKey}
   </select>
 
   <insert id="insertRecord" parameterType="com.whale.crm.platform.idempotency.IdempotencyRecord"
           useGeneratedKeys="true" keyProperty="id">
-    INSERT INTO crm_idempotency_record (tenant_id, scope_code, idempotency_key, resource_type, resource_id, status, request_hash)
-    VALUES (#{tenantId}, #{scopeCode}, #{idempotencyKey}, #{resourceType}, #{resourceId}, #{status}, #{requestHash})
+    INSERT INTO crm_idempotency_record (tenant_id, scope_code, actor_user_id, idempotency_key, resource_type,
+                                        resource_id, status, request_hash)
+    VALUES (#{tenantId}, #{scopeCode}, #{actorUserId}, #{idempotencyKey}, #{resourceType},
+            #{resourceId}, #{status}, #{requestHash})
   </insert>
 
 </mapper>

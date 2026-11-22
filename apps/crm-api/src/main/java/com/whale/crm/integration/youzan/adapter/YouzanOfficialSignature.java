@@ -11,7 +11,8 @@ public final class YouzanOfficialSignature {
     }
 
     public static boolean valid(String clientId, String clientSecret, String rawEntity, String expected) {
-        if (clientId == null || clientSecret == null || rawEntity == null || expected == null) {
+        if (clientId == null || clientId.isBlank() || clientSecret == null || clientSecret.isBlank()
+                || rawEntity == null || expected == null) {
             return false;
         }
         String normalizedExpected = expected.trim().toLowerCase(Locale.ROOT);

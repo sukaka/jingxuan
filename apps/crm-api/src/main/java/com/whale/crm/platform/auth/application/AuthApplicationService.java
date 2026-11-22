@@ -13,13 +13,17 @@ import com.whale.crm.platform.security.JwtAuthenticationFilter;
 import com.whale.crm.platform.security.JwtService;
 import com.whale.crm.platform.user.domain.SysUser;
 import com.whale.crm.platform.user.domain.UserRepository;
+import com.whale.crm.platform.web.ApiResponse;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -31,8 +35,10 @@ import java.util.Optional;
 @Service
 public class AuthApplicationService {
 
-    /** 用户不存在时的哑哈希：拉平校验耗时，避免时间侧信道探测用户名是否存在。 */
-    private static final String DUMMY_HASH = "$2a$10$7EqJtq98hPqEX7fNZaFWoOhi5B5Q5b5f5b5f5b5f5b5f5b5f5b5f5";
+    private static final Logger log = LoggerFactory.getLogger(AuthApplicationService.class);
+
+    /** 用户不存在/停用/无哈希时的有效 60 位 BCrypt 哑哈希：拉平校验耗时，避免时间侧信道探测。 */
+    private static final String DUMMY_HASH = "$2a$10$7EqJtq98hPqEX7fNZaFWoO5V5T9R1P3K7M2N4Q6S8U0W2Y4a6c8e0";
 
     private final UserRepository userRepository;
     private final CurrentUserService currentUserService;
@@ -67,34 +73,90 @@ public class AuthApplicationService {
     @Transactional
     public AuthResult login(String username, String password, String captchaId, String captchaAnswer,
                             String clientIp, String userAgent) {
-        loginAttemptService.checkAllowed(username, clientIp);
+        return login(username, password, captchaId, captchaAnswer, null, clientIp, userAgent);
+    }
+
+    @Transactional
+    public AuthResult login(String username, String password, String captchaId, String captchaAnswer,
+                            String tenantCode, String clientIp, String userAgent) {
+        String normalizedTenantCode = tenantCode == null || tenantCode.isBlank() ? null : tenantCode.strip();
+        loginAttemptService.checkIpAllowed(clientIp);
         try {
             captchaService.verify(captchaId, captchaAnswer);
         } catch (BusinessException ex) {
-            try {
-                loginAttemptService.recordFailure(username, clientIp);
-            } finally {
-                auditService.recordIndependent(TenantContext.DEFAULT_TENANT_ID, null,
-                        AuditService.ACTION_LOGIN_FAILED, "USER", "-", null,
-                        Map.of("username", username), "验证码校验失败");
+            if (ex.errorCode() == ErrorCode.VALIDATION_FAILED) {
+                try {
+                    loginAttemptService.recordCaptchaFailure(clientIp);
+                } finally {
+                    recordCaptchaFailureAudit(username, normalizedTenantCode);
+                }
             }
             throw ex;
         }
 
-        Optional<SysUser> found = userRepository.findByUsernameForAuth(username);
-        boolean authenticated = found
-                .map(user -> user.isActive() && user.getPasswordHash() != null
-                        && passwordEncoder.matches(password, user.getPasswordHash()))
-                .orElseGet(() -> {
-                    passwordEncoder.matches(password, DUMMY_HASH);
-                    return false;
-                });
+        if (normalizedTenantCode != null) {
+            List<Long> tenantIds = userRepository.findActiveTenantIdsByOrgCode(normalizedTenantCode);
+            if (tenantIds.size() != 1) {
+                String attemptScope = "org:" + normalizedTenantCode;
+                loginAttemptService.checkAllowed(attemptScope, username, clientIp);
+                passwordEncoder.matches(password, DUMMY_HASH);
+                try {
+                    loginAttemptService.recordFailure(attemptScope, username, clientIp);
+                } finally {
+                    log.warn("登录组织编码无效或存在歧义，拒绝认证 matchedOrgs={}", tenantIds.size());
+                }
+                throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
+            }
+            long resolvedTenantId = tenantIds.getFirst();
+            String attemptScope = tenantAttemptScope(resolvedTenantId);
+            loginAttemptService.checkAllowed(attemptScope, username, clientIp);
+            Optional<SysUser> found = userRepository.findByTenantAndUsernameForAuth(resolvedTenantId, username);
+            return verifyPasswordAndIssueSession(found, resolvedTenantId, attemptScope, username, password,
+                    clientIp, userAgent);
+        }
+
+        List<SysUser> candidates = userRepository.findCandidatesByUsernameForAuth(username);
+        if (candidates.size() > 1) {
+            String attemptScope = "ambiguous";
+            loginAttemptService.checkAllowed(attemptScope, username, clientIp);
+            passwordEncoder.matches(password, DUMMY_HASH);
+            try {
+                loginAttemptService.recordFailure(attemptScope, username, clientIp);
+            } finally {
+                log.warn("登录名跨租户重复且未提供组织编码，拒绝登录 candidateCount={}", candidates.size());
+            }
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "存在多个组织账号，请填写组织编码",
+                    List.of(new ApiResponse.ErrorDetail("tenantCode", "请填写组织编码")));
+        }
+        Optional<SysUser> found = candidates.stream().findFirst();
+        long auditTenantId = found.map(SysUser::getTenantId).orElse(TenantContext.DEFAULT_TENANT_ID);
+        String attemptScope = tenantAttemptScope(auditTenantId);
+        loginAttemptService.checkAllowed(attemptScope, username, clientIp);
+        return verifyPasswordAndIssueSession(found, auditTenantId, attemptScope, username, password,
+                clientIp, userAgent);
+    }
+
+    private static String tenantAttemptScope(long tenantId) {
+        return "tenant:" + tenantId;
+    }
+
+    private AuthResult verifyPasswordAndIssueSession(Optional<SysUser> found, long auditTenantId, String attemptScope,
+                                                     String username, String password, String clientIp,
+                                                     String userAgent) {
+        String targetHash = found.map(SysUser::getPasswordHash)
+                .filter(hash -> !hash.isBlank())
+                .orElse(DUMMY_HASH);
+        boolean passwordMatches = passwordEncoder.matches(password, targetHash);
+        boolean authenticated = found.isPresent()
+                && found.get().isActive()
+                && found.get().getPasswordHash() != null
+                && passwordMatches;
         if (!authenticated) {
             try {
-                loginAttemptService.recordFailure(username, clientIp);
+                loginAttemptService.recordFailure(attemptScope, username, clientIp);
             } finally {
                 auditService.recordIndependent(
-                        found.map(SysUser::getTenantId).orElse(TenantContext.DEFAULT_TENANT_ID),
+                        auditTenantId,
                         found.map(SysUser::getId).orElse(null),
                         AuditService.ACTION_LOGIN_FAILED, "USER",
                         found.map(u -> Long.toString(u.getId())).orElse("-"),
@@ -104,8 +166,35 @@ public class AuthApplicationService {
         }
 
         SysUser user = found.get();
-        loginAttemptService.recordSuccess(username);
+        loginAttemptService.recordSuccess(attemptScope, username);
         return issueVerifiedSession(user, clientIp, userAgent);
+    }
+
+    private void recordCaptchaFailureAudit(String username, String normalizedTenantCode) {
+        if (normalizedTenantCode != null) {
+            List<Long> tenantIds = userRepository.findActiveTenantIdsByOrgCode(normalizedTenantCode);
+            if (tenantIds.size() == 1) {
+                auditService.recordIndependent(tenantIds.getFirst(), null,
+                        AuditService.ACTION_LOGIN_FAILED, "USER", "-", null,
+                        Map.of("username", username, "tenantCode", normalizedTenantCode), "验证码校验失败");
+            } else {
+                log.warn("登录验证码校验失败但组织编码无效或存在歧义，跳过租户审计落库 matchedOrgs={}", tenantIds.size());
+            }
+            return;
+        }
+        List<SysUser> candidates = userRepository.findCandidatesByUsernameForAuth(username);
+        if (candidates.size() == 1) {
+            SysUser candidate = candidates.getFirst();
+            auditService.recordIndependent(candidate.getTenantId(), candidate.getId(),
+                    AuditService.ACTION_LOGIN_FAILED, "USER", Long.toString(candidate.getId()), null,
+                    Map.of("username", username), "验证码校验失败");
+        } else if (candidates.isEmpty()) {
+            auditService.recordIndependent(TenantContext.DEFAULT_TENANT_ID, null,
+                    AuditService.ACTION_LOGIN_FAILED, "USER", "-", null,
+                    Map.of("username", username), "验证码校验失败");
+        } else {
+            log.warn("登录验证码校验失败且用户名跨租户重复，跳过租户审计落库 candidateCount={}", candidates.size());
+        }
     }
 
     @Transactional
@@ -144,7 +233,8 @@ public class AuthApplicationService {
     @Transactional
     public void logout(CurrentUser currentUser, String token) {
         if (token != null) {
-            loginSessionRepository.revokeByTokenHash(JwtAuthenticationFilter.sha256Hex(token), Instant.now());
+            loginSessionRepository.revokeByTokenHash(currentUser.tenantId(), currentUser.userId(),
+                    JwtAuthenticationFilter.sha256Hex(token), Instant.now());
         }
         auditService.record(currentUser.tenantId(), currentUser.userId(), AuditService.ACTION_LOGOUT, "USER",
                 Long.toString(currentUser.userId()), null,

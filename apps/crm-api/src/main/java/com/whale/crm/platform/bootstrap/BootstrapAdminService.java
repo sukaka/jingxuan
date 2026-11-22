@@ -43,8 +43,8 @@ public class BootstrapAdminService {
         if (displayName == null || displayName.isBlank() || displayName.length() > 64) {
             throw new IllegalArgumentException("显示名不能为空且最长 64 字符");
         }
-        if (password == null || password.length() < 12 || password.length() > 64) {
-            throw new IllegalArgumentException("初始密码长度须为 12-64 位");
+        if (password == null || password.isBlank() || password.length() < 12 || password.length() > 64) {
+            throw new IllegalArgumentException("初始密码长度须为 12-64 位且不能为空白字符");
         }
         if (userRepository.existsByUsername(TENANT_ID, username)) {
             return new BootstrapAdminResult(0L, false);

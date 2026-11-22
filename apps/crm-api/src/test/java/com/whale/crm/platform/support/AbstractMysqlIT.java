@@ -8,6 +8,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.testcontainers.containers.MySQLContainer;
@@ -20,6 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 采用单例容器模式（静态启动、JVM 结束由 Ryuk 回收），避免 @Testcontainers 按类停容器导致共享上下文断库。
  * 注意数据跨类共享：测试自建数据一律使用独立前缀的用户名/编码，避免相互污染。
  */
+@ActiveProfiles("local")
 @SpringBootTest(properties = "app.exports.worker.enabled=false")
 @AutoConfigureMockMvc
 public abstract class AbstractMysqlIT {
@@ -30,7 +32,10 @@ public abstract class AbstractMysqlIT {
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
             .withDatabaseName("medical_crm")
             .withUrlParam("connectionTimeZone", "UTC")
-            .withCommand("--log-bin-trust-function-creators=1");
+            .withCommand("--log-bin-trust-function-creators=1")
+            .withTmpFs(java.util.Map.of("/var/lib/mysql", "rw,mode=1777"))
+            .withEnv("MYSQL_INITDB_SKIP_TZINFO", "1")
+            .withStartupTimeoutSeconds(600);
 
     static {
         MYSQL.start();
@@ -68,7 +73,11 @@ public abstract class AbstractMysqlIT {
     }
 
     protected void resetLoginAttempts(String username, String clientIp) {
-        loginAttemptService.recordSuccess(username);
+        resetLoginAttempts("tenant:1", username, clientIp);
+    }
+
+    protected void resetLoginAttempts(String tenantScope, String username, String clientIp) {
+        loginAttemptService.recordSuccess(tenantScope, username);
         redis.delete(loginAttemptKeyPrefix + "ip:"
                 + com.whale.crm.platform.security.JwtAuthenticationFilter.sha256Hex(clientIp));
     }

@@ -56,6 +56,9 @@ public class FollowupPolicyService {
     @Transactional
     public FollowupPolicyResponse update(long tenantId, CurrentUser user,
                                          UpdateFollowupPolicyRequest request, String idempotencyKey) {
+        if (user == null || !user.permissions().contains("followup:policy:manage")) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅授权策略管理员可修改跟进间隔策略");
+        }
         String key = requireKey(idempotencyKey);
         String payload = canonical(request);
         if (idempotencyService.lookup(tenantId, IDEMPOTENCY_SCOPE, key, payload).isPresent()) {

@@ -8,10 +8,10 @@ import com.whale.crm.platform.auth.application.CaptchaService;
 import com.whale.crm.platform.auth.application.AuthApplicationService.AuthResult;
 import com.whale.crm.platform.security.AuthSecurityProperties;
 import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.JwtAuthenticationFilter;
 import com.whale.crm.platform.security.SecuritySupport;
 import com.whale.crm.platform.web.ApiResponse;
 import com.whale.crm.platform.web.RequestIdFilter;
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
@@ -63,7 +63,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<AuthUserResponse>> login(@Valid @RequestBody LoginRequest body,
                                                                HttpServletRequest request) {
         AuthResult result = authService.login(body.username(), body.password(), body.captchaId(), body.captchaAnswer(),
-                clientIp(request), request.getHeader(HttpHeaders.USER_AGENT));
+                body.tenantCode(), clientIp(request), request.getHeader(HttpHeaders.USER_AGENT));
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, tokenCookie(result.token()).toString())
                 .header(HttpHeaders.SET_COOKIE, csrfCookie(result.csrfToken()).toString())
@@ -73,7 +73,7 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<ApiResponse<Void>> logout(HttpServletRequest request) {
         CurrentUser currentUser = SecuritySupport.requireCurrentUser();
-        authService.logout(currentUser, readTokenCookie(request));
+        authService.logout(currentUser, JwtAuthenticationFilter.resolveToken(request, properties.tokenCookieName()));
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, clearedCookie(properties.tokenCookieName(), true).toString())
                 .header(HttpHeaders.SET_COOKIE, clearedCookie(properties.csrfCookieName(), false).toString())
@@ -113,17 +113,6 @@ public class AuthController {
                 .path("/")
                 .maxAge(0)
                 .build();
-    }
-
-    private String readTokenCookie(HttpServletRequest request) {
-        if (request.getCookies() != null) {
-            for (Cookie cookie : request.getCookies()) {
-                if (properties.tokenCookieName().equals(cookie.getName())) {
-                    return cookie.getValue();
-                }
-            }
-        }
-        return null;
     }
 
     private String clientIp(HttpServletRequest request) {

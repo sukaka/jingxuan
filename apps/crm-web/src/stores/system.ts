@@ -41,7 +41,7 @@ export const useSystemStore = defineStore('system', {
           this.healthMessage = '已连接·未认证(请重新登录)'
         } else if (error instanceof ApiError && error.isNetworkError) {
           this.healthStatus = 'unreachable'
-          this.healthMessage = '无法连接后端服务,请确认后端已启动(http://localhost:8080)'
+          this.healthMessage = '无法连接后端服务，请确认后端已启动或稍后重试'
         } else {
           this.healthStatus = 'down'
           this.healthMessage = error instanceof Error ? error.message : '健康检查失败'

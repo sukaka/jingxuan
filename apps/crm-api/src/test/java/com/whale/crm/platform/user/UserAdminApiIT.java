@@ -228,6 +228,207 @@ class UserAdminApiIT extends AbstractMysqlIT {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void blankPasswordRejected_andNonAdminCannotEscalateOrModifyAdminAccount() throws Exception {
+        AuthCookies admin = login("admin");
+        long targetUserId = createUser(admin, "it_user_blank_pw");
+        long version = currentVersion(admin, "it_user_blank_pw");
+
+        mockMvc.perform(admin.withAuth(patch("/api/v1/users/" + targetUserId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"空白密码\",\"password\":\"        \",\"version\":" + version + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        String delegateRoleBody = mockMvc.perform(admin.withAuth(post("/api/v1/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleCode\":\"IT_USER_MGR_LOW\",\"roleName\":\"低权限用户管理员\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long delegateRoleId = objectMapper.readTree(delegateRoleBody).at("/data/id").asLong();
+
+        mockMvc.perform(admin.withAuth(put("/api/v1/roles/" + delegateRoleId + "/permissions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"permissionCodes\":[\"user:read\",\"user:write\"]}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"it_low_user_mgr\",\"displayName\":\"低权限管理员\","
+                                + "\"password\":\"ItPass@12345\",\"userType\":\"EMPLOYEE\",\"roleIds\":["
+                                + delegateRoleId + "]}"))
+                .andExpect(status().isCreated());
+
+        var loginResult = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginPayload("it_low_user_mgr", "ItPass@12345")))
+                .andExpect(status().isOk())
+                .andReturn();
+        AuthCookies lowMgr = new AuthCookies(cookieValue(loginResult, "CRM_TOKEN"), cookieValue(loginResult, "CRM_CSRF"));
+
+        long adminRoleId = roleIdByCode(admin, "ADMIN");
+        long financeRoleId = roleIdByCode(admin, "FINANCE");
+
+        mockMvc.perform(lowMgr.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"it_escalate_admin\",\"displayName\":\"越权建ADMIN\","
+                                + "\"password\":\"ItPass@12345\",\"userType\":\"EMPLOYEE\",\"roleIds\":["
+                                + adminRoleId + "]}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        mockMvc.perform(lowMgr.withAuth(put("/api/v1/users/" + targetUserId + "/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleIds\":[" + financeRoleId + "]}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        long adminVersion = currentVersion(admin, "admin");
+        mockMvc.perform(lowMgr.withAuth(patch("/api/v1/users/1"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"篡改\",\"password\":\"HackPass@123\",\"version\":"
+                                + adminVersion + "}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        mockMvc.perform(lowMgr.withAuth(post("/api/v1/users/1/disable")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        mockMvc.perform(lowMgr.withAuth(put("/api/v1/users/" + targetUserId + "/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleIds\":[" + delegateRoleId + "," + delegateRoleId + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.roles.length()").value(1));
+    }
+
+    @Test
+    void nonAdminUserWriteCannotModifyOutOfScopeUser_butCanManageSubsetUser() throws Exception {
+        AuthCookies admin = login("admin");
+
+        String mgrRoleBody = mockMvc.perform(admin.withAuth(post("/api/v1/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleCode\":\"IT_MBE02_MGR\",\"roleName\":\"委派用户管理员\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long mgrRoleId = objectMapper.readTree(mgrRoleBody).at("/data/id").asLong();
+        mockMvc.perform(admin.withAuth(put("/api/v1/roles/" + mgrRoleId + "/permissions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"permissionCodes\":[\"user:read\",\"user:write\"]}"))
+                .andExpect(status().isOk());
+
+        String subsetRoleBody = mockMvc.perform(admin.withAuth(post("/api/v1/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleCode\":\"IT_MBE02_READER\",\"roleName\":\"子集只读角色\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long subsetRoleId = objectMapper.readTree(subsetRoleBody).at("/data/id").asLong();
+        mockMvc.perform(admin.withAuth(put("/api/v1/roles/" + subsetRoleId + "/permissions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"permissionCodes\":[\"user:read\"]}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"it_mbe02_mgr\",\"displayName\":\"委派管理员\","
+                                + "\"password\":\"ItPass@12345\",\"userType\":\"EMPLOYEE\",\"roleIds\":["
+                                + mgrRoleId + "]}"))
+                .andExpect(status().isCreated());
+
+        long financeRoleId = roleIdByCode(admin, "FINANCE");
+        String outOfScopeUserBody = mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"it_mbe02_fin\",\"displayName\":\"越权目标财务\","
+                                + "\"password\":\"ItPass@12345\",\"userType\":\"EMPLOYEE\",\"roleIds\":["
+                                + financeRoleId + "]}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long outOfScopeUserId = objectMapper.readTree(outOfScopeUserBody).at("/data/id").asLong();
+        long outOfScopeVersion = currentVersion(admin, "it_mbe02_fin");
+
+        String subsetUserBody = mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"it_mbe02_sub\",\"displayName\":\"子集用户\","
+                                + "\"password\":\"ItPass@12345\",\"userType\":\"EMPLOYEE\",\"roleIds\":["
+                                + subsetRoleId + "]}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long subsetUserId = objectMapper.readTree(subsetUserBody).at("/data/id").asLong();
+        long subsetVersion = currentVersion(admin, "it_mbe02_sub");
+
+        var loginResult = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginPayload("it_mbe02_mgr", "ItPass@12345")))
+                .andExpect(status().isOk())
+                .andReturn();
+        AuthCookies mgr = new AuthCookies(cookieValue(loginResult, "CRM_TOKEN"), cookieValue(loginResult, "CRM_CSRF"));
+
+        // 1. Out-of-scope seeded finance1 account must reject PATCH, PUT /roles, and POST /disable with 403
+        long finance1Id = userIdByUsername(admin, "finance1");
+        long finance1Version = currentVersion(admin, "finance1");
+        mockMvc.perform(mgr.withAuth(patch("/api/v1/users/" + finance1Id))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"劫持财务\",\"password\":\"HackPass@123\",\"version\":"
+                                + finance1Version + "}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        mockMvc.perform(mgr.withAuth(put("/api/v1/users/" + finance1Id + "/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleIds\":[]}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        mockMvc.perform(mgr.withAuth(post("/api/v1/users/" + finance1Id + "/disable")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        // 2. Out-of-scope custom FINANCE user must also reject all three with 403
+        mockMvc.perform(mgr.withAuth(patch("/api/v1/users/" + outOfScopeUserId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"劫持\",\"password\":\"HackPass@123\",\"version\":"
+                                + outOfScopeVersion + "}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        mockMvc.perform(mgr.withAuth(put("/api/v1/users/" + outOfScopeUserId + "/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleIds\":[" + subsetRoleId + "]}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        mockMvc.perform(mgr.withAuth(post("/api/v1/users/" + outOfScopeUserId + "/disable")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        // Confirm finance1 password & active status remain untouched
+        login("finance1");
+
+        // 3. Subset-permission user remains manageable across update, assignRoles, and disable
+        mockMvc.perform(mgr.withAuth(patch("/api/v1/users/" + subsetUserId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"子集已改名\",\"password\":\"NewSub@12345\",\"version\":"
+                                + subsetVersion + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.displayName").value("子集已改名"));
+        mockMvc.perform(mgr.withAuth(put("/api/v1/users/" + subsetUserId + "/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleIds\":[" + subsetRoleId + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.roles[0]").value("IT_MBE02_READER"));
+        mockMvc.perform(mgr.withAuth(post("/api/v1/users/" + subsetUserId + "/disable")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("DISABLED"));
+    }
+
+    private long userIdByUsername(AuthCookies admin, String username) throws Exception {
+        String body = mockMvc.perform(get("/api/v1/users?keyword=" + username).cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        for (var item : objectMapper.readTree(body).at("/data/items")) {
+            if (username.equals(item.get("username").asText())) {
+                return item.get("id").asLong();
+            }
+        }
+        throw new AssertionError("列表中未找到用户 " + username);
+    }
+
     private long createUser(AuthCookies admin, String username) throws Exception {
         String body = mockMvc.perform(admin.withAuth(post("/api/v1/users"))
                         .contentType(MediaType.APPLICATION_JSON)

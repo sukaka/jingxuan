@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
 import type { RiskCase, RiskCaseDetail } from '../src/api/risk'
-import { claimRiskCase, closeRiskCase, getRiskCase, listRiskCases, resolveRiskCase } from '../src/api/risk'
+import { claimRiskCase, closeRiskCase, getRiskCase, listRiskCases, resolveRiskCase, syncRiskCases } from '../src/api/risk'
 import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
 import RiskCasesView from '../src/views/RiskCasesView.vue'
@@ -16,6 +16,7 @@ vi.mock('../src/api/risk', () => ({
   claimRiskCase: vi.fn(),
   resolveRiskCase: vi.fn(),
   closeRiskCase: vi.fn(),
+  syncRiskCases: vi.fn(),
 }))
 
 function risk(status: string, version = 0): RiskCase {
@@ -261,5 +262,21 @@ describe('RiskCasesView 服务端状态机与追加历史', () => {
     await flushPromises()
     expect(element('risk-permission-empty').textContent).toContain('没有风控台账查看权限')
     expect(listRiskCases).toHaveBeenCalledTimes(1)
+  })
+
+  it('手动同步按钮仅对 risk:write 可见，点击触发 POST /risks/sync 并刷新台账', async () => {
+    const readonly = mountView(['risk:read'])
+    await flushPromises()
+    expect(readonly.find('[data-testid="risk-sync-button"]').exists()).toBe(false)
+    readonly.unmount()
+
+    vi.mocked(syncRiskCases).mockResolvedValue({ createdCount: 1, updatedCount: 0 })
+    const writable = mountView(['risk:read', 'risk:write'])
+    await flushPromises()
+    await click('risk-sync-button')
+
+    expect(syncRiskCases).toHaveBeenCalledTimes(1)
+    expect(listRiskCases).toHaveBeenCalledTimes(3)
+    writable.unmount()
   })
 })

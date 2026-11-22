@@ -24,8 +24,11 @@ public interface CatalogMapper {
     int updateProject(@Param("tenantId") long tenantId, @Param("entity") Project project);
 
     List<ProductPackage> searchPackages(@Param("tenantId") long tenantId, @Param("keyword") String keyword,
-                                        @Param("status") String status, @Param("offset") int offset, @Param("size") int size);
-    long countPackages(@Param("tenantId") long tenantId, @Param("keyword") String keyword, @Param("status") String status);
+                                        @Param("status") String status,
+                                        @Param("institutionIds") Set<Long> institutionIds,
+                                        @Param("offset") int offset, @Param("size") int size);
+    long countPackages(@Param("tenantId") long tenantId, @Param("keyword") String keyword,
+                       @Param("status") String status, @Param("institutionIds") Set<Long> institutionIds);
     ProductPackage selectPackage(@Param("tenantId") long tenantId, @Param("id") long id);
     ProductPackage selectPackageForUpdate(@Param("tenantId") long tenantId, @Param("id") long id);
     ProductPackage selectPackageByCode(@Param("tenantId") long tenantId, @Param("code") String code);
@@ -33,6 +36,9 @@ public interface CatalogMapper {
     int updatePackage(@Param("tenantId") long tenantId, @Param("entity") ProductPackage productPackage);
 
     List<PackageVersion> selectVersions(@Param("tenantId") long tenantId, @Param("packageId") long packageId);
+    List<PackageVersion> selectVersionsByInstitutionIds(@Param("tenantId") long tenantId,
+                                                        @Param("packageId") long packageId,
+                                                        @Param("institutionIds") Set<Long> institutionIds);
     PackageVersion selectVersion(@Param("tenantId") long tenantId, @Param("id") long id);
     PackageVersion selectVersionForUpdate(@Param("tenantId") long tenantId, @Param("id") long id);
     int nextVersionNo(@Param("tenantId") long tenantId, @Param("packageId") long packageId);
@@ -78,8 +84,10 @@ public interface CatalogMapper {
     long countInstitutions(@Param("tenantId") long tenantId, @Param("keyword") String keyword,
                            @Param("status") String status, @Param("institutionIds") Set<Long> institutionIds);
     List<Institution> selectInstitutionsByIds(@Param("tenantId") long tenantId, @Param("ids") Set<Long> ids);
+    List<Institution> selectActiveInstitutionsByIds(@Param("tenantId") long tenantId, @Param("ids") Set<Long> ids);
     long countActiveInstitutionsByIds(@Param("tenantId") long tenantId, @Param("ids") Set<Long> ids);
     List<Long> selectInstitutionIdsBySku(@Param("tenantId") long tenantId, @Param("skuId") long skuId);
+    List<Long> selectActiveInstitutionIdsBySku(@Param("tenantId") long tenantId, @Param("skuId") long skuId);
     void deleteSkuInstitutions(@Param("tenantId") long tenantId, @Param("skuId") long skuId);
     void insertSkuInstitution(@Param("tenantId") long tenantId, @Param("skuId") long skuId,
                               @Param("institutionId") long institutionId);

@@ -55,13 +55,27 @@ public interface CustomerMapper {
     @org.apache.ibatis.annotations.Update("UPDATE crm_customer SET deleted=0,version=version+1 WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND deleted=1")
     int restore(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version);
 
-    List<Long> selectCustomerIdsByMobileHash(@Param("tenantId") long tenantId, @Param("mobileHash") String mobileHash);
+    List<Long> selectCustomerIdsByMobileHash(@Param("tenantId") long tenantId,
+                                             @Param("scopeType") String scopeType,
+                                             @Param("teamIds") List<Long> teamIds,
+                                             @Param("selfId") long selfId,
+                                             @Param("mobileHash") String mobileHash);
 
     int countByMobileHash(@Param("tenantId") long tenantId, @Param("mobileHash") String mobileHash);
 
-    List<String> selectDuplicatedMobileHashes(@Param("tenantId") long tenantId);
+    List<String> selectDuplicatedMobileHashes(@Param("tenantId") long tenantId,
+                                              @Param("scopeType") String scopeType,
+                                              @Param("teamIds") List<Long> teamIds,
+                                              @Param("selfId") long selfId);
 
-    List<Long> selectCustomerIdsByExternalId(@Param("tenantId") long tenantId, @Param("externalId") String externalId);
+    List<Long> selectCustomerIdsByExternalId(@Param("tenantId") long tenantId,
+                                             @Param("scopeType") String scopeType,
+                                             @Param("teamIds") List<Long> teamIds,
+                                             @Param("selfId") long selfId,
+                                             @Param("externalId") String externalId);
 
-    List<String> selectDuplicatedExternalIds(@Param("tenantId") long tenantId);
+    List<String> selectDuplicatedExternalIds(@Param("tenantId") long tenantId,
+                                             @Param("scopeType") String scopeType,
+                                             @Param("teamIds") List<Long> teamIds,
+                                             @Param("selfId") long selfId);
 }

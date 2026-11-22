@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { getRedemption } from '../../api/fulfillment'
 import type { Redemption, RedemptionDetail } from '../../api/fulfillment'
 import { getEntitlement } from '../../api/trading'
+import { mapWithConcurrency } from '../../utils/asyncBatch'
 import { useReferenceNames } from '../references'
 import { formatDateTime } from '../customer/shared'
 
 const props = defineProps<{ rows: Redemption[]; canReverse: boolean }>()
-const emit = defineEmits<{ detail: [id: number]; reverse: [row: Redemption] }>()
+const emit = defineEmits<{
+  detail: [id: number]
+  reverse: [row: Redemption]
+  'details-loaded': [details: Record<number, RedemptionDetail>]
+}>()
 const details = ref<Record<number, RedemptionDetail>>({})
 const cumulativeCounts = ref<Record<number, number>>({})
+const detailCache = new Map<string, RedemptionDetail>()
+const entitlementCache = new Map<number, number>()
+let loadSequence = 0
+let disposed = false
 const { loadCustomerNames, customerLabel, institutionLabel, projectLabel } = useReferenceNames()
 
 const REDEMPTION_STATUS: Record<string, [string, string]> = {
@@ -21,20 +30,61 @@ const REDEMPTION_STATUS: Record<string, [string, string]> = {
 function pill(status: string) { return REDEMPTION_STATUS[status] || ['未知状态', 'dark'] }
 
 watch(() => props.rows, async (rows) => {
-  const results = await Promise.allSettled(rows.map((row) => getRedemption(row.id)))
+  const sequence = ++loadSequence
+  if (!rows.length) {
+    details.value = {}
+    cumulativeCounts.value = {}
+    emit('details-loaded', {})
+    return
+  }
+
+  const uncachedRows = rows.filter((row) => !detailCache.has(`${row.id}:${row.version}`))
+  const results = await mapWithConcurrency(uncachedRows, 5, (row) => getRedemption(row.id))
+  if (disposed || sequence !== loadSequence) return
+
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      const row = uncachedRows[index]
+      detailCache.set(`${row.id}:${row.version}`, result.value)
+    }
+  })
+
   const map: Record<number, RedemptionDetail> = {}
-  results.forEach((result, index) => { if (result.status === 'fulfilled') map[rows[index].id] = result.value })
+  rows.forEach((row) => {
+    const cached = detailCache.get(`${row.id}:${row.version}`)
+    if (cached) map[row.id] = cached
+  })
   details.value = map
+  emit('details-loaded', map)
   void loadCustomerNames(rows.map((row) => row.customerId))
+
   const entitlementIds = [...new Set(Object.values(map).flatMap((detail) => detail.lines.map((line) => line.entitlementId)))]
-  const ledgers = await Promise.allSettled(entitlementIds.map((id) => getEntitlement(id)))
-  const totals: Record<number, number> = {}
+  const uncachedEntitlements = entitlementIds.filter((id) => !entitlementCache.has(id))
+  const ledgers = await mapWithConcurrency(uncachedEntitlements, 5, (id) => getEntitlement(id))
+  if (disposed || sequence !== loadSequence) return
+
   ledgers.forEach((result, index) => {
-    if (result.status === 'fulfilled') totals[entitlementIds[index]] = result.value.ledger
-      .filter((line) => line.txnType === 'REDEEM').reduce((sum, line) => sum + Math.abs(line.deltaCount), 0)
+    if (result.status === 'fulfilled') {
+      entitlementCache.set(
+        uncachedEntitlements[index],
+        result.value.ledger.filter((line) => line.txnType === 'REDEEM').reduce((sum, line) => sum + Math.abs(line.deltaCount), 0),
+      )
+    }
+  })
+
+  const totals: Record<number, number> = {}
+  entitlementIds.forEach((id) => {
+    const total = entitlementCache.get(id)
+    if (total !== undefined) totals[id] = total
   })
   cumulativeCounts.value = totals
 }, { immediate: true })
+
+onBeforeUnmount(() => {
+  disposed = true
+  loadSequence += 1
+})
+
 function lines(id: number) { return details.value[id]?.lines || [] }
 function count(id: number) { return lines(id).reduce((sum, line) => sum + line.count, 0) }
 function cumulative(id: number) { return lines(id).reduce((sum, line) => sum + (cumulativeCounts.value[line.entitlementId] || 0), 0) }

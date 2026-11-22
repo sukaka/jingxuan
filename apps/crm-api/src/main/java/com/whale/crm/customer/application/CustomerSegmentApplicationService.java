@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @Service
@@ -73,6 +74,9 @@ public class CustomerSegmentApplicationService {
     @Transactional
     public CustomerSegmentResponse create(long tenantId, CurrentUser user, CreateCustomerSegmentRequest input,
                                           String idempotencyKey) {
+        if (scopeSupport.isEmptyScope(scopeSupport.scope(user))) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "当前数据范围不能创建动态分组");
+        }
         CreateCustomerSegmentRequest request = new CreateCustomerSegmentRequest(input.name().strip(),
                 normalize(input.filters()));
         projectSupport.requireExisting(tenantId, projectIds(request.filters()));
@@ -99,6 +103,7 @@ public class CustomerSegmentApplicationService {
     public CustomerSegmentResponse update(long tenantId, CurrentUser user, long id,
                                           UpdateCustomerSegmentRequest input) {
         CustomerSegment before = requireSegment(tenantId, id);
+        requireSegmentManageable(user, before);
         UpdateCustomerSegmentRequest request = new UpdateCustomerSegmentRequest(input.name().strip(),
                 normalize(input.filters()), input.version());
         projectSupport.requireExisting(tenantId, projectIds(request.filters()));
@@ -119,6 +124,7 @@ public class CustomerSegmentApplicationService {
     @Transactional
     public void delete(long tenantId, CurrentUser user, long id, long version) {
         CustomerSegment before = requireSegment(tenantId, id);
+        requireSegmentManageable(user, before);
         if (repository.softDelete(tenantId, id, version) == 0) {
             throw conflict();
         }
@@ -210,6 +216,14 @@ public class CustomerSegmentApplicationService {
     private CustomerSegment requireSegment(long tenantId, long id) {
         return repository.findActiveById(tenantId, id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "动态分组不存在"));
+    }
+
+    private void requireSegmentManageable(CurrentUser user, CustomerSegment segment) {
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)
+                || (!Objects.equals(segment.createdBy(), user.userId()) && scope.type() != DataScope.ScopeType.ALL)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅创建人或全量范围管理员可修改或删除动态分组");
+        }
     }
 
     private CustomerSegmentResponse toResponse(CustomerSegment segment) {

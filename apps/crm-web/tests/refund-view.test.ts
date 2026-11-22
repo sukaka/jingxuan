@@ -10,9 +10,11 @@ import { useAuthStore } from '../src/stores/auth'
 import RefundsView from '../src/views/RefundsView.vue'
 import RefundExecutionDrawer from '../src/views/refund/RefundExecutionDrawer.vue'
 
+let currentQuery: Record<string, string> = {}
+
 vi.mock('vue-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-router')>()),
-  useRoute: () => ({ query: {} }),
+  useRoute: () => ({ query: currentQuery }),
 }))
 
 vi.mock('../src/api/refund', () => ({
@@ -77,6 +79,7 @@ function mountView(user: AuthUser) {
 
 describe('RefundsView 退款状态与操作权限', () => {
   beforeEach(() => {
+    currentQuery = {}
     vi.clearAllMocks()
     vi.mocked(listRefunds).mockResolvedValue({ items: [refund], total: 1, page: 1, size: 20 })
     vi.mocked(getRefund).mockResolvedValue(detail)
@@ -217,5 +220,18 @@ describe('RefundsView 退款状态与操作权限', () => {
     const writer = mountView(makeUser(10, ['refund:read', 'refund:write']))
     await flushPromises()
     expect(writer.find('[data-testid="refund-create"]').exists()).toBe(true)
+  })
+
+  it('进入页面时消费合法的 route.query.status 并忽略非法状态', async () => {
+    currentQuery = { status: 'REQUESTED' }
+    mountView(makeUser(10, ['refund:read']))
+    await flushPromises()
+    expect(listRefunds).toHaveBeenCalledWith(expect.objectContaining({ status: 'REQUESTED' }))
+
+    vi.mocked(listRefunds).mockClear()
+    currentQuery = { status: 'INVALID_STATUS' }
+    mountView(makeUser(10, ['refund:read']))
+    await flushPromises()
+    expect(listRefunds).toHaveBeenCalledWith(expect.objectContaining({ status: undefined }))
   })
 })

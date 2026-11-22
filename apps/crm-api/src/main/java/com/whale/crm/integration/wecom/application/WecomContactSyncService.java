@@ -10,6 +10,8 @@ import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -21,23 +23,35 @@ import java.util.Map;
 @Service
 public class WecomContactSyncService {
     private static final int MAX_PAGES = 10000;
+    private static final long DEFAULT_LEASE_SECONDS = 300L;
     private final WecomContactSyncRepository repository;
     private final WecomContactClientRouter clients;
     private final AuditService auditService;
     private final TransactionTemplate transactions;
+    private final long syncLeaseSeconds;
 
+    @Autowired
     public WecomContactSyncService(WecomContactSyncRepository repository, WecomContactClientRouter clients,
-                                   AuditService auditService, PlatformTransactionManager transactionManager) {
+                                   AuditService auditService, PlatformTransactionManager transactionManager,
+                                   @Value("${app.wecom.official.sync-lease-seconds:300}") long syncLeaseSeconds) {
         this.repository = repository;
         this.clients = clients;
         this.auditService = auditService;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.syncLeaseSeconds = syncLeaseSeconds > 0 ? syncLeaseSeconds : DEFAULT_LEASE_SECONDS;
+    }
+
+    public WecomContactSyncService(WecomContactSyncRepository repository, WecomContactClientRouter clients,
+                                   AuditService auditService, PlatformTransactionManager transactionManager) {
+        this(repository, clients, auditService, transactionManager, DEFAULT_LEASE_SECONDS);
     }
 
     public WecomContactSyncRun sync(CurrentUser user, String requestedType) {
         WecomContactClient client = client(user.tenantId());
         String type = requestedType == null ? "FULL" : requestedType;
-        long runId = repository.startRun(user.tenantId(), client.corpId(), type, user.userId(), Instant.now());
+        Instant now = Instant.now();
+        long runId = repository.startRun(user.tenantId(), client.corpId(), type, user.userId(),
+                now, now.plusSeconds(syncLeaseSeconds));
         if (runId == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "该企业已有客户同步正在运行");
         }
@@ -81,7 +95,10 @@ public class WecomContactSyncService {
             }
         }
         int deactivated = "RECONCILE".equals(type) ? repository.deactivateMissing(tenantId, client.corpId(), runId) : 0;
-        repository.finishRun(tenantId, runId, "SUCCESS", cursor, received, received, deactivated, null, Instant.now());
+        if (repository.finishRun(tenantId, runId, "SUCCESS", cursor, received, received, deactivated,
+                null, Instant.now()) != 1) {
+            throw new BusinessException(ErrorCode.CONFLICT, "企微同步租约已过期，本次结果未提交");
+        }
         auditService.record(tenantId, null, "WECOM_CONTACT_SYNC", "WECOM_CONTACT_SYNC_RUN",
                 Long.toString(runId), null, Map.of("runType", type, "received", received, "deactivated", deactivated), null);
         return repository.runs(tenantId, client.corpId()).stream().filter(run -> run.id() == runId).findFirst().orElseThrow();
@@ -89,7 +106,9 @@ public class WecomContactSyncService {
 
     public void refreshContact(long tenantId, String externalUserid) {
         WecomContactClient client = client(tenantId);
-        long runId = repository.startRun(tenantId, client.corpId(), "CALLBACK", null, Instant.now());
+        Instant now = Instant.now();
+        long runId = repository.startRun(tenantId, client.corpId(), "CALLBACK", null,
+                now, now.plusSeconds(syncLeaseSeconds));
         if (runId == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "无法创建客户回调同步记录");
         }
@@ -103,7 +122,10 @@ public class WecomContactSyncService {
                     repository.upsertContact(tenantId, mapping.staffUserId(), runId, Instant.now(), profile);
                     count[0]++;
                 }
-                repository.finishRun(tenantId, runId, "SUCCESS", null, count[0], count[0], 0, null, Instant.now());
+                if (repository.finishRun(tenantId, runId, "SUCCESS", null, count[0], count[0], 0,
+                        null, Instant.now()) != 1) {
+                    throw new BusinessException(ErrorCode.CONFLICT, "企微回调同步租约已过期，本次结果未提交");
+                }
             });
         } catch (RuntimeException ex) {
             repository.finishRun(tenantId, runId, "ERROR", null, 0, 0, 0, masked(ex), Instant.now());

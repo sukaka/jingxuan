@@ -21,7 +21,7 @@ for name,minimum,maximum in [('LOAD_REQUESTS',1,100000),('LOAD_CONCURRENCY',1,64
     assert minimum<=value<=maximum,(name,value)
 assert int(os.environ['LOAD_CONCURRENCY'])<=int(os.environ['LOAD_REQUESTS'])
 PY
-for tool in curl ab python3; do
+for tool in curl python3; do
   command -v "$tool" >/dev/null
 done
 RUN_ID="$(date +%s)-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:10])')"
@@ -29,7 +29,7 @@ WORK="$ROOT/tmp/p3-load-$RUN_ID"
 mkdir -p "$WORK"
 chmod 700 "$WORK"
 cleanup() {
-  rm -f "$WORK/cookies.txt" "$WORK/login.headers"
+  rm -f "$WORK/cookies.txt" "$WORK/login.json"
 }
 trap cleanup EXIT
 
@@ -39,91 +39,169 @@ import json,sys
 body=json.load(open(sys.argv[1]))
 assert body.get('status')=='UP',body
 PY
-PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"username":sys.argv[1],"password":sys.argv[2]}))' "$USERNAME" "$PASSWORD")"
-curl --fail --silent --show-error --max-time 10 -D "$WORK/login.headers" -c "$WORK/cookies.txt" \
-  -H 'Content-Type: application/json' --data "$PAYLOAD" "$BASE_URL/api/v1/auth/login" > "$WORK/login.json"
-python3 - "$WORK/login.json" <<'PY'
-import json,sys
+export CRM_LOAD_USERNAME="$USERNAME"
+export CRM_LOAD_PASSWORD="$PASSWORD"
+python3 "$ROOT/infra/production/tests/captcha_solver.py" \
+  --base-url "$BASE_URL" \
+  --username-env CRM_LOAD_USERNAME \
+  --password-env CRM_LOAD_PASSWORD \
+  --cookie-jar "$WORK/cookies.txt" \
+  --out-json "$WORK/login.json"
+python3 - "$WORK/login.json" "$WORK/cookies.txt" <<'PY'
+import http.cookiejar,json,sys
 body=json.load(open(sys.argv[1]))
 assert body.get('code')=='OK' and body['data']['userId']>0,body
+jar=http.cookiejar.MozillaCookieJar(sys.argv[2])
+jar.load(ignore_discard=True,ignore_expires=True)
+names={c.name for c in jar}
+assert {'CRM_TOKEN','CRM_CSRF'}.issubset(names),f'登录响应缺少认证 Cookie: {names}'
 PY
-AUTH_COOKIE="$(python3 - "$WORK/login.headers" <<'PY'
-import sys
-cookies=[]
-for line in open(sys.argv[1]):
-    if line.lower().startswith('set-cookie:'):
-        cookie=line.split(':',1)[1].strip().split(';',1)[0]
-        if cookie.startswith(('CRM_TOKEN=','CRM_CSRF=')):
-            cookies.append(cookie)
-assert len(cookies)==2,'登录响应缺少认证 Cookie'
-print('; '.join(cookies))
-PY
-)"
 for endpoint in customers reconciliation; do
   case "$endpoint" in
     customers) PATH_PART='/api/v1/customers?page=1&size=20' ;;
     reconciliation) PATH_PART='/api/v1/settlements/reconciliation' ;;
   esac
-  curl --fail --silent --show-error --max-time 10 -H "Cookie: $AUTH_COOKIE" "$BASE_URL$PATH_PART" > "$WORK/$endpoint-preflight.json"
+  curl --fail --silent --show-error --max-time 10 -b "$WORK/cookies.txt" "$BASE_URL$PATH_PART" > "$WORK/$endpoint-preflight.json"
   python3 - "$WORK/$endpoint-preflight.json" <<'PY'
 import json,sys
 body=json.load(open(sys.argv[1]))
 assert body.get('code')=='OK',body
 PY
-  ab -k -s 10 -n "$REQUESTS" -c "$CONCURRENCY" -H 'Accept: application/json' \
-    -H "Cookie: $AUTH_COOKIE" "$BASE_URL$PATH_PART" > "$WORK/$endpoint.ab.txt"
 done
-python3 - "$WORK" <<'PY'
+python3 - "$WORK" "$WORK/cookies.txt" <<'PY'
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import json,os,re,sys
-root=Path(sys.argv[1])
-results=[]
-for name in ('customers','reconciliation'):
-    text=(root/f'{name}.ab.txt').read_text()
-    def number(label,default=None):
-        match=re.search(rf'^{re.escape(label)}\s+(\d+(?:\.\d+)?)',text,re.M)
-        if not match:
-            if default is not None:
-                return default
-            raise AssertionError((name,label))
-        return float(match.group(1))
-    p95_match=re.search(r'^\s*95%\s+(\d+)',text,re.M)
-    assert p95_match,(name,'缺少 p95')
-    p95=int(p95_match.group(1))
-    complete=int(number('Complete requests:'))
-    failed=int(number('Failed requests:'))
-    non_2xx=int(number('Non-2xx responses:',0))
-    breakdown=re.search(r'\(Connect:\s*(\d+), Receive:\s*(\d+), Length:\s*(\d+), Exceptions:\s*(\d+)\)',text)
-    if breakdown:
-        connect,receive,length_variants,exceptions=map(int,breakdown.groups())
-    else:
-        assert failed==0,(name,'非零失败时缺少请求失败分类')
-        connect=receive=length_variants=exceptions=0
-    transport_failures=connect+receive+exceptions
-    limit=int(os.environ['LOAD_P95_LIMIT'])
-    result={
-        'endpoint':name,
-        'completeRequests':complete,
-        'failedRequests':failed,
-        'transportFailures':transport_failures,
-        'lengthDifferingResponses':length_variants,
-        'non2xxResponses':non_2xx,
-        'p95Ms':p95,
-        'p95LimitMs':limit,
-        'requestsPerSecond':number('Requests per second:'),
+from urllib.parse import urlparse
+import http.client
+import http.cookiejar
+import json
+import math
+import os
+import queue
+import sys
+import time
+
+root = Path(sys.argv[1])
+cookie_path = Path(sys.argv[2])
+base_url = os.environ['LOAD_BASE_URL'].rstrip('/')
+parsed = urlparse(base_url)
+total_requests = int(os.environ['LOAD_REQUESTS'])
+concurrency = int(os.environ['LOAD_CONCURRENCY'])
+p95_limit = int(os.environ['LOAD_P95_LIMIT'])
+
+jar = http.cookiejar.MozillaCookieJar(str(cookie_path))
+jar.load(ignore_discard=True, ignore_expires=True)
+cookie_header = '; '.join(f'{c.name}={c.value}' for c in jar if c.name in ('CRM_TOKEN', 'CRM_CSRF'))
+assert 'CRM_TOKEN=' in cookie_header and 'CRM_CSRF=' in cookie_header, 'Cookie file missing auth cookies'
+
+endpoints = [
+    ('customers', '/api/v1/customers?page=1&size=20'),
+    ('reconciliation', '/api/v1/settlements/reconciliation'),
+]
+
+def run_endpoint(name: str, path_part: str) -> dict:
+    req_queue: queue.Queue[int] = queue.Queue()
+    for idx in range(total_requests):
+        req_queue.put(idx)
+
+    host = parsed.hostname or '127.0.0.1'
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+    full_path = (parsed.path.rstrip('/') + path_part) if parsed.path else path_part
+    headers = {
+        'Accept': 'application/json',
+        'Cookie': cookie_header,
+        'Connection': 'keep-alive',
     }
-    assert complete==int(os.environ['LOAD_REQUESTS']),result
-    assert transport_failures==0 and non_2xx==0,result
-    assert failed==transport_failures+length_variants,result
-    assert p95<=limit,result
-    results.append(result)
-summary={
-    'baseUrl':os.environ['LOAD_BASE_URL'],
-    'concurrency':int(os.environ['LOAD_CONCURRENCY']),
-    'results':results,
-    'boundary':'本机只读负载冒烟，不是生产容量、SLA、渗透或上线验收',
+
+    def worker() -> tuple[list[float], int, int]:
+        latencies_ms: list[float] = []
+        transport_errs = 0
+        non_2xx = 0
+        conn = None
+
+        def open_conn():
+            if parsed.scheme == 'https':
+                return http.client.HTTPSConnection(host, port, timeout=10)
+            return http.client.HTTPConnection(host, port, timeout=10)
+
+        try:
+            conn = open_conn()
+            while True:
+                try:
+                    req_queue.get_nowait()
+                except queue.Empty:
+                    break
+                started = time.perf_counter()
+                try:
+                    conn.request('GET', full_path, headers=headers)
+                    resp = conn.getresponse()
+                    resp.read()
+                    elapsed_ms = (time.perf_counter() - started) * 1000.0
+                    latencies_ms.append(elapsed_ms)
+                    if not (200 <= resp.status < 300):
+                        non_2xx += 1
+                    if resp.getheader('Connection', '').lower() == 'close':
+                        conn.close()
+                        conn = open_conn()
+                except Exception:
+                    transport_errs += 1
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = open_conn()
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        return latencies_ms, transport_errs, non_2xx
+
+    wall_start = time.perf_counter()
+    all_latencies: list[float] = []
+    transport_failures = 0
+    non_2xx_responses = 0
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(worker) for _ in range(concurrency)]
+        for fut in futures:
+            lats, terr, n2xx = fut.result()
+            all_latencies.extend(lats)
+            transport_failures += terr
+            non_2xx_responses += n2xx
+    wall_elapsed = max(1e-6, time.perf_counter() - wall_start)
+
+    complete = len(all_latencies)
+    failed = transport_failures + non_2xx_responses
+    sorted_lats = sorted(all_latencies)
+    p95 = int(math.ceil(sorted_lats[min(len(sorted_lats) - 1, math.ceil(0.95 * len(sorted_lats)) - 1)])) if sorted_lats else 0
+    rps = round(complete / wall_elapsed, 2)
+
+    result = {
+        'endpoint': name,
+        'completeRequests': complete,
+        'failedRequests': failed,
+        'transportFailures': transport_failures,
+        'lengthDifferingResponses': 0,
+        'non2xxResponses': non_2xx_responses,
+        'p95Ms': p95,
+        'p95LimitMs': p95_limit,
+        'requestsPerSecond': rps,
+    }
+    assert complete == total_requests, result
+    assert transport_failures == 0 and non_2xx_responses == 0, result
+    assert failed == 0, result
+    assert p95 <= p95_limit, result
+    return result
+
+results = [run_endpoint(name, path_part) for name, path_part in endpoints]
+summary = {
+    'baseUrl': base_url,
+    'concurrency': concurrency,
+    'results': results,
+    'boundary': '本机只读负载冒烟，不是生产容量、SLA、渗透或上线验收',
 }
-(root/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2)+'\n')
-print(json.dumps(summary,ensure_ascii=False,indent=2))
-print('证据目录:',root)
+(root / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+print(json.dumps(summary, ensure_ascii=False, indent=2))
+print('证据目录:', root)
 PY

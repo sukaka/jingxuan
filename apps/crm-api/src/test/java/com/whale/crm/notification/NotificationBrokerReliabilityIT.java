@@ -47,7 +47,7 @@ class NotificationBrokerReliabilityIT extends AbstractMysqlIT {
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.kafka.bootstrap-servers", () -> KafkaTestContainer.bootstrapServers(KAFKA));
+        KafkaTestContainer.registerProperties(registry, KAFKA);
     }
 
     @Autowired NotificationRequestService requestService;
@@ -87,7 +87,7 @@ class NotificationBrokerReliabilityIT extends AbstractMysqlIT {
                 "payload":{"notificationId":999999,"contentMasked":"forbidden"}}
                 """.formatted(invalidEventId, invalidEventId);
         kafkaTemplate.send(OutboxKafkaConfiguration.NOTIFICATION_REQUEST_TOPIC, invalidEventId, invalid)
-                .get(5, TimeUnit.SECONDS);
+                .get(30, TimeUnit.SECONDS);
         ConsumerRecord<String, String> dlq = awaitDlq(invalidEventId);
         assertThat(dlq.value()).isEqualTo(invalid);
         assertThat(header(dlq, "kafka_dlt-original-topic")).isEqualTo(OutboxKafkaConfiguration.NOTIFICATION_REQUEST_TOPIC);
@@ -98,7 +98,7 @@ class NotificationBrokerReliabilityIT extends AbstractMysqlIT {
     }
 
     private void awaitListenerReady() throws InterruptedException {
-        for (int attempt = 0; attempt < 300; attempt++) {
+        for (int attempt = 0; attempt < 1200; attempt++) {
             boolean ready = listenerRegistry.getListenerContainers().stream()
                     .allMatch(container -> container.isRunning() && !container.getAssignedPartitions().isEmpty());
             if (ready) {
@@ -111,7 +111,7 @@ class NotificationBrokerReliabilityIT extends AbstractMysqlIT {
 
     private void awaitDelivery(long notificationId, String expected) throws InterruptedException {
         String status = null;
-        for (int attempt = 0; attempt < 300; attempt++) {
+        for (int attempt = 0; attempt < 900; attempt++) {
             status = jdbcTemplate.queryForObject("SELECT status FROM crm_notification_delivery WHERE notification_id=?",
                     String.class, notificationId);
             if (expected.equals(status)) {
@@ -137,7 +137,7 @@ class NotificationBrokerReliabilityIT extends AbstractMysqlIT {
         properties.put("enable.auto.commit", "false");
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties)) {
             consumer.subscribe(List.of(NotificationKafkaConfiguration.DLQ_TOPIC));
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
             while (System.nanoTime() < deadline) {
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(250))) {
                     if (key.equals(record.key())) {

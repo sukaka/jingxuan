@@ -74,7 +74,7 @@
   </select>
   <select id="searchHits" resultType="com.whale.crm.complaint.domain.ComplaintHit">
     SELECT h.* FROM (
-      SELECT <include refid="hitColumns"/> FROM crm_complaint_hit
+      SELECT <include refid="hitColumns"/> FROM crm_complaint_hit WHERE tenant_id=#{q.tenantId}
     ) h JOIN crm_customer c ON c.tenant_id=h.tenantId AND c.id=h.customerId AND c.deleted=0
     WHERE h.tenantId=#{q.tenantId} AND <include refid="scope"/>
     <if test="q.status != null and q.status != ''">AND h.status=#{q.status}</if>
@@ -132,7 +132,7 @@
   </select>
   <select id="searchCases" resultType="com.whale.crm.complaint.domain.ComplaintCase">
     SELECT cc.* FROM (
-      SELECT <include refid="caseColumns"/> FROM crm_complaint_case
+      SELECT <include refid="caseColumns"/> FROM crm_complaint_case WHERE tenant_id=#{q.tenantId}
     ) cc JOIN crm_customer c ON c.tenant_id=cc.tenantId AND c.id=cc.customerId AND c.deleted=0
     JOIN crm_complaint_hit h ON h.tenant_id=cc.tenantId AND h.id=cc.complaintHitId
     WHERE cc.tenantId=#{q.tenantId} AND <include refid="scope"/>

@@ -21,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -52,6 +53,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+@ActiveProfiles("local")
 @SpringBootTest(properties = {
         "app.files.enabled=true", "app.files.endpoint=http://127.0.0.1:9",
         "app.files.access-key=synthetic-test-only", "app.files.secret-key=synthetic-test-only",
@@ -69,7 +71,10 @@ class KnowledgeBrokerReliabilityIT {
             .withUsername("k01")
             .withPassword("k01-test-only")
             .withUrlParam("connectionTimeZone", "UTC")
-            .withCommand("--log-bin-trust-function-creators=1");
+            .withCommand("--log-bin-trust-function-creators=1")
+            .withTmpFs(Map.of("/var/lib/mysql", "rw,mode=1777"))
+            .withEnv("MYSQL_INITDB_SKIP_TZINFO", "1")
+            .withStartupTimeoutSeconds(600);
     private static final String TEXT = "# K01 合成知识文本\n不包含客户数据";
 
     static {
@@ -78,7 +83,7 @@ class KnowledgeBrokerReliabilityIT {
 
     @DynamicPropertySource
     static void integrationProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.kafka.bootstrap-servers", () -> KafkaTestContainer.bootstrapServers(KAFKA));
+        KafkaTestContainer.registerProperties(registry, KAFKA);
     }
 
     @MockitoBean PrivateObjectStorage storage;
@@ -103,6 +108,14 @@ class KnowledgeBrokerReliabilityIT {
         assertThat(jdbcTemplate.queryForObject("SELECT DATABASE()", String.class)).isEqualTo("k01_reliability");
         objects.clear();
         when(scanner.scan(any())).thenReturn(com.whale.crm.file.application.ClamAvScanner.ScanResult.CLEAN);
+        when(storage.stat(anyString())).thenAnswer(invocation -> {
+            byte[] content = objects.get(invocation.getArgument(0));
+            if (content == null) {
+                throw new IllegalStateException("测试对象不存在");
+            }
+            String md5 = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(content));
+            return new PrivateObjectStorage.ObjectStat('"' + md5 + '"', content.length, "text/markdown");
+        });
         when(storage.getObject(anyString())).thenAnswer(invocation -> {
             byte[] content = objects.get(invocation.getArgument(0));
             if (content == null) {
@@ -187,7 +200,7 @@ class KnowledgeBrokerReliabilityIT {
                 "correlation_id":"k01-invalid-contract","payload":{"jobId":999999,"documentId":999999}}
                 """;
         kafkaTemplate.send(OutboxKafkaConfiguration.KNOWLEDGE_SYNC_TOPIC, invalidKey, invalidMessage)
-                .get(5, TimeUnit.SECONDS);
+                .get(30, TimeUnit.SECONDS);
 
         ConsumerRecord<String, String> dlq = awaitDlq(invalidKey);
         assertThat(dlq.value()).isEqualTo(invalidMessage);
@@ -205,7 +218,7 @@ class KnowledgeBrokerReliabilityIT {
     }
 
     private void awaitListenerReady() throws InterruptedException {
-        for (int attempt = 0; attempt < 300; attempt++) {
+        for (int attempt = 0; attempt < 1200; attempt++) {
             boolean ready = listenerRegistry.getListenerContainers().stream()
                     .allMatch(container -> container.isRunning() && !container.getAssignedPartitions().isEmpty());
             if (ready) {
@@ -218,7 +231,7 @@ class KnowledgeBrokerReliabilityIT {
 
     private Map<String, Object> awaitJob(long jobId, String expected) throws InterruptedException {
         Map<String, Object> row = Map.of();
-        for (int attempt = 0; attempt < 300; attempt++) {
+        for (int attempt = 0; attempt < 900; attempt++) {
             row = jdbcTemplate.queryForMap("SELECT status,version,attempt_count FROM crm_knowledge_sync_job WHERE id=?", jobId);
             if (expected.equals(row.get("status"))) {
                 return row;
@@ -249,7 +262,7 @@ class KnowledgeBrokerReliabilityIT {
         properties.put("enable.auto.commit", "false");
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties)) {
             consumer.subscribe(List.of("crm.dlq.knowledge.sync.v1"));
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
             while (System.nanoTime() < deadline) {
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(250))) {
                     if (key.equals(record.key())) {

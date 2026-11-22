@@ -1,5 +1,7 @@
 import type { Router, RouteLocationNormalized } from 'vue-router'
+import { setUnauthorizedHandler } from '../api/http'
 import { useAuthStore } from '../stores/auth'
+import { resetReferenceNames } from '../views/references'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -24,6 +26,24 @@ declare module 'vue-router' {
  * 4. 缺少路由声明的权限码 → /403(菜单隐藏不等于授权,后端仍会二次校验)
  */
 export function installAuthGuard(router: Router): void {
+  let redirectingToLogin = false
+
+  setUnauthorizedHandler(() => {
+    const auth = useAuthStore()
+    auth.user = null
+    resetReferenceNames()
+    const current = router.currentRoute.value
+    if (current.meta.public || current.name === 'login' || redirectingToLogin) {
+      return
+    }
+    redirectingToLogin = true
+    void router
+      .replace({ name: 'login', query: { redirect: current.fullPath } })
+      .finally(() => {
+        redirectingToLogin = false
+      })
+  })
+
   router.beforeEach(async (to: RouteLocationNormalized) => {
     const auth = useAuthStore()
 

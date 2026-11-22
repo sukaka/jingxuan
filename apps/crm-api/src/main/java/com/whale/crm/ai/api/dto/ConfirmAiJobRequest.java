@@ -6,7 +6,7 @@ import jakarta.validation.constraints.Size;
 import java.time.Instant;
 
 public record ConfirmAiJobRequest(@NotNull Long version,
-                                  @Pattern(regexp = "CONFIRM|REJECT") String decision,
+                                  @NotNull @Pattern(regexp = "CONFIRM|REJECT") String decision,
                                   @Size(max = 255) String title,
                                   @Size(max = 2000) String description,
                                   Instant dueAt,

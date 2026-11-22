@@ -1,8 +1,11 @@
 package com.whale.crm.platform.idempotency;
 
+import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -14,6 +17,7 @@ import java.util.Optional;
  * 创建类操作的幂等守卫（crm_idempotency_record）。
  * 用法：先 {@link #lookup}，命中且请求哈希一致 → 调用方返回首次资源；哈希不一致 → 409。
  * 未命中则业务执行后 {@link #recordSuccess} 落记录（与业务同事务）；并发同键撞唯一键 → 409。
+ * 默认按当前认证用户（actor_user_id）隔离；系统任务或未认证回调使用 actor_user_id=0。
  */
 @Service
 public class IdempotencyService {
@@ -26,10 +30,16 @@ public class IdempotencyService {
 
     public Optional<IdempotencyRecord> lookup(long tenantId, String scopeCode, String idempotencyKey,
                                               String requestPayload) {
+        return lookup(tenantId, scopeCode, null, idempotencyKey, requestPayload);
+    }
+
+    public Optional<IdempotencyRecord> lookup(long tenantId, String scopeCode, Long actorUserId,
+                                              String idempotencyKey, String requestPayload) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             return Optional.empty();
         }
-        IdempotencyRecord record = idempotencyMapper.selectByKey(tenantId, scopeCode, idempotencyKey);
+        long resolvedActor = resolveActorUserId(actorUserId);
+        IdempotencyRecord record = idempotencyMapper.selectByKey(tenantId, scopeCode, resolvedActor, idempotencyKey);
         if (record == null) {
             return Optional.empty();
         }
@@ -41,12 +51,18 @@ public class IdempotencyService {
 
     public void recordSuccess(long tenantId, String scopeCode, String idempotencyKey,
                               String resourceType, String resourceId, String requestPayload) {
+        recordSuccess(tenantId, scopeCode, null, idempotencyKey, resourceType, resourceId, requestPayload);
+    }
+
+    public void recordSuccess(long tenantId, String scopeCode, Long actorUserId, String idempotencyKey,
+                              String resourceType, String resourceId, String requestPayload) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             return;
         }
         IdempotencyRecord record = new IdempotencyRecord();
         record.setTenantId(tenantId);
         record.setScopeCode(scopeCode);
+        record.setActorUserId(resolveActorUserId(actorUserId));
         record.setIdempotencyKey(idempotencyKey);
         record.setResourceType(resourceType);
         record.setResourceId(resourceId);
@@ -57,6 +73,18 @@ public class IdempotencyService {
         } catch (DuplicateKeyException ex) {
             throw new BusinessException(ErrorCode.CONFLICT, "相同幂等键的请求正在处理，请查询结果后重试");
         }
+    }
+
+    private long resolveActorUserId(Long explicitActorUserId) {
+        if (explicitActorUserId != null) {
+            return Math.max(0L, explicitActorUserId);
+        }
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal() instanceof CurrentUser currentUser
+                && currentUser.userId() > 0) {
+            return currentUser.userId();
+        }
+        return 0L;
     }
 
     public static String sha256(String payload) {

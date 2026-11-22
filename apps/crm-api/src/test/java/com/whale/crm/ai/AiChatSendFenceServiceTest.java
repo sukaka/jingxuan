@@ -98,6 +98,38 @@ class AiChatSendFenceServiceTest {
         assertThat(senderCalls.get()).isEqualTo(1);
     }
 
+    @Test
+    void releaseForRetryClearsInFlightAndFinishedAtAllowingRetryWhileFinishLocksOut() {
+        Instant now = Instant.parse("2026-01-01T01:00:00Z");
+        InMemoryFenceRepository fences = new InMemoryFenceRepository();
+        AiChatSendFenceService service = new AiChatSendFenceService(delegationRepository, fences, customerRepository,
+                new TestTransactionManager(), Clock.fixed(now, ZoneOffset.UTC), 2000, 5);
+        AiChatDelegationRun firstRun = run(now);
+        AiChatDelegationRun secondRun = new AiChatDelegationRun(11L, 1L, 91L, 101L, 8L, 3L, "corp", "external",
+                "conversation", "SENDING", null, "cipher", "GENERAL", "[]", "mock", "mock-v1", null, null,
+                now, 1, 2, null, "worker-a", now.plusSeconds(30), now, now, 3L);
+        when(delegationRepository.findPolicyForUpdate(1L))
+                .thenReturn(Optional.of(AiChatDelegationPolicy.defaults(1L)));
+        when(delegationRepository.findRunForUpdate(1L, 11L)).thenReturn(Optional.of(firstRun), Optional.of(secondRun), Optional.of(secondRun));
+        when(customerRepository.findByIdForUpdate(1L, 101L)).thenReturn(Optional.of(customer()));
+
+        AiChatSendFenceService.Decision first = service.authorize(firstRun, "worker-a", (p, c) -> null);
+        assertThat(first.accepted()).isTrue();
+        service.releaseForRetry(first.authorization());
+        assertThat(fences.fence.inFlight()).isFalse();
+        assertThat(fences.fence.finishedAt()).isNull();
+
+        AiChatSendFenceService.Decision retry = service.authorize(secondRun, "worker-a", (p, c) -> null);
+        assertThat(retry.accepted()).isTrue();
+        service.finish(retry.authorization());
+        assertThat(fences.fence.inFlight()).isFalse();
+        assertThat(fences.fence.finishedAt()).isNotNull();
+
+        AiChatSendFenceService.Decision afterFinish = service.authorize(secondRun, "worker-a", (p, c) -> null);
+        assertThat(afterFinish.accepted()).isFalse();
+        assertThat(afterFinish.deniedReason()).isEqualTo("SEND_ALREADY_COMPLETED");
+    }
+
     private AiChatDelegationRun run(Instant now) {
         return new AiChatDelegationRun(11L, 1L, 91L, 101L, 8L, 3L, "corp", "external", "conversation",
                 "SENDING", null, "cipher", "GENERAL", "[]", "mock", "mock-v1", null, null,
@@ -173,6 +205,16 @@ class AiChatSendFenceServiceTest {
             }
             fence = new AiChatSendFence(fence.id(), tenantId, runId, fence.customerId(), fence.blocked(), false,
                     fence.startedAt(), now, fence.version() + 1);
+            return 1;
+        }
+
+        @Override
+        public synchronized int releaseForRetry(long tenantId, long runId, long expectedVersion, Instant now) {
+            if (fence == null || !fence.inFlight()) {
+                return 0;
+            }
+            fence = new AiChatSendFence(fence.id(), tenantId, runId, fence.customerId(), fence.blocked(), false,
+                    fence.startedAt(), null, fence.version() + 1);
             return 1;
         }
 

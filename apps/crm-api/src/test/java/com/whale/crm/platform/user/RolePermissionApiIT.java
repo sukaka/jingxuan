@@ -20,11 +20,14 @@ class RolePermissionApiIT extends AbstractMysqlIT {
         AuthCookies admin = login("admin");
         mockMvc.perform(get("/api/v1/permissions").cookie(admin.cookies()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(73))
+                .andExpect(jsonPath("$.data.length()").value(76))
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'customer:merge_reverse')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'ai:knowledge:config')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'ai:knowledge:publish')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'integration:runtime:manage')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.permissionCode == 'wecom:mapping:manage')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.permissionCode == 'followup:policy:manage')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.permissionCode == 'channel:approve_finance')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'customer:read')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'redemption:post')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'redemption:reverse')]").isNotEmpty())
@@ -42,10 +45,11 @@ class RolePermissionApiIT extends AbstractMysqlIT {
         for (var role : roles) {
             switch (role.get("roleCode").asText()) {
                 case "ADMIN" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(73);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(76);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
-                            .contains("redemption:approve", "customer:merge_reverse", "integration:runtime:manage");
+                            .contains("redemption:approve", "customer:merge_reverse", "integration:runtime:manage",
+                                    "wecom:mapping:manage", "followup:policy:manage", "channel:approve_finance");
                 }
                 case "OWNER" -> {
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(29);
@@ -81,17 +85,18 @@ class RolePermissionApiIT extends AbstractMysqlIT {
                                     "export:create", "user:write");
                 }
                 case "OPERATION_LEAD" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(24);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(25);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions")).extracting(node -> node.asText())
                             .contains("campaign:review", "material:review", "risk:write", "complaint:read",
-                                    "complaint:write", "complaint:config", "wecom:sidebar:view", "quickreply:manage")
+                                    "complaint:write", "complaint:config", "wecom:sidebar:view", "quickreply:manage",
+                                    "followup:policy:manage")
                             .doesNotContain("order:confirm_payment", "export:create", "user:write");
                 }
                 case "FINANCE" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(16);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(17);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
-                            .contains("redemption:approve", "redemption:read")
+                            .contains("redemption:approve", "redemption:read", "channel:approve_finance")
                             .doesNotContain("redemption:reverse");
                 }
                 case "INSTITUTION_STAFF" -> {
@@ -225,6 +230,63 @@ class RolePermissionApiIT extends AbstractMysqlIT {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"permissionCodes\":[]}"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void multiSegmentPermissionCodesAccepted_andPrivilegeEscalationOrAdminLockoutBlocked() throws Exception {
+        AuthCookies admin = login("admin");
+
+        String delegatedBody = mockMvc.perform(admin.withAuth(post("/api/v1/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleCode\":\"IT_USER_ADMIN_DELEGATE\",\"roleName\":\"受限用户管理\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long delegateRoleId = objectMapper.readTree(delegatedBody).at("/data/id").asLong();
+
+        mockMvc.perform(admin.withAuth(put("/api/v1/roles/" + delegateRoleId + "/permissions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"permissionCodes\":[\"user:read\",\"user:write\",\"ai:knowledge:config\",\"wecom:mapping:manage\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.permissions.length()").value(4));
+
+        mockMvc.perform(admin.withAuth(put("/api/v1/roles/1/permissions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"permissionCodes\":[\"user:read\"]}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+
+        mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"it_sub_admin\",\"displayName\":\"受限管理员\","
+                                + "\"password\":\"ItPass@12345\",\"userType\":\"EMPLOYEE\",\"roleIds\":["
+                                + delegateRoleId + "]}"))
+                .andExpect(status().isCreated());
+        AuthCookies subAdmin = mockLogin("it_sub_admin", "ItPass@12345");
+
+        String targetRoleBody = mockMvc.perform(admin.withAuth(post("/api/v1/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleCode\":\"IT_TARGET_ROLE\",\"roleName\":\"目标角色\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long targetRoleId = objectMapper.readTree(targetRoleBody).at("/data/id").asLong();
+
+        mockMvc.perform(subAdmin.withAuth(put("/api/v1/roles/1/permissions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"permissionCodes\":[\"user:read\",\"user:write\"]}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        mockMvc.perform(subAdmin.withAuth(put("/api/v1/roles/" + targetRoleId + "/permissions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"permissionCodes\":[\"user:read\",\"refund:approve\"]}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        mockMvc.perform(subAdmin.withAuth(put("/api/v1/roles/" + targetRoleId + "/permissions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"permissionCodes\":[\"user:read\",\"ai:knowledge:config\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.permissions.length()").value(2));
     }
 
     private AuthCookies mockLogin(String username, String password) throws Exception {

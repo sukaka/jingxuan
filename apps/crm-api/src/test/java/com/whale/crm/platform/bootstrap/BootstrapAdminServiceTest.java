@@ -100,6 +100,9 @@ class BootstrapAdminServiceTest {
         assertThatThrownBy(() -> service.initialize("admin", "系统管理员", "short"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("12");
+        assertThatThrownBy(() -> service.initialize("admin", "系统管理员", "            "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("空白");
         assertThatThrownBy(() -> service.initialize("bad name", "系统管理员", "Synthetic-install-password-123"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("登录名");

@@ -33,7 +33,7 @@ public class YouzanRemoteClient {
     @org.springframework.beans.factory.annotation.Autowired
     public YouzanRemoteClient(ObjectMapper objectMapper,
                               @Value("${YOUZAN_API_BASE_URL:https://open.youzanyun.com}") String baseUrl) {
-        this(new OkHttpClient(), objectMapper, baseUrl);
+        this(new OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build(), objectMapper, baseUrl);
     }
 
     YouzanRemoteClient(OkHttpClient client, ObjectMapper objectMapper, String baseUrl) {

@@ -1,7 +1,6 @@
 package com.whale.crm.file.application;
 
 import com.whale.crm.file.domain.FileClassification;
-import com.whale.crm.file.domain.FileMetadata;
 import com.whale.crm.institution.application.InstitutionFileOperations;
 import com.whale.crm.platform.security.SecuritySupport;
 import com.whale.crm.platform.web.BusinessException;
@@ -17,19 +16,18 @@ public class FileInstitutionOperations implements InstitutionFileOperations {
     }
 
     @Override
-    public void assertClean(long tenantId, long fileId) {
-        FileMetadata metadata = fileService.requireCleanUsable(tenantId, SecuritySupport.requireCurrentUser(),
-                fileId, (FileClassification) null, null);
-        FileClassification classification = FileClassification.valueOf(metadata.classification());
-        if (classification != FileClassification.CONTRACT && classification != FileClassification.QUALIFICATION
-                && classification != FileClassification.CHANGE_EVIDENCE) {
+    public void requireClean(long tenantId, long institutionId, long fileId,
+                             FileClassification expectedClassification) {
+        if (institutionId <= 0) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "机构ID无效");
+        }
+        if (expectedClassification != FileClassification.CONTRACT
+                && expectedClassification != FileClassification.QUALIFICATION
+                && expectedClassification != FileClassification.CHANGE_EVIDENCE
+                && expectedClassification != FileClassification.MERCHANT_RESOURCE) {
             throw new BusinessException(ErrorCode.CONFLICT, "机构文档类别不匹配");
         }
-    }
-
-    @Override
-    public void assertMerchantResourceClean(long tenantId, long fileId, long institutionId) {
         fileService.requireCleanUsable(tenantId, SecuritySupport.requireCurrentUser(), fileId,
-                FileClassification.MERCHANT_RESOURCE, institutionId);
+                expectedClassification, institutionId);
     }
 }

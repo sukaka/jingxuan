@@ -1,7 +1,6 @@
 package com.whale.crm.refund.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.whale.crm.platform.context.TenantContext;
 import com.whale.crm.platform.web.ApiResponse;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
@@ -48,19 +47,20 @@ public class RefundCallbackController {
         if (!adapter.supports(provider) || !adapter.verify(rawBody, signature, timestamp)) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "退款回调提供方未知、Mock未启用或签名无效/过期");
         }
+        RefundCallbackRequest body;
         try {
-            RefundCallbackRequest body = objectMapper.readValue(rawBody, RefundCallbackRequest.class);
+            body = objectMapper.readValue(rawBody, RefundCallbackRequest.class);
             Set<ConstraintViolation<RefundCallbackRequest>> violations = validator.validate(body);
             if (!violations.isEmpty()) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "退款回调字段无效");
             }
-            RefundDetail result = service.handleCallback(TenantContext.currentTenantId(), provider, body, idempotencyKey);
-            Object requestId = request.getAttribute(RequestIdFilter.REQUEST_ATTRIBUTE);
-            return ApiResponse.ok(result, requestId instanceof String id ? id : null);
         } catch (BusinessException ex) {
             throw ex;
         } catch (Exception ex) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "退款回调JSON格式或字段无效");
         }
+        RefundDetail result = service.handleCallback(provider, body, idempotencyKey);
+        Object requestId = request.getAttribute(RequestIdFilter.REQUEST_ATTRIBUTE);
+        return ApiResponse.ok(result, requestId instanceof String id ? id : null);
     }
 }

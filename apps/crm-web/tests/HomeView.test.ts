@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
 import { listCustomers } from '../src/api/customer'
 import { listFollowups } from '../src/api/followup'
@@ -121,6 +121,10 @@ beforeEach(() => {
   vi.mocked(getEntitlementSummary).mockReset()
 })
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe('HomeView 分角色真实数据工作台', () => {
   it('管家工作台展示各接口真实 total、任务和跟进记录', async () => {
     vi.mocked(listCustomers).mockResolvedValue({ items: [], total: 12, page: 1, size: 5 })
@@ -163,7 +167,7 @@ describe('HomeView 分角色真实数据工作台', () => {
       page: 1,
       size: 5,
     })
-    vi.mocked(listAppointments).mockResolvedValue({ items: [], total: 4, page: 1, size: 100 })
+    vi.mocked(listAppointments).mockResolvedValue({ items: [], total: 4, page: 1, size: 1 })
 
     const wrapper = mountHomeView(MANAGER_PERMISSIONS, ['MANAGER'])
     await flushPromises()
@@ -176,7 +180,7 @@ describe('HomeView 分角色真实数据工作台', () => {
     expect(listCustomers).toHaveBeenCalledWith({ page: 1, size: 5 })
     expect(listTasks).toHaveBeenCalledWith({ page: 1, size: 6, status: 'OPEN' })
     expect(listFollowups).toHaveBeenCalledWith({ page: 1, size: 5 })
-    expect(listAppointments).toHaveBeenCalledWith({ page: 1, size: 100 })
+    expect(listAppointments).toHaveBeenCalledWith({ page: 1, size: 1, status: 'PENDING_INSTITUTION' })
     expect(listRedemptions).not.toHaveBeenCalled()
     expect(getPerformanceReport).not.toHaveBeenCalled()
     expect(getEntitlementSummary).not.toHaveBeenCalled()
@@ -334,7 +338,7 @@ describe('HomeView 分角色真实数据工作台', () => {
     )
     vi.mocked(listTasks).mockResolvedValue({ items: [], total: 3, page: 1, size: 6 })
     vi.mocked(listFollowups).mockResolvedValue({ items: [], total: 2, page: 1, size: 5 })
-    vi.mocked(listAppointments).mockResolvedValue({ items: [], total: 4, page: 1, size: 100 })
+    vi.mocked(listAppointments).mockResolvedValue({ items: [], total: 4, page: 1, size: 1 })
 
     const wrapper = mountHomeView(MANAGER_PERMISSIONS, ['MANAGER'])
     await flushPromises()
@@ -355,5 +359,30 @@ describe('HomeView 分角色真实数据工作台', () => {
     expect(wrapper.findAll('.admin-task-card .el-table__row')).toHaveLength(0)
     expect(wrapper.text()).toContain('暂无待办任务')
     expect(listTasks).toHaveBeenCalledTimes(1)
+  })
+
+  it('机构工作台在 UTC 跨天窗口（00:30+08:00）仍按上海当日统计今日接待', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-25T16:30:00Z'))
+    vi.mocked(listAppointments).mockResolvedValue({
+      items: [appointment(1, 'CONFIRMED', '2026-10-25T17:00:00Z')],
+      total: 1,
+      page: 1,
+      size: 100,
+    })
+    const wrapper = mountHomeView(['appointment:read'], ['INSTITUTION_OPERATOR'], 'INSTITUTION')
+    await flushPromises()
+
+    expect(statValue(wrapper, '今日接待')).toBe('1 位')
+    expect(wrapper.text()).toContain('2026-10-26 01:00')
+  })
+
+  it('运营工作台今日日期在 UTC 跨天窗口（00:30+08:00）仍按 Asia/Shanghai 展示', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-25T16:30:00Z'))
+    const wrapper = mountHomeView()
+    await flushPromises()
+
+    expect(wrapper.get('.admin-hero-date strong').text()).toBe('10月26日星期一')
   })
 })

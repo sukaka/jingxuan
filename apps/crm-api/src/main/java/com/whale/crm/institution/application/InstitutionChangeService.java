@@ -1,6 +1,7 @@
 package com.whale.crm.institution.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.whale.crm.file.domain.FileClassification;
 import com.whale.crm.institution.api.dto.ChangeRequestResponse;
 import com.whale.crm.institution.api.dto.RevalidateChangeRequest;
 import com.whale.crm.institution.api.dto.ReviewChangeRequest;
@@ -55,14 +56,14 @@ public class InstitutionChangeService {
         InstitutionScope scope = support.scope(tenantId, user);
         int offset = (page - 1) * size;
         List<ChangeRequestResponse> items = repository.searchChanges(tenantId, scope, institutionId, status, offset, size)
-                .stream().map(this::detailResponse).toList();
+                .stream().map(item -> detailResponse(tenantId, user, item)).toList();
         return new PageResponse<>(items, repository.countChanges(tenantId, scope, institutionId, status), page, size);
     }
 
     @Transactional(readOnly = true)
     public ChangeRequestResponse detail(long tenantId, CurrentUser user, long id) {
         ProfileChangeRequest request = requireChange(tenantId, user, id);
-        return detailResponse(request);
+        return detailResponse(tenantId, user, request);
     }
 
     @Transactional
@@ -70,13 +71,13 @@ public class InstitutionChangeService {
         if (repository.findActiveChange(tenantId, draft.activeTarget()).isPresent()) {
             throw new BusinessException(ErrorCode.CONFLICT, "该机构目标已有进行中的变更申请");
         }
-        repository.insertChange(draft);
+        repository.insertChange(tenantId, draft);
         ProfileChangeRequest created = repository.findActiveChange(tenantId, draft.activeTarget()).orElseThrow();
         insertStep(tenantId, created.id(), "REQUESTED", "REQUESTED", user.userId(), created.reason());
         outbox(tenantId, created, "requested", created.status());
         auditService.record(tenantId, user.userId(), "INSTITUTION_CHANGE_REQUEST", "INSTITUTION",
                 Long.toString(created.institutionId()), null, support.auditChange(created), created.reason());
-        return detailResponse(created);
+        return detailResponse(tenantId, user, created);
     }
 
     public ChangeRequestResponse review(long tenantId, CurrentUser user, long id, String step,
@@ -119,7 +120,7 @@ public class InstitutionChangeService {
         if (!"PENDING_REVIEW".equals(before.status())) {
             IdempotencyRecord terminalReplay = support.lookup(tenantId, REVIEW_SCOPE, key, payload);
             if (terminalReplay != null) {
-                return detailResponse(before);
+                return detailResponse(tenantId, user, before);
             }
             throw new BusinessException(ErrorCode.CONFLICT, "申请已审核或拒绝，不能再次审批");
         }
@@ -135,7 +136,7 @@ public class InstitutionChangeService {
         }
         IdempotencyRecord replay = support.lookup(tenantId, REVIEW_SCOPE, key, payload);
         if (replay != null) {
-            return detailResponse(before);
+            return detailResponse(tenantId, user, before);
         }
         if (!before.currentStep().equals(step)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "当前审批步骤不允许该角色或顺序操作");
@@ -178,7 +179,7 @@ public class InstitutionChangeService {
         auditService.record(tenantId, user.userId(), "INSTITUTION_CHANGE_REVIEW", "INSTITUTION",
                 Long.toString(before.institutionId()), support.auditChange(before), support.auditChange(after), comment);
         support.record(tenantId, REVIEW_SCOPE, key, "INSTITUTION_CHANGE", before.id(), payload);
-        return detailResponse(after);
+        return detailResponse(tenantId, user, after);
     }
 
     private ChangeRequestResponse doRevalidate(long tenantId, CurrentUser user, long id,
@@ -190,7 +191,7 @@ public class InstitutionChangeService {
         support.requireChange(tenantId, institution, user);
         IdempotencyRecord replay = support.lookup(tenantId, REVALIDATE_SCOPE, key, payload);
         if (replay != null) {
-            return detailResponse(before);
+            return detailResponse(tenantId, user, before);
         }
         if (!"CONFLICT_REVALIDATE".equals(before.status()) || !before.version().equals(request.version())) {
             throw new BusinessException(ErrorCode.CONFLICT, "只有冲突待复核申请且版本一致才能重新复核");
@@ -209,11 +210,12 @@ public class InstitutionChangeService {
         auditService.record(tenantId, user.userId(), "INSTITUTION_CHANGE_REVALIDATE", "INSTITUTION",
                 Long.toString(before.institutionId()), support.auditChange(before), support.auditChange(after), request.reason());
         support.record(tenantId, REVALIDATE_SCOPE, key, "INSTITUTION_CHANGE", id, payload);
-        return detailResponse(after);
+        return detailResponse(tenantId, user, after);
     }
 
     private void applyFinal(long tenantId, CurrentUser user, ProfileChangeRequest request) {
-        support.requireClean(tenantId, request.evidenceFileId());
+        support.requireClean(tenantId, request.institutionId(), request.evidenceFileId(),
+                FileClassification.CHANGE_EVIDENCE);
         switch (request.changeType()) {
             case "ONBOARDING" -> {
                 if (repository.updateProfileStatus(tenantId, request.institutionId(), request.baseVersion(),
@@ -233,7 +235,7 @@ public class InstitutionChangeService {
             case "CONTRACT_ACTIVATION" -> {
                 InstitutionContract target = repository.findContractForUpdate(tenantId, request.targetId())
                         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "合同不存在"));
-                support.requireClean(tenantId, target.fileId());
+                support.requireClean(tenantId, target.institutionId(), target.fileId(), FileClassification.CONTRACT);
                 if (target.previousContractId() != null) {
                     InstitutionContract previous = repository.findContractForUpdate(tenantId, target.previousContractId())
                             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "上一合同版本不存在"));
@@ -253,7 +255,8 @@ public class InstitutionChangeService {
             case "QUALIFICATION_REVIEW" -> {
                 InstitutionQualification qualification = repository.findQualificationForUpdate(tenantId, request.targetId())
                         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "资质不存在"));
-                support.requireClean(tenantId, qualification.fileId());
+                support.requireClean(tenantId, qualification.institutionId(), qualification.fileId(),
+                        FileClassification.QUALIFICATION);
                 if (repository.updateQualificationStatus(tenantId, request.targetId(), request.targetVersion(),
                         "PENDING_REVIEW", "APPROVED", user.userId(), Instant.now()) == 0) {
                     throw new BusinessException(ErrorCode.CONFLICT, "资质审核版本冲突");
@@ -333,14 +336,13 @@ public class InstitutionChangeService {
         return request;
     }
 
-    private ChangeRequestResponse detailResponse(ProfileChangeRequest request) {
-        return support.response(request,
-                repository.findSteps(com.whale.crm.platform.context.TenantContext.currentTenantId(), request.id()));
+    private ChangeRequestResponse detailResponse(long tenantId, CurrentUser user, ProfileChangeRequest request) {
+        return support.response(request, repository.findSteps(tenantId, request.id()), user);
     }
 
     private void insertStep(long tenantId, long requestId, String step, String status, long actor, String comment) {
         int sequence = repository.findSteps(tenantId, requestId).size();
-        repository.insertStep(new ProfileChangeStep(null, requestId, sequence, step, status, actor,
+        repository.insertStep(tenantId, new ProfileChangeStep(null, requestId, sequence, step, status, actor,
                 Instant.now(), comment, null));
     }
 

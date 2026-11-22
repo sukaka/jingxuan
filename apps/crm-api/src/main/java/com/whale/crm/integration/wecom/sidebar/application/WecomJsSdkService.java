@@ -35,8 +35,8 @@ public class WecomJsSdkService {
         this.redis = redis;
     }
 
-    public Signature sign(String url, boolean agentConfig) {
-        requireConfigured();
+    public Signature sign(long tenantId, String url, boolean agentConfig) {
+        requireConfigured(tenantId);
         String normalizedUrl = validateUrl(url);
         String ticket = cachedTicket(agentConfig);
         String nonce = UUID.randomUUID().toString().replace("-", "");
@@ -80,8 +80,9 @@ public class WecomJsSdkService {
         }
     }
 
-    private void requireConfigured() {
-        if (!properties.enabled() || officialProperties.corpId() == null || officialProperties.corpId().isBlank()
+    private void requireConfigured(long tenantId) {
+        if (officialProperties.allowedTenantId() <= 0 || tenantId != officialProperties.allowedTenantId()
+                || !properties.enabled() || officialProperties.corpId() == null || officialProperties.corpId().isBlank()
                 || properties.agentId() == null || properties.agentId() <= 0) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "企微侧边栏尚未配置或未启用");
         }

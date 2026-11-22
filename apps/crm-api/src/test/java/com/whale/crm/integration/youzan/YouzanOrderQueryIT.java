@@ -124,12 +124,141 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
         JsonNode managerPage = orders(manager1, shop, 1, 20, null);
         assertThat(managerPage.at("/total").asLong()).isEqualTo(2);
         assertThat(item(managerPage, failedOrder).at("/payloadMaskedJson").isNull()).isTrue();
-        mockMvc.perform(get("/api/v1/integrations/youzan/orders").param("shopId", shop)
-                        .cookie(manager2.cookies()))
-                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+        JsonNode manager2Page = orders(manager2, shop, 1, 20, null);
+        assertThat(manager2Page.at("/items")).isEmpty();
+        assertThat(manager2Page.at("/total").asLong()).isZero();
         mockMvc.perform(get("/api/v1/integrations/youzan/orders/{id}", failedRawId)
                         .cookie(manager2.cookies()))
                 .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void dataScopeEnforcedAcrossReportIssuesLinksForTeamSelfNoneAndInstitution() throws Exception {
+        String shop = shop("scope");
+        String externalCustomer = "IT-YZ-SCOPE-CUST-" + suffix();
+        seedSkuAndCustomer(shop, externalCustomer, true);
+        String failedOrder = "IT-YZ-SCOPE-FAIL-" + suffix();
+        YouzanOrderEvent failed = event(shop, "IT-YZ-SCOPE-EV-" + suffix(), failedOrder,
+                externalCustomer, "IT-YZ-SCOPE-TR-" + suffix(), "YZ-SKU-MISSING", 181100,
+                Instant.parse("2026-10-24T04:00:00Z"));
+        postWebhook(json(failed));
+        long failedRawId = awaitEvent(shop, failed.eventId(), "MAPPING_FAILED");
+
+        AuthCookies lead1 = login("lead1");
+        JsonNode leadOrders = orders(lead1, shop, 1, 20, null);
+        assertThat(leadOrders.at("/total").asLong()).isEqualTo(1);
+        JsonNode leadReport = data(lead1.withAuth(get("/api/v1/integrations/youzan/reconcile-report").param("shopId", shop)));
+        assertThat(leadReport.at("/totalEvents").asLong()).isEqualTo(1);
+        JsonNode leadLinks = data(lead1.withAuth(get("/api/v1/integrations/youzan/customer-links").param("shopId", shop)));
+        assertThat(leadLinks.size()).isEqualTo(1);
+
+        AuthCookies lead2 = login("lead2");
+        JsonNode lead2Orders = orders(lead2, shop, 1, 20, null);
+        assertThat(lead2Orders.at("/items")).isEmpty();
+        assertThat(lead2Orders.at("/total").asLong()).isZero();
+        JsonNode lead2Report = data(lead2.withAuth(get("/api/v1/integrations/youzan/reconcile-report").param("shopId", shop)));
+        assertThat(lead2Report.at("/totalEvents").asLong()).isZero();
+
+        JsonNode m2Report = data(manager2.withAuth(get("/api/v1/integrations/youzan/reconcile-report").param("shopId", shop)));
+        assertThat(m2Report.at("/totalEvents").asLong()).isZero();
+        assertThat(m2Report.at("/internalOrders").asLong()).isZero();
+        JsonNode m2Links = data(manager2.withAuth(get("/api/v1/integrations/youzan/customer-links").param("shopId", shop)));
+        assertThat(m2Links).isEmpty();
+        JsonNode m2Issues = data(manager2.withAuth(get("/api/v1/integrations/youzan/sync-issues").param("size", "100")));
+        m2Issues.at("/items").forEach(item ->
+                assertThat(item.at("/detailMasked").asText()).doesNotContain(failedOrder));
+
+        AuthCookies business1 = login("business1");
+        mockMvc.perform(get("/api/v1/integrations/youzan/orders").param("shopId", shop)
+                        .cookie(business1.cookies()))
+                .andExpect(status().isOk());
+        JsonNode businessPage = orders(business1, shop, 1, 20, null);
+        assertThat(businessPage.at("/items")).isEmpty();
+        assertThat(businessPage.at("/total").asLong()).isZero();
+        JsonNode businessReport = data(business1.withAuth(
+                get("/api/v1/integrations/youzan/reconcile-report").param("shopId", shop)));
+        assertThat(businessReport.at("/totalEvents").asLong()).isZero();
+        assertThat(businessReport.at("/internalOrders").asLong()).isZero();
+        assertThat(businessReport.at("/openIssues").asLong()).isZero();
+        assertThat(businessReport.at("/todayEvents").asLong()).isZero();
+        assertThat(businessReport.at("/campaignOrders").asLong()).isZero();
+        JsonNode businessIssues = data(business1.withAuth(
+                get("/api/v1/integrations/youzan/sync-issues").param("size", "20")));
+        assertThat(businessIssues.at("/items")).isEmpty();
+        assertThat(businessIssues.at("/total").asLong()).isZero();
+        JsonNode businessLinks = data(business1.withAuth(
+                get("/api/v1/integrations/youzan/customer-links").param("shopId", shop)));
+        assertThat(businessLinks).isEmpty();
+        mockMvc.perform(get("/api/v1/integrations/youzan/orders/{id}", failedRawId)
+                        .cookie(business1.cookies()))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+        AuthCookies operator1 = login("operator1");
+        mockMvc.perform(get("/api/v1/integrations/youzan/orders").param("shopId", shop)
+                        .cookie(operator1.cookies()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void mappedOrderOfSoftDeletedCustomerIsOmittedFromListAnd404OnDetailForAllAndSelfScope() throws Exception {
+        Map<String, Object> managerRow = jdbcTemplate.queryForMap(
+                "SELECT id,team_id FROM sys_user WHERE tenant_id=1 AND username='manager1'");
+        long manager1Id = ((Number) managerRow.get("id")).longValue();
+        long manager1TeamId = ((Number) managerRow.get("team_id")).longValue();
+
+        long activeCustomerId = insertCustomer(manager1Id, manager1TeamId, "YZ-ACTIVE-" + suffix());
+        long deletedCustomerId = insertCustomer(manager1Id, manager1TeamId, "YZ-DELETED-" + suffix());
+        String mixedShop = shop("deleted-mixed");
+        seedSku(mixedShop);
+        String activeExtCust = "IT-YZ-ACT-CUST-" + suffix();
+        String deletedExtCust = "IT-YZ-DEL-CUST-" + suffix();
+        linkCustomer(mixedShop, activeExtCust, activeCustomerId);
+        linkCustomer(mixedShop, deletedExtCust, deletedCustomerId);
+
+        String activeOrder = "IT-YZ-ACT-ORD-" + suffix();
+        String deletedOrder = "IT-YZ-DEL-ORD-" + suffix();
+        YouzanOrderEvent activeEv = event(mixedShop, "IT-YZ-ACT-EV-" + suffix(), activeOrder, activeExtCust,
+                "IT-YZ-ACT-TR-" + suffix(), "YZ-SKU-301", 181100, Instant.parse("2026-10-24T08:00:00Z"));
+        YouzanOrderEvent deletedEv = event(mixedShop, "IT-YZ-DEL-EV-" + suffix(), deletedOrder, deletedExtCust,
+                "IT-YZ-DEL-TR-" + suffix(), "YZ-SKU-301", 181100, Instant.parse("2026-10-24T08:01:00Z"));
+        postWebhook(json(activeEv));
+        awaitEvent(mixedShop, activeEv.eventId(), "PROCESSED");
+        postWebhook(json(deletedEv));
+        long deletedRawId = awaitEvent(mixedShop, deletedEv.eventId(), "PROCESSED");
+
+        jdbcTemplate.update("UPDATE crm_customer SET deleted=1 WHERE tenant_id=1 AND id=?", deletedCustomerId);
+
+        for (AuthCookies actor : List.of(admin, manager1)) {
+            JsonNode mixedPage = orders(actor, mixedShop, 1, 20, null);
+            assertThat(mixedPage.at("/total").asLong()).isEqualTo(1L);
+            assertThat(mixedPage.at("/items").size()).isEqualTo(1);
+            assertThat(item(mixedPage, activeOrder).at("/eventId").asText()).isEqualTo(activeEv.eventId());
+            mockMvc.perform(get("/api/v1/integrations/youzan/orders/{id}", deletedRawId)
+                            .cookie(actor.cookies()))
+                    .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+        }
+
+        long onlyDeletedCustomerId = insertCustomer(manager1Id, manager1TeamId, "YZ-ONLY-DEL-" + suffix());
+        String deletedOnlyShop = shop("deleted-only");
+        seedSku(deletedOnlyShop);
+        String onlyDeletedExtCust = "IT-YZ-ONLY-DEL-CUST-" + suffix();
+        linkCustomer(deletedOnlyShop, onlyDeletedExtCust, onlyDeletedCustomerId);
+        String onlyDeletedOrder = "IT-YZ-ONLY-DEL-ORD-" + suffix();
+        YouzanOrderEvent onlyDeletedEv = event(deletedOnlyShop, "IT-YZ-ONLY-DEL-EV-" + suffix(), onlyDeletedOrder,
+                onlyDeletedExtCust, "IT-YZ-ONLY-DEL-TR-" + suffix(), "YZ-SKU-301", 181100,
+                Instant.parse("2026-10-24T08:02:00Z"));
+        postWebhook(json(onlyDeletedEv));
+        long onlyDeletedRawId = awaitEvent(deletedOnlyShop, onlyDeletedEv.eventId(), "PROCESSED");
+
+        jdbcTemplate.update("UPDATE crm_customer SET deleted=1 WHERE tenant_id=1 AND id=?", onlyDeletedCustomerId);
+
+        for (AuthCookies actor : List.of(admin, manager1)) {
+            JsonNode emptyPage = orders(actor, deletedOnlyShop, 1, 20, null);
+            assertThat(emptyPage.at("/items")).isEmpty();
+            assertThat(emptyPage.at("/total").asLong()).isZero();
+            mockMvc.perform(get("/api/v1/integrations/youzan/orders/{id}", onlyDeletedRawId)
+                            .cookie(actor.cookies()))
+                    .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+        }
     }
 
     @Test
@@ -199,13 +328,27 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
     }
 
     private void seedSkuAndCustomer(String shop, String externalCustomer, boolean linked) {
+        seedSku(shop);
+        if (linked) {
+            linkCustomer(shop, externalCustomer, 1010L);
+        }
+    }
+
+    private void seedSku(String shop) {
         jdbcTemplate.update("INSERT INTO crm_youzan_sku_map (tenant_id,shop_id,external_sku_id,crm_sku_id,status) "
                 + "VALUES (1,?,'YZ-SKU-301',301,'ACTIVE')", shop);
-        if (linked) {
-            jdbcTemplate.update("INSERT INTO crm_youzan_customer_link (tenant_id,shop_id,external_customer_id,"
-                    + "customer_id,link_type,confidence,reason,created_by) VALUES (1,?,?,1010,'MANUAL','HIGH',?,1)",
-                    shop, externalCustomer, "集成测试虚构客户映射");
-        }
+    }
+
+    private void linkCustomer(String shop, String externalCustomer, long customerId) {
+        jdbcTemplate.update("INSERT INTO crm_youzan_customer_link (tenant_id,shop_id,external_customer_id,"
+                        + "customer_id,link_type,confidence,reason,created_by) VALUES (1,?,?,?,'MANUAL','HIGH',?,1)",
+                shop, externalCustomer, customerId, "集成测试虚构客户映射");
+    }
+
+    private long insertCustomer(long ownerStaffId, long teamId, String customerNo) {
+        jdbcTemplate.update("INSERT INTO crm_customer (tenant_id,owner_staff_id,team_id,customer_no,display_name) "
+                + "VALUES (1,?,?,?,'有赞测试客户')", ownerStaffId, teamId, customerNo);
+        return queryLong("SELECT id FROM crm_customer WHERE tenant_id=1 AND customer_no=?", customerNo);
     }
 
     private YouzanOrderEvent event(String shop, String eventId, String externalOrder, String externalCustomer,

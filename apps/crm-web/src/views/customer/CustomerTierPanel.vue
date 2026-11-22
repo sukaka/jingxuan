@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { CustomerTierCode, CustomerTierHistory, CustomerTierView } from '../../api/customerTier'
 import {
@@ -24,43 +24,70 @@ const adjustVisible = ref(false)
 const adjustForm = reactive<{ tierCode: CustomerTierCode | ''; reason: string; lock: boolean }>({
   tierCode: '', reason: '', lock: true,
 })
+let loadSequence = 0
+let disposed = false
 const historyTypeLabels: Record<CustomerTierHistory['changeType'], string> = {
   AUTO_UPGRADE: '自动升级',
   DOWNGRADE_APPROVED: '降级复核通过',
   MANUAL_ADJUST: '人工调整',
 }
 
+onBeforeUnmount(() => {
+  disposed = true
+  loadSequence += 1
+})
+
 async function load() {
+  if (disposed) return
+  const targetCustomerId = props.customerId
+  const sequence = ++loadSequence
   loading.value = true
   errorMessage.value = ''
   try {
     const [tierView, items] = await Promise.all([
-      getCustomerTier(props.customerId),
-      listCustomerTierHistory(props.customerId),
+      getCustomerTier(targetCustomerId),
+      listCustomerTierHistory(targetCustomerId),
     ])
+    if (disposed || sequence !== loadSequence || props.customerId !== targetCustomerId) return
     view.value = tierView
     history.value = items
   } catch (error) {
+    if (disposed || sequence !== loadSequence || props.customerId !== targetCustomerId) return
     errorMessage.value = error instanceof Error ? error.message : '客户等级加载失败'
   } finally {
-    loading.value = false
+    if (!disposed && sequence === loadSequence) loading.value = false
   }
 }
 
-watch(() => props.customerId, () => void load(), { immediate: true })
+watch(() => props.customerId, () => {
+  if (disposed) return
+  loadSequence += 1
+  view.value = null
+  history.value = []
+  errorMessage.value = ''
+  adjustVisible.value = false
+  recalculating.value = false
+  saving.value = false
+  void load()
+}, { immediate: true })
 
 async function recalculate() {
-  if (!view.value) return
+  const targetCustomerId = props.customerId
+  const sequence = loadSequence
+  if (disposed || !view.value) return
   recalculating.value = true
   try {
-    await recalculateCustomerTier(props.customerId, view.value.customerVersion, crypto.randomUUID())
+    await recalculateCustomerTier(targetCustomerId, view.value.customerVersion, crypto.randomUUID())
+    if (disposed || sequence !== loadSequence || props.customerId !== targetCustomerId) return
     ElMessage.success('重算完成；降级仍需人工复核')
     await load()
-    emit('changed')
+    if (!disposed && props.customerId === targetCustomerId) emit('changed')
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '重算失败')
+    if (!disposed && sequence === loadSequence && props.customerId === targetCustomerId) {
+      ElMessage.error(error instanceof Error ? error.message : '重算失败')
+    }
   } finally {
-    recalculating.value = false
+    if (!disposed && sequence === loadSequence && props.customerId === targetCustomerId) recalculating.value = false
   }
 }
 
@@ -73,26 +100,32 @@ function openAdjustment() {
 }
 
 async function saveAdjustment() {
-  if (!view.value || !adjustForm.tierCode || !adjustForm.reason.trim()) {
-    ElMessage.warning('请选择等级并填写人工调整理由')
+  const targetCustomerId = props.customerId
+  const sequence = loadSequence
+  if (disposed || !view.value || !adjustForm.tierCode || !adjustForm.reason.trim()) {
+    if (!disposed) ElMessage.warning('请选择等级并填写人工调整理由')
     return
   }
   saving.value = true
   try {
-    view.value = await adjustCustomerTier(props.customerId, {
+    const updated = await adjustCustomerTier(targetCustomerId, {
       tierCode: adjustForm.tierCode,
       reason: adjustForm.reason.trim(),
       lock: adjustForm.lock,
       version: view.value.customerVersion,
     }, crypto.randomUUID())
+    if (disposed || sequence !== loadSequence || props.customerId !== targetCustomerId) return
+    view.value = updated
     adjustVisible.value = false
     ElMessage.success('等级已调整并追加历史')
     await load()
-    emit('changed')
+    if (!disposed && props.customerId === targetCustomerId) emit('changed')
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '人工调整失败')
+    if (!disposed && sequence === loadSequence && props.customerId === targetCustomerId) {
+      ElMessage.error(error instanceof Error ? error.message : '人工调整失败')
+    }
   } finally {
-    saving.value = false
+    if (!disposed && sequence === loadSequence && props.customerId === targetCustomerId) saving.value = false
   }
 }
 

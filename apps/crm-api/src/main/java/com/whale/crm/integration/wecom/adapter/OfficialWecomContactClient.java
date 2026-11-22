@@ -25,22 +25,22 @@ import java.util.concurrent.TimeUnit;
 public class OfficialWecomContactClient implements WecomContactClient {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private final WecomOfficialProperties properties;
-    private final WecomTokenService tokens;
+    private final WecomTokenService tokenService;
     private final ObjectMapper objectMapper;
     private final OkHttpClient http;
 
     @Autowired
-    public OfficialWecomContactClient(WecomOfficialProperties properties, WecomTokenService tokens,
+    public OfficialWecomContactClient(WecomOfficialProperties properties, WecomTokenService tokenService,
                                       ObjectMapper objectMapper) {
-        this(properties, tokens, objectMapper, new OkHttpClient.Builder()
+        this(properties, tokenService, objectMapper, new OkHttpClient.Builder()
                 .connectTimeout(properties.connectTimeoutMs(), TimeUnit.MILLISECONDS)
                 .readTimeout(properties.readTimeoutMs(), TimeUnit.MILLISECONDS).build());
     }
 
-    public OfficialWecomContactClient(WecomOfficialProperties properties, WecomTokenService tokens,
+    public OfficialWecomContactClient(WecomOfficialProperties properties, WecomTokenService tokenService,
                                       ObjectMapper objectMapper, OkHttpClient http) {
         this.properties = properties;
-        this.tokens = tokens;
+        this.tokenService = tokenService;
         this.objectMapper = objectMapper;
         this.http = http;
     }
@@ -79,7 +79,7 @@ public class OfficialWecomContactClient implements WecomContactClient {
         int pages = 0;
         do {
             HttpUrl.Builder builder = HttpUrl.get(properties.apiBaseUrl() + "/cgi-bin/externalcontact/get").newBuilder()
-                    .addQueryParameter("access_token", tokens.token())
+                    .addQueryParameter("access_token", tokenService.token())
                     .addQueryParameter("external_userid", externalUserid);
             if (cursor != null && !cursor.isBlank()) {
                 builder.addQueryParameter("cursor", cursor);
@@ -110,7 +110,7 @@ public class OfficialWecomContactClient implements WecomContactClient {
     private JsonNode execute(String path, Map<String, Object> body) {
         try {
             HttpUrl url = HttpUrl.get(properties.apiBaseUrl() + path).newBuilder()
-                    .addQueryParameter("access_token", tokens.token()).build();
+                    .addQueryParameter("access_token", tokenService.token()).build();
             Request request = new Request.Builder().url(url)
                     .post(RequestBody.create(objectMapper.writeValueAsString(body), JSON)).build();
             return execute(request, true);
@@ -126,7 +126,7 @@ public class OfficialWecomContactClient implements WecomContactClient {
             JsonNode body = objectMapper.readTree(WecomHttpResponses.body(response, objectMapper));
             int code = body.path("errcode").asInt(response.isSuccessful() ? 0 : -1);
             if (retryToken && (code == 40014 || code == 42001)) {
-                String fresh = tokens.refresh();
+                String fresh = tokenService.refresh();
                 Request retry = request.newBuilder().url(request.url().newBuilder()
                         .setQueryParameter("access_token", fresh).build()).build();
                 return execute(retry, false);

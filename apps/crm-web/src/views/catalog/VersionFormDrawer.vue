@@ -34,8 +34,8 @@ interface LineState {
 type GroupState = PackageSelectionGroupInput
 
 const form = reactive({
-  selectionMode: 'USE_N',
-  choiceCount: 3,
+  selectionMode: 'FIXED',
+  choiceCount: 0,
   selectionRules: '',
   items: [] as LineState[],
   groups: [] as GroupState[],
@@ -66,8 +66,8 @@ watch(
         referenceYuan: (item.referencePriceFen ?? item.listPriceFen ?? 0) / 100,
       }))
     } else {
-      form.selectionMode = 'USE_N'
-      form.choiceCount = 3
+      form.selectionMode = 'FIXED'
+      form.choiceCount = 0
       form.selectionRules = ''
       form.groups = []
       form.items = [newLine()]
@@ -190,6 +190,10 @@ function validateGroups(): string {
 
 async function save() {
   if (!props.packageId) return
+  if (form.selectionMode === 'USE_N') {
+    ElMessage.warning('USE_N 选择模式待 Q01 确认，不能创建或发放权益，请改用固定组合或选择子项目')
+    return
+  }
   const choiceCount = effectiveChoiceCount()
   if (form.selectionMode !== 'FIXED' && choiceCount <= 0) {
     ElMessage.warning('选 N 项或 N 次时，N 必须大于 0')
@@ -255,11 +259,25 @@ async function save() {
         : '草稿可编辑；旧版无分组 CHOOSE_N 仍按 Q01 待确认模板处理，不能上架发放权益'"
       class="drawer-tip"
     />
+    <el-alert
+      v-if="form.selectionMode === 'USE_N'"
+      type="warning"
+      :closable="false"
+      title="Q01 选择规则未确认：USE_N 仅作历史模板查看，不能激活、保存为可售规格或发放客户权益；请改用「固定组合」或「选择子项目」。"
+      class="drawer-tip"
+      data-testid="version-use-n-warning"
+    />
     <el-form label-position="top">
       <div class="catalog-form-grid">
         <el-form-item label="选择模式" required>
-          <el-select v-model="form.selectionMode" class="full-width" @change="handleModeChange">
-            <el-option v-for="mode in ['USE_N', 'FIXED', 'CHOOSE_N']" :key="mode" :label="selectionModeLabel(mode)" :value="mode" />
+          <el-select v-model="form.selectionMode" class="full-width" data-testid="version-selection-mode" @change="handleModeChange">
+            <el-option
+              v-for="mode in ['FIXED', 'CHOOSE_N', 'USE_N']"
+              :key="mode"
+              :label="selectionModeLabel(mode)"
+              :value="mode"
+              :disabled="mode === 'USE_N'"
+            />
           </el-select>
         </el-form-item>
         <el-form-item v-if="form.selectionMode === 'CHOOSE_N' && form.groups.length" label="兼容总选项数（由组规则计算）">

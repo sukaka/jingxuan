@@ -238,12 +238,12 @@ onMounted(() => {
       <template v-if="activeTab === 'analytics'">
         <div class="proto-toolbar">
           <div class="report-filter">
-            <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" class="report-date" @change="analyticsQuery.page = 1; loadAnalytics" />
-            <el-select v-model="filters.campaignId" class="campaign-filter" placeholder="全部活动" clearable filterable @change="analyticsQuery.page = 1; loadAnalytics"><el-option v-for="item in campaigns" :key="item.id" :label="`${item.campaignName}（${item.campaignCode}）`" :value="item.id" /></el-select>
-            <el-select v-model="filters.sourceSystem" class="report-source" aria-label="订单来源" @change="analyticsQuery.page = 1; loadAnalytics"><el-option label="全部来源" value="ALL" /><el-option label="手工订单" value="MANUAL" /><el-option label="有赞订单" value="YOUZAN" /></el-select>
-            <el-select v-model="filters.receiverType" class="report-source" aria-label="收款方" @change="analyticsQuery.page = 1; loadAnalytics"><el-option label="全部收款方" value="ALL" /><el-option label="平台收款" value="PLATFORM" /><el-option label="机构收款" value="INSTITUTION" /></el-select>
+            <el-date-picker v-model="filters.range" type="daterange" value-format="YYYY-MM-DD" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" class="report-date" @change="analyticsQuery.page = 1; loadAnalytics()" />
+            <el-select v-model="filters.campaignId" class="campaign-filter" placeholder="全部活动" clearable filterable @change="analyticsQuery.page = 1; loadAnalytics()"><el-option v-for="item in campaigns" :key="item.id" :label="`${item.campaignName}（${item.campaignCode}）`" :value="item.id" /></el-select>
+            <el-select v-model="filters.sourceSystem" class="report-source" aria-label="订单来源" @change="analyticsQuery.page = 1; loadAnalytics()"><el-option label="全部来源" value="ALL" /><el-option label="手工订单" value="MANUAL" /><el-option label="有赞订单" value="YOUZAN" /></el-select>
+            <el-select v-model="filters.receiverType" class="report-source" aria-label="收款方" @change="analyticsQuery.page = 1; loadAnalytics()"><el-option label="全部收款方" value="ALL" /><el-option label="平台收款" value="PLATFORM" /><el-option label="机构收款" value="INSTITUTION" /></el-select>
             <el-select v-model="filters.drillDownType" class="report-source" aria-label="查看明细事实类型"><el-option label="支付流水" value="PAYMENT" /><el-option label="成功退款" value="REFUND" /><el-option label="正式核销" value="REDEMPTION" /><el-option label="预约确认" value="APPOINTMENT_CONFIRMED" /><el-option label="到院事实" value="CHECKED_IN" /></el-select>
-            <el-button type="primary" :loading="reportLoading" @click="analyticsQuery.page = 1; loadAnalytics">查询</el-button><el-button @click="resetAnalytics">重置</el-button>
+            <el-button type="primary" :loading="reportLoading" @click="analyticsQuery.page = 1; loadAnalytics()">查询</el-button><el-button @click="resetAnalytics">重置</el-button>
           </div>
         </div>
         <div v-if="reportLoading" class="report-loading" role="status">正在加载活动分析，请稍候。</div>

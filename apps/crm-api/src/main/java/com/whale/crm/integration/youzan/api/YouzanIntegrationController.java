@@ -11,7 +11,7 @@ import com.whale.crm.integration.youzan.application.YouzanManagementService;
 import com.whale.crm.integration.youzan.domain.YouzanCustomerLink;
 import com.whale.crm.integration.youzan.domain.YouzanSkuMapping;
 import com.whale.crm.integration.youzan.domain.YouzanSyncIssue;
-import com.whale.crm.platform.context.TenantContext;
+import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.SecuritySupport;
 import com.whale.crm.platform.web.ApiResponse;
 import com.whale.crm.platform.web.PageResponse;
@@ -44,21 +44,21 @@ public class YouzanIntegrationController extends YouzanBaseController {
     }
 
     @GetMapping("/orders")
-    @PreAuthorize("hasAuthority('order:read')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'order:read')")
     public ApiResponse<PageResponse<YouzanOrderView>> orders(
             @RequestParam String shopId,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             HttpServletRequest request) {
-        return ApiResponse.ok(managementService.orders(TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser(),
-                shopId, page, size), requestId(request));
+        CurrentUser user = SecuritySupport.requireCurrentUser();
+        return ApiResponse.ok(managementService.orders(user.tenantId(), user, shopId, page, size), requestId(request));
     }
 
     @GetMapping("/orders/{id}")
-    @PreAuthorize("hasAuthority('order:read')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'order:read')")
     public ApiResponse<YouzanOrderView> order(@PathVariable long id, HttpServletRequest request) {
-        return ApiResponse.ok(managementService.order(TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser(), id),
-                requestId(request));
+        CurrentUser user = SecuritySupport.requireCurrentUser();
+        return ApiResponse.ok(managementService.order(user.tenantId(), user, id), requestId(request));
     }
 
     @PostMapping("/sync")
@@ -78,23 +78,25 @@ public class YouzanIntegrationController extends YouzanBaseController {
     }
 
     @GetMapping("/reconcile-report")
-    @PreAuthorize("hasAuthority('order:read')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'order:read')")
     public ApiResponse<YouzanReconcileReport> report(@RequestParam String shopId, HttpServletRequest request) {
-        return ApiResponse.ok(managementService.report(TenantContext.currentTenantId(), shopId), requestId(request));
+        CurrentUser user = SecuritySupport.requireCurrentUser();
+        return ApiResponse.ok(managementService.report(user.tenantId(), user, shopId), requestId(request));
     }
 
     @GetMapping("/sync-issues")
-    @PreAuthorize("hasAuthority('order:read')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'order:read')")
     public ApiResponse<PageResponse<YouzanSyncIssue>> issues(
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             HttpServletRequest request) {
-        return ApiResponse.ok(managementService.issues(TenantContext.currentTenantId(), status, page, size), requestId(request));
+        CurrentUser user = SecuritySupport.requireCurrentUser();
+        return ApiResponse.ok(managementService.issues(user.tenantId(), user, status, page, size), requestId(request));
     }
 
     @PostMapping("/sync-issues/{id}/retry")
-    @PreAuthorize("hasAuthority('campaign:write')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'campaign:write')")
     public ApiResponse<YouzanEventResponse> retry(@PathVariable long id,
             @RequestHeader(name = "Idempotency-Key", required = true) @Size(min = 1, max = 128) String key,
             HttpServletRequest request) {
@@ -102,13 +104,14 @@ public class YouzanIntegrationController extends YouzanBaseController {
     }
 
     @GetMapping("/sku-mappings")
-    @PreAuthorize("hasAuthority('order:read')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'order:read')")
     public ApiResponse<List<YouzanSkuMapping>> skuMappings(@RequestParam String shopId, HttpServletRequest request) {
-        return ApiResponse.ok(managementService.skuMappings(TenantContext.currentTenantId(), shopId), requestId(request));
+        CurrentUser user = SecuritySupport.requireCurrentUser();
+        return ApiResponse.ok(managementService.skuMappings(user.tenantId(), user, shopId), requestId(request));
     }
 
     @PostMapping("/sku-mappings")
-    @PreAuthorize("hasAuthority('campaign:write')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'campaign:write')")
     public ApiResponse<YouzanSkuMapping> saveSkuMapping(@Valid @RequestBody YouzanSkuMappingRequest body,
             @RequestHeader(name = "Idempotency-Key", required = true) @Size(min = 1, max = 128) String key,
             HttpServletRequest request) {
@@ -116,13 +119,14 @@ public class YouzanIntegrationController extends YouzanBaseController {
     }
 
     @GetMapping("/customer-links")
-    @PreAuthorize("hasAuthority('order:read')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'order:read')")
     public ApiResponse<List<YouzanCustomerLink>> customerLinks(@RequestParam String shopId, HttpServletRequest request) {
-        return ApiResponse.ok(managementService.customerLinks(TenantContext.currentTenantId(), shopId), requestId(request));
+        CurrentUser user = SecuritySupport.requireCurrentUser();
+        return ApiResponse.ok(managementService.customerLinks(user.tenantId(), user, shopId), requestId(request));
     }
 
     @PostMapping("/customer-links")
-    @PreAuthorize("hasAuthority('campaign:write')")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'campaign:write')")
     public ApiResponse<YouzanCustomerLink> saveCustomerLink(@Valid @RequestBody YouzanCustomerLinkRequest body,
             @RequestHeader(name = "Idempotency-Key", required = true) @Size(min = 1, max = 128) String key,
             HttpServletRequest request) {

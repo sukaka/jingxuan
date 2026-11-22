@@ -1,21 +1,70 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { listEntitlements } from '../api/trading'
-import type { Entitlement } from '../api/trading'
-import { getWecomSidebarContext } from '../api/wecomSidebar'
-import type { WecomSidebarContext } from '../api/wecomSidebar'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getCustomerTimeline } from '../api/customerTimeline'
 import type { CustomerTimelineItem } from '../api/customerTimeline'
-import { getWecomChatContext, isWecomRuntime, redirectToWecomOAuth } from '../services/wecomSdk'
+import { listEntitlements } from '../api/trading'
+import type { Entitlement } from '../api/trading'
+import { getWecomSidebarContext, getWecomSidebarGroupContext } from '../api/wecomSidebar'
+import type { WecomSidebarContext, WecomSidebarGroupContext } from '../api/wecomSidebar'
+import WecomAiReplyPanel from '../components/WecomAiReplyPanel.vue'
+import WecomGroupChatPanel from '../components/WecomGroupChatPanel.vue'
+import WecomH5CardPanel from '../components/WecomH5CardPanel.vue'
+import WecomMaterialPanel from '../components/WecomMaterialPanel.vue'
+import WecomQuickActionsPanel from '../components/WecomQuickActionsPanel.vue'
+import WecomQuickReplyPanel from '../components/WecomQuickReplyPanel.vue'
+import {
+  getWecomChatContext,
+  isWecomRuntime,
+  peekWecomChatContext,
+  redirectToWecomOAuth,
+} from '../services/wecomSdk'
+import type { WecomChatContext } from '../services/wecomSdk'
 import { useAuthStore } from '../stores/auth'
 import { ApiError } from '../types/api'
-import WecomQuickReplyPanel from '../components/WecomQuickReplyPanel.vue'
-import WecomAiReplyPanel from '../components/WecomAiReplyPanel.vue'
-import WecomH5CardPanel from '../components/WecomH5CardPanel.vue'
 
-type ViewStatus = 'LOADING' | 'BROWSER' | 'AUTHENTICATING' | 'FORBIDDEN' | 'NOT_CHAT' | 'GROUP_CHAT' | 'READY' | 'ERROR'
+type ViewStatus =
+  | 'LOADING'
+  | 'BROWSER'
+  | 'AUTHENTICATING'
+  | 'OAUTH_ERROR'
+  | 'FORBIDDEN'
+  | 'NOT_CHAT'
+  | 'GROUP_CHAT'
+  | 'READY'
+  | 'ERROR'
 type SidebarTab = 'CUSTOMER' | 'PACKAGES' | 'TIMELINE' | 'AI' | 'TOOLS'
-type ToolTab = 'QUICK_REPLY' | 'H5_CARD'
+type ToolTab = 'QUICK_REPLY' | 'H5_CARD' | 'MATERIAL'
+
+const OAUTH_ATTEMPT_KEY = 'wecom_sidebar_oauth_attempt_at'
+const OAUTH_LOOP_WINDOW_MS = 30_000
+const SWITCH_CHECK_DEBOUNCE_MS = 300
+
+const OAUTH_ERROR_GUIDANCE: Record<string, { title: string; guide: string }> = {
+  UNAUTHORIZED: {
+    title: '企业微信身份验证未通过',
+    guide: '请确认当前企微账号已与 CRM 员工完成绑定且账号处于启用状态，或联系管理员核对企微成员映射。',
+  },
+  VALIDATION_FAILED: {
+    title: '企业微信授权参数无效或已过期',
+    guide: '授权回调状态可能已超时或被重复使用，请点击下方按钮重新发起企业微信授权。',
+  },
+  PENDING_BUSINESS_RULE: {
+    title: '企业微信侧边栏尚未完成配置',
+    guide: '请联系管理员在系统设置中核对企微 CorpId、AgentId、Secret 及应用可信域名配置。',
+  },
+  AUTH_PROTECTION_UNAVAILABLE: {
+    title: '认证保护服务暂不可用',
+    guide: '服务端登录保护组件暂时异常，请稍后重试或联系管理员检查认证依赖。',
+  },
+  CONFLICT: {
+    title: '企微成员映射存在冲突',
+    guide: '当前企微成员与 CRM 账号映射存在冲突，请联系管理员在企微映射设置中排查。',
+  },
+  REDIRECT_LOOP_GUARD: {
+    title: '已暂停自动授权跳转',
+    guide: '短时间内已多次尝试企微 OAuth 跳转但仍未建立会话。请检查企微可信域名、HTTPS 与 Cookie 设置后点击手动重试。',
+  },
+}
 
 const auth = useAuthStore()
 const status = ref<ViewStatus>('LOADING')
@@ -23,78 +72,290 @@ const activeTab = ref<SidebarTab>('CUSTOMER')
 const toolTab = ref<ToolTab>('QUICK_REPLY')
 const chatEntry = ref('')
 const context = ref<WecomSidebarContext | null>(null)
+const groupContext = ref<WecomSidebarGroupContext | null>(null)
+const groupLoading = ref(false)
+const groupError = ref('')
 const entitlements = ref<Entitlement[]>([])
 const timeline = ref<CustomerTimelineItem[]>([])
 const errorMessage = ref('')
 const auxiliaryMessage = ref('')
+const mismatchNotice = ref('')
+const oauthErrorCode = ref('')
+const oauthErrorMessage = ref('')
+
+// Track active chat fingerprint for silent chat-switch detection
+const activeChatKind = ref<WecomChatContext['kind'] | ''>('')
+const activeExternalUserid = ref('')
+const activeChatId = ref('')
+
+let switchCheckTimer: number | undefined
+let checkingSwitch = false
+let loadSeq = 0
+
 const customer = computed(() => context.value?.customer ?? null)
 const customerName = computed(() => customer.value?.displayName || customer.value?.nickname || customer.value?.customerNo || '当前客户')
 const customerInitial = computed(() => customerName.value.slice(0, 1))
 const hasCustomer = computed(() => context.value?.contextStatus === 'READY' && customer.value !== null)
+const oauthGuidance = computed(
+  () => OAUTH_ERROR_GUIDANCE[oauthErrorCode.value] ?? {
+    title: '企业微信授权失败',
+    guide: '请稍后点击下方按钮重新发起授权；若持续失败请联系管理员核对企微应用配置。',
+  },
+)
 
-async function load(): Promise<void> {
+function readStorageItem(key: string): string | null {
+  try {
+    return window.sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeStorageItem(key: string, value: string): void {
+  try {
+    window.sessionStorage.setItem(key, value)
+  } catch {
+    // Ignore restricted WebView storage errors
+  }
+}
+
+function removeStorageItem(key: string): void {
+  try {
+    window.sessionStorage.removeItem(key)
+  } catch {
+    // Ignore restricted WebView storage errors
+  }
+}
+
+function readOAuthErrorQuery(): { code: string; message: string } | null {
+  const params = new URLSearchParams(window.location.search)
+  const code = params.get('oauth_error')?.trim() ?? ''
+  if (!code) return null
+  const message = params.get('oauth_message')?.trim() ?? ''
+  return { code, message }
+}
+
+function stripOAuthErrorQuery(): void {
+  try {
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has('oauth_error') && !url.searchParams.has('oauth_message')) return
+    url.searchParams.delete('oauth_error')
+    url.searchParams.delete('oauth_message')
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  } catch {
+    // Ignore history API restrictions
+  }
+}
+
+function isRedirectLoopBlocked(): boolean {
+  const raw = readStorageItem(OAUTH_ATTEMPT_KEY)
+  if (!raw) return false
+  const timestamp = Number(raw)
+  return Number.isFinite(timestamp) && Date.now() - timestamp < OAUTH_LOOP_WINDOW_MS
+}
+
+function triggerOAuthRedirect(): void {
+  writeStorageItem(OAUTH_ATTEMPT_KEY, String(Date.now()))
+  status.value = 'AUTHENTICATING'
+  redirectToWecomOAuth()
+}
+
+function retryOAuthManually(): void {
+  stripOAuthErrorQuery()
+  oauthErrorCode.value = ''
+  oauthErrorMessage.value = ''
+  removeStorageItem(OAUTH_ATTEMPT_KEY)
+  triggerOAuthRedirect()
+}
+
+async function load(options: { keepNotice?: boolean } = {}): Promise<void> {
+  const seq = ++loadSeq
   status.value = 'LOADING'
   errorMessage.value = ''
   auxiliaryMessage.value = ''
+  if (!options.keepNotice) mismatchNotice.value = ''
+  oauthErrorCode.value = ''
+  oauthErrorMessage.value = ''
   context.value = null
+  groupContext.value = null
+  groupError.value = ''
+  groupLoading.value = false
   chatEntry.value = ''
   entitlements.value = []
   timeline.value = []
+  activeChatKind.value = ''
+  activeExternalUserid.value = ''
+  activeChatId.value = ''
+
   try {
+    const oauthQueryError = readOAuthErrorQuery()
+    if (oauthQueryError) {
+      oauthErrorCode.value = oauthQueryError.code
+      oauthErrorMessage.value = oauthQueryError.message
+      status.value = 'OAUTH_ERROR'
+      return
+    }
+
     if (!isWecomRuntime()) {
       status.value = 'BROWSER'
       return
     }
     if (!auth.initialized) await auth.fetchMe()
+    if (seq !== loadSeq) return
     if (!auth.isLoggedIn) {
-      status.value = 'AUTHENTICATING'
-      redirectToWecomOAuth()
+      if (isRedirectLoopBlocked()) {
+        oauthErrorCode.value = 'REDIRECT_LOOP_GUARD'
+        oauthErrorMessage.value = '30 秒内已尝试企业微信自动授权但会话未建立，已阻止重复跳转。'
+        status.value = 'OAUTH_ERROR'
+        return
+      }
+      triggerOAuthRedirect()
       return
     }
+
+    removeStorageItem(OAUTH_ATTEMPT_KEY)
+
     if (!auth.hasPermission('wecom:sidebar:view')) {
       status.value = 'FORBIDDEN'
       return
     }
+
     const chat = await getWecomChatContext()
-    if (chat.kind === 'GROUP_CHAT') {
-      status.value = 'GROUP_CHAT'
-      return
-    }
-    if (chat.kind !== 'CUSTOMER') {
-      status.value = 'NOT_CHAT'
-      return
-    }
-    chatEntry.value = chat.entry
-    context.value = await getWecomSidebarContext(chat.externalUserid)
-    status.value = 'READY'
-    if (context.value.customer) await loadBusinessData(context.value.customer.id)
+    if (seq !== loadSeq) return
+    await applyChatContext(chat, seq)
   } catch (error) {
+    if (seq !== loadSeq) return
     errorMessage.value = error instanceof ApiError ? error.message : error instanceof Error ? error.message : '页面加载失败，请重试'
     status.value = 'ERROR'
   }
 }
 
-async function loadBusinessData(customerId: number): Promise<void> {
+async function applyChatContext(chat: WecomChatContext, seq: number): Promise<void> {
+  activeChatKind.value = chat.kind
+  if (chat.kind === 'GROUP_CHAT') {
+    chatEntry.value = chat.entry
+    activeChatId.value = chat.chatId ?? ''
+    activeExternalUserid.value = ''
+    status.value = 'GROUP_CHAT'
+    if (chat.chatId) {
+      groupLoading.value = true
+      groupError.value = ''
+      try {
+        const res = await getWecomSidebarGroupContext(chat.chatId)
+        if (seq !== loadSeq) return
+        groupContext.value = res
+      } catch (error) {
+        if (seq !== loadSeq) return
+        groupError.value = error instanceof ApiError || error instanceof Error ? error.message : '群聊信息加载失败，仍可使用群发工具'
+      } finally {
+        if (seq === loadSeq) groupLoading.value = false
+      }
+    }
+    return
+  }
+
+  if (chat.kind !== 'CUSTOMER') {
+    activeChatId.value = ''
+    activeExternalUserid.value = ''
+    status.value = 'NOT_CHAT'
+    return
+  }
+
+  chatEntry.value = chat.entry
+  activeExternalUserid.value = chat.externalUserid
+  activeChatId.value = ''
+  const nextContext = await getWecomSidebarContext(chat.externalUserid)
+  if (seq !== loadSeq) return
+  context.value = nextContext
+  status.value = 'READY'
+  if (nextContext.customer) {
+    await loadBusinessData(nextContext.customer.id, seq)
+  }
+}
+
+async function loadBusinessData(customerId: number, seq: number): Promise<void> {
   const tasks: Promise<void>[] = []
   if (auth.hasPermission('entitlement:read')) {
     tasks.push((async () => {
       try {
-        entitlements.value = (await listEntitlements({ customerId, page: 1, size: 50 })).items
+        const page = await listEntitlements({ customerId, page: 1, size: 50 })
+        if (seq === loadSeq) entitlements.value = page.items
       } catch {
-        auxiliaryMessage.value = '套餐信息暂时不可用，客户档案仍可正常使用。'
+        if (seq === loadSeq) auxiliaryMessage.value = '套餐信息暂时不可用，客户档案仍可正常使用。'
       }
     })())
   }
   if (auth.hasPermission('customer:read')) {
     tasks.push((async () => {
       try {
-        timeline.value = (await getCustomerTimeline(customerId, { size: 20 })).items
+        const res = await getCustomerTimeline(customerId, { size: 20 })
+        if (seq === loadSeq) timeline.value = res.items
       } catch {
-        auxiliaryMessage.value = '跟进时间线暂时不可用，客户档案仍可正常使用。'
+        if (seq === loadSeq) auxiliaryMessage.value = '跟进时间线暂时不可用，客户档案仍可正常使用。'
       }
     })())
   }
   await Promise.all(tasks)
+}
+
+/** 在当前客户页内原位刷新档案/权益/时间线，不中断 KeepAlive 草稿 */
+async function refreshCurrentCustomer(): Promise<void> {
+  const externalUserid = context.value?.externalUserid
+  if (!externalUserid) {
+    await load()
+    return
+  }
+  const seq = ++loadSeq
+  auxiliaryMessage.value = ''
+  try {
+    const nextContext = await getWecomSidebarContext(externalUserid)
+    if (seq !== loadSeq) return
+    context.value = nextContext
+    if (nextContext.customer) {
+      await loadBusinessData(nextContext.customer.id, seq)
+    }
+  } catch {
+    // Keep existing UI data intact on background refresh error
+  }
+}
+
+function handleContextMismatch(): void {
+  mismatchNotice.value = '检测到当前企微会话已切换，已阻止误发并自动刷新上下文。'
+  void load({ keepNotice: true })
+}
+
+function isSameChatContext(next: WecomChatContext): boolean {
+  if (next.kind !== activeChatKind.value) return false
+  if (next.kind === 'CUSTOMER') return next.externalUserid === activeExternalUserid.value
+  if (next.kind === 'GROUP_CHAT') return (next.chatId ?? '') === activeChatId.value
+  return true
+}
+
+async function checkChatSwitch(): Promise<void> {
+  if (checkingSwitch) return
+  if (document.visibilityState === 'hidden') return
+  if (!isWecomRuntime() || !auth.isLoggedIn) return
+  if (['LOADING', 'AUTHENTICATING', 'OAUTH_ERROR', 'FORBIDDEN', 'BROWSER'].includes(status.value)) return
+  checkingSwitch = true
+  try {
+    const latest = await peekWecomChatContext()
+    if (!isSameChatContext(latest)) {
+      await load()
+    }
+  } catch {
+    // Ignore transient SDK focus errors silently
+  } finally {
+    checkingSwitch = false
+  }
+}
+
+function scheduleChatSwitchCheck(): void {
+  if (document.visibilityState === 'hidden') return
+  if (switchCheckTimer !== undefined) window.clearTimeout(switchCheckTimer)
+  switchCheckTimer = window.setTimeout(() => {
+    switchCheckTimer = undefined
+    void checkChatSwitch()
+  }, SWITCH_CHECK_DEBOUNCE_MS)
 }
 
 function formatDate(value: string | null): string {
@@ -118,7 +379,20 @@ function timelineTypeLabel(type: string): string {
   return ({ FOLLOWUP: '跟进', INTENT: '意向', BLOCKER: '阻碍', NEXT_FOLLOWUP: '待跟进', TASK: '待办', OWNERSHIP: '归属', ORDER: '订单', APPOINTMENT: '预约', REDEMPTION: '核销', REFUND: '退款', TIER: '等级', COMPLAINT: '客诉' } as Record<string, string>)[type] ?? '记录'
 }
 
-onMounted(() => { void load() })
+onMounted(() => {
+  void load()
+  document.addEventListener('visibilitychange', scheduleChatSwitchCheck)
+  window.addEventListener('focus', scheduleChatSwitchCheck)
+})
+
+onUnmounted(() => {
+  if (switchCheckTimer !== undefined) {
+    window.clearTimeout(switchCheckTimer)
+    switchCheckTimer = undefined
+  }
+  document.removeEventListener('visibilitychange', scheduleChatSwitchCheck)
+  window.removeEventListener('focus', scheduleChatSwitchCheck)
+})
 </script>
 
 <template>
@@ -131,12 +405,24 @@ onMounted(() => { void load() })
     <section v-else-if="status === 'BROWSER'" class="sidebar-state" data-testid="browser-state">
       <span class="state-brand">鲸</span><span class="state-eyebrow">企微客户助手</span>
       <h1>请在企业微信中打开</h1>
-      <p>当前是普通浏览器，无法读取聊天上下文。请从客户单聊的聊天工具栏进入，系统不会在此伪造当前客户或会话。</p>
-      <div class="state-guidance"><strong>正确入口</strong><span>企业微信 → 客户聊天 → 聊天工具栏 → 鲸选客户助手</span></div>
+      <p>当前是普通浏览器，无法读取聊天上下文。请从客户单聊或客户群的聊天工具栏进入，系统不会在此伪造当前客户或会话。</p>
+      <div class="state-guidance"><strong>正确入口</strong><span>企业微信 → 客户单聊 / 客户群 → 聊天工具栏 → 鲸选客户助手</span></div>
     </section>
 
     <section v-else-if="status === 'AUTHENTICATING'" class="sidebar-state" aria-live="polite">
       <span class="state-brand">鲸</span><h1>正在进行企业身份认证</h1><p>即将跳转企业微信授权，完成后自动返回当前页面。</p>
+    </section>
+
+    <section v-else-if="status === 'OAUTH_ERROR'" class="sidebar-state" data-testid="oauth-error-state">
+      <span class="state-brand">鲸</span>
+      <span class="state-eyebrow">企微授权排查</span>
+      <h1>{{ oauthGuidance.title }}</h1>
+      <p v-if="oauthErrorMessage" role="alert">{{ oauthErrorMessage }}</p>
+      <div class="state-guidance">
+        <strong>排查建议（{{ oauthErrorCode || 'OAUTH_ERROR' }}）</strong>
+        <span>{{ oauthGuidance.guide }}</span>
+      </div>
+      <button class="state-action" type="button" data-testid="oauth-manual-retry" @click="retryOAuthManually">重新发起企微授权</button>
     </section>
 
     <section v-else-if="status === 'FORBIDDEN'" class="sidebar-state" data-testid="forbidden-state">
@@ -144,20 +430,30 @@ onMounted(() => { void load() })
     </section>
 
     <section v-else-if="status === 'NOT_CHAT'" class="sidebar-state" data-testid="not-chat-state">
-      <span class="state-brand">鲸</span><h1>当前不是客户聊天入口</h1><p>请从客户单聊工具栏或客户资料页进入。当前入口不会读取客户标识，也不会执行会话操作。</p>
+      <span class="state-brand">鲸</span><h1>当前不是客户聊天入口</h1><p>请从客户单聊工具栏、客户群工具栏或客户资料页进入。当前入口不会读取客户标识，也不会执行会话操作。</p>
     </section>
 
-    <section v-else-if="status === 'GROUP_CHAT'" class="sidebar-state" data-testid="group-chat-state">
-      <span class="state-brand">鲸</span><h1>当前是群聊</h1><p>群聊不自动对应某一个 CRM 客户。请进入客户单聊后使用客户助手，避免把客户资料展示在错误的会话中。</p>
-    </section>
+    <template v-else-if="status === 'GROUP_CHAT'">
+      <div v-if="mismatchNotice" class="mismatch-banner" role="alert" data-testid="mismatch-notice">{{ mismatchNotice }}</div>
+      <WecomGroupChatPanel
+        :group-context="groupContext"
+        :chat-id="activeChatId"
+        :chat-entry="chatEntry || 'group_chat_tools'"
+        :loading="groupLoading"
+        :error-message="groupError"
+        @reload="load"
+        @context-mismatch="handleContextMismatch"
+      />
+    </template>
 
     <section v-else-if="status === 'ERROR'" class="sidebar-state" data-testid="error-state">
-      <span class="state-brand">鲸</span><h1>暂时无法打开客户助手</h1><p role="alert">{{ errorMessage }}</p><button class="state-action" type="button" @click="load">重新加载</button>
+      <span class="state-brand">鲸</span><h1>暂时无法打开客户助手</h1><p role="alert">{{ errorMessage }}</p><button class="state-action" type="button" @click="load()">重新加载</button>
     </section>
 
     <template v-else-if="status === 'READY' && context">
+      <div v-if="mismatchNotice" class="mismatch-banner" role="alert" data-testid="mismatch-notice">{{ mismatchNotice }}</div>
       <header class="customer-hero">
-        <div class="assistant-bar"><span class="assistant-brand">鲸</span><span>企微客户助手</span><button type="button" aria-label="刷新当前客户" @click="load">刷新</button></div>
+        <div class="assistant-bar"><span class="assistant-brand">鲸</span><span>企微客户助手</span><button type="button" aria-label="刷新当前客户" @click="load()">刷新</button></div>
         <template v-if="hasCustomer && customer">
           <div class="customer-identity">
             <span class="customer-avatar">{{ customerInitial }}</span>
@@ -165,7 +461,7 @@ onMounted(() => { void load() })
           </div>
           <div class="customer-owner"><span>客户编号 {{ customer.customerNo }}</span><span>管家 {{ customer.ownerName || '待分配' }}</span></div>
         </template>
-        <div v-else class="unlinked-hero"><span class="state-eyebrow">当前企微客户</span><h1>尚未关联 CRM 客户</h1><p>已识别 external_userid，但它不是 CRM 主键。请先由有权限人员在企微管理中完成人工匹配。</p></div>
+        <div v-else class="unlinked-hero"><span class="state-eyebrow">当前企微客户</span><h1>尚未关联 CRM 客户</h1><p>已识别 external_userid，但它不是 CRM 主键。可在下方搜索已有 CRM 客户或新建档案完成人工匹配。</p></div>
       </header>
 
       <template v-if="hasCustomer && customer">
@@ -184,6 +480,11 @@ onMounted(() => { void load() })
         <div v-if="auxiliaryMessage" class="auxiliary-notice" role="status">{{ auxiliaryMessage }}</div>
         <div class="sidebar-content">
           <section v-if="activeTab === 'CUSTOMER'" class="content-section" data-testid="sidebar-customer-panel">
+            <WecomQuickActionsPanel
+              :customer="customer"
+              :external-userid="context.externalUserid || ''"
+              @updated="refreshCurrentCustomer"
+            />
             <div class="section-heading"><span>客户档案</span><small>实时 CRM 数据</small></div>
             <dl class="profile-list">
               <div><dt>客户等级</dt><dd>{{ customer.tierCode || '未分级' }}</dd></div>
@@ -209,35 +510,77 @@ onMounted(() => { void load() })
             <div v-else class="inline-empty"><strong>当前没有套餐权益</strong><p>可能尚未购买、已用完或已退款；请以订单与权益明细为准。</p></div>
           </section>
 
-          <section v-else-if="activeTab === 'AI'" class="content-section" data-testid="sidebar-ai-panel">
-            <WecomAiReplyPanel :customer-id="customer.id" :external-userid="context.externalUserid || ''" :chat-entry="chatEntry" />
-          </section>
-
-          <section v-else-if="activeTab === 'TOOLS'" class="content-section" data-testid="sidebar-tools-panel">
-            <div class="tool-switch" role="tablist" aria-label="员工工具">
-              <button type="button" role="tab" :aria-selected="toolTab === 'QUICK_REPLY'" data-testid="quick-reply-tool-tab" @click="toolTab = 'QUICK_REPLY'">快捷话术</button>
-              <button type="button" role="tab" :aria-selected="toolTab === 'H5_CARD'" data-testid="h5-card-tool-tab" @click="toolTab = 'H5_CARD'">H5 卡片</button>
-            </div>
-            <WecomQuickReplyPanel v-if="toolTab === 'QUICK_REPLY'" :customer-id="customer.id" :external-userid="context.externalUserid || ''" :chat-entry="chatEntry" />
-            <WecomH5CardPanel v-else :customer-id="customer.id" :external-userid="context.externalUserid || ''" :chat-entry="chatEntry" />
-          </section>
-
-          <section v-else class="content-section" data-testid="sidebar-timeline-panel">
+          <section v-else-if="activeTab === 'TIMELINE'" class="content-section" data-testid="sidebar-timeline-panel">
             <div class="section-heading"><span>客户跟进时间线</span><small>最近 20 条</small></div>
             <ol v-if="timeline.length" class="timeline-list">
               <li v-for="item in timeline" :key="item.eventKey"><span class="timeline-dot" aria-hidden="true" /><div><div class="timeline-heading"><strong>{{ item.title }}</strong><span>{{ timelineTypeLabel(item.type) }}</span></div><p v-if="item.summary">{{ item.summary }}</p><time>{{ formatDateTime(item.occurredAt) }}</time></div></li>
             </ol>
             <div v-else class="inline-empty"><strong>暂无跟进记录</strong><p>新的跟进、预约、订单和客诉记录会按时间汇总在这里。</p></div>
           </section>
+
+          <!-- KeepAlive keyed by customer.id preserves AI & Tools drafts across tab switches and resets on customer change -->
+          <section
+            v-show="activeTab === 'AI' || activeTab === 'TOOLS'"
+            class="content-section"
+            :data-testid="activeTab === 'AI' ? 'sidebar-ai-panel' : 'sidebar-tools-panel'"
+          >
+            <div v-if="activeTab === 'TOOLS'" class="tool-switch" role="tablist" aria-label="员工工具">
+              <button type="button" role="tab" :aria-selected="toolTab === 'QUICK_REPLY'" data-testid="quick-reply-tool-tab" @click="toolTab = 'QUICK_REPLY'">快捷话术</button>
+              <button type="button" role="tab" :aria-selected="toolTab === 'H5_CARD'" data-testid="h5-card-tool-tab" @click="toolTab = 'H5_CARD'">H5 卡片</button>
+              <button type="button" role="tab" :aria-selected="toolTab === 'MATERIAL'" data-testid="material-tool-tab" @click="toolTab = 'MATERIAL'">素材库</button>
+            </div>
+            <KeepAlive :key="customer.id">
+              <WecomAiReplyPanel
+                v-if="activeTab === 'AI'"
+                :key="`ai-${customer.id}`"
+                :customer-id="customer.id"
+                :external-userid="context.externalUserid || ''"
+                :chat-entry="chatEntry"
+                @context-mismatch="handleContextMismatch"
+              />
+              <WecomQuickReplyPanel
+                v-else-if="activeTab === 'TOOLS' && toolTab === 'QUICK_REPLY'"
+                :key="`qr-${customer.id}`"
+                :customer-id="customer.id"
+                :external-userid="context.externalUserid || ''"
+                :chat-entry="chatEntry"
+                @context-mismatch="handleContextMismatch"
+              />
+              <WecomH5CardPanel
+                v-else-if="activeTab === 'TOOLS' && toolTab === 'H5_CARD'"
+                :key="`h5-${customer.id}`"
+                :customer-id="customer.id"
+                :external-userid="context.externalUserid || ''"
+                :chat-entry="chatEntry"
+                @context-mismatch="handleContextMismatch"
+              />
+              <WecomMaterialPanel
+                v-else-if="activeTab === 'TOOLS' && toolTab === 'MATERIAL'"
+                :key="`mat-${customer.id}`"
+                :customer-id="customer.id"
+                :external-userid="context.externalUserid || ''"
+                :chat-entry="chatEntry"
+                @context-mismatch="handleContextMismatch"
+              />
+            </KeepAlive>
+          </section>
         </div>
         <footer class="sidebar-footer">数据来自 CRM 实时查询 · 仅展示当前授权范围</footer>
       </template>
+
+      <WecomQuickActionsPanel
+        v-else-if="context.externalUserid"
+        :customer="null"
+        :external-userid="context.externalUserid"
+        @linked="load()"
+      />
     </template>
   </main>
 </template>
 
 <style scoped>
 .wecom-sidebar { --ws-ink: #203c35; --ws-muted: #7d9089; --ws-line: #e4ebe7; --ws-green: #276c59; width: min(100%, 520px); min-height: 100vh; min-height: 100dvh; margin: 0 auto; overflow: hidden; border-inline: 1px solid #e8eeeb; color: var(--ws-ink); background: #f7f9f8; font-size: 13px; }
+.mismatch-banner { padding: 10px 16px; color: #9c4a38; background: #fff0ea; border-bottom: 1px solid #f0d3c7; font-size: 11px; line-height: 1.6; text-align: center; }
 .sidebar-state { display: flex; min-height: 100vh; min-height: 100dvh; align-items: center; justify-content: center; flex-direction: column; padding: 42px 28px; text-align: center; background: #f7faf8; }
 .state-brand { display: grid; width: 52px; height: 52px; place-items: center; margin-bottom: 24px; border-radius: 16px; color: #edf7f2; background: #245d4e; font-size: 23px; font-weight: 760; box-shadow: 0 8px 24px rgb(35 82 66 / 12%); }
 .state-eyebrow { margin-bottom: 12px; color: #6f8b80; font-size: 11px; font-weight: 650; letter-spacing: 2px; }
@@ -270,12 +613,12 @@ onMounted(() => { void load() })
 .summary-strip > div:last-child { border-right: 0; }
 .summary-strip strong { color: #285f4e; font-size: 25px; font-weight: 740; font-variant-numeric: tabular-nums; }
 .summary-strip span { color: #82958d; font-size: 10px; }
-.sidebar-tabs { position: sticky; top: 0; z-index: 2; display: flex; gap: 24px; margin-top: 18px; padding: 0 22px; border-bottom: 1px solid var(--ws-line); background: #f7f9f8; }
-.sidebar-tabs button { position: relative; min-width: 46px; padding: 13px 4px; border: 0; color: #80948b; background: transparent; font: inherit; font-weight: 650; cursor: pointer; }
+.sidebar-tabs { position: sticky; top: 0; z-index: 2; display: flex; gap: 20px; margin-top: 18px; padding: 0 22px; border-bottom: 1px solid var(--ws-line); background: #f7f9f8; overflow-x: auto; }
+.sidebar-tabs button { position: relative; flex: 0 0 auto; min-width: 44px; padding: 13px 4px; border: 0; color: #80948b; background: transparent; font: inherit; font-weight: 650; cursor: pointer; }
 .sidebar-tabs button[aria-selected='true'] { color: #276c59; }
 .sidebar-tabs button[aria-selected='true']::after { position: absolute; right: 4px; bottom: -1px; left: 4px; height: 2px; background: #347762; content: ''; }
 .tool-switch { display: flex; gap: 6px; margin-bottom: 20px; padding: 4px; border-radius: 9px; background: #eaf0ec; }
-.tool-switch button { flex: 1; padding: 8px 10px; border: 0; border-radius: 6px; color: #758e81; background: transparent; font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+.tool-switch button { flex: 1; padding: 8px 6px; border: 0; border-radius: 6px; color: #758e81; background: transparent; font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
 .tool-switch button[aria-selected='true'] { color: #315f4b; background: #fcfefc; box-shadow: 0 1px 4px rgb(38 79 59 / 7%); }
 .auxiliary-notice { margin: 14px 18px 0; padding: 10px 12px; border-radius: 8px; color: #8b6d43; background: #f7f1e6; font-size: 11px; line-height: 1.7; }
 .sidebar-content { padding: 0 18px 22px; }

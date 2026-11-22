@@ -1,5 +1,6 @@
 package com.whale.crm.institution.application;
 
+import com.whale.crm.file.domain.FileClassification;
 import com.whale.crm.institution.api.dto.ChangeRequestResponse;
 import com.whale.crm.institution.api.dto.CreateContractRequest;
 import com.whale.crm.institution.api.dto.CreateQualificationRequest;
@@ -154,7 +155,7 @@ public class InstitutionDocumentService {
                                                  CreateContractRequest request, String key, String payload) {
         InstitutionProfile profile = requireVisible(tenantId, user, request.institutionId());
         support.requireChange(tenantId, profile, user);
-        support.requireClean(tenantId, request.fileId());
+        support.requireClean(tenantId, request.institutionId(), request.fileId(), FileClassification.CONTRACT);
         if (request.endDate() != null && request.endDate().isBefore(request.startDate())) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "合同结束日期不能早于开始日期");
         }
@@ -177,7 +178,7 @@ public class InstitutionDocumentService {
         InstitutionContract input = new InstitutionContract(null, request.institutionId(), contractNo, versionNo,
                 request.title(), request.contractType(), request.startDate(), request.endDate(), request.fileId(),
                 request.amountFen(), request.notes(), "PENDING_REVIEW", previousId, user.userId(), null, null);
-        repository.insertContract(input);
+        repository.insertContract(tenantId, input);
         InstitutionContract created = repository.findContractByKey(tenantId, contractNo, versionNo).orElseThrow();
         outboxService.append(tenantId, "institution.contract.created.v1:" + created.id(), "institution.contract.created.v1",
                 "institution", Long.toString(created.institutionId()),
@@ -197,8 +198,9 @@ public class InstitutionDocumentService {
         if (!"PENDING_REVIEW".equals(contract.status()) || !contract.version().equals(request.baseVersion())) {
             throw new BusinessException(ErrorCode.CONFLICT, "合同已处理或版本不一致");
         }
-        support.requireClean(tenantId, contract.fileId());
-        support.requireClean(tenantId, request.evidenceFileId());
+        support.requireClean(tenantId, contract.institutionId(), contract.fileId(), FileClassification.CONTRACT);
+        support.requireClean(tenantId, contract.institutionId(), request.evidenceFileId(),
+                FileClassification.CHANGE_EVIDENCE);
         String beforeMasked = support.jsonText(Map.of("status", contract.status()));
         String afterMasked = support.jsonText(Map.of("status", "ACTIVE"));
         ProfileChangeRequest draft = new ProfileChangeRequest(null, contract.institutionId(), "CONTRACT_ACTIVATION",
@@ -214,14 +216,14 @@ public class InstitutionDocumentService {
                                                         CreateQualificationRequest request, String key, String payload) {
         InstitutionProfile profile = requireVisible(tenantId, user, request.institutionId());
         support.requireChange(tenantId, profile, user);
-        support.requireClean(tenantId, request.fileId());
+        support.requireClean(tenantId, request.institutionId(), request.fileId(), FileClassification.QUALIFICATION);
         if (request.validFrom() != null && request.validTo() != null && request.validTo().isBefore(request.validFrom())) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "资质有效期结束日期不能早于开始日期");
         }
         InstitutionQualification input = new InstitutionQualification(null, request.institutionId(),
                 request.qualificationType(), request.title(), support.encrypt(request.licenseNo()), request.fileId(),
                 request.validFrom(), request.validTo(), "PENDING_REVIEW", user.userId(), null, null, null, null);
-        repository.insertQualification(input);
+        repository.insertQualification(tenantId, input);
         InstitutionQualification created = repository.findLatestQualification(tenantId, request.institutionId(),
                 request.fileId(), request.title()).orElseThrow();
         outboxService.append(tenantId, "institution.qualification.created.v1:" + created.id(),
@@ -242,8 +244,10 @@ public class InstitutionDocumentService {
         if (!"PENDING_REVIEW".equals(qualification.status()) || !qualification.version().equals(request.baseVersion())) {
             throw new BusinessException(ErrorCode.CONFLICT, "资质已审核或版本不一致");
         }
-        support.requireClean(tenantId, qualification.fileId());
-        support.requireClean(tenantId, request.evidenceFileId());
+        support.requireClean(tenantId, qualification.institutionId(), qualification.fileId(),
+                FileClassification.QUALIFICATION);
+        support.requireClean(tenantId, qualification.institutionId(), request.evidenceFileId(),
+                FileClassification.CHANGE_EVIDENCE);
         String beforeMasked = support.jsonText(Map.of("status", qualification.status()));
         String afterMasked = support.jsonText(Map.of("status", "APPROVED"));
         ProfileChangeRequest draft = new ProfileChangeRequest(null, qualification.institutionId(), "QUALIFICATION_REVIEW",

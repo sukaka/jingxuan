@@ -21,6 +21,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
@@ -53,7 +54,7 @@ class OrderApplicationServiceAttributionTest {
         CurrentUser actor = new CurrentUser(1L, 1L, "sync", "同步账号", "EMPLOYEE", null,
                 Set.of("ADMIN"), Set.of("order:write"), Set.of());
         Customer customer = mock(Customer.class);
-        when(scopeSupport.requireVisible(1L, 100L, actor)).thenReturn(customer);
+        when(scopeSupport.requireVisibleForUpdate(1L, 100L, actor)).thenReturn(customer);
         when(campaignService.resolveOrderAttribution(eq(1L), eq(11L), eq(22L), isNull(), any()))
                 .thenThrow(new BusinessException(ErrorCode.VALIDATION_FAILED, "批次不存在或不属于所选活动"));
         CreateOrderRequest legacyRequest = new CreateOrderRequest(100L, "PLATFORM", "PROMOTION",
@@ -63,7 +64,7 @@ class OrderApplicationServiceAttributionTest {
                 "YOUZAN", "shop", "external-order"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不属于所选活动");
-        verify(repository, never()).insertOrder(any());
+        verify(repository, never()).insertOrder(anyLong(), any());
         verify(campaignService).resolveOrderAttribution(eq(1L), eq(11L), eq(22L), isNull(), any());
     }
 
@@ -80,7 +81,7 @@ class OrderApplicationServiceAttributionTest {
         CurrentUser actor = new CurrentUser(1L, 1L, "manager", "管家", "EMPLOYEE", null,
                 Set.of("MANAGER"), Set.of("order:write"), Set.of());
         Customer customer = mock(Customer.class);
-        when(scopeSupport.requireVisible(1L, 100L, actor)).thenReturn(customer);
+        when(scopeSupport.requireVisibleForUpdate(1L, 100L, actor)).thenReturn(customer);
         when(campaignService.resolveOrderAttribution(eq(1L), isNull(), isNull(), isNull(), any()))
                 .thenReturn(com.whale.crm.campaign.domain.OrderAttributionSnapshot.empty());
         when(dictionaryService.requireActiveOption(1L, "orderTypes", "INACTIVE_TYPE"))
@@ -91,6 +92,6 @@ class OrderApplicationServiceAttributionTest {
         assertThatThrownBy(() -> service.create(1L, actor, request))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("订单类型已停用");
-        verify(repository, never()).insertOrder(any());
+        verify(repository, never()).insertOrder(anyLong(), any());
     }
 }

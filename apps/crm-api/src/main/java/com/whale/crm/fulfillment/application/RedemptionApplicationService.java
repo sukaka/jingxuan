@@ -27,9 +27,10 @@ import com.whale.crm.platform.security.InstitutionAccessSupport;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
+import com.whale.crm.settlement.application.SettlementApplicationService;
 import com.whale.crm.trading.application.FulfillmentTradingOperations;
 import com.whale.crm.trading.application.OutboxService;
-import com.whale.crm.trading.domain.FulfillmentEntitlementView;
+import com.whale.crm.trading.domain.LockedEntitlementBatch;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -37,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -56,6 +58,7 @@ public class RedemptionApplicationService {
     private final CustomerScopeSupport scopeSupport;
     private final InstitutionAccessSupport institutionAccess;
     private final FulfillmentTradingOperations tradingOperations;
+    private final SettlementApplicationService settlementService;
     private final FileApplicationService fileOperations;
     private final OutboxService outboxService;
     private final AuditService auditService;
@@ -63,13 +66,16 @@ public class RedemptionApplicationService {
 
     public RedemptionApplicationService(FulfillmentRepository repository, FulfillmentSupport support,
                                         CustomerScopeSupport scopeSupport, InstitutionAccessSupport institutionAccess,
-                                        FulfillmentTradingOperations tradingOperations, FileApplicationService fileOperations, OutboxService outboxService,
+                                        FulfillmentTradingOperations tradingOperations,
+                                        SettlementApplicationService settlementService,
+                                        FileApplicationService fileOperations, OutboxService outboxService,
                                         AuditService auditService, PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.support = support;
         this.scopeSupport = scopeSupport;
         this.institutionAccess = institutionAccess;
         this.tradingOperations = tradingOperations;
+        this.settlementService = settlementService;
         this.fileOperations = fileOperations;
         this.outboxService = outboxService;
         this.auditService = auditService;
@@ -180,7 +186,7 @@ public class RedemptionApplicationService {
         List<RedemptionLineRequest> lines = request.lines().stream()
                 .sorted(Comparator.comparingLong(RedemptionLineRequest::entitlementId)).toList();
         Set<Long> unique = new HashSet<>();
-        Map<Long, FulfillmentEntitlementView> locked = new HashMap<>();
+        List<FulfillmentTradingOperations.RedemptionLockCommand> lockCommands = new ArrayList<>();
         for (RedemptionLineRequest line : lines) {
             if (!unique.add(line.entitlementId())) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "同一权益批次在一个核销批次中只能出现一次");
@@ -193,9 +199,11 @@ public class RedemptionApplicationService {
             if (line.count() > remaining) {
                 throw new BusinessException(ErrorCode.CONFLICT, "核销次数超过预约项目剩余计划次数");
             }
-            locked.put(line.entitlementId(), tradingOperations.lockRedeemable(tenantId, line.entitlementId(),
-                    appointment.customerId(), appointment.institutionId(), item.projectId(), line.count(), request.serviceAt()));
+            lockCommands.add(new FulfillmentTradingOperations.RedemptionLockCommand(line.entitlementId(),
+                    appointment.customerId(), appointment.institutionId(), item.projectId(),
+                    line.count(), request.serviceAt()));
         }
+        LockedEntitlementBatch locked = tradingOperations.lockRedeemables(tenantId, lockCommands);
 
         if (request.voucherFileId() != null) {
             fileOperations.requireCleanUsable(tenantId, user, request.voucherFileId(),
@@ -205,19 +213,20 @@ public class RedemptionApplicationService {
         Redemption input = new Redemption(null, appointmentId, appointment.customerId(), appointment.institutionId(),
                 appointment.ownerStaffId(), appointment.teamId(), request.serviceAt(), request.evidenceRef(),
                 request.voucherFileId(), "POSTED", "PENDING_VERIFICATION", key, user.userId(), now, null, null);
-        repository.insertRedemption(input);
+        repository.insertRedemption(tenantId, input);
         Redemption created = repository.findRedemptionByKey(tenantId, key).orElseThrow();
         for (RedemptionLineRequest line : lines) {
             AppointmentItem item = itemsByEntitlement.get(line.entitlementId());
-            repository.insertRedemptionLine(new RedemptionLine(null, created.id(), item.id(), item.entitlementId(),
-                    item.projectId(), line.count(), null));
+            repository.insertRedemptionLine(tenantId, new RedemptionLine(null, created.id(), item.id(),
+                    item.entitlementId(), item.projectId(), line.count(), null));
         }
         List<RedemptionLine> persistedLines = repository.findRedemptionLines(tenantId, created.id());
-        for (RedemptionLine line : persistedLines) {
-            tradingOperations.appendRedemption(tenantId, user.userId(), locked.get(line.entitlementId()), line.count(),
-                    line.id().toString(), "redemption.post:" + line.id());
-        }
-        repository.insertRedemptionHistory(new RedemptionStatusHistory(null, created.id(),
+        List<FulfillmentTradingOperations.RedemptionAppendCommand> appendCommands = persistedLines.stream()
+                .map(line -> new FulfillmentTradingOperations.RedemptionAppendCommand(
+                        line.entitlementId(), line.count(), line.id().toString(), "redemption.post:" + line.id()))
+                .toList();
+        tradingOperations.appendRedemptions(tenantId, user.userId(), locked, appendCommands);
+        repository.insertRedemptionHistory(tenantId, new RedemptionStatusHistory(null, created.id(),
                 "PENDING_INSTITUTION", "POSTED", user.userId(), request.evidenceRef(), null));
 
         Map<Long, Integer> afterPosted = new HashMap<>(postedByItem);
@@ -232,7 +241,7 @@ public class RedemptionApplicationService {
                 "SERVICE_DONE", appointmentStatus) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "预约已被其他履约操作修改，请重试");
         }
-        repository.insertAppointmentHistory(new AppointmentHistory(null, appointmentId, "SERVICE_DONE",
+        repository.insertAppointmentHistory(tenantId, new AppointmentHistory(null, appointmentId, "SERVICE_DONE",
                 appointmentStatus, user.userId(), "REDEMPTION_POSTED:" + created.id(), null));
         List<Map<String, Object>> eventLines = persistedLines.stream()
                 .map(line -> Map.<String, Object>of("lineId", line.id(), "entitlementId", line.entitlementId(),
@@ -266,6 +275,9 @@ public class RedemptionApplicationService {
         if (!redemption.version().equals(request.redemptionVersion())) {
             throw new BusinessException(ErrorCode.CONFLICT, "核销事实版本已变化，请刷新后重试");
         }
+        if (settlementService.hasSettlementLineForUpdate(tenantId, redemptionId)) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该核销已纳入结算批次，不能申请冲正");
+        }
         if (repository.findActiveReversalByRedemption(tenantId, redemptionId).isPresent()) {
             throw new BusinessException(ErrorCode.CONFLICT, "该核销已存在待审核或已生效的冲正申请");
         }
@@ -273,9 +285,9 @@ public class RedemptionApplicationService {
                 redemption.institutionId(), redemption.ownerStaffId(), redemption.teamId(), "REQUESTED",
                 request.reason(), user.userId(), Instant.now(), null, null, null, key, null,
                 redemptionId, null, null);
-        repository.insertReversal(input);
+        repository.insertReversal(tenantId, input);
         RedemptionReversal created = repository.findReversalByRequestKey(tenantId, key).orElseThrow();
-        repository.insertReversalHistory(new RedemptionReversalHistory(null, created.id(), "NONE",
+        repository.insertReversalHistory(tenantId, new RedemptionReversalHistory(null, created.id(), "NONE",
                 "REQUESTED", user.userId(), request.reason(), null));
         outboxService.append(tenantId, "redemption.reversal.requested.v1:" + created.id(),
                 "redemption.reversal.requested.v1", "redemption_reversal", Long.toString(created.id()),

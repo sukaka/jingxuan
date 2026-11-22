@@ -3,9 +3,13 @@ import argparse
 import hashlib
 import http.cookiejar
 import json
+import sys
 import time
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from captcha_solver import login_with_captcha
 
 
 class SmokeTest:
@@ -38,7 +42,7 @@ class SmokeTest:
         return result.get('data')
 
     def run(self):
-        login = self.api('POST', '/auth/login', {'username': self.username, 'password': self.password}, csrf=False)
+        login = login_with_captcha(self.client, self.base_url, self.username, self.password)
         if 'ADMIN' not in login['roles']:
             raise AssertionError('初始化账号没有管理员角色')
         me = self.api('GET', '/auth/me')

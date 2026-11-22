@@ -23,10 +23,22 @@ public class MybatisUserRepository implements UserRepository {
     @Override
     public Optional<SysUser> findByUsernameForAuth(String username) {
         List<SysUser> rows = userMapper.selectByUsernameForAuth(username);
-        if (rows.size() > 1) {
-            throw new IllegalStateException("登录名跨租户重复，违反唯一性配置: " + username);
-        }
-        return rows.stream().findFirst();
+        return rows.size() == 1 ? Optional.of(rows.getFirst()) : Optional.empty();
+    }
+
+    @Override
+    public List<SysUser> findCandidatesByUsernameForAuth(String username) {
+        return userMapper.selectByUsernameForAuth(username);
+    }
+
+    @Override
+    public List<Long> findActiveTenantIdsByOrgCode(String orgCode) {
+        return userMapper.selectActiveTenantIdsByOrgCode(orgCode);
+    }
+
+    @Override
+    public Optional<SysUser> findByTenantAndUsernameForAuth(long tenantId, String username) {
+        return Optional.ofNullable(userMapper.selectByTenantAndUsernameForAuth(tenantId, username));
     }
 
     @Override

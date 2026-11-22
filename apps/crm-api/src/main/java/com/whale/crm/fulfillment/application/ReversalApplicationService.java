@@ -14,9 +14,10 @@ import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
+import com.whale.crm.settlement.application.SettlementApplicationService;
 import com.whale.crm.trading.application.FulfillmentTradingOperations;
 import com.whale.crm.trading.application.OutboxService;
-import com.whale.crm.trading.domain.FulfillmentEntitlementView;
+import com.whale.crm.trading.domain.LockedEntitlementBatch;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -25,7 +26,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,18 +38,21 @@ public class ReversalApplicationService {
     private final FulfillmentSupport support;
     private final CustomerScopeSupport scopeSupport;
     private final FulfillmentTradingOperations tradingOperations;
+    private final SettlementApplicationService settlementService;
     private final OutboxService outboxService;
     private final AuditService auditService;
     private final TransactionTemplate transactionTemplate;
 
     public ReversalApplicationService(FulfillmentRepository repository, FulfillmentSupport support,
                                       CustomerScopeSupport scopeSupport, FulfillmentTradingOperations tradingOperations,
+                                      SettlementApplicationService settlementService,
                                       OutboxService outboxService, AuditService auditService,
                                       PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.support = support;
         this.scopeSupport = scopeSupport;
         this.tradingOperations = tradingOperations;
+        this.settlementService = settlementService;
         this.outboxService = outboxService;
         this.auditService = auditService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
@@ -110,6 +113,11 @@ public class ReversalApplicationService {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "未知冲正审核操作");
         }
         if ("approve".equals(action)) {
+            repository.findRedemptionForUpdate(tenantId, before.redemptionId())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "核销记录不存在"));
+            if (settlementService.hasSettlementLineForUpdate(tenantId, before.redemptionId())) {
+                throw new BusinessException(ErrorCode.CONFLICT, "该核销已纳入结算批次，不能审批通过冲正");
+            }
             applyCorrections(tenantId, user, before);
         }
         String toStatus = "approve".equals(action) ? "APPROVED" : "REJECTED";
@@ -118,7 +126,7 @@ public class ReversalApplicationService {
                 user.userId(), Instant.now(), request.reason(), key, activeRedemptionId) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "冲正申请已被其他审核人处理");
         }
-        repository.insertReversalHistory(new RedemptionReversalHistory(null, reversalId, "REQUESTED",
+        repository.insertReversalHistory(tenantId, new RedemptionReversalHistory(null, reversalId, "REQUESTED",
                 toStatus, user.userId(), request.reason(), null));
         String eventAction = "approve".equals(action) ? "approved" : "rejected";
         Map<String, Object> eventPayload = new LinkedHashMap<>();
@@ -150,15 +158,18 @@ public class ReversalApplicationService {
         if (lines.isEmpty()) {
             throw new BusinessException(ErrorCode.CONFLICT, "原核销缺少项目明细，不能冲正");
         }
-        Map<Long, FulfillmentEntitlementView> locked = new HashMap<>();
-        for (RedemptionLine line : lines) {
-            locked.put(line.entitlementId(), tradingOperations.lockReversible(tenantId, line.entitlementId(),
-                    reversal.customerId(), line.projectId(), line.id().toString(), line.count()));
-        }
-        for (RedemptionLine line : lines) {
-            tradingOperations.appendReversal(tenantId, user.userId(), locked.get(line.entitlementId()), line.count(),
-                    reversal.id().toString(), "redemption.reversal:" + reversal.id() + ":" + line.id());
-        }
+        List<FulfillmentTradingOperations.ReversalLockCommand> lockCommands = lines.stream()
+                .map(line -> new FulfillmentTradingOperations.ReversalLockCommand(
+                        line.entitlementId(), reversal.customerId(), line.projectId(),
+                        line.id().toString(), line.count()))
+                .toList();
+        LockedEntitlementBatch locked = tradingOperations.lockReversibles(tenantId, lockCommands);
+        List<FulfillmentTradingOperations.ReversalAppendCommand> appendCommands = lines.stream()
+                .map(line -> new FulfillmentTradingOperations.ReversalAppendCommand(
+                        line.entitlementId(), line.count(), reversal.id().toString(),
+                        "redemption.reversal:" + reversal.id() + ":" + line.id()))
+                .toList();
+        tradingOperations.appendReversals(tenantId, user.userId(), locked, appendCommands);
     }
 
     private ReversalDetail replayReview(long tenantId, CurrentUser user, long reversalId,

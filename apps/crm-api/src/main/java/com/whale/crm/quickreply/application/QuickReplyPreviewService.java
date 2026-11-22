@@ -15,9 +15,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,28 +43,57 @@ public class QuickReplyPreviewService {
 
     @Transactional(readOnly = true)
     public List<QuickReplyTemplateResponse> list(CurrentUser user, String scene) {
-        java.util.Set<Long> favorites = java.util.Set.copyOf(repository.findFavoriteTemplateIds(user.tenantId(),
-                user.userId()));
+        return list(user, scene, null, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<QuickReplyTemplateResponse> list(CurrentUser user, String scene, String keyword,
+                                                 Boolean favoriteOnly, String sort) {
+        Set<Long> favorites = Set.copyOf(repository.findFavoriteTemplateIds(user.tenantId(), user.userId()));
         Map<Long, com.whale.crm.quickreply.domain.QuickReplyUsageStat> usage = repository.aggregateUsageStats(
                 user.tenantId(), user.userId(), null, null).stream().collect(java.util.stream.Collectors.toMap(
                         com.whale.crm.quickreply.domain.QuickReplyUsageStat::templateId, Function.identity()));
-        java.util.Comparator<QuickReplyTemplateResponse> order = java.util.Comparator
-                .comparing(QuickReplyTemplateResponse::favorite, java.util.Comparator.reverseOrder())
+        String normalizedKeyword = keyword == null ? "" : keyword.strip().toLowerCase(Locale.ROOT);
+        boolean onlyFavorites = Boolean.TRUE.equals(favoriteOnly);
+        Comparator<QuickReplyTemplateResponse> order = "RECENT".equals(sort)
+                ? Comparator.comparing(QuickReplyTemplateResponse::lastUsedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(QuickReplyTemplateResponse::usageCount, Comparator.reverseOrder())
+                .thenComparing(QuickReplyTemplateResponse::favorite, Comparator.reverseOrder())
+                .thenComparingInt(QuickReplyTemplateResponse::sortNo)
+                .thenComparingLong(QuickReplyTemplateResponse::id)
+                : Comparator.comparing(QuickReplyTemplateResponse::favorite, Comparator.reverseOrder())
                 .thenComparing(QuickReplyTemplateResponse::lastUsedAt,
-                        java.util.Comparator.nullsFirst(java.util.Comparator.reverseOrder()))
-                .thenComparing(QuickReplyTemplateResponse::aiEnabled, java.util.Comparator.reverseOrder())
-                .thenComparing(QuickReplyTemplateResponse::featured, java.util.Comparator.reverseOrder())
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(QuickReplyTemplateResponse::aiEnabled, Comparator.reverseOrder())
+                .thenComparing(QuickReplyTemplateResponse::featured, Comparator.reverseOrder())
                 .thenComparingInt(QuickReplyTemplateResponse::sortNo)
                 .thenComparingLong(QuickReplyTemplateResponse::id);
         return repository.findTemplates(user.tenantId()).stream()
                 .filter(template -> "ACTIVE".equals(template.status()))
                 .filter(template -> scene == null || scene.isBlank() || scene.equals(template.scene()))
                 .filter(template -> visible(user, template.scopeType(), template.scopeId()))
+                .filter(template -> matchesKeyword(template, normalizedKeyword))
                 .map(template -> {
                     com.whale.crm.quickreply.domain.QuickReplyUsageStat stat = usage.get(template.id());
                     return QuickReplyTemplateResponse.from(template, favorites.contains(template.id()),
                             stat == null ? null : stat.lastUsedAt(), stat == null ? 0L : stat.totalCount());
-                }).sorted(order).toList();
+                })
+                .filter(item -> !onlyFavorites || item.favorite())
+                .sorted(order).toList();
+    }
+
+    private boolean matchesKeyword(QuickReplyTemplate template, String normalizedKeyword) {
+        if (normalizedKeyword.isEmpty()) {
+            return true;
+        }
+        return containsIgnoreCase(template.name(), normalizedKeyword)
+                || containsIgnoreCase(template.content(), normalizedKeyword)
+                || containsIgnoreCase(template.code(), normalizedKeyword);
+    }
+
+    private boolean containsIgnoreCase(String value, String needle) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(needle);
     }
 
     @Transactional(readOnly = true)

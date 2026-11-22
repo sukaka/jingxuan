@@ -111,8 +111,13 @@ class InstitutionWorkflowApiIT extends AbstractMysqlIT {
                         "newValue", newValue, "baseVersion", 1,
                         "reason", "IT-BANK", "evidenceFileId", 9001))));
         long requestId = request.at("/id").asLong();
-        assertThat(request.at("/beforeMasked/value").asText()).isEqualTo("****8866");
-        assertThat(request.at("/afterMasked/value").asText()).isEqualTo("****9999");
+        assertThat(request.at("/beforeMasked").isNull()).isTrue();
+        assertThat(request.at("/afterMasked").isNull()).isTrue();
+        assertThat(request.at("/evidenceFileId").isNull()).isTrue();
+        JsonNode financeView = data(get("/api/v1/institution-change-requests/" + requestId).cookie(finance.cookies()));
+        assertThat(financeView.at("/beforeMasked/value").asText()).isEqualTo("****8866");
+        assertThat(financeView.at("/afterMasked/value").asText()).isEqualTo("****9999");
+        assertThat(financeView.at("/evidenceFileId").asLong()).isEqualTo(9001L);
         String requestCipher = jdbcTemplate.queryForObject(
                 "SELECT after_cipher FROM crm_profile_change_request WHERE tenant_id=1 AND id=?", String.class, requestId);
         assertThat(objectMapper.readTree(cipher.decrypt(requestCipher)).asText()).isEqualTo(newValue);
@@ -366,8 +371,9 @@ class InstitutionWorkflowApiIT extends AbstractMysqlIT {
         @Bean
         @Primary
         InstitutionFileOperations institutionFileOperations() {
-            return (tenantId, fileId) -> {
-                if (!Set.of(9001L, 9002L, 9003L).contains(fileId)) {
+            return (tenantId, institutionId, fileId, expectedClassification) -> {
+                if (institutionId <= 0 || expectedClassification == null
+                        || !Set.of(9001L, 9002L, 9003L).contains(fileId)) {
                     throw new BusinessException(ErrorCode.VALIDATION_FAILED, "测试文件未扫描通过");
                 }
             };

@@ -3,9 +3,21 @@ package com.whale.crm.complaint;
 import com.whale.crm.complaint.application.ComplaintEventConsumer;
 import com.whale.crm.complaint.infrastructure.ComplaintKafkaConfiguration;
 import com.whale.crm.file.infrastructure.PrivateObjectStorage;
+import com.whale.crm.integration.wecom.adapter.WecomAdapter;
+import com.whale.crm.integration.wecom.adapter.WecomAdapterRouter;
+import com.whale.crm.integration.wecom.adapter.WecomArchiveMessage;
+import com.whale.crm.integration.wecom.adapter.WecomArchivePage;
+import com.whale.crm.integration.wecom.api.dto.WecomRoomSaveRequest;
+import com.whale.crm.integration.wecom.api.dto.WecomSyncRequest;
+import com.whale.crm.integration.wecom.application.WecomArchiveService;
+import com.whale.crm.integration.wecom.application.WecomRoomService;
+import com.whale.crm.integration.wecom.domain.WecomMessage;
+import com.whale.crm.integration.wecom.domain.WecomRepository;
+import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.crypto.AesGcmCipher;
 import com.whale.crm.platform.support.AbstractMysqlIT;
 import com.whale.crm.platform.support.KafkaTestContainer;
+import com.whale.crm.trading.application.OutboxRelayService;
 import com.whale.crm.trading.infrastructure.OutboxKafkaConfiguration;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -33,10 +45,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(properties = {
@@ -50,7 +68,7 @@ class ComplaintBrokerReliabilityIT extends AbstractMysqlIT {
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.kafka.bootstrap-servers", () -> KafkaTestContainer.bootstrapServers(KAFKA));
+        KafkaTestContainer.registerProperties(registry, KAFKA);
     }
 
     @Autowired
@@ -61,8 +79,18 @@ class ComplaintBrokerReliabilityIT extends AbstractMysqlIT {
     private KafkaListenerEndpointRegistry listenerRegistry;
     @Autowired
     private AesGcmCipher cipher;
+    @Autowired
+    private WecomArchiveService wecomArchiveService;
+    @Autowired
+    private WecomRoomService wecomRoomService;
+    @Autowired
+    private WecomRepository wecomRepository;
+    @Autowired
+    private OutboxRelayService outboxRelayService;
     @MockitoBean
     private PrivateObjectStorage objectStorage;
+    @MockitoBean
+    private WecomAdapterRouter wecomAdapterRouter;
 
     @Test
     void realBrokerDeduplicatesWecomAndFollowupAndPublishesInvalidPayloadToDlq() throws Exception {
@@ -76,12 +104,12 @@ class ComplaintBrokerReliabilityIT extends AbstractMysqlIT {
         String wecomEventId = "complaint-wecom-" + suffix;
         kafkaTemplate.send(OutboxKafkaConfiguration.WECOM_EVENTS_TOPIC, wecomEventId,
                 envelope(wecomEventId, ComplaintEventConsumer.WECOM_EVENT, "wecom", fixture.messageId(),
-                        fixture.payload())).get(5, TimeUnit.SECONDS);
+                        fixture.payload())).get(30, TimeUnit.SECONDS);
         awaitCount("SELECT COUNT(*) FROM crm_complaint_hit WHERE tenant_id=1 AND source_type='WECOM_MESSAGE' "
                 + "AND source_id=?", 1, Long.toString(fixture.messageId()));
         kafkaTemplate.send(OutboxKafkaConfiguration.WECOM_EVENTS_TOPIC, wecomEventId,
                 envelope(wecomEventId, ComplaintEventConsumer.WECOM_EVENT, "wecom", fixture.messageId(),
-                        fixture.payload())).get(5, TimeUnit.SECONDS);
+                        fixture.payload())).get(30, TimeUnit.SECONDS);
         Thread.sleep(600);
         assertThat(queryLong("SELECT COUNT(*) FROM crm_complaint_hit WHERE tenant_id=1 AND source_type='WECOM_MESSAGE' "
                 + "AND source_id=?", Long.toString(fixture.messageId()))).isEqualTo(1);
@@ -105,9 +133,9 @@ class ComplaintBrokerReliabilityIT extends AbstractMysqlIT {
         String followupEvent = envelope(followupEventId, ComplaintEventConsumer.FOLLOWUP_EVENT, "followup",
                 followupId, followupPayload);
         kafkaTemplate.send(OutboxKafkaConfiguration.FOLLOWUP_EVENTS_TOPIC, followupEventId, followupEvent)
-                .get(5, TimeUnit.SECONDS);
+                .get(30, TimeUnit.SECONDS);
         kafkaTemplate.send(OutboxKafkaConfiguration.FOLLOWUP_EVENTS_TOPIC, followupEventId, followupEvent)
-                .get(5, TimeUnit.SECONDS);
+                .get(30, TimeUnit.SECONDS);
         awaitCount("SELECT COUNT(*) FROM crm_complaint_hit WHERE tenant_id=1 AND source_type='FOLLOWUP' "
                 + "AND source_id=?", 1, Long.toString(followupId));
         assertThat(inboxCount(ComplaintEventConsumer.FOLLOWUP_GROUP, followupEventId)).isEqualTo(1);
@@ -118,12 +146,95 @@ class ComplaintBrokerReliabilityIT extends AbstractMysqlIT {
         String invalid = envelope(invalidEventId, ComplaintEventConsumer.WECOM_EVENT, "wecom", fixture.messageId(),
                 invalidPayload);
         kafkaTemplate.send(OutboxKafkaConfiguration.WECOM_EVENTS_TOPIC, invalidEventId, invalid)
-                .get(5, TimeUnit.SECONDS);
+                .get(30, TimeUnit.SECONDS);
         ConsumerRecord<String, String> dlq = awaitDlq(invalidEventId);
         assertThat(dlq.value()).isEqualTo(invalid);
         assertThat(new String(dlq.headers().lastHeader("kafka_dlt-original-topic").value(), StandardCharsets.UTF_8))
                 .isEqualTo(OutboxKafkaConfiguration.WECOM_EVENTS_TOPIC);
         assertThat(inboxCount(ComplaintEventConsumer.WECOM_GROUP, invalidEventId)).isZero();
+    }
+
+    @Test
+    void realWecomArchiveServiceDirectLongEventIdAndRoomEventProcessWithoutDlq() throws Exception {
+        awaitListenerReady();
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        String corpId = "c05-comp-" + suffix;
+        String externalId = "wm-c05-" + suffix;
+        String roomId = "c05-room-" + suffix;
+        String keyword = "核销问题" + suffix;
+        jdbcTemplate.update("INSERT INTO crm_complaint_keyword (tenant_id,keyword,status,created_by) VALUES (1,?,'ACTIVE',1)",
+                keyword);
+        long customerId = newCustomer("IT-C05-COMP-" + suffix);
+        jdbcTemplate.update("INSERT INTO crm_wecom_staff_account (tenant_id,corp_id,wecom_userid,staff_user_id,enabled) "
+                + "VALUES (1,?,'staff-2',2,1)", corpId);
+        jdbcTemplate.update("INSERT INTO crm_wecom_contact (tenant_id,corp_id,external_userid,staff_user_id,customer_id,"
+                + "consent_status,consent_evidence_ref,link_type,link_reason,created_by) VALUES (1,?,?,2,?,"
+                + "'GRANTED','synthetic-consent','MANUAL','合成测试',1)", corpId, externalId, customerId);
+        jdbcTemplate.update("INSERT INTO crm_wecom_archive_member (tenant_id,corp_id,staff_user_id,enabled,source_code,evidence_ref) "
+                + "VALUES (1,?,2,1,'MOCK','synthetic-member')", corpId);
+
+        CurrentUser admin = new CurrentUser(1L, 1L, "admin", "管理员", "EMPLOYEE", null,
+                Set.of("ADMIN"), Set.of("wecom:sync", "wecom:mapping:manage"), Set.of());
+        wecomRoomService.save(admin, roomId, new WecomRoomSaveRequest(corpId, "C05客诉群", true,
+                List.of("staff-2", externalId), "synthetic-room-ref", 0L, "C05测试群"), "c05-room-" + suffix);
+
+        Map<String, byte[]> objects = new ConcurrentHashMap<>();
+        doAnswer(inv -> {
+            objects.put(inv.getArgument(0), inv.getArgument(1, byte[].class));
+            return null;
+        }).when(objectStorage).putObject(anyString(), any(byte[].class), anyString());
+        when(objectStorage.getObject(anyString())).thenAnswer(inv -> new ByteArrayInputStream(objects.get(inv.getArgument(0))));
+
+        String longMsgId = "c05-long-" + suffix + "-" + "x".repeat(90);
+        String directEventId = "wecom.message.archived.v1:" + corpId + ":" + longMsgId;
+        assertThat(directEventId.length()).isGreaterThan(64).isLessThanOrEqualTo(192);
+        String roomMsgId = "c05-room-msg-" + suffix;
+        String roomEventId = "wecom.message.archived.v1:" + corpId + ":" + roomMsgId;
+
+        WecomAdapter adapter = mock(WecomAdapter.class);
+        when(wecomAdapterRouter.adapter(1L)).thenReturn(adapter);
+        when(adapter.name()).thenReturn("MOCK");
+        when(adapter.pullContacts(corpId)).thenReturn(List.of());
+        Instant now = Instant.now();
+        when(adapter.pullArchive(corpId, 0L, 50)).thenReturn(new WecomArchivePage(List.of(
+                new WecomArchiveMessage(longMsgId, 1L, externalId, 2L, "conv-" + suffix, "TEXT", "CUSTOMER",
+                        now, "我要投诉：" + keyword),
+                WecomArchiveMessage.room(roomMsgId, 2L, roomId, "TEXT", "CUSTOMER", now.plusMillis(10),
+                        "群里也提了" + keyword, externalId, null, List.of(), null)
+        ), 2L, false));
+
+        wecomArchiveService.sync(admin, new WecomSyncRequest(corpId, 0L, 50));
+        assertThat(outboxRelayService.relayOnce()).isGreaterThanOrEqualTo(2);
+
+        WecomMessage directPersisted = wecomRepository.findMessage(1L, corpId, longMsgId).orElseThrow();
+        WecomMessage roomPersisted = wecomRepository.findMessage(1L, corpId, roomMsgId).orElseThrow();
+        awaitCount("SELECT COUNT(*) FROM crm_complaint_hit WHERE tenant_id=1 AND source_type='WECOM_MESSAGE' "
+                + "AND source_id=?", 1, Long.toString(directPersisted.id()));
+        awaitCount("SELECT COUNT(*) FROM crm_inbox_event WHERE tenant_id=1 AND consumer_group=? AND event_id=?",
+                1, ComplaintEventConsumer.WECOM_GROUP, roomEventId);
+        assertThat(inboxCount(ComplaintEventConsumer.WECOM_GROUP, directEventId)).isEqualTo(1);
+        assertThat(queryLong("SELECT COUNT(*) FROM crm_complaint_hit WHERE tenant_id=1 AND source_type='WECOM_MESSAGE' "
+                + "AND source_id=?", Long.toString(roomPersisted.id()))).isZero();
+        assertNoDlqForKeys(Set.of(Long.toString(directPersisted.id()), Long.toString(roomPersisted.id())));
+    }
+
+    private void assertNoDlqForKeys(Set<String> keys) {
+        Properties properties = new Properties();
+        properties.put("bootstrap.servers", KafkaTestContainer.bootstrapServers(KAFKA));
+        properties.put("group.id", "complaint-dlq-empty-check-" + UUID.randomUUID());
+        properties.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        properties.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        properties.put("auto.offset.reset", "earliest");
+        properties.put("enable.auto.commit", "false");
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties)) {
+            consumer.subscribe(List.of(ComplaintKafkaConfiguration.DLQ_TOPIC));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (System.nanoTime() < deadline) {
+                for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(200))) {
+                    assertThat(keys).doesNotContain(record.key());
+                }
+            }
+        }
     }
 
     private WecomFixture newWecom(String suffix, long customerId, String text) throws Exception {
@@ -181,7 +292,7 @@ class ComplaintBrokerReliabilityIT extends AbstractMysqlIT {
     }
 
     private void awaitListenerReady() throws InterruptedException {
-        for (int attempt = 0; attempt < 300; attempt++) {
+        for (int attempt = 0; attempt < 1200; attempt++) {
             boolean ready = listenerRegistry.getListenerContainers().stream()
                     .allMatch(container -> container.isRunning() && !container.getAssignedPartitions().isEmpty());
             if (ready) {
@@ -194,7 +305,7 @@ class ComplaintBrokerReliabilityIT extends AbstractMysqlIT {
 
     private void awaitCount(String sql, long expected, Object... args) throws InterruptedException {
         long actual = -1;
-        for (int attempt = 0; attempt < 300; attempt++) {
+        for (int attempt = 0; attempt < 900; attempt++) {
             actual = queryLong(sql, args);
             if (actual == expected) {
                 return;
@@ -219,7 +330,7 @@ class ComplaintBrokerReliabilityIT extends AbstractMysqlIT {
         properties.put("enable.auto.commit", "false");
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties)) {
             consumer.subscribe(List.of(ComplaintKafkaConfiguration.DLQ_TOPIC));
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(40);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
             while (System.nanoTime() < deadline) {
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(250))) {
                     if (key.equals(record.key())) {

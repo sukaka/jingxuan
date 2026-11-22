@@ -3,6 +3,7 @@ package com.whale.crm.platform.support;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.time.Duration;
+import org.springframework.test.context.DynamicPropertyRegistry;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 
@@ -28,9 +29,18 @@ public final class KafkaTestContainer {
                 .withEnv("KAFKA_TRANSACTION_STATE_LOG_MIN_ISR", "1")
                 .withEnv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "true")
                 .waitingFor(Wait.forLogMessage(".*Kafka Server started.*", 1))
-                .withStartupTimeout(Duration.ofSeconds(90));
+                .withStartupTimeout(Duration.ofSeconds(240));
         container.start();
         return container;
+    }
+
+    public static void registerProperties(DynamicPropertyRegistry registry, GenericContainer<?> container) {
+        registry.add("spring.kafka.bootstrap-servers", () -> bootstrapServers(container));
+        registry.add("spring.kafka.admin.operation-timeout", () -> "30s");
+        registry.add("spring.kafka.admin.properties.default.api.timeout.ms", () -> "30000");
+        registry.add("spring.kafka.admin.properties.request.timeout.ms", () -> "15000");
+        registry.add("app.outbox.relay.claim-timeout-ms", () -> "60000");
+        registry.add("app.outbox.relay.send-timeout-ms", () -> "30000");
     }
 
     public static String bootstrapServers(GenericContainer<?> container) {

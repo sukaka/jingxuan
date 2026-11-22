@@ -23,6 +23,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
@@ -62,9 +63,14 @@ public class QuickReplyController {
 
     @GetMapping
     @PreAuthorize("hasAuthority('quickreply:view')")
-    public ApiResponse<List<QuickReplyTemplateResponse>> list(@RequestParam(required = false) @Size(max = 64) String scene,
-                                                               HttpServletRequest request) {
-        return ApiResponse.ok(previewService.list(SecuritySupport.requireCurrentUser(), scene), requestId(request));
+    public ApiResponse<List<QuickReplyTemplateResponse>> list(
+            @RequestParam(required = false) @Size(max = 64) String scene,
+            @RequestParam(required = false) @Size(max = 64) String keyword,
+            @RequestParam(required = false) Boolean favoriteOnly,
+            @RequestParam(required = false) @Pattern(regexp = "DEFAULT|RECENT") String sort,
+            HttpServletRequest request) {
+        return ApiResponse.ok(previewService.list(SecuritySupport.requireCurrentUser(), scene, keyword, favoriteOnly,
+                sort), requestId(request));
     }
 
     @PostMapping

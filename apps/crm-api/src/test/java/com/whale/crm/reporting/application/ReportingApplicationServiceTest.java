@@ -129,6 +129,46 @@ class ReportingApplicationServiceTest {
         verifyNoInteractions(taskService, appointmentService, refundService);
     }
 
+    @Test
+    void pendingReconciliationFenRequiresAllScopesAndSettlementReadPermission() {
+        CurrentUser withSettlement = new CurrentUser(92, 1, "fin", "财务", "EMPLOYEE", null,
+                Set.of(), Set.of("report:read", "settlement:read"), Set.of());
+        CurrentUser withoutSettlement = new CurrentUser(93, 1, "op", "运营", "EMPLOYEE", null,
+                Set.of(), Set.of("report:read"), Set.of());
+        when(repository.operations(any())).thenReturn(ReportingRepository.OperationsFactRow.empty());
+        when(repository.operationsInstitutions(any())).thenReturn(List.of(
+                new ReportingRepository.OperationsInstitutionFactRow(10L, "合作机构", 1, 1, 1, 1, 1, 1, 1, 9000L)));
+
+        when(dataScopeService.scopeFor(withSettlement, DataScopeService.RESOURCE_CUSTOMER)).thenReturn(DataScope.all());
+        when(dataScopeService.scopeFor(withSettlement, DataScopeService.RESOURCE_INSTITUTION))
+                .thenReturn(DataScope.all());
+        OperationsReportResponse full = service.operations(1, withSettlement, criteria(), "NONE", 20);
+        assertThat(full.institutionRows()).hasSize(1);
+        assertThat(full.institutionRows().getFirst().pendingReconciliationFen()).isEqualTo(9000L);
+        assertThat(full.institutionRows().getFirst().pendingReconciliationStatus()).isEqualTo("VERIFIED");
+
+        when(dataScopeService.scopeFor(withoutSettlement, DataScopeService.RESOURCE_CUSTOMER))
+                .thenReturn(DataScope.all());
+        OperationsReportResponse noPerm = service.operations(1, withoutSettlement, criteria(), "NONE", 20);
+        assertThat(noPerm.institutionRows().getFirst().pendingReconciliationFen()).isNull();
+        assertThat(noPerm.institutionRows().getFirst().pendingReconciliationStatus()).isEqualTo("PENDING_VERIFICATION");
+
+        when(dataScopeService.scopeFor(withSettlement, DataScopeService.RESOURCE_CUSTOMER))
+                .thenReturn(DataScope.team(Set.of(1L)));
+        OperationsReportResponse teamCustomer = service.operations(1, withSettlement, criteria(), "NONE", 20);
+        assertThat(teamCustomer.institutionRows().getFirst().pendingReconciliationFen()).isNull();
+        assertThat(teamCustomer.institutionRows().getFirst().pendingReconciliationStatus())
+                .isEqualTo("PENDING_VERIFICATION");
+
+        when(dataScopeService.scopeFor(withSettlement, DataScopeService.RESOURCE_CUSTOMER)).thenReturn(DataScope.all());
+        when(dataScopeService.scopeFor(withSettlement, DataScopeService.RESOURCE_INSTITUTION))
+                .thenReturn(DataScope.self());
+        OperationsReportResponse nonAllInst = service.operations(1, withSettlement, criteria(), "NONE", 20);
+        assertThat(nonAllInst.institutionRows().getFirst().pendingReconciliationFen()).isNull();
+        assertThat(nonAllInst.institutionRows().getFirst().pendingReconciliationStatus())
+                .isEqualTo("PENDING_VERIFICATION");
+    }
+
     private ReportingRepository.CampaignFactRow emptyCampaignFacts() {
         return new ReportingRepository.CampaignFactRow(null, null, null, null, null, null,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null);

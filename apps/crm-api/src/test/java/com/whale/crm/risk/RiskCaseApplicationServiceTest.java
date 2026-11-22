@@ -2,12 +2,17 @@ package com.whale.crm.risk;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.platform.audit.application.AuditService;
+import com.whale.crm.platform.idempotency.IdempotencyRecord;
+import com.whale.crm.platform.idempotency.IdempotencyService;
 import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.DataScope;
+import com.whale.crm.platform.security.DataScopeService;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.risk.api.dto.ClaimRiskCaseRequest;
 import com.whale.crm.risk.api.dto.CloseRiskCaseRequest;
 import com.whale.crm.risk.api.dto.ResolveRiskCaseRequest;
+import com.whale.crm.risk.api.dto.RiskSyncResponse;
 import com.whale.crm.risk.application.RiskAccessService;
 import com.whale.crm.risk.application.RiskCaseApplicationService;
 import com.whale.crm.risk.application.RiskEvidenceMasker;
@@ -34,7 +39,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -47,13 +54,20 @@ class RiskCaseApplicationServiceTest {
     @Mock RiskCaseRepository repository;
     @Mock RiskSourceSynchronizer sourceSynchronizer;
     @Mock AuditService auditService;
+    @Mock DataScopeService dataScopeService;
+    @Mock IdempotencyService idempotencyService;
 
     private RiskCaseApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new RiskCaseApplicationService(repository, new RiskAccessService(), sourceSynchronizer,
-                auditService, new RiskEvidenceMasker(new ObjectMapper().findAndRegisterModules()));
+        lenient().when(dataScopeService.scopeFor(ADMIN, DataScopeService.RESOURCE_CUSTOMER))
+                .thenReturn(DataScope.all());
+        lenient().when(dataScopeService.scopeFor(ADMIN, DataScopeService.RESOURCE_INSTITUTION))
+                .thenReturn(DataScope.all());
+        service = new RiskCaseApplicationService(repository, new RiskAccessService(dataScopeService),
+                sourceSynchronizer, auditService, idempotencyService,
+                new RiskEvidenceMasker(new ObjectMapper().findAndRegisterModules()));
     }
 
     @Test
@@ -161,6 +175,46 @@ class RiskCaseApplicationServiceTest {
         assertThat(view.customerNo()).isEqualTo("C0000000031");
         assertThat(view.customerName()).isEqualTo("合成真实客户");
         verify(repository).findCustomerLinks(1, List.of(10L));
+        verifyNoInteractions(sourceSynchronizer);
+    }
+
+    @Test
+    void syncRequiresAllDataScopeOnBothResourcesAndSupportsIdempotencyReplay() {
+        CurrentUser operationWithoutAllInst = new CurrentUser(11, 1, "op_partial", "运营", "EMPLOYEE", null,
+                Set.of("OPERATION"), Set.of("risk:read", "risk:write"), Set.of());
+        when(dataScopeService.scopeFor(operationWithoutAllInst, DataScopeService.RESOURCE_CUSTOMER))
+                .thenReturn(DataScope.all());
+        when(dataScopeService.scopeFor(operationWithoutAllInst, DataScopeService.RESOURCE_INSTITUTION))
+                .thenReturn(DataScope.none());
+
+        assertThatThrownBy(() -> service.search(operationWithoutAllInst, null, null, null, null, null, null, null, 1, 20))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.FORBIDDEN);
+        assertThatThrownBy(() -> service.sync(operationWithoutAllInst, "sync-key-1"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.FORBIDDEN);
+
+        Instant now = Instant.parse("2026-10-26T08:00:00Z");
+        when(idempotencyService.lookup(1L, "risk.sync", 1L, "sync-key-1", "{}"))
+                .thenReturn(Optional.empty());
+        when(sourceSynchronizer.sync(ADMIN)).thenReturn(new RiskSyncResponse(2, 0, now));
+
+        RiskSyncResponse first = service.sync(ADMIN, "sync-key-1");
+        assertThat(first.createdCount()).isEqualTo(2);
+        assertThat(first.updatedCount()).isZero();
+        verify(idempotencyService).recordSuccess(1L, "risk.sync", 1L, "sync-key-1", "RISK_SYNC", "1", "{}");
+        verify(auditService).record(eq(1L), eq(1L), eq("RISK_CASE_SYNC"), eq("RISK_SYNC"), eq("1"),
+                eq(null), eq(first), anyString());
+
+        IdempotencyRecord record = new IdempotencyRecord();
+        record.setCreatedAt(now);
+        when(idempotencyService.lookup(1L, "risk.sync", 1L, "sync-key-1", "{}"))
+                .thenReturn(Optional.of(record));
+        RiskSyncResponse replay = service.sync(ADMIN, "sync-key-1");
+        assertThat(replay.createdCount()).isZero();
+        assertThat(replay.updatedCount()).isZero();
+        assertThat(replay.syncedAt()).isEqualTo(now);
+        verify(sourceSynchronizer, times(1)).sync(ADMIN);
     }
 
     @Test

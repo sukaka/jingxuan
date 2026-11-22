@@ -31,13 +31,14 @@ public record ExportScope(Kind kind, Set<Long> teamIds, long selfId, Set<Long> i
         }
         if (kind == Kind.INSTITUTION || other.kind == Kind.INSTITUTION) {
             if (kind == Kind.INSTITUTION && other.kind == Kind.INSTITUTION) {
-                return new ExportScope(Kind.INSTITUTION, Set.of(), selfId, intersection(institutionIds, other.institutionIds));
+                Set<Long> common = intersection(institutionIds, other.institutionIds);
+                return common.isEmpty() ? none(selfId) : new ExportScope(Kind.INSTITUTION, Set.of(), selfId, common);
             }
             if (kind == Kind.INSTITUTION && other.kind == Kind.ALL) {
-                return this;
+                return institutionIds.isEmpty() ? none(selfId) : this;
             }
             if (other.kind == Kind.INSTITUTION && kind == Kind.ALL) {
-                return other;
+                return other.institutionIds.isEmpty() ? none(selfId) : other;
             }
             return none(selfId);
         }

@@ -2,6 +2,7 @@ package com.whale.crm.file;
 
 import com.mysql.cj.jdbc.MysqlDataSource;
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +16,7 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,11 +26,19 @@ class P2OperationsGovernanceSchemaIT {
     private static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
             .withDatabaseName("medical_crm")
             .withUrlParam("connectionTimeZone", "UTC")
-            .withCommand("--log-bin-trust-function-creators=1");
+            .withCommand("--log-bin-trust-function-creators=1")
+            .withTmpFs(Map.of("/var/lib/mysql", "rw,mode=1777"))
+            .withEnv("MYSQL_INITDB_SKIP_TZINFO", "1")
+            .withStartupTimeoutSeconds(600);
     private static DataSource dataSource;
 
     static {
         MYSQL.start();
+    }
+
+    @AfterAll
+    static void stopContainer() {
+        MYSQL.stop();
     }
 
     private Connection connection;

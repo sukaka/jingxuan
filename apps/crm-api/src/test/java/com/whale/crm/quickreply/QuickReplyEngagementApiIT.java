@@ -46,6 +46,18 @@ class QuickReplyEngagementApiIT extends AbstractMysqlIT {
         JsonNode current = findById(afterUse, templateId);
         assertThat(current.at("/usageCount").asLong()).isEqualTo(2);
         assertThat(current.at("/lastUsedAt").isNull()).isFalse();
+
+        JsonNode filtered = data(get("/api/v1/quick-replies")
+                .param("keyword", "ENGAGEMENT_" + suffix)
+                .param("favoriteOnly", "true")
+                .param("sort", "RECENT")
+                .cookie(admin.cookies()));
+        assertThat(filtered).hasSize(1);
+        assertThat(filtered.at("/0/id").asLong()).isEqualTo(templateId);
+        assertThat(filtered.at("/0/favorite").asBoolean()).isTrue();
+        assertThat(filtered.at("/0/usageCount").asLong()).isEqualTo(2);
+        mockMvc.perform(get("/api/v1/quick-replies").param("sort", "INVALID").cookie(admin.cookies()))
+                .andExpect(status().isBadRequest());
         JsonNode statistics = data(get("/api/v1/quick-replies/statistics").cookie(admin.cookies()));
         JsonNode stat = findById(statistics, templateId);
         assertThat(stat.at("/totalCount").asLong()).isEqualTo(2);

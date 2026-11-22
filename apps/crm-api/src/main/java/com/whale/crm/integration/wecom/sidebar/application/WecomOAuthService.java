@@ -50,12 +50,16 @@ public class WecomOAuthService {
         requireConfigured();
         states.consume(state, officialProperties.corpId());
         String wecomUserid = client.oauthUserid(code);
-        List<WecomStaffIdentity> mappings = repository.activeStaffForAuth(officialProperties.corpId(), wecomUserid)
+        List<WecomStaffIdentity> mappings = repository
+                .activeStaffForAuth(officialProperties.allowedTenantId(), officialProperties.corpId(), wecomUserid)
                 .stream().distinct().toList();
         if (mappings.size() != 1) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "企微成员未唯一关联 CRM 员工，请联系管理员配置");
         }
         WecomStaffIdentity identity = mappings.getFirst();
+        if (identity.tenantId() != officialProperties.allowedTenantId()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "企微成员租户与当前企业配置不一致");
+        }
         return authService.loginWithVerifiedIdentity(identity.staffUserId(), clientIp, userAgent);
     }
 
@@ -64,7 +68,8 @@ public class WecomOAuthService {
     }
 
     private void requireConfigured() {
-        if (!properties.enabled() || officialProperties.corpId() == null || officialProperties.corpId().isBlank()
+        if (officialProperties.allowedTenantId() <= 0
+                || !properties.enabled() || officialProperties.corpId() == null || officialProperties.corpId().isBlank()
                 || officialProperties.secret() == null || officialProperties.secret().isBlank()
                 || properties.agentId() == null || properties.agentId() <= 0
                 || properties.oauthRedirectUri() == null || properties.oauthRedirectUri().isBlank()

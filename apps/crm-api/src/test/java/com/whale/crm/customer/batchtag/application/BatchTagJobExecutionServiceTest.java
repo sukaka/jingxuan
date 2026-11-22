@@ -38,10 +38,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.InOrder;
 
 class BatchTagJobExecutionServiceTest {
     private final BatchTagJobRepository repository = mock(BatchTagJobRepository.class);
@@ -151,6 +153,44 @@ class BatchTagJobExecutionServiceTest {
         verify(repository).finishJob(eq(1L), eq(1L), eq(6L), eq(leaseOwner.get()),
                 eq(BatchTagJob.PARTIAL_FAILED), eq(new BatchTagJobCounts(0, 0, 1, 0)), isNull(), any());
         verify(notificationService, never()).request(any());
+    }
+
+    @Test
+    void confirmedMergeTargetSkipsWithMergeConflictAfterLockingCustomer() {
+        BatchTagJobItem item = item(BatchTagJobItem.PENDING);
+        when(repository.findWorkItems(1L, 1)).thenReturn(List.of(item), List.of());
+        when(repository.findItemForUpdate(1L, 10)).thenReturn(Optional.of(item));
+        when(repository.findConfirmedMergeTarget(1L, 11L)).thenReturn(Optional.of(99L));
+        when(repository.countItemResults(1L, 1)).thenReturn(new BatchTagJobCounts(0, 0, 1, 0));
+
+        service.run(job(BatchTagJob.PENDING, 5, null), idempotency("EXECUTE"));
+
+        InOrder order = inOrder(repository, customerRepository);
+        order.verify(repository).findItemForUpdate(1L, 10L);
+        order.verify(customerRepository).findByIdForUpdate(1L, 11L);
+        order.verify(repository).findJobById(1L, 1L);
+        order.verify(repository).findConfirmedMergeTarget(1L, 11L);
+        verify(tagRepository, never()).insertIfAbsent(anyLong(), anyLong(), anyString(), anyLong());
+        verify(repository).updateItemResult(eq(1L), eq(10L), eq(7L), eq(BatchTagJobItem.SKIPPED),
+                eq("MERGE_CONFLICT"), anyString(), isNull(), isNull(), eq("[]"), any());
+    }
+
+    @Test
+    void activeCustomerLocksCustomerBeforeOpeningReadViewForMergeCheck() {
+        BatchTagJobItem item = item(BatchTagJobItem.PENDING);
+        when(repository.findWorkItems(1L, 1)).thenReturn(List.of(item), List.of());
+        when(repository.findItemForUpdate(1L, 10)).thenReturn(Optional.of(item));
+        when(repository.countItemResults(1L, 1)).thenReturn(new BatchTagJobCounts(1, 0, 0, 0));
+        when(tagRepository.findTagCodes(1L, 11)).thenReturn(List.of(), List.of("VIP"));
+        when(tagRepository.insertIfAbsent(1L, 11, "VIP", 2L)).thenReturn(1);
+
+        service.run(job(BatchTagJob.PENDING, 5, null), idempotency("EXECUTE"));
+
+        InOrder order = inOrder(repository, customerRepository);
+        order.verify(repository).findItemForUpdate(1L, 10L);
+        order.verify(customerRepository).findByIdForUpdate(1L, 11L);
+        order.verify(repository).findJobById(1L, 1L);
+        order.verify(repository).findConfirmedMergeTarget(1L, 11L);
     }
 
     private BatchTagJobExecutionService.ExecutionIdempotency idempotency(String trigger) {

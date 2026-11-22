@@ -1,4 +1,5 @@
 import type { ApiResponse } from '../types/api'
+import { ApiError } from '../types/api'
 import { http } from './http'
 
 export interface H5Card {
@@ -33,6 +34,12 @@ export interface PublicH5Card {
   imageUrl: string
 }
 
+export const SHARE_KEY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/
+
+export function isValidShareKey(shareKey: string): boolean {
+  return SHARE_KEY_PATTERN.test(shareKey)
+}
+
 function idempotency(key: string) {
   return { headers: { 'Idempotency-Key': key } }
 }
@@ -61,6 +68,13 @@ export async function recordH5CardUsage(id: number, body: {
 }
 
 export async function getPublicH5Card(shareKey: string): Promise<PublicH5Card> {
-  const res = await http.get<ApiResponse<PublicH5Card>>(`/public/h5-cards/${shareKey}`)
+  if (!isValidShareKey(shareKey)) {
+    throw new ApiError({
+      status: 400,
+      code: 'INVALID_SHARE_KEY',
+      message: '分享链接无效或格式不正确',
+    })
+  }
+  const res = await http.get<ApiResponse<PublicH5Card>>(`/public/h5-cards/${encodeURIComponent(shareKey)}`)
   return res.data.data
 }

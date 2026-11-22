@@ -27,5 +27,8 @@ public interface AiChatSendFenceMapper {
     int finish(@Param("tenantId") long tenantId, @Param("runId") long runId,
                @Param("expectedVersion") long expectedVersion, @Param("now") Instant now);
 
+    int releaseForRetry(@Param("tenantId") long tenantId, @Param("runId") long runId,
+                        @Param("expectedVersion") long expectedVersion, @Param("now") Instant now);
+
     int recover(@Param("tenantId") long tenantId, @Param("runId") long runId, @Param("now") Instant now);
 }

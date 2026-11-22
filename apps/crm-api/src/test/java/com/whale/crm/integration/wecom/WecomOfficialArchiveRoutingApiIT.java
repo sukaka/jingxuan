@@ -70,6 +70,9 @@ class WecomOfficialArchiveRoutingApiIT extends AbstractMysqlIT {
         when(runtimeConfig.wecomArchiveRealEnabled(1L)).thenReturn(true);
         when(nativeClient.open(anyString(), anyString(), anyString(), anyString(), anyString(), anyInt())).thenReturn(session);
         when(keyService.decryptRandomKey(anyString(), anyInt())).thenReturn("synthetic-random-key");
+        jdbcTemplate.update("DELETE FROM crm_wecom_media_asset WHERE tenant_id=1");
+        jdbcTemplate.update("DELETE FROM crm_wecom_recall_event WHERE tenant_id=1 AND corp_id=?", CORP);
+        jdbcTemplate.update("DELETE FROM crm_wecom_message WHERE tenant_id=1 AND corp_id=?", CORP);
         jdbcTemplate.update("DELETE FROM crm_wecom_data_gap WHERE tenant_id=1 AND corp_id=?", CORP);
         jdbcTemplate.update("DELETE FROM crm_wecom_cursor WHERE tenant_id=1 AND corp_id=?", CORP);
         objects.clear();
@@ -254,6 +257,55 @@ class WecomOfficialArchiveRoutingApiIT extends AbstractMysqlIT {
                         .get("/api/v1/integrations/wecom/messages/" + original.id() + "/content").cookie(login("admin").cookies()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.content").value("撤回前原始消息"))
                 .andExpect(jsonPath("$.data.recalledAt").isNotEmpty());
+    }
+
+    @Test
+    void dualArchiveScopesCoexistAtSameSeqAndGapOutboxEventIdIncludesScope() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        String external = "wm-scope-" + suffix;
+        String officialMsgId = "OFFICIAL-SCOPE-" + suffix;
+        String mockMsgId = "MOCK-SCOPE-" + suffix;
+        String blockedMsgId = "BLOCKED-SCOPE-" + suffix;
+        jdbcTemplate.update("INSERT INTO crm_wecom_staff_account (tenant_id,corp_id,wecom_userid,staff_user_id,enabled) "
+                + "VALUES (1,?,'staff-2',2,1) ON DUPLICATE KEY UPDATE enabled=1", CORP);
+        jdbcTemplate.update("INSERT INTO crm_wecom_archive_member (tenant_id,corp_id,staff_user_id,enabled,source_code) "
+                + "VALUES (1,?,2,1,'OFFICIAL') ON DUPLICATE KEY UPDATE enabled=1,source_code='OFFICIAL'", CORP);
+        jdbcTemplate.update("INSERT INTO crm_wecom_contact (tenant_id,corp_id,external_userid,staff_user_id,customer_id,"
+                + "consent_status,consent_evidence_ref,follow_status) VALUES (1,?,?,2,NULL,'GRANTED','synthetic://consent','ACTIVE')",
+                CORP, external);
+
+        // Pre-insert a MOCK_ARCHIVE row at archive_seq = 501
+        repository.insertMessage(1L, new WecomMessage(null, CORP, mockMsgId, 501L, null, external, 2L,
+                external, "TEXT", "CUSTOMER", java.time.Instant.parse("2026-11-13T08:00:00Z"),
+                "wecom/1/mock.enc", "0".repeat(64), "GRANTED", null, "UNMATCHED", null, null,
+                "GRANTED", 0L, "DIRECT", external, null, null, "MOCK_ARCHIVE"));
+
+        String validPlaintext = "{\"msgid\":\"" + officialMsgId + "\",\"action\":\"send\",\"from\":\"" + external
+                + "\",\"tolist\":[\"staff-2\"],\"roomid\":\"\",\"msgtime\":1700000000000,\"msgtype\":\"text\","
+                + "\"text\":{\"content\":\"[微笑] 同序号双scope消息\"}}";
+        String dualPage = "{\"errcode\":0,\"chatdata\":["
+                + "{\"seq\":501,\"msgid\":\"" + officialMsgId + "\",\"publickey_ver\":3,"
+                + "\"encrypt_random_key\":\"random-dual\",\"encrypt_chat_msg\":\"cipher-valid\"},"
+                + "{\"seq\":502,\"msgid\":\"" + blockedMsgId + "\",\"publickey_ver\":3,"
+                + "\"encrypt_random_key\":\"random-dual\",\"encrypt_chat_msg\":\"cipher-corrupt\"}"
+                + "]}";
+        when(session.pullChatData(0, 100)).thenReturn(dualPage);
+        when(session.decrypt("synthetic-random-key", "cipher-valid")).thenReturn(validPlaintext);
+        when(session.decrypt("synthetic-random-key", "cipher-corrupt")).thenReturn("{corrupt-json");
+
+        sync(6).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.stored").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1))
+                .andExpect(jsonPath("$.data.lastSeq").value(502));
+
+        WecomMessage official = repository.findMessage(1L, CORP, officialMsgId).orElseThrow();
+        assertThat(official.archiveScope()).isEqualTo("OFFICIAL_ARCHIVE");
+        assertThat(official.archiveSeq()).isEqualTo(501L);
+        assertThat(archiveService.readContent(official)).isEqualTo("[微笑] 同序号双scope消息");
+        assertThat(queryLong("SELECT COUNT(*) FROM crm_wecom_message WHERE tenant_id=1 AND corp_id=? AND archive_seq=501",
+                CORP)).isEqualTo(2);
+        assertThat(queryLong("SELECT COUNT(*) FROM crm_outbox_event WHERE tenant_id=1 AND event_id=?",
+                "wecom.archive.gap.v1:" + CORP + ":OFFICIAL_ARCHIVE:MESSAGE_PAYLOAD_INVALID:502")).isEqualTo(1);
     }
 
     private String page(long seq, String msgId, String cipher) {

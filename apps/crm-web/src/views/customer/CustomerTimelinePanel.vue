@@ -9,6 +9,7 @@ const items = ref<CustomerTimelineItem[]>([])
 const nextCursor = ref<string | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
+let loadSequence = 0
 
 const typeLabels: Record<CustomerTimelineType, string> = {
   FOLLOWUP: '跟进', INTENT: '意向', BLOCKER: '卡点', NEXT_FOLLOWUP: '下一步', TASK: '任务',
@@ -17,22 +18,26 @@ const typeLabels: Record<CustomerTimelineType, string> = {
 }
 
 async function load(append = false) {
+  const targetCustomerId = props.customerId
+  const sequence = ++loadSequence
   loading.value = true
   errorMessage.value = ''
   const cursor = append ? nextCursor.value : null
   try {
-    const result = await getCustomerTimeline(props.customerId, {
+    const result = await getCustomerTimeline(targetCustomerId, {
       size: 20, ...(cursor ? { cursor } : {}),
     })
+    if (sequence !== loadSequence || props.customerId !== targetCustomerId) return
     const existing = new Set(append ? items.value.map((item) => item.eventKey) : [])
     const additions = result.items.filter((item) => !existing.has(item.eventKey))
     items.value = append ? [...items.value, ...additions] : result.items
     nextCursor.value = result.nextCursor
   } catch (error) {
+    if (sequence !== loadSequence || props.customerId !== targetCustomerId) return
     if (!append) items.value = []
     errorMessage.value = error instanceof Error ? error.message : '时间线加载失败'
   } finally {
-    loading.value = false
+    if (sequence === loadSequence) loading.value = false
   }
 }
 
@@ -42,8 +47,10 @@ function detailText(item: CustomerTimelineItem): string {
 }
 
 watch(() => props.customerId, () => {
+  loadSequence += 1
   items.value = []
   nextCursor.value = null
+  errorMessage.value = ''
   void load()
 }, { immediate: true })
 </script>

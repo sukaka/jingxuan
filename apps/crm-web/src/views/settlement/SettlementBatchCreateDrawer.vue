@@ -17,10 +17,16 @@ const emit = defineEmits<{
 const form = reactive({ institutionId: undefined as number | undefined, settlementType: 'MONTHLY' as 'MONTHLY' | 'PER_REDEMPTION', periodMonth: '' })
 const redemptions = ref<Redemption[]>([])
 const selected = ref<Redemption[]>([])
+const redemptionTable = ref<{ clearSelection?: () => void } | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 let idempotencyKey = ''
 const periodKey = computed(() => form.settlementType === 'MONTHLY' ? form.periodMonth : (selected.value[0] ? `REDEMPTION:${selected.value[0].id}` : ''))
+
+function clearRedemptionSelection() {
+  selected.value = []
+  redemptionTable.value?.clearSelection?.()
+}
 
 watch(() => props.modelValue, (visible) => {
   if (!visible) return
@@ -28,8 +34,13 @@ watch(() => props.modelValue, (visible) => {
   form.settlementType = 'MONTHLY'
   form.periodMonth = ''
   redemptions.value = []
-  selected.value = []
+  clearRedemptionSelection()
   idempotencyKey = createFinanceIdempotencyKey('settlement.batch.create')
+})
+
+watch(() => form.institutionId, () => {
+  redemptions.value = []
+  clearRedemptionSelection()
 })
 
 function updateVisible(value: boolean) {
@@ -42,7 +53,7 @@ async function loadRedemptionOptions() {
     return
   }
   loading.value = true
-  selected.value = []
+  clearRedemptionSelection()
   try {
     const result = await listRedemptions({ page: 1, size: 100, institutionId: form.institutionId, status: 'POSTED' })
     redemptions.value = result.items

@@ -1,13 +1,23 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPublicH5Card } from '../src/api/h5Card'
 import { routes } from '../src/router'
 import PublicH5CardView from '../src/views/PublicH5CardView.vue'
 
-vi.mock('../src/api/h5Card', () => ({ getPublicH5Card: vi.fn() }))
+let currentShareKey = 'high-entropy-share-key'
+
+vi.mock('../src/api/h5Card', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/api/h5Card')>()
+  return { ...actual, getPublicH5Card: vi.fn() }
+})
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-router')>()
-  return { ...actual, useRoute: () => ({ params: { shareKey: 'high-entropy-share-key' } }) }
+  return { ...actual, useRoute: () => ({ params: { shareKey: currentShareKey } }) }
+})
+
+beforeEach(() => {
+  currentShareKey = 'high-entropy-share-key'
+  vi.mocked(getPublicH5Card).mockReset()
 })
 
 afterEach(() => {
@@ -40,6 +50,15 @@ describe('H5 公开项目介绍', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="public-h5-error"]').text()).toContain('卡片不存在或不可见')
     expect(wrapper.find('.public-card-content').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('路径参数含非法字符时不发起接口请求并展示错误', async () => {
+    currentShareKey = '../admin'
+    const wrapper = mount(PublicH5CardView)
+    await flushPromises()
+    expect(getPublicH5Card).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="public-h5-error"]').text()).toContain('分享链接无效')
     wrapper.unmount()
   })
 })

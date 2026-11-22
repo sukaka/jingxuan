@@ -1,8 +1,16 @@
 package com.whale.crm.customer.tier;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.whale.crm.customer.tier.api.dto.CustomerTierAdjustmentRequest;
+import com.whale.crm.customer.tier.api.dto.CustomerTierReviewRequest;
+import com.whale.crm.customer.tier.application.CustomerTierCustomerService;
 import com.whale.crm.customer.tier.application.CustomerTierRecalculationService;
+import com.whale.crm.customer.tier.application.CustomerTierReviewService;
+import com.whale.crm.platform.security.CurrentUser;
+import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.support.AbstractMysqlIT;
+import com.whale.crm.platform.web.BusinessException;
+import com.whale.crm.platform.web.ErrorCode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -34,6 +42,12 @@ class CustomerTierApiIT extends AbstractMysqlIT {
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private CustomerTierRecalculationService recalculationService;
+    @Autowired
+    private CustomerTierReviewService reviewService;
+    @Autowired
+    private CustomerTierCustomerService tierCustomerService;
+    @Autowired
+    private CurrentUserService currentUserService;
 
     @Test
     void actualConsumptionUsesHalfOpenWindowAndUpgradeIsTransactionalAndIdempotent() throws Exception {
@@ -382,6 +396,63 @@ class CustomerTierApiIT extends AbstractMysqlIT {
         assertThat(pendingReviewCount(customerId)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_customer_tier_history "
                 + "WHERE customer_id=?", Long.class, customerId)).isZero();
+    }
+
+    @Test
+    void concurrentReviewApproveAndCustomerTierAdjustSerializeWithoutDeadlock() throws Exception {
+        AuthCookies admin = login("admin");
+        CurrentUser adminUser = currentUserService.loadById(1).orElseThrow();
+        createActiveRule(admin, "UTC");
+        for (int round = 0; round < 10; round++) {
+            long customerId = customer(1L, 2L, "S");
+            recalculate(admin, customerId, 0, "tier-lock-recalc-" + round + "-" + UUID.randomUUID(), AS_OF);
+            long reviewId = pendingReview(customerId);
+            String approveKey = "tier-lock-app-" + round + "-" + UUID.randomUUID();
+            String adjustKey = "tier-lock-adj-" + round + "-" + UUID.randomUUID();
+
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+            try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+                Future<Throwable> approveFuture = pool.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    try {
+                        reviewService.approve(1L, adminUser, reviewId,
+                                new CustomerTierReviewRequest(0L, "并发核准降级"), approveKey);
+                        return null;
+                    } catch (Throwable ex) {
+                        return ex;
+                    }
+                });
+                Future<Throwable> adjustFuture = pool.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    try {
+                        tierCustomerService.adjust(1L, adminUser, customerId,
+                                new CustomerTierAdjustmentRequest("A", "并发人工调整", false, 0L), adjustKey);
+                        return null;
+                    } catch (Throwable ex) {
+                        return ex;
+                    }
+                });
+                assertThat(ready.await(15, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                start.countDown();
+                Throwable approveError = approveFuture.get(25, java.util.concurrent.TimeUnit.SECONDS);
+                Throwable adjustError = adjustFuture.get(25, java.util.concurrent.TimeUnit.SECONDS);
+
+                assertThat(approveError == null || adjustError == null).isTrue();
+                if (approveError != null) {
+                    assertThat(approveError).isInstanceOf(BusinessException.class)
+                            .satisfies(ex -> assertThat(((BusinessException) ex).errorCode())
+                                    .isEqualTo(ErrorCode.CONFLICT));
+                }
+                if (adjustError != null) {
+                    assertThat(adjustError).isInstanceOf(BusinessException.class)
+                            .satisfies(ex -> assertThat(((BusinessException) ex).errorCode())
+                                    .isEqualTo(ErrorCode.CONFLICT));
+                }
+            }
+        }
     }
 
     private long createActiveRule(AuthCookies admin, String timezone) throws Exception {

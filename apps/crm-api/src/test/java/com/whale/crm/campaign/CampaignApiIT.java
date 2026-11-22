@@ -10,7 +10,9 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -176,10 +178,14 @@ class CampaignApiIT extends AbstractMysqlIT {
         long channelId = channel.at("/id").asLong();
         org.assertj.core.api.Assertions.assertThat(channel.at("/commissionPercent").decimalValue())
                 .isEqualByComparingTo("12.50");
-        org.assertj.core.api.Assertions.assertThat(channel.at("/contactPhone").asText()).isEqualTo("13800000000");
-        org.assertj.core.api.Assertions.assertThat(channel.at("/idCardNumber").asText()).isEqualTo("11010519491231002X");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/contactPhone").asText()).isEqualTo("138****0000");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/contactPhoneConfigured").asBoolean()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(channel.at("/idCardNumber").asText()).isEqualTo("110105********002X");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/idCardConfigured").asBoolean()).isTrue();
         org.assertj.core.api.Assertions.assertThat(channel.at("/settlementMethod").asText()).isEqualTo("MONTHLY");
-        org.assertj.core.api.Assertions.assertThat(channel.at("/paymentAccountNo").asText()).isEqualTo("0000000000000001");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/paymentAccountName").asText()).isEqualTo("合****户");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/paymentAccountNo").asText()).isEqualTo("****0001");
+        org.assertj.core.api.Assertions.assertThat(channel.at("/paymentAccountConfigured").asBoolean()).isTrue();
         org.assertj.core.api.Assertions.assertThat(channel.at("/businessOwnerName").asText()).isEqualTo("孙周");
         mockMvc.perform(get("/api/v1/channels/owner-options").cookie(admin.cookies()))
                 .andExpect(status().isOk())
@@ -302,6 +308,224 @@ class CampaignApiIT extends AbstractMysqlIT {
                         .content("{\"externalTradeNo\":\"IT-DENIED\",\"paymentChannel\":\"OFFLINE\","
                                 + "\"amountFen\":1,\"paidAt\":\"2026-11-01T00:00:00Z\",\"evidenceRef\":\"IT-DENIED\"}"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void hSec03ChannelMaskingStatusToggleAndFinanceApprovalWorkflow() throws Exception {
+        AuthCookies business = login("business1");
+        AuthCookies finance = login("finance1");
+        AuthCookies admin = login("admin");
+        AuthCookies manager = login("manager1");
+
+        // 1. Unconfigured INACTIVE channel can set initial financials on PATCH, rejects wildcard *
+        Map<String, Object> draftBody = new HashMap<>();
+        draftBody.put("channelNo", "HSEC03-UNLOCKED");
+        draftBody.put("name", "未配置财务渠道");
+        draftBody.put("channelType", "BLOGGER");
+        draftBody.put("status", "INACTIVE");
+        draftBody.put("businessOwnerUserId", 6);
+        JsonNode unlocked = data(postJson("/api/v1/channels", business, draftBody));
+        long unlockedId = unlocked.at("/id").asLong();
+        assertThat(unlocked.at("/contactPhoneConfigured").asBoolean()).isFalse();
+        assertThat(unlocked.at("/idCardConfigured").asBoolean()).isFalse();
+        assertThat(unlocked.at("/paymentAccountConfigured").asBoolean()).isFalse();
+
+        Map<String, Object> wildcardPatch = new HashMap<>(draftBody);
+        wildcardPatch.put("version", 0);
+        wildcardPatch.put("paymentAccountNo", "****0001");
+        mockMvc.perform(business.withAuth(patch("/api/v1/channels/" + unlockedId))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(wildcardPatch)))
+                .andExpect(status().isBadRequest());
+
+        Map<String, Object> initialFinancialPatch = new HashMap<>(draftBody);
+        initialFinancialPatch.put("version", 0);
+        initialFinancialPatch.put("commissionPercent", "8.50");
+        initialFinancialPatch.put("settlementMethod", "MONTHLY");
+        initialFinancialPatch.put("paymentAccountName", "初始收款户");
+        initialFinancialPatch.put("paymentAccountNo", "6222000000001234");
+        initialFinancialPatch.put("paymentBankName", "初始开户行");
+        JsonNode configured = data(business.withAuth(patch("/api/v1/channels/" + unlockedId))
+                .contentType(MediaType.APPLICATION_JSON).content(json(initialFinancialPatch)));
+        assertThat(configured.at("/paymentAccountName").asText()).isEqualTo("初***户");
+        assertThat(configured.at("/paymentAccountNo").asText()).isEqualTo("****1234");
+        assertThat(configured.at("/paymentAccountConfigured").asBoolean()).isTrue();
+
+        // 2. Status toggle endpoint updates status without touching PII/bank; checks version
+        JsonNode activated = data(business.withAuth(post("/api/v1/channels/" + unlockedId + "/status"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"status\":\"ACTIVE\",\"version\":1,\"reason\":\"上线合作\"}"));
+        assertThat(activated.at("/status").asText()).isEqualTo("ACTIVE");
+        assertThat(activated.at("/version").asLong()).isEqualTo(2L);
+        assertThat(activated.at("/paymentAccountNo").asText()).isEqualTo("****1234");
+
+        mockMvc.perform(business.withAuth(post("/api/v1/channels/" + unlockedId + "/status"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"INACTIVE\",\"version\":99}"))
+                .andExpect(status().isConflict());
+
+        // 3. Create ACTIVE channel with PII + bank -> ordinary PATCH preserves blank sensitive & rejects financial change
+        Map<String, Object> create = channelProfileBody("HSEC03-FLOW");
+        JsonNode channel = data(postJson("/api/v1/channels", business, create));
+        long channelId = channel.at("/id").asLong();
+        String oldPhoneCipher = jdbcTemplate.queryForObject(
+                "SELECT contact_phone_cipher FROM crm_partner_channel WHERE tenant_id=1 AND id=?",
+                String.class, channelId);
+        String oldIdCipher = jdbcTemplate.queryForObject(
+                "SELECT id_card_number_cipher FROM crm_partner_channel WHERE tenant_id=1 AND id=?",
+                String.class, channelId);
+
+        Map<String, Object> forbiddenPatch = new HashMap<>();
+        forbiddenPatch.put("name", "改名");
+        forbiddenPatch.put("channelType", "BLOGGER");
+        forbiddenPatch.put("status", "ACTIVE");
+        forbiddenPatch.put("commissionPercent", "20.00");
+        forbiddenPatch.put("version", 0);
+        mockMvc.perform(business.withAuth(patch("/api/v1/channels/" + channelId))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(forbiddenPatch)))
+                .andExpect(status().isForbidden());
+
+        Map<String, Object> metadataPatch = new HashMap<>();
+        metadataPatch.put("name", "合成博主昵称（已改）");
+        metadataPatch.put("channelType", "BLOGGER");
+        metadataPatch.put("businessOwnerUserId", 6);
+        metadataPatch.put("status", "ACTIVE");
+        metadataPatch.put("remarks", "保留敏感密文");
+        metadataPatch.put("version", 0);
+        JsonNode updatedMeta = data(business.withAuth(patch("/api/v1/channels/" + channelId))
+                .contentType(MediaType.APPLICATION_JSON).content(json(metadataPatch)));
+        assertThat(updatedMeta.at("/version").asLong()).isEqualTo(1L);
+        assertThat(updatedMeta.at("/contactPhone").asText()).isEqualTo("138****0000");
+        assertThat(updatedMeta.at("/contactPhoneConfigured").asBoolean()).isTrue();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT contact_phone_cipher FROM crm_partner_channel WHERE tenant_id=1 AND id=?",
+                String.class, channelId)).isEqualTo(oldPhoneCipher);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT id_card_number_cipher FROM crm_partner_channel WHERE tenant_id=1 AND id=?",
+                String.class, channelId)).isEqualTo(oldIdCipher);
+
+        // 4. Submit financial change request -> duplicate active 409 -> role-aware masking -> baseVersion conflict -> reject -> approve
+        String createKey = "hsec03-create-" + UUID.randomUUID();
+        Map<String, Object> finChange = Map.of(
+                "commissionPercent", "18.50",
+                "paymentAccountName", "新合作收款户",
+                "paymentAccountNo", "6222020200009999",
+                "paymentBankName", "新合作开户行",
+                "baseVersion", 1,
+                "reason", "季度调佣与更换收款卡");
+        JsonNode req1 = data(business.withAuth(post("/api/v1/channels/" + channelId + "/financial-change-requests"))
+                .header("Idempotency-Key", createKey)
+                .contentType(MediaType.APPLICATION_JSON).content(json(finChange)));
+        long reqId1 = req1.at("/id").asLong();
+        assertThat(req1.at("/status").asText()).isEqualTo("PENDING_REVIEW");
+        assertThat(req1.at("/afterMasked/commissionPercent").decimalValue()).isEqualByComparingTo("18.50");
+        assertThat(req1.at("/afterMasked/paymentAccountName").asText()).isEqualTo("***");
+        assertThat(req1.at("/afterMasked/paymentAccountNo").asText()).isEqualTo("****");
+        assertThat(req1.at("/afterMasked/paymentBankName").asText()).isEqualTo("***");
+        assertThat(req1.at("/paymentAccountNo").isNull()).isTrue();
+
+        // Idempotent replay
+        JsonNode replayedCreate = data(business.withAuth(post("/api/v1/channels/" + channelId + "/financial-change-requests"))
+                .header("Idempotency-Key", createKey)
+                .contentType(MediaType.APPLICATION_JSON).content(json(finChange)));
+        assertThat(replayedCreate.at("/id").asLong()).isEqualTo(reqId1);
+
+        // Duplicate active request with different key -> 409
+        mockMvc.perform(business.withAuth(post("/api/v1/channels/" + channelId + "/financial-change-requests"))
+                        .header("Idempotency-Key", "hsec03-dup-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(json(finChange)))
+                .andExpect(status().isConflict());
+
+        // Non-finance (business) vs finance GET list masking + manager1 403
+        mockMvc.perform(get("/api/v1/channel-change-requests").cookie(manager.cookies()))
+                .andExpect(status().isForbidden());
+        JsonNode businessList = data(get("/api/v1/channels/" + channelId + "/financial-change-requests")
+                .cookie(business.cookies()));
+        assertThat(businessList.at("/items/0/afterMasked/paymentAccountNo").asText()).isEqualTo("****");
+        JsonNode financeList = data(get("/api/v1/channel-change-requests?channelId=" + channelId)
+                .cookie(finance.cookies()));
+        assertThat(financeList.at("/items/0/afterMasked/paymentAccountName").asText()).isEqualTo("新****户");
+        assertThat(financeList.at("/items/0/afterMasked/paymentAccountNo").asText()).isEqualTo("****9999");
+        assertThat(financeList.at("/items/0/paymentAccountNo").asText()).isEqualTo("****9999");
+        assertThat(financeList.toString()).doesNotContain("6222020200009999", "新合作收款户");
+
+        // Advance channel version via status toggle -> APPROVE returns 409 CONFLICT, REJECT clears active request
+        data(business.withAuth(post("/api/v1/channels/" + channelId + "/status"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"status\":\"INACTIVE\",\"version\":1,\"reason\":\"临时暂停\"}"));
+        mockMvc.perform(finance.withAuth(post("/api/v1/channel-change-requests/" + reqId1 + "/review"))
+                        .header("Idempotency-Key", "hsec03-conflict-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"APPROVE\",\"version\":0,\"comment\":\"过期版本\"}"))
+                .andExpect(status().isConflict());
+        JsonNode rejected = data(finance.withAuth(post("/api/v1/channel-change-requests/" + reqId1 + "/review"))
+                .header("Idempotency-Key", "hsec03-reject-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"REJECT\",\"version\":0,\"comment\":\"版本已过期请重提\"}"));
+        assertThat(rejected.at("/status").asText()).isEqualTo("REJECTED");
+
+        // 5. Self-review denied (403 + CHANNEL_SELF_REVIEW_DENIED audit) & finance approval updates DB + audit
+        Map<String, Object> finChange2 = Map.of(
+                "commissionPercent", "19.00",
+                "paymentAccountName", "终审收款户",
+                "paymentAccountNo", "6222020200007777",
+                "paymentBankName", "终审开户行",
+                "baseVersion", 2,
+                "reason", "重新提交");
+        long reqId2 = data(admin.withAuth(post("/api/v1/channels/" + channelId + "/financial-change-requests"))
+                .header("Idempotency-Key", "hsec03-admin-req-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON).content(json(finChange2))).at("/id").asLong();
+        mockMvc.perform(admin.withAuth(post("/api/v1/channel-change-requests/" + reqId2 + "/review"))
+                        .header("Idempotency-Key", "hsec03-self-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"APPROVE\",\"version\":0}"))
+                .andExpect(status().isForbidden());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM crm_audit_log WHERE tenant_id=1 AND action_code='CHANNEL_SELF_REVIEW_DENIED' "
+                        + "AND target_id=?", Integer.class, Long.toString(channelId))).isEqualTo(1);
+
+        String approveKey = "hsec03-approve-" + UUID.randomUUID();
+        JsonNode approved = data(finance.withAuth(post("/api/v1/channel-change-requests/" + reqId2 + "/review"))
+                .header("Idempotency-Key", approveKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"APPROVE\",\"version\":0,\"comment\":\"财务复核通过\"}"));
+        assertThat(approved.at("/status").asText()).isEqualTo("APPROVED");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT commission_percent FROM crm_partner_channel WHERE tenant_id=1 AND id=?",
+                java.math.BigDecimal.class, channelId)).isEqualByComparingTo("19.00");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT payment_bank_name FROM crm_partner_channel WHERE tenant_id=1 AND id=?",
+                String.class, channelId)).isEqualTo("终审开户行");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT version FROM crm_partner_channel WHERE tenant_id=1 AND id=?",
+                Long.class, channelId)).isEqualTo(3L);
+        String approveAudit = jdbcTemplate.queryForObject(
+                "SELECT CONCAT_WS('',before_json,after_json) FROM crm_audit_log WHERE tenant_id=1 "
+                        + "AND action_code='CHANNEL_FINANCE_CHANGE_APPROVE' AND target_id=?",
+                String.class, Long.toString(channelId));
+        assertThat(approveAudit).contains("****7777").doesNotContain("6222020200007777", "终审收款户");
+
+        // Idempotent replay on review
+        JsonNode replayApprove = data(finance.withAuth(post("/api/v1/channel-change-requests/" + reqId2 + "/review"))
+                .header("Idempotency-Key", approveKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"APPROVE\",\"version\":0,\"comment\":\"财务复核通过\"}"));
+        assertThat(replayApprove.at("/status").asText()).isEqualTo("APPROVED");
+
+        // 6. Cross-tenant isolation on tenant_id=2 channel
+        jdbcTemplate.update("INSERT INTO crm_partner_channel (tenant_id,channel_no,name,channel_type,status) "
+                + "VALUES (2,'HSEC03-T2','二租户渠道','BLOGGER','ACTIVE')");
+        long t2ChannelId = jdbcTemplate.queryForObject(
+                "SELECT id FROM crm_partner_channel WHERE tenant_id=2 AND channel_no='HSEC03-T2'", Long.class);
+        mockMvc.perform(get("/api/v1/channels/" + t2ChannelId + "/financial-change-requests").cookie(admin.cookies()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels/" + t2ChannelId + "/status"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"INACTIVE\",\"version\":0}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(admin.withAuth(post("/api/v1/channels/" + t2ChannelId + "/financial-change-requests"))
+                        .header("Idempotency-Key", "hsec03-t2-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(json(finChange)))
+                .andExpect(status().isNotFound());
     }
 
     private Map<String, Object> campaignBody(String code, String name) {

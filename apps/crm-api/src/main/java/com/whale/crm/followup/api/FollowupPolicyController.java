@@ -33,7 +33,7 @@ public class FollowupPolicyController {
     }
 
     @PutMapping
-    @PreAuthorize("hasAuthority('followup:write')")
+    @PreAuthorize("hasAuthority('followup:policy:manage')")
     public ApiResponse<FollowupPolicyResponse> update(
             @Valid @RequestBody UpdateFollowupPolicyRequest body,
             @RequestHeader("Idempotency-Key") String idempotencyKey, HttpServletRequest request) {

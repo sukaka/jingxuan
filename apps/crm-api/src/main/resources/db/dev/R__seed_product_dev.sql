@@ -15,9 +15,9 @@ INSERT INTO crm_package (id,tenant_id,package_code,package_name,status) VALUES
  (202,1,'PKG-SY','素颜卡','ACTIVE')
  ON DUPLICATE KEY UPDATE package_name=VALUES(package_name),status=VALUES(status);
 INSERT INTO crm_package_version (id,tenant_id,package_id,version_no,selection_mode,choice_count,selection_rules,status) VALUES
- (301,1,201,1,'USE_N',3,NULL,'ACTIVE'),
- (302,1,201,2,'USE_N',6,NULL,'ACTIVE'),
- (303,1,201,3,'USE_N',10,NULL,'DRAFT'),
+ (301,1,201,1,'FIXED',3,NULL,'ACTIVE'),
+ (302,1,201,2,'FIXED',6,NULL,'ACTIVE'),
+ (303,1,201,3,'FIXED',10,NULL,'DRAFT'),
  (311,1,202,1,'CHOOSE_N',3,NULL,'DRAFT')
  ON DUPLICATE KEY UPDATE selection_mode=VALUES(selection_mode),choice_count=VALUES(choice_count),status=VALUES(status);
 INSERT INTO crm_package_project (id,tenant_id,package_version_id,project_id,grant_count,selection_weight,allocation_price_fen,option_group,reference_price_fen) VALUES

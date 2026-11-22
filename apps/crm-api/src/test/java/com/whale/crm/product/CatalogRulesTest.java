@@ -23,12 +23,27 @@ class CatalogRulesTest {
     }
 
     @Test
-    void useNWithProjectsCanIssueOnlyWhenActive() {
+    void useNIsPendingQ01AndCannotActivateOrIssue() {
         List<PackageProject> projects = List.of(project(3));
 
+        assertThat(CatalogRules.rulesStatus(version("USE_N", null, "DRAFT"))).isEqualTo("PENDING_Q01");
+        assertThat(CatalogRules.rulesStatus(version("USE_N", null, "ACTIVE"))).isEqualTo("PENDING_Q01");
+        assertThat(CatalogRules.canActivate(version("USE_N", null, "DRAFT"), projects)).isFalse();
         assertThat(CatalogRules.entitlementIssuable(version("USE_N", null, "DRAFT"), projects)).isFalse();
-        assertThat(CatalogRules.entitlementIssuable(version("USE_N", null, "ACTIVE"), projects)).isTrue();
-        assertThat(CatalogRules.rulesStatus(version("USE_N", null, "ACTIVE"))).isEqualTo("READY");
+        assertThat(CatalogRules.entitlementIssuable(version("USE_N", null, "ACTIVE"), projects)).isFalse();
+    }
+
+    @Test
+    void fixedWithDistinctActiveProjectsCanActivateAndIssueWhenActive() {
+        List<PackageProject> projects = List.of(project(3));
+        List<PackageProject> duplicateProjects = List.of(project(1), project(2));
+
+        assertThat(CatalogRules.rulesStatus(version("FIXED", null, "ACTIVE"))).isEqualTo("READY");
+        assertThat(CatalogRules.canActivate(version("FIXED", null, "DRAFT"), projects)).isTrue();
+        assertThat(CatalogRules.entitlementIssuable(version("FIXED", null, "DRAFT"), projects)).isFalse();
+        assertThat(CatalogRules.entitlementIssuable(version("FIXED", null, "ACTIVE"), projects)).isTrue();
+        assertThat(CatalogRules.canActivate(version("FIXED", null, "DRAFT"), duplicateProjects)).isFalse();
+        assertThat(CatalogRules.entitlementIssuable(version("FIXED", null, "ACTIVE"), duplicateProjects)).isFalse();
     }
 
     @Test

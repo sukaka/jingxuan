@@ -48,7 +48,15 @@ class JwtServiceTest {
     }
 
     @Test
-    void shortSecret_isRejected() {
+    void shortOrUnresolvedSecret_isRejected() {
+        assertThatThrownBy(() -> new JwtService(null))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new JwtService(new AuthSecurityProperties(
+                "   ", 7200, "CRM_TOKEN", "CRM_CSRF", "X-CSRF-Token", false)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new JwtService(new AuthSecurityProperties(
+                "${JWT_SECRET_WITH_OVER_32_BYTES_LENGTH}", 7200, "CRM_TOKEN", "CRM_CSRF", "X-CSRF-Token", false)))
+                .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> new JwtService(new AuthSecurityProperties(
                 "too-short", 7200, "CRM_TOKEN", "CRM_CSRF", "X-CSRF-Token", false)))
                 .isInstanceOf(IllegalStateException.class);

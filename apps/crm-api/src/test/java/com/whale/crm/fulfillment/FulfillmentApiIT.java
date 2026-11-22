@@ -13,7 +13,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,9 @@ class FulfillmentApiIT extends AbstractMysqlIT {
 
     private AuthCookies admin;
     private AuthCookies manager1;
+    private AuthCookies manager2;
+    private AuthCookies lead1;
+    private AuthCookies lead2;
     private AuthCookies finance1;
     private AuthCookies frontdesk;
     private AuthCookies operator1;
@@ -54,6 +58,9 @@ class FulfillmentApiIT extends AbstractMysqlIT {
     void setUp() throws Exception {
         admin = login("admin");
         manager1 = login("manager1");
+        manager2 = login("manager2");
+        lead1 = login("lead1");
+        lead2 = login("lead2");
         finance1 = login("finance1");
         frontdesk = login("inst1");
         operator1 = login("operator1");
@@ -492,11 +499,587 @@ class FulfillmentApiIT extends AbstractMysqlIT {
         assertThat(fulfillmentHistory(paid.orderId())).isEmpty();
     }
 
+    @Test
+    void c01DirBSettledRedemptionsAcrossAllBatchStatusesBlockReversalRequest() throws Exception {
+        long cleanFileId = insertCleanPaymentFile();
+        String currentPeriod = YearMonth.now(ZoneId.of("Asia/Shanghai")).toString();
+
+        for (String targetStatus : List.of("DRAFT", "CONFIRMED", "PARTIALLY_PAID", "PAID")) {
+            PaidOrder paid = paidOrder(SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+            EntitlementRow entitlement = singleEntitlement(paid.orderId());
+            long appointmentId = newAppointment(paid.customerId(), List.of(new Line(entitlement.id(), 1)));
+            long appointmentVersion = toServiceDone(appointmentId);
+            JsonNode posted = data(redemptionRequest(operator1, appointmentId, appointmentVersion,
+                    List.of(new Line(entitlement.id(), 1)), "C01-" + targetStatus, key("c01-post")));
+            long redemptionId = posted.at("/redemption/id").asLong();
+            long redemptionVersion = posted.at("/redemption/version").asLong();
+
+            long batchId = createMonthlyBatch(1L, currentPeriod, redemptionId);
+            if (!"DRAFT".equals(targetStatus)) {
+                data(finance1.withAuth(post("/api/v1/settlements/batches/" + batchId + "/verification"))
+                        .header("Idempotency-Key", key("c01-verify"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("version", 0, "ruleVersion", "R1", "grossFen", 1000,
+                                "commissionFen", 100, "netPayableFen", 900,
+                                "verificationEvidence", "c01-proof"))));
+            }
+            if ("PARTIALLY_PAID".equals(targetStatus) || "PAID".equals(targetStatus)) {
+                long payAmount = "PAID".equals(targetStatus) ? 900L : 400L;
+                data(finance1.withAuth(post("/api/v1/settlements/batches/" + batchId + "/payments"))
+                        .header("Idempotency-Key", key("c01-pay"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("version", 1, "amountFen", payAmount,
+                                "bankTradeNo", key("C01-BANK"), "paidAt", Instant.now().toString(),
+                                "voucherFileId", cleanFileId, "evidenceRef", "c01-pay-proof"))));
+            }
+            assertThat(queryString("SELECT status FROM crm_settlement_batch WHERE id=?", batchId))
+                    .isEqualTo(targetStatus);
+
+            mockMvc.perform(reversalRequest(manager1, redemptionId, redemptionVersion,
+                            "C01-BLOCK-" + targetStatus, key("c01-req-block")))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("CONFLICT"));
+            assertThat(queryInt("SELECT COUNT(*) FROM crm_redemption_reversal WHERE redemption_id=?", redemptionId))
+                    .isZero();
+        }
+    }
+
+    @Test
+    void c01DirBPreExistingRequestedReversalBlockedOnApproveButAllowedOnReject() throws Exception {
+        String currentPeriod = YearMonth.now(ZoneId.of("Asia/Shanghai")).toString();
+
+        PaidOrder paid = paidOrder(SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+        EntitlementRow entitlement = singleEntitlement(paid.orderId());
+        long appointmentId = newAppointment(paid.customerId(), List.of(new Line(entitlement.id(), 1)));
+        long appointmentVersion = toServiceDone(appointmentId);
+        JsonNode posted = data(redemptionRequest(operator1, appointmentId, appointmentVersion,
+                List.of(new Line(entitlement.id(), 1)), "C01-PRE-REV", key("c01-pre-post")));
+        long redemptionId = posted.at("/redemption/id").asLong();
+        long redemptionVersion = posted.at("/redemption/version").asLong();
+
+        JsonNode requested = data(reversalRequest(manager1, redemptionId, redemptionVersion,
+                "C01-PRE-REQUEST", key("c01-pre-req")));
+        long reversalId = requested.at("/reversal/id").asLong();
+        long reversalVersion = requested.at("/reversal/version").asLong();
+
+        jdbcTemplate.update("INSERT INTO crm_settlement_batch (tenant_id,institution_id,settlement_type,period_key,"
+                + "status,amount_status) VALUES (1,1,'MONTHLY',?,'DRAFT','PENDING_VERIFICATION')", currentPeriod);
+        long batchId = queryLong("SELECT MAX(id) FROM crm_settlement_batch WHERE tenant_id=1 AND institution_id=1 "
+                + "AND settlement_type='MONTHLY' AND period_key=?", currentPeriod);
+        jdbcTemplate.update("INSERT INTO crm_settlement_line (tenant_id,settlement_batch_id,redemption_id,rate_snapshot) "
+                + "VALUES (1,?,?, '{}')", batchId, redemptionId);
+
+        mockMvc.perform(reviewRequest(finance1, reversalId, "approve", reversalVersion,
+                        "C01-APPROVE-BLOCK", key("c01-app-block")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+        assertThat(availableCount(entitlement.id())).isEqualTo(2);
+        assertThat(correctionCount(entitlement.id())).isZero();
+
+        JsonNode rejected = data(reviewRequest(finance1, reversalId, "reject", reversalVersion,
+                "C01-REJECT-ALLOW", key("c01-rej-allow")));
+        assertThat(rejected.at("/reversal/status").asText()).isEqualTo("REJECTED");
+        assertThat(queryString("SELECT active_redemption_id FROM crm_redemption_reversal WHERE id=?", reversalId))
+                .isNull();
+    }
+
+    @Test
+    void c01ConcurrentSettlementAndReversalRequestNeverCoexist() throws Exception {
+        String currentPeriod = YearMonth.now(ZoneId.of("Asia/Shanghai")).toString();
+        PaidOrder paid = paidOrder(SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+        EntitlementRow entitlement = singleEntitlement(paid.orderId());
+        long appointmentId = newAppointment(paid.customerId(), List.of(new Line(entitlement.id(), 1)));
+        long appointmentVersion = toServiceDone(appointmentId);
+        JsonNode posted = data(redemptionRequest(operator1, appointmentId, appointmentVersion,
+                List.of(new Line(entitlement.id(), 1)), "C01-RACE", key("c01-race-post")));
+        long redemptionId = posted.at("/redemption/id").asLong();
+        long redemptionVersion = posted.at("/redemption/version").asLong();
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<Integer> settleFuture = executor.submit(() -> {
+                start.await();
+                return mockMvc.perform(finance1.withAuth(post("/api/v1/settlements/batches"))
+                                .header("Idempotency-Key", key("c01-race-settle"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(json(Map.of("institutionId", 1, "settlementType", "MONTHLY",
+                                        "periodKey", currentPeriod, "redemptionIds", List.of(redemptionId)))))
+                        .andReturn().getResponse().getStatus();
+            });
+            Future<Integer> reverseFuture = executor.submit(() -> {
+                start.await();
+                return mockMvc.perform(reversalRequest(manager1, redemptionId, redemptionVersion,
+                                "C01-RACE-REV", key("c01-race-rev")))
+                        .andReturn().getResponse().getStatus();
+            });
+            start.countDown();
+            int settleStatus = settleFuture.get(30, TimeUnit.SECONDS);
+            int reverseStatus = reverseFuture.get(30, TimeUnit.SECONDS);
+            assertThat((settleStatus == 201 && reverseStatus == 409)
+                    || (settleStatus == 409 && reverseStatus == 200))
+                    .as("Expected exactly one winner (settle=201 or reverse=200) and one 409 conflict, got settle=%s reverse=%s",
+                            settleStatus, reverseStatus)
+                    .isTrue();
+        } finally {
+            executor.shutdownNow();
+        }
+        int lineCount = queryInt("SELECT COUNT(*) FROM crm_settlement_line WHERE tenant_id=1 AND redemption_id=?", redemptionId);
+        int activeRevCount = queryInt("SELECT COUNT(*) FROM crm_redemption_reversal WHERE tenant_id=1 AND active_redemption_id=?", redemptionId);
+        assertThat(lineCount + activeRevCount).isEqualTo(1);
+    }
+
+    @Test
+    void hBiz04MultiOrderRedemptionAndReversalUpdateOrdersWithoutDeadlock() throws Exception {
+        long customerId = createCustomer();
+        PaidOrder orderA = paidOrderForCustomer(customerId, SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+        PaidOrder orderB = paidOrderForCustomer(customerId, SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+        assertThat(orderA.orderId()).isLessThan(orderB.orderId());
+        EntitlementRow entA = singleEntitlement(orderA.orderId());
+        EntitlementRow entB = singleEntitlement(orderB.orderId());
+
+        long appointmentId = newAppointment(customerId, List.of(
+                new Line(entB.id(), 3), new Line(entA.id(), 3)));
+        long version = toServiceDone(appointmentId);
+        JsonNode posted = data(redemptionRequest(operator1, appointmentId, version,
+                List.of(new Line(entB.id(), 3), new Line(entA.id(), 3)), "MULTI-ORDER-POST", key("mo-post")));
+        long redemptionId = posted.at("/redemption/id").asLong();
+        long redemptionVersion = posted.at("/redemption/version").asLong();
+
+        assertOrderStatus(orderA.orderId(), "FULFILLED");
+        assertOrderStatus(orderB.orderId(), "FULFILLED");
+        assertThat(availableCount(entA.id())).isZero();
+        assertThat(availableCount(entB.id())).isZero();
+
+        JsonNode req = data(reversalRequest(manager1, redemptionId, redemptionVersion,
+                "MULTI-ORDER-REV", key("mo-rev")));
+        long reversalId = req.at("/reversal/id").asLong();
+        long reversalVersion = req.at("/reversal/version").asLong();
+        data(reviewRequest(finance1, reversalId, "approve", reversalVersion,
+                "MULTI-ORDER-APP", key("mo-app")));
+
+        assertOrderStatus(orderA.orderId(), "PAID");
+        assertOrderStatus(orderB.orderId(), "PAID");
+        assertThat(availableCount(entA.id())).isEqualTo(3);
+        assertThat(availableCount(entB.id())).isEqualTo(3);
+    }
+
+    @Test
+    void hBiz04ConcurrentRedemptionAndManualRefundNeverDeadlock() throws Exception {
+        long cleanFileId = insertCleanPaymentFile();
+        PaidOrder paid = paidOrder(SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+        EntitlementRow entitlement = singleEntitlement(paid.orderId());
+        long appointmentId = newAppointment(paid.customerId(), List.of(new Line(entitlement.id(), 3)));
+        long appointmentVersion = toServiceDone(appointmentId);
+
+        JsonNode refundCreated = data(manager1.withAuth(post("/api/v1/refunds"))
+                .header("Idempotency-Key", key("race-rf-create"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("orderId", paid.orderId(), "requestedFen", 60000L,
+                        "reasonCode", "CUSTOMER_REQUEST", "reasonDetail", "race",
+                        "items", List.of(Map.of("entitlementId", entitlement.id(),
+                                "revokeCount", 3, "allocatedFen", 60000L))))));
+        long refundId = refundCreated.at("/refund/id").asLong();
+        data(finance1.withAuth(post("/api/v1/refunds/" + refundId + "/review"))
+                .header("Idempotency-Key", key("race-rf-review"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("version", 0, "decision", "APPROVED",
+                        "approvedFen", 60000L, "reason", "race-approve"))));
+        String extNo = key("EXT-RF");
+        data(finance1.withAuth(post("/api/v1/refunds/" + refundId + "/executions"))
+                .header("Idempotency-Key", key("race-rf-exec"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("version", 1, "provider", "BANK_TRANSFER",
+                        "externalRefundNo", extNo, "amountFen", 60000L, "evidenceRef", "race-exec"))));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<Integer> redeemFuture = executor.submit(() -> {
+                start.await();
+                return mockMvc.perform(redemptionRequest(operator1, appointmentId, appointmentVersion,
+                                List.of(new Line(entitlement.id(), 3)), "RACE-REDEEM", key("race-redeem")))
+                        .andReturn().getResponse().getStatus();
+            });
+            Future<Integer> refundFuture = executor.submit(() -> {
+                start.await();
+                return mockMvc.perform(finance1.withAuth(post("/api/v1/refunds/" + refundId + "/success"))
+                                .header("Idempotency-Key", key("race-rf-succ"))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(json(Map.of("externalRefundNo", extNo, "amountFen", 60000L,
+                                        "succeededAt", Instant.now().minusSeconds(5).toString(),
+                                        "evidenceRef", "race-proof", "voucherFileId", cleanFileId))))
+                        .andReturn().getResponse().getStatus();
+            });
+            start.countDown();
+            int redeemStatus = redeemFuture.get(30, TimeUnit.SECONDS);
+            int refundStatus = refundFuture.get(30, TimeUnit.SECONDS);
+            assertThat(List.of(redeemStatus, refundStatus)).containsExactlyInAnyOrder(200, 409);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void hSec09CustomerTransferAndSoftDeleteSynchronizeFulfillmentSearchAndTimeline() throws Exception {
+        PaidOrder paid = paidOrder(SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+        EntitlementRow entitlement = singleEntitlement(paid.orderId());
+        long appointmentId = newAppointment(paid.customerId(), List.of(new Line(entitlement.id(), 1)));
+        long appointmentVersion = toServiceDone(appointmentId);
+        JsonNode posted = data(redemptionRequest(operator1, appointmentId, appointmentVersion,
+                List.of(new Line(entitlement.id(), 1)), "HSEC09-POST", key("hsec09-post")));
+        long redemptionId = posted.at("/redemption/id").asLong();
+        long redemptionVersion = posted.at("/redemption/version").asLong();
+        long reversalId = data(reversalRequest(manager1, redemptionId, redemptionVersion,
+                "HSEC09-REV", key("hsec09-rev"))).at("/reversal/id").asLong();
+
+        mockMvc.perform(get("/api/v1/appointments?customerId=" + paid.customerId()).cookie(manager1.cookies()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1));
+        mockMvc.perform(get("/api/v1/appointments?customerId=" + paid.customerId()).cookie(manager2.cookies()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+
+        jdbcTemplate.update("UPDATE crm_customer SET owner_staff_id=3, team_id=2 WHERE tenant_id=1 AND id=?",
+                paid.customerId());
+
+        for (AuthCookies oldViewer : List.of(manager1, lead1)) {
+            mockMvc.perform(get("/api/v1/appointments?customerId=" + paid.customerId()).cookie(oldViewer.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+            mockMvc.perform(get("/api/v1/redemptions?customerId=" + paid.customerId()).cookie(oldViewer.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+            mockMvc.perform(get("/api/v1/redemption-reversals?customerId=" + paid.customerId())
+                            .cookie(oldViewer.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+            mockMvc.perform(get("/api/v1/appointments/" + appointmentId).cookie(oldViewer.cookies()))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/v1/redemptions/" + redemptionId).cookie(oldViewer.cookies()))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/v1/redemption-reversals/" + reversalId).cookie(oldViewer.cookies()))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/v1/customers/" + paid.customerId() + "/timeline").cookie(oldViewer.cookies()))
+                    .andExpect(status().isNotFound());
+        }
+
+        for (AuthCookies newViewer : List.of(manager2, lead2)) {
+            mockMvc.perform(get("/api/v1/appointments?customerId=" + paid.customerId()).cookie(newViewer.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1));
+            mockMvc.perform(get("/api/v1/redemptions?customerId=" + paid.customerId()).cookie(newViewer.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1));
+            mockMvc.perform(get("/api/v1/redemption-reversals?customerId=" + paid.customerId())
+                            .cookie(newViewer.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1));
+            mockMvc.perform(get("/api/v1/appointments/" + appointmentId).cookie(newViewer.cookies()))
+                    .andExpect(status().isOk());
+            mockMvc.perform(get("/api/v1/redemptions/" + redemptionId).cookie(newViewer.cookies()))
+                    .andExpect(status().isOk());
+            mockMvc.perform(get("/api/v1/redemption-reversals/" + reversalId).cookie(newViewer.cookies()))
+                    .andExpect(status().isOk());
+            JsonNode timeline = data(get("/api/v1/customers/" + paid.customerId() + "/timeline")
+                    .cookie(newViewer.cookies()));
+            assertThat(timeline.findValues("type").stream().map(JsonNode::asText))
+                    .contains("APPOINTMENT", "REDEMPTION");
+        }
+
+        jdbcTemplate.update("UPDATE crm_customer SET deleted=1 WHERE tenant_id=1 AND id=?", paid.customerId());
+        for (AuthCookies employee : List.of(manager2, lead2, admin)) {
+            mockMvc.perform(get("/api/v1/appointments?customerId=" + paid.customerId()).cookie(employee.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+            mockMvc.perform(get("/api/v1/redemptions?customerId=" + paid.customerId()).cookie(employee.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+            mockMvc.perform(get("/api/v1/redemption-reversals?customerId=" + paid.customerId())
+                            .cookie(employee.cookies()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+        }
+        mockMvc.perform(get("/api/v1/appointments?customerId=" + paid.customerId()).cookie(operator1.cookies()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1));
+    }
+
+    @Test
+    void mBe08AppointmentOptionsAndCreationWorkBeyond100ActiveInstitutions() throws Exception {
+        List<Long> seededIds = new ArrayList<>();
+        try {
+            for (int i = 0; i < 105; i++) {
+                String no = "IT-OVER100-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+                jdbcTemplate.update("INSERT INTO crm_institution (tenant_id,institution_no,full_name,status,"
+                        + "settlement_type,online_rate,offline_rate,platform_rate) "
+                        + "VALUES (1,?,?,'ACTIVE','MONTHLY',0.18,0.12,0.15)", no, "超百机构-" + i);
+                seededIds.add(queryLong("SELECT id FROM crm_institution WHERE tenant_id=1 AND institution_no=?", no));
+            }
+            long over100InstitutionId = seededIds.get(seededIds.size() - 1);
+
+            String skuCode = "IT-OVER100-SKU-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            JsonNode sku = data(admin.withAuth(post("/api/v1/skus"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(json(Map.of("skuCode", skuCode, "packageVersionId", 301L,
+                            "specName", "超100机构规格", "salePriceFen", SINGLE_PROJECT_PRICE,
+                            "institutionIds", List.of(over100InstitutionId)))));
+            long skuId = sku.at("/id").asLong();
+            mockMvc.perform(admin.withAuth(post("/api/v1/skus/" + skuId + "/activate"))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                    .andExpect(status().isOk());
+
+            PaidOrder paid = paidOrder(skuId, SINGLE_PROJECT_PRICE);
+            EntitlementRow entitlement = singleEntitlement(paid.orderId());
+            JsonNode options = data(manager1.withAuth(get("/api/v1/appointment-options?customerId=" + paid.customerId())));
+            assertThat(options.at("/institutions").findValues("id").stream().map(JsonNode::asLong))
+                    .contains(over100InstitutionId);
+
+            JsonNode created = data(manager1.withAuth(post("/api/v1/appointments"))
+                    .header("Idempotency-Key", key("over100-appt"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(json(Map.of("customerId", paid.customerId(), "institutionId", over100InstitutionId,
+                            "scheduledAt", scheduledAt, "remark", "over-100",
+                            "items", lineMaps(List.of(new Line(entitlement.id(), 1)))))));
+            assertThat(created.at("/appointment/institutionId").asLong()).isEqualTo(over100InstitutionId);
+        } finally {
+            for (Long id : seededIds) {
+                jdbcTemplate.update("UPDATE crm_institution SET status='INACTIVE' WHERE tenant_id=1 AND id=?", id);
+            }
+        }
+    }
+
+    @Test
+    void concurrentRedemptionsOnSeparateEntitlementsOfSameOrderSetStatusFulfilled() throws Exception {
+        for (int round = 0; round < 5; round++) {
+            PaidOrder paid = paidOrder(multiProjectSku, MULTI_PROJECT_PRICE);
+            List<EntitlementRow> rows = entitlements(paid.orderId());
+            EntitlementRow e1 = rows.get(0);
+            EntitlementRow e2 = rows.get(1);
+            long appt1 = newAppointment(paid.customerId(), List.of(new Line(e1.id(), e1.grantedCount())));
+            long appt2 = newAppointment(paid.customerId(), List.of(new Line(e2.id(), e2.grantedCount())));
+            long v1 = toServiceDone(appt1);
+            long v2 = toServiceDone(appt2);
+
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            CountDownLatch start = new CountDownLatch(1);
+            try {
+                Future<Integer> f1 = executor.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(redemptionRequest(operator1, appt1, v1,
+                                    List.of(new Line(e1.id(), e1.grantedCount())), "MVCC-A1", key("mvcc-a1")))
+                            .andReturn().getResponse().getStatus();
+                });
+                Future<Integer> f2 = executor.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(redemptionRequest(operator1, appt2, v2,
+                                    List.of(new Line(e2.id(), e2.grantedCount())), "MVCC-A2", key("mvcc-a2")))
+                            .andReturn().getResponse().getStatus();
+                });
+                start.countDown();
+                assertThat(f1.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+                assertThat(f2.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+            } finally {
+                executor.shutdownNow();
+            }
+
+            assertThat(availableCount(e1.id())).isZero();
+            assertThat(availableCount(e2.id())).isZero();
+            assertOrderStatus(paid.orderId(), "FULFILLED");
+        }
+    }
+
+    @Test
+    void concurrentReversalApprovalsOnSeparateEntitlementsOfSameOrderRestorePaidStatus() throws Exception {
+        for (int round = 0; round < 5; round++) {
+            PaidOrder paid = paidOrder(multiProjectSku, MULTI_PROJECT_PRICE);
+            List<EntitlementRow> rows = entitlements(paid.orderId());
+            EntitlementRow e1 = rows.get(0);
+            EntitlementRow e2 = rows.get(1);
+            long appt1 = newAppointment(paid.customerId(), List.of(new Line(e1.id(), e1.grantedCount())));
+            long appt2 = newAppointment(paid.customerId(), List.of(new Line(e2.id(), e2.grantedCount())));
+            long v1 = toServiceDone(appt1);
+            long v2 = toServiceDone(appt2);
+            JsonNode post1 = data(redemptionRequest(operator1, appt1, v1,
+                    List.of(new Line(e1.id(), e1.grantedCount())), "MVCC-B-POST1", key("mvcc-bp1")));
+            JsonNode post2 = data(redemptionRequest(operator1, appt2, v2,
+                    List.of(new Line(e2.id(), e2.grantedCount())), "MVCC-B-POST2", key("mvcc-bp2")));
+            assertOrderStatus(paid.orderId(), "FULFILLED");
+
+            JsonNode req1 = data(reversalRequest(manager1, post1.at("/redemption/id").asLong(),
+                    post1.at("/redemption/version").asLong(), "MVCC-B-REQ1", key("mvcc-br1")));
+            JsonNode req2 = data(reversalRequest(manager1, post2.at("/redemption/id").asLong(),
+                    post2.at("/redemption/version").asLong(), "MVCC-B-REQ2", key("mvcc-br2")));
+            long rev1Id = req1.at("/reversal/id").asLong();
+            long rev1Version = req1.at("/reversal/version").asLong();
+            long rev2Id = req2.at("/reversal/id").asLong();
+            long rev2Version = req2.at("/reversal/version").asLong();
+
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            CountDownLatch start = new CountDownLatch(1);
+            try {
+                Future<Integer> f1 = executor.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(reviewRequest(finance1, rev1Id, "approve", rev1Version,
+                                    "MVCC-B-APP1", key("mvcc-ba1")))
+                            .andReturn().getResponse().getStatus();
+                });
+                Future<Integer> f2 = executor.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(reviewRequest(finance1, rev2Id, "approve", rev2Version,
+                                    "MVCC-B-APP2", key("mvcc-ba2")))
+                            .andReturn().getResponse().getStatus();
+                });
+                start.countDown();
+                assertThat(f1.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+                assertThat(f2.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+            } finally {
+                executor.shutdownNow();
+            }
+
+            assertThat(availableCount(e1.id())).isEqualTo(e1.grantedCount());
+            assertThat(availableCount(e2.id())).isEqualTo(e2.grantedCount());
+            assertOrderStatus(paid.orderId(), "PAID");
+        }
+    }
+
+    @Test
+    void concurrentReversalApprovalAndRedemptionOnSameOrderKeepPartiallyRedeemedStatus() throws Exception {
+        for (int round = 0; round < 5; round++) {
+            PaidOrder paid = paidOrder(multiProjectSku, MULTI_PROJECT_PRICE);
+            List<EntitlementRow> rows = entitlements(paid.orderId());
+            EntitlementRow e1 = rows.get(0);
+            EntitlementRow e2 = rows.get(1);
+            long appt1 = newAppointment(paid.customerId(), List.of(new Line(e1.id(), e1.grantedCount())));
+            long v1 = toServiceDone(appt1);
+            JsonNode post1 = data(redemptionRequest(operator1, appt1, v1,
+                    List.of(new Line(e1.id(), e1.grantedCount())), "MVCC-C-POST1", key("mvcc-cp1")));
+            assertOrderStatus(paid.orderId(), "PARTIALLY_REDEEMED");
+
+            JsonNode req1 = data(reversalRequest(manager1, post1.at("/redemption/id").asLong(),
+                    post1.at("/redemption/version").asLong(), "MVCC-C-REQ1", key("mvcc-cr1")));
+            long rev1Id = req1.at("/reversal/id").asLong();
+            long rev1Version = req1.at("/reversal/version").asLong();
+
+            long appt2 = newAppointment(paid.customerId(), List.of(new Line(e2.id(), e2.grantedCount())));
+            long v2 = toServiceDone(appt2);
+
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            CountDownLatch start = new CountDownLatch(1);
+            try {
+                Future<Integer> f1 = executor.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(reviewRequest(finance1, rev1Id, "approve", rev1Version,
+                                    "MVCC-C-APP1", key("mvcc-ca1")))
+                            .andReturn().getResponse().getStatus();
+                });
+                Future<Integer> f2 = executor.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(redemptionRequest(operator1, appt2, v2,
+                                    List.of(new Line(e2.id(), e2.grantedCount())), "MVCC-C-POST2", key("mvcc-cp2")))
+                            .andReturn().getResponse().getStatus();
+                });
+                start.countDown();
+                assertThat(f1.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+                assertThat(f2.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+            } finally {
+                executor.shutdownNow();
+            }
+
+            assertThat(availableCount(e1.id())).isEqualTo(e1.grantedCount());
+            assertThat(availableCount(e2.id())).isZero();
+            assertOrderStatus(paid.orderId(), "PARTIALLY_REDEEMED");
+        }
+    }
+
+    @Test
+    void concurrentPartialRedemptionsOnSharedEntitlementsAcrossOrdersNeverFailWith409OrDeadlock() throws Exception {
+        for (int round = 0; round < 5; round++) {
+            long customerId = createCustomer();
+            long orderAId = createSubmittedOrderForCustomer(customerId, SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+            long orderBId = createSubmittedOrderForCustomer(customerId, SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+            assertThat(orderAId).isLessThan(orderBId);
+            confirmOrderPayment(orderBId, SINGLE_PROJECT_PRICE);
+            confirmOrderPayment(orderAId, SINGLE_PROJECT_PRICE);
+            EntitlementRow entA = singleEntitlement(orderAId);
+            EntitlementRow entB = singleEntitlement(orderBId);
+            assertThat(entB.id()).isLessThan(entA.id());
+
+            long appt1 = newAppointment(customerId, List.of(new Line(entA.id(), 2), new Line(entB.id(), 2)));
+            long appt2 = newAppointment(customerId, List.of(new Line(entB.id(), 1), new Line(entA.id(), 1)));
+            long v1 = toServiceDone(appt1);
+            long v2 = toServiceDone(appt2);
+
+            ExecutorService executor = Executors.newFixedThreadPool(2);
+            CountDownLatch start = new CountDownLatch(1);
+            try {
+                Future<Integer> f1 = executor.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(redemptionRequest(operator1, appt1, v1,
+                                    List.of(new Line(entA.id(), 2), new Line(entB.id(), 2)),
+                                    "MVCC-D-1", key("mvcc-d1")))
+                            .andReturn().getResponse().getStatus();
+                });
+                Future<Integer> f2 = executor.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(redemptionRequest(operator1, appt2, v2,
+                                    List.of(new Line(entB.id(), 1), new Line(entA.id(), 1)),
+                                    "MVCC-D-2", key("mvcc-d2")))
+                            .andReturn().getResponse().getStatus();
+                });
+                start.countDown();
+                assertThat(f1.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+                assertThat(f2.get(30, TimeUnit.SECONDS)).isEqualTo(200);
+            } finally {
+                executor.shutdownNow();
+            }
+
+            assertThat(availableCount(entA.id())).isZero();
+            assertThat(availableCount(entB.id())).isZero();
+            assertOrderStatus(orderAId, "FULFILLED");
+            assertOrderStatus(orderBId, "FULFILLED");
+        }
+    }
+
+    private long createMonthlyBatch(long institutionId, String periodKey, long redemptionId) throws Exception {
+        return data(finance1.withAuth(post("/api/v1/settlements/batches"))
+                        .header("Idempotency-Key", key("c01-batch"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("institutionId", institutionId, "settlementType", "MONTHLY",
+                                "periodKey", periodKey, "redemptionIds", List.of(redemptionId)))))
+                .at("/batch/id").asLong();
+    }
+
+    private long insertCleanPaymentFile() {
+        String objectKey = "sealed/1/it-fulfillment-" + UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO crm_file_object (tenant_id,object_key,mime_type,size_bytes,sha256,"
+                        + "classification,scan_status,uploaded_by) VALUES (1,?,'application/pdf',1,?,'PAYMENT','CLEAN',1)",
+                objectKey, UUID.randomUUID().toString().replace("-", "").repeat(2));
+        return queryLong("SELECT id FROM crm_file_object WHERE object_key=?", objectKey);
+    }
+
+    private PaidOrder paidOrderForCustomer(long customerId, long skuId, long payableFen) throws Exception {
+        long orderId = createSubmittedOrderForCustomer(customerId, skuId, payableFen);
+        confirmOrderPayment(orderId, payableFen);
+        return new PaidOrder(customerId, orderId);
+    }
+
+    private long createSubmittedOrderForCustomer(long customerId, long skuId, long payableFen) throws Exception {
+        Map<String, Object> orderBody = Map.of("customerId", customerId, "receiverType", "PLATFORM",
+                "orderTypeCode", "REGULAR", "campaignId", 1, "campaignBatchId", 1,
+                "payableFen", payableFen, "validTo", LocalDate.now(ZoneId.of("Asia/Shanghai")).plusYears(1).toString(),
+                "items", List.of(Map.of("skuId", skuId, "quantity", 1)));
+        JsonNode order = data(manager1.withAuth(post("/api/v1/orders"))
+                .contentType(MediaType.APPLICATION_JSON).content(json(orderBody)));
+        long orderId = order.at("/order/order/id").asLong();
+        data(manager1.withAuth(post("/api/v1/orders/" + orderId + "/submit"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"));
+        return orderId;
+    }
+
+    private void confirmOrderPayment(long orderId, long payableFen) throws Exception {
+        String tradeNo = key("payment");
+        Map<String, Object> paymentBody = Map.of("externalTradeNo", tradeNo, "paymentChannel", "BANK_TRANSFER",
+                "amountFen", payableFen, "paidAt", Instant.now().minusSeconds(120).toString(),
+                "evidenceRef", "IT-P0-4-PAYMENT");
+        data(admin.withAuth(post("/api/v1/orders/" + orderId + "/payment-confirmations"))
+                .header("Idempotency-Key", tradeNo)
+                .contentType(MediaType.APPLICATION_JSON).content(json(paymentBody)));
+    }
+
     private PaidOrder paidOrder(long skuId, long payableFen) throws Exception {
         long customerId = createCustomer();
         Map<String, Object> orderBody = Map.of("customerId", customerId, "receiverType", "PLATFORM",
                 "orderTypeCode", "REGULAR", "campaignId", 1, "campaignBatchId", 1,
-                "payableFen", payableFen, "validTo", LocalDate.now(ZoneOffset.UTC).plusYears(1).toString(),
+                "payableFen", payableFen, "validTo", LocalDate.now(ZoneId.of("Asia/Shanghai")).plusYears(1).toString(),
                 "items", List.of(Map.of("skuId", skuId, "quantity", 1)));
         JsonNode order = data(manager1.withAuth(post("/api/v1/orders"))
                 .contentType(MediaType.APPLICATION_JSON).content(json(orderBody)));
@@ -521,7 +1104,7 @@ class FulfillmentApiIT extends AbstractMysqlIT {
     }
 
     private long createTwoProjectSku() throws Exception {
-        Map<String, Object> versionBody = Map.of("selectionMode", "USE_N", "choiceCount", 2,
+        Map<String, Object> versionBody = Map.of("selectionMode", "FIXED", "choiceCount", 0,
                 "projects", List.of(
                         Map.of("projectId", 101, "grantCount", 2, "allocationPriceFen", 100),
                         Map.of("projectId", 102, "grantCount", 3, "allocationPriceFen", 200)));

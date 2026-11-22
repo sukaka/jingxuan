@@ -131,6 +131,13 @@ class RiskCaseApiIT extends AbstractMysqlIT {
         String filter = "/api/v1/risks?sourceType=YOUZAN_SYNC_ISSUE&sourceRef=" + issueId
                 + "&riskType=PAYMENT_MISMATCH";
 
+        JsonNode beforeSync = data(get(filter).cookie(admin.cookies()));
+        assertThat(beforeSync.at("/total").asInt()).isZero();
+        JsonNode syncResult = syncRisks(admin, key());
+        assertThat(syncResult.at("/createdCount").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(syncResult.at("/updatedCount").asInt()).isZero();
+        assertThat(syncResult.at("/syncedAt").asText()).isNotBlank();
+
         JsonNode first = data(get(filter).cookie(admin.cookies()));
         assertThat(first.at("/total").asInt()).isEqualTo(1);
         assertThat(first.toString()).doesNotContain("13800138000");
@@ -146,6 +153,7 @@ class RiskCaseApiIT extends AbstractMysqlIT {
         assertThat(queryString("SELECT status FROM crm_youzan_sync_issue WHERE tenant_id=1 AND id=?", issueId))
                 .isEqualTo("OPEN");
 
+        syncRisks(admin, key());
         JsonNode replay = data(get(filter).cookie(admin.cookies()));
         assertThat(replay.at("/total").asInt()).isEqualTo(1);
         assertThat(replay.at("/items/0/id").asLong()).isEqualTo(riskId);
@@ -161,6 +169,7 @@ class RiskCaseApiIT extends AbstractMysqlIT {
 
         jdbcTemplate.update("UPDATE crm_youzan_sync_issue SET detail_masked='新的重试仍失败 13900139000',"
                 + "attempts=attempts+1 WHERE tenant_id=1 AND id=?", issueId);
+        syncRisks(admin, key());
         JsonNode afterRetry = data(get(filter).cookie(admin.cookies()));
         assertThat(afterRetry.at("/total").asInt()).isEqualTo(1);
         assertThat(afterRetry.at("/items/0/id").asLong()).isEqualTo(riskId);
@@ -171,6 +180,7 @@ class RiskCaseApiIT extends AbstractMysqlIT {
                 + "AND source_ref=? AND risk_type='PAYMENT_MISMATCH'", Long.toString(issueId))).isEqualTo(1);
 
         long newIssueId = newYouzanIssue("OPEN", "新的真实支付异常");
+        syncRisks(admin, key());
         JsonNode newCase = data(get("/api/v1/risks?sourceType=YOUZAN_SYNC_ISSUE&sourceRef=" + newIssueId)
                 .cookie(admin.cookies()));
         assertThat(newCase.at("/total").asInt()).isEqualTo(1);
@@ -191,6 +201,7 @@ class RiskCaseApiIT extends AbstractMysqlIT {
                 "IT-RISK-ORDER-" + suffix, customerId);
         long orderId = queryLong("SELECT id FROM crm_order WHERE tenant_id=1 AND order_no=?", "IT-RISK-ORDER-" + suffix);
 
+        syncRisks(admin, key());
         JsonNode result = data(get("/api/v1/risks").param("sourceType", "ORDER")
                 .param("sourceRef", Long.toString(orderId)).param("riskType", "ORDER_PAYMENT_CASH")
                 .cookie(admin.cookies()));
@@ -221,6 +232,7 @@ class RiskCaseApiIT extends AbstractMysqlIT {
                         + "WHERE tenant_id=1 AND id=?", orderId, eventId);
         jdbcTemplate.update("UPDATE crm_youzan_event SET order_id=? WHERE tenant_id=1 AND id=?", orderId, eventId);
 
+        syncRisks(admin, key());
         JsonNode result = data(get("/api/v1/risks").param("sourceType", "YOUZAN_SYNC_ISSUE")
                 .param("sourceRef", Long.toString(issueId)).param("riskType", "PAYMENT_MISMATCH")
                 .cookie(admin.cookies()));
@@ -241,6 +253,7 @@ class RiskCaseApiIT extends AbstractMysqlIT {
         String filter = "/api/v1/risks?sourceType=YOUZAN_SYNC_ISSUE&sourceRef=" + issueId
                 + "&riskType=PAYMENT_MISMATCH";
 
+        syncRisks(admin, key());
         JsonNode beforeLink = data(get(filter).cookie(admin.cookies()));
         assertThat(beforeLink.at("/items/0/customerId").isMissingNode()).isTrue();
 
@@ -261,6 +274,59 @@ class RiskCaseApiIT extends AbstractMysqlIT {
     }
 
     @Test
+    void readOnlyGetSyncEndpointIdempotencyAndOperationDataScopeIsolation() throws Exception {
+        String suffix = suffix();
+        long riskId = newRisk(1, "IT-RISK-SCOPE-" + suffix, "SECURITY", "TEST_FIXTURE", suffix,
+                "OPEN", "范围隔离校验");
+        long issueId = newYouzanIssue("OPEN", "只读GET不得触发同步");
+
+        JsonNode beforeSync = data(get("/api/v1/risks")
+                .param("sourceType", "YOUZAN_SYNC_ISSUE")
+                .param("sourceRef", Long.toString(issueId))
+                .cookie(admin.cookies()));
+        assertThat(beforeSync.at("/total").asInt()).isZero();
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_risk_case WHERE tenant_id=1 AND source_type='YOUZAN_SYNC_ISSUE' "
+                + "AND source_ref=?", Long.toString(issueId))).isZero();
+
+        String idempotencyKey = key();
+        JsonNode firstSync = syncRisks(admin, idempotencyKey);
+        assertThat(firstSync.at("/createdCount").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(firstSync.at("/updatedCount").asInt()).isZero();
+        assertThat(firstSync.at("/syncedAt").asText()).isNotBlank();
+
+        JsonNode replaySync = syncRisks(admin, idempotencyKey);
+        assertThat(replaySync.at("/createdCount").asInt()).isZero();
+        assertThat(replaySync.at("/updatedCount").asInt()).isZero();
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_risk_case WHERE tenant_id=1 AND source_type='YOUZAN_SYNC_ISSUE' "
+                + "AND source_ref=?", Long.toString(issueId))).isEqualTo(1);
+
+        AuthCookies owner = login("owner1");
+        mockMvc.perform(get("/api/v1/risks").cookie(owner.cookies())).andExpect(status().isOk());
+        mockMvc.perform(owner.withAuth(post("/api/v1/risks/sync"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+
+        AuthCookies operationWithoutAllScope = newOperationActorWithCustomerAllOnly();
+        mockMvc.perform(get("/api/v1/risks").cookie(operationWithoutAllScope.cookies()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/risks/" + riskId).cookie(operationWithoutAllScope.cookies()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(operationWithoutAllScope.withAuth(post("/api/v1/risks/sync"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(operationWithoutAllScope.withAuth(post("/api/v1/risks/" + riskId + "/claim"))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(Map.of("version", 0, "reason", "越权"))))
+                .andExpect(status().isForbidden());
+
+        AuthCookies operationLead = login("operationlead1");
+        mockMvc.perform(get("/api/v1/risks").cookie(operationLead.cookies())).andExpect(status().isOk());
+        mockMvc.perform(operationLead.withAuth(post("/api/v1/risks/sync"))
+                        .header("Idempotency-Key", key())
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void customerAssociationCannotCrossTenantBoundary() throws Exception {
         String suffix = suffix();
         long otherCustomerId = newCustomer(2, "IT-RISK-OTHER-CUSTOMER-" + suffix, "合成其他租户客户");
@@ -274,6 +340,27 @@ class RiskCaseApiIT extends AbstractMysqlIT {
         assertThat(detail.at("/riskCase/orderId").isMissingNode()).isTrue();
         assertThat(detail.at("/riskCase/customerId").isMissingNode()).isTrue();
         assertThat(detail.at("/riskCase/customerName").isMissingNode()).isTrue();
+    }
+
+    private JsonNode syncRisks(AuthCookies actor, String idempotencyKey) throws Exception {
+        return data(actor.withAuth(post("/api/v1/risks/sync"))
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"));
+    }
+
+    private AuthCookies newOperationActorWithCustomerAllOnly() throws Exception {
+        String suffix = suffix();
+        String username = "it-risk-op-" + suffix;
+        jdbcTemplate.update("INSERT INTO sys_user (tenant_id,org_id,team_id,username,display_name,password_hash,user_type,status) "
+                        + "VALUES (1,1,NULL,?,?,'$2y$10$bA7nD4dAyv5R2OVlUo69k.mU1UkiSPlZV7jvAKKrPp8IMNAQuA7Ri','EMPLOYEE','ACTIVE')",
+                username, "合成受限运营账号");
+        long userId = queryLong("SELECT id FROM sys_user WHERE tenant_id=1 AND username=?", username);
+        long opRoleId = queryLong("SELECT id FROM sys_role WHERE tenant_id=1 AND role_code='OPERATION'");
+        jdbcTemplate.update("INSERT INTO sys_user_role (tenant_id,user_id,role_id) VALUES (1,?,?)", userId, opRoleId);
+        jdbcTemplate.update("INSERT INTO sys_data_scope (tenant_id,user_id,resource,scope_type,scope_ref_id) "
+                + "VALUES (1,?,'customer','ALL',NULL)", userId);
+        return login(username);
     }
 
     private AuthCookies newRiskActor(String userType, String baseRole) throws Exception {

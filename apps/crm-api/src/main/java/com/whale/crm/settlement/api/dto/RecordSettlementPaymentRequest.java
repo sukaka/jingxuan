@@ -10,7 +10,7 @@ import java.time.Instant;
 
 public record RecordSettlementPaymentRequest(
         @NotNull @PositiveOrZero Long version,
-        @NotNull @Positive Long amountFen,
+        @NotNull @PositiveOrZero Long amountFen,
         @NotBlank @Size(max = 128) String bankTradeNo,
         @NotNull Instant paidAt,
         @NotNull @Positive Long voucherFileId,

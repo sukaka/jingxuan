@@ -1,13 +1,31 @@
 spring:
   datasource:
+    password: ${MYSQL_PASSWORD:dev_crm_CHANGE_ME}
     hikari:
       maximum-pool-size: 16
       minimum-idle: 1
       idle-timeout: 10000
   flyway:
     locations: classpath:db/migration,classpath:db/dev
+  kafka:
+    admin:
+      operation-timeout: 2s
+      properties:
+        default.api.timeout.ms: 2000
+        request.timeout.ms: 1500
+        reconnect.backoff.ms: 1000
+
+logging:
+  level:
+    org.apache.kafka.clients: ERROR
 
 app:
+  security:
+    auth:
+      jwt-secret: ${JWT_SECRET:dev-only-jwt-secret-do-not-use-in-prod-0123456789abcdef}
+    crypto:
+      aes-key-base64: ${APP_AES_KEY_BASE64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+      blind-index-pepper: ${APP_BLIND_INDEX_PEPPER:dev-only-blind-index-pepper-change-me}
   exports:
     worker:
       enabled: false
@@ -16,6 +34,14 @@ app:
   outbox:
     relay:
       enabled: false
+  refunds:
+    mock:
+      secret: ${REFUND_MOCK_SECRET:dev-only-refund-mock-secret}
+  ai:
+    worker:
+      internal-token: ${AI_INTERNAL_TOKEN:dev-ai-internal-token-change-me}
   wecom:
     official:
       callback-delay-ms: 600000
+    sync-policy:
+      check-ms: 600000

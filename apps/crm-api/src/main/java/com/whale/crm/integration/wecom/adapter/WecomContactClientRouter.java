@@ -8,19 +8,23 @@ import org.springframework.stereotype.Component;
 public class WecomContactClientRouter {
     private final ObjectProvider<MockWecomContactClient> mock;
     private final ObjectProvider<OfficialWecomContactClient> official;
+    private final WecomOfficialProperties officialProperties;
     private final IntegrationRuntimeConfigService runtimeConfig;
 
     public WecomContactClientRouter(ObjectProvider<MockWecomContactClient> mock,
                                     ObjectProvider<OfficialWecomContactClient> official,
+                                    WecomOfficialProperties officialProperties,
                                     IntegrationRuntimeConfigService runtimeConfig) {
         this.mock = mock;
         this.official = official;
+        this.officialProperties = officialProperties;
         this.runtimeConfig = runtimeConfig;
     }
 
     public WecomContactClient client(long tenantId) {
         if (runtimeConfig.wecomOfficialEnabled(tenantId)) {
-            return official.getIfAvailable();
+            return officialProperties.allowedTenantId() > 0 && officialProperties.allowedTenantId() == tenantId
+                    ? official.getIfAvailable() : null;
         }
         return mock.getIfAvailable();
     }

@@ -4,12 +4,10 @@ spring:
   autoconfigure:
     # 认证由平台自研 JWT/会话链承担（platform/security），不使用内存 UserDetailsService，避免误导性的 generated password 日志
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
-  profiles:
-    active: ${SPRING_PROFILES_ACTIVE:local}
   datasource:
     url: ${DB_JDBC_URL:jdbc:mysql://localhost:3307/medical_crm?connectionTimeZone=UTC&useUnicode=true&characterEncoding=UTF-8}
     username: ${DB_USER:crm}
-    password: ${MYSQL_PASSWORD:dev_crm_CHANGE_ME}
+    password: ${MYSQL_PASSWORD}
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -52,8 +50,8 @@ app:
     cors:
       allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
     auth:
-      # 开发默认密钥，仅本地使用；生产必须经 JWT_SECRET 环境变量注入 >=32 字节随机值
-      jwt-secret: ${JWT_SECRET:dev-only-jwt-secret-do-not-use-in-prod-0123456789abcdef}
+      # 密钥必须由环境或 local profile 显式注入 >=32 字节随机值
+      jwt-secret: ${JWT_SECRET}
       jwt-ttl-seconds: 7200
       token-cookie-name: CRM_TOKEN
       csrf-cookie-name: CRM_CSRF
@@ -61,10 +59,9 @@ app:
       # 开发环境（http://localhost）可关闭 Secure；生产必须 true
       cookie-secure: ${COOKIE_SECURE:false}
     crypto:
-      # 开发占位密钥（Base64 的 32 字节）：敏感列 AES-GCM 加密用；生产走密钥管理服务
-      aes-key-base64: ${APP_AES_KEY_BASE64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
-      # 盲索引 HMAC pepper（开发占位），与 AES 密钥分离
-      blind-index-pepper: ${APP_BLIND_INDEX_PEPPER:dev-only-blind-index-pepper-change-me}
+      # 敏感列 AES-GCM 密钥与盲索引 pepper，禁止在基础配置提供默认明文值
+      aes-key-base64: ${APP_AES_KEY_BASE64}
+      blind-index-pepper: ${APP_BLIND_INDEX_PEPPER}
   files:
     enabled: ${FILES_ENABLED:false}
   outbox:
@@ -85,13 +82,14 @@ app:
   refunds:
     mock:
       enabled: ${REFUND_MOCK_ENABLED:false}
-      secret: ${REFUND_MOCK_SECRET:dev-only-refund-mock-secret}
   ai:
     provider:
-      # 默认仅允许 HTTPS；确需内网 HTTP 时必须显式开启，公网 HTTP 仍拒绝
+      # 默认仅允许 HTTPS；确需内网 HTTP 时必须显式开启，并配置明确放行的主机白名单
       allow-http: ${AI_PROVIDER_ALLOW_HTTP:false}
+      allowed-hosts: ${AI_PROVIDER_ALLOWED_HOSTS:}
     knowledge:
       allow-http: ${AI_DIFY_ALLOW_HTTP:false}
+      allowed-hosts: ${AI_DIFY_ALLOWED_HOSTS:}
       sync:
         kafka:
           enabled: ${KNOWLEDGE_SYNC_KAFKA_ENABLED:false}
@@ -103,7 +101,7 @@ app:
     worker:
       enabled: ${AI_WORKER_ENABLED:false}
       base-url: ${AI_WORKER_BASE_URL:http://localhost:8090}
-      internal-token: ${AI_INTERNAL_TOKEN:dev-ai-internal-token-change-me}
+      internal-token: ${AI_INTERNAL_TOKEN}
       timeout-ms: 30000
       delay-ms: 1000
       batch-size: 10
@@ -111,6 +109,7 @@ app:
   wecom:
     official:
       # 未保存页面配置时的默认值；每租户运行时开关由 IntegrationRuntimeConfigService 读取
+      allowed-tenant-id: ${WECOM_OFFICIAL_ALLOWED_TENANT_ID:1}
       enabled: ${WECOM_OFFICIAL_ENABLED:false}
       corp-id: ${WECOM_CORP_ID:}
       secret: ${WECOM_SECRET:}
@@ -149,6 +148,7 @@ app:
       ticket-refresh-skew-seconds: 60
     message:
       # 应用消息与会话归档完全独立；默认 DISABLED，MOCK 也不会记为官方发送成功。
+      allowed-tenant-id: ${WECOM_MESSAGE_ALLOWED_TENANT_ID:1}
       mode: ${WECOM_MESSAGE_MODE:DISABLED}
       corp-id: ${WECOM_MESSAGE_CORP_ID:}
       secret: ${WECOM_MESSAGE_SECRET:}

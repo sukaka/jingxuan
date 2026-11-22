@@ -3,19 +3,30 @@ package com.whale.crm.integration.wecom.adapter;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 
 @Component
 public class JnaWecomArchiveNativeClient implements WecomArchiveNativeClient {
-    private static final int MAX_SLICE_BYTES = 16 * 1024 * 1024;
+    static final int MAX_SLICE_BYTES = 16 * 1024 * 1024;
+    private final NativeLibraryProvider libraryProvider;
+
+    @Autowired
+    public JnaWecomArchiveNativeClient() {
+        this(path -> Native.load(path, NativeLibrary.class));
+    }
+
+    JnaWecomArchiveNativeClient(NativeLibraryProvider libraryProvider) {
+        this.libraryProvider = libraryProvider;
+    }
 
     @Override
     public NativeSession open(String corpId, String secret, String sdkLibraryPath, String proxy,
                               String proxyPassword, int timeoutSeconds) {
         try {
-            NativeLibrary library = Native.load(sdkLibraryPath, NativeLibrary.class);
+            NativeLibrary library = libraryProvider.load(sdkLibraryPath);
             Pointer sdk = library.NewSdk();
             if (sdk == null) {
                 throw new IllegalStateException("官方归档 SDK 无法创建会话");
@@ -88,7 +99,12 @@ public class JnaWecomArchiveNativeClient implements WecomArchiveNativeClient {
             try {
                 requireSuccess("下载媒体", library.GetMediaData(sdk, nextIndex == null ? "" : nextIndex,
                         sdkFileId, proxy, proxyPassword, timeoutSeconds, media));
-                byte[] data = library.GetData(media);
+                int length = library.GetDataLen(media);
+                Pointer buffer = library.GetData(media);
+                if (length < 0 || length > MAX_SLICE_BYTES || (length > 0 && buffer == null)) {
+                    throw new IllegalStateException("官方归档 SDK 返回媒体分片长度无效");
+                }
+                byte[] data = length == 0 ? new byte[0] : buffer.getByteArray(0, length);
                 String next = library.GetOutIndexBuf(media);
                 return new WecomMediaChunk(data, next, library.IsMediaDataFinish(media) == 1);
             } finally {
@@ -120,7 +136,12 @@ public class JnaWecomArchiveNativeClient implements WecomArchiveNativeClient {
         }
     }
 
-    private interface NativeLibrary extends Library {
+    @FunctionalInterface
+    interface NativeLibraryProvider {
+        NativeLibrary load(String sdkLibraryPath);
+    }
+
+    interface NativeLibrary extends Library {
         Pointer NewSdk();
 
         int Init(Pointer sdk, String corpId, String secret);
@@ -141,7 +162,9 @@ public class JnaWecomArchiveNativeClient implements WecomArchiveNativeClient {
         int GetMediaData(Pointer sdk, String nextIndex, String sdkFileId, String proxy, String proxyPassword,
                          int timeoutSeconds, Pointer mediaData);
 
-        byte[] GetData(Pointer mediaData);
+        Pointer GetData(Pointer mediaData);
+
+        int GetDataLen(Pointer mediaData);
 
         String GetOutIndexBuf(Pointer mediaData);
 

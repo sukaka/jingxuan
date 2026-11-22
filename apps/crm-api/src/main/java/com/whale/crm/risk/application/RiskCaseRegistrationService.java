@@ -28,10 +28,15 @@ public class RiskCaseRegistrationService {
 
     @Transactional
     public RiskCase register(RiskSourceRecord source, Long actorUserId) {
+        return registerOutcome(source, actorUserId).riskCase();
+    }
+
+    @Transactional
+    public RegistrationResult registerOutcome(RiskSourceRecord source, Long actorUserId) {
         var existing = repository.findBySource(source.tenantId(), source.sourceType(), source.sourceRef(),
                 source.riskType());
         if (existing.isPresent()) {
-            return existing.get();
+            return new RegistrationResult(existing.get(), false);
         }
         RiskCase input = new RiskCase(null, source.tenantId(), "RC" + UlidCreator.getUlid(),
                 source.riskType(), source.severity(), source.sourceType(), source.sourceRef(), "OPEN", null,
@@ -39,8 +44,9 @@ public class RiskCaseRegistrationService {
         try {
             repository.insert(input);
         } catch (DuplicateKeyException ex) {
-            return repository.findBySourceForUpdate(source.tenantId(), source.sourceType(), source.sourceRef(),
-                    source.riskType()).orElseThrow(() -> ex);
+            RiskCase raced = repository.findBySourceForUpdate(source.tenantId(), source.sourceType(),
+                    source.sourceRef(), source.riskType()).orElseThrow(() -> ex);
+            return new RegistrationResult(raced, false);
         }
         RiskCase created = repository.findBySource(source.tenantId(), source.sourceType(), source.sourceRef(),
                 source.riskType()).orElseThrow();
@@ -49,7 +55,10 @@ public class RiskCaseRegistrationService {
         auditService.record(source.tenantId(), actorUserId, "RISK_CASE_REGISTER", "RISK_CASE",
                 created.id().toString(), null, snapshot(created),
                 "真实来源幂等登记: " + source.sourceType() + "/" + source.sourceRef());
-        return created;
+        return new RegistrationResult(created, true);
+    }
+
+    public record RegistrationResult(RiskCase riskCase, boolean created) {
     }
 
     private Map<String, Object> snapshot(RiskCase riskCase) {

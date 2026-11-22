@@ -94,6 +94,10 @@ public class SettlementApplicationService {
         return detail(tenantId, batch);
     }
 
+    public boolean hasSettlementLineForUpdate(long tenantId, long redemptionId) {
+        return repository.lockLineIdByRedemption(tenantId, redemptionId).isPresent();
+    }
+
     public SettlementBatchDetail create(long tenantId, CurrentUser user, CreateSettlementBatchRequest request,
                                         String idempotencyKey) {
         SettlementAccess.requireEmployeeWrite(tenantId, user, dataScopeService);
@@ -145,23 +149,22 @@ public class SettlementApplicationService {
 
     private SettlementBatchDetail doCreate(long tenantId, CurrentUser user, CreateSettlementBatchRequest request,
                                            List<Long> redemptionIds, String key, String payload) {
-        Optional<SettlementBatch> existing = repository.findBatchByPeriod(tenantId, request.institutionId(),
-                request.settlementType(), request.periodKey());
-        if (existing.isPresent()) {
-            return sameBatchOrConflict(tenantId, existing.get(), redemptionIds, key, payload);
+        List<SettlementRedemption> redemptions = repository.lockRedemptions(tenantId, redemptionIds);
+        if (redemptions.size() != redemptionIds.size()) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "部分核销不存在或不属于当前租户");
         }
         Optional<IdempotencyRecord> replay = idempotencyService.lookup(tenantId, CREATE_SCOPE, key, payload);
         if (replay.isPresent()) {
             return detail(tenantId, user, resourceId(replay.get()));
         }
+        List<SettlementLine> existingLines = repository.findLinesByRedemptions(tenantId, redemptionIds);
+        if (!existingLines.isEmpty()) {
+            return resolveExistingBatchOrConflict(tenantId, request, redemptionIds, existingLines, key, payload);
+        }
         InstitutionProfile institution = institutionRepository.findProfile(tenantId, request.institutionId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "机构不存在"));
         if (!request.settlementType().equals(institution.settlementType())) {
             throw new BusinessException(ErrorCode.CONFLICT, "批次结算方式必须与机构当前结算方式一致");
-        }
-        List<SettlementRedemption> redemptions = repository.lockRedemptions(tenantId, redemptionIds);
-        if (redemptions.size() != redemptionIds.size()) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "部分核销不存在或不属于当前租户");
         }
         for (SettlementRedemption redemption : redemptions) {
             if (!"POSTED".equals(redemption.status())) {
@@ -178,9 +181,9 @@ public class SettlementApplicationService {
             } else if (!request.periodKey().equals("REDEMPTION:" + redemption.id())) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "次结期间必须对应唯一核销 REDEMPTION:{id}");
             }
-            if (repository.findLineByRedemption(tenantId, redemption.id()).isPresent()) {
-                throw new BusinessException(ErrorCode.CONFLICT, "同一核销不能重复进入月结或次结批次");
-            }
+        }
+        if (!repository.findActiveReversalRedemptionIds(tenantId, redemptionIds).isEmpty()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "存在待审核或已生效冲正的核销，禁止纳入结算批次");
         }
         SettlementDayRule.MonthlySnapshot daySnapshot = "MONTHLY".equals(request.settlementType())
                 ? settlementDays.monthlySnapshot(tenantId, institution, YearMonth.parse(request.periodKey())) : null;
@@ -189,9 +192,8 @@ public class SettlementApplicationService {
                 daySnapshot == null ? null : daySnapshot.rule(), daySnapshot == null ? null : daySnapshot.source(),
                 daySnapshot == null ? null : daySnapshot.settlementDate(),
                 "DRAFT", "PENDING_VERIFICATION", 0L, 0L, 0L, 0L, null, null, null, null, null);
-        repository.insertBatch(tenantId, draft);
-        SettlementBatch created = repository.findBatchByPeriod(tenantId, institution.id(), request.settlementType(),
-                request.periodKey()).orElseThrow();
+        long batchId = repository.insertBatch(tenantId, draft);
+        SettlementBatch created = repository.findBatch(tenantId, batchId).orElseThrow();
         for (Long redemptionId : redemptionIds) {
             repository.insertLine(tenantId, created.id(), redemptionId, rateSnapshot);
         }
@@ -228,6 +230,17 @@ public class SettlementApplicationService {
                 || net != request.netPayableFen()) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "人工核准金额必须非负且满足 gross-commission=net 等式");
         }
+        List<Long> lineRedemptionIds = repository.findLines(tenantId, batchId).stream()
+                .map(SettlementLine::redemptionId)
+                .distinct()
+                .sorted()
+                .toList();
+        if (!lineRedemptionIds.isEmpty()) {
+            repository.lockRedemptions(tenantId, lineRedemptionIds);
+            if (!repository.findActiveReversalRedemptionIds(tenantId, lineRedemptionIds).isEmpty()) {
+                throw new BusinessException(ErrorCode.CONFLICT, "结算批次包含待审核或已生效冲正的核销，禁止核准金额");
+            }
+        }
         if (repository.updateVerification(tenantId, batchId, request.version(), request.grossFen(),
                 request.commissionFen(), request.netPayableFen(), request.ruleVersion().strip(),
                 request.verificationEvidence().strip()) == 0) {
@@ -256,7 +269,10 @@ public class SettlementApplicationService {
         if (!"VERIFIED".equals(before.amountStatus()) || !List.of("CONFIRMED", "PARTIALLY_PAID").contains(before.status())) {
             throw new BusinessException(ErrorCode.CONFLICT, "待核实金额必须经人工核准后才能付款");
         }
-        if (request.amountFen() <= 0) {
+        if (request.amountFen() < 0) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "付款金额不能为负数");
+        }
+        if (request.amountFen() == 0 && (before.netPayableFen() != 0 || before.paidFen() != 0)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "付款金额必须大于0");
         }
         fileOperations.requireCleanUsable(tenantId, user, request.voucherFileId(), FileClassification.PAYMENT, null);
@@ -296,9 +312,31 @@ public class SettlementApplicationService {
         if (replay.isPresent()) {
             return detail(tenantId, user, resourceId(replay.get()));
         }
-        SettlementBatch existing = repository.findBatchByPeriod(tenantId, request.institutionId(),
-                request.settlementType(), request.periodKey())
+        List<SettlementLine> existingLines = repository.findLinesByRedemptions(tenantId, redemptionIds);
+        if (existingLines.isEmpty()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "核销已进入其他结算批次");
+        }
+        return resolveExistingBatchOrConflict(tenantId, request, redemptionIds, existingLines, key, payload);
+    }
+
+    private SettlementBatchDetail resolveExistingBatchOrConflict(long tenantId, CreateSettlementBatchRequest request,
+                                                                 List<Long> redemptionIds,
+                                                                 List<SettlementLine> existingLines,
+                                                                 String key, String payload) {
+        if (existingLines.size() != redemptionIds.size()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "同一核销不能重复进入月结或次结批次");
+        }
+        List<Long> batchIds = existingLines.stream().map(SettlementLine::settlementBatchId).distinct().toList();
+        if (batchIds.size() != 1) {
+            throw new BusinessException(ErrorCode.CONFLICT, "同一核销不能重复进入月结或次结批次");
+        }
+        SettlementBatch existing = repository.findBatch(tenantId, batchIds.get(0))
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "核销已进入其他结算批次"));
+        if (!request.institutionId().equals(existing.institutionId())
+                || !request.settlementType().equals(existing.settlementType())
+                || !request.periodKey().equals(existing.periodKey())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "同一核销不能重复进入月结或次结批次");
+        }
         return sameBatchOrConflict(tenantId, existing, redemptionIds, key, payload);
     }
 

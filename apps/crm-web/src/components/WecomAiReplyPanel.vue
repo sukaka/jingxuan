@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { decideAiReply, generateAiReply, listAiReplyHistory } from '../api/aiReply'
 import type { AiReplySuggestion } from '../api/aiReply'
 import { listQuickReplies, recordQuickReplyUsage } from '../api/quickReply'
 import type { QuickReplyTemplate, QuickReplyUsageInput } from '../api/quickReply'
 import { sendTextToCurrentChat } from '../services/wecomSdk'
+import type { WecomSendTarget } from '../services/wecomSdk'
 import { useAuthStore } from '../stores/auth'
 import { ApiError } from '../types/api'
+import { copyTextWithFallback } from '../utils/clipboard'
 
 const props = defineProps<{ customerId: number; externalUserid: string; chatEntry: string }>()
+const emit = defineEmits<{
+  'context-mismatch': []
+}>()
+
 const auth = useAuthStore()
 const allowed = computed(() => auth.hasPermission('quickreply:view') && (auth.hasPermission('ai:write') || auth.hasPermission('ai:read')))
 const canGenerate = computed(() => auth.hasPermission('quickreply:view') && auth.hasPermission('ai:write'))
@@ -33,6 +39,22 @@ const proposed = computed(() => current.value?.status === 'PROPOSED')
 const accepted = computed(() => current.value?.status === 'ACCEPTED' && current.value.finalContent !== null)
 const canUse = computed(() => accepted.value && !busy.value && (current.value?.finalContent?.trim().length ?? 0) > 0)
 const statusLabel = computed(() => ({ PROPOSED: '待人工处理', ACCEPTED: '已人工采纳', REJECTED: '已驳回' } as Record<string, string>)[current.value?.status ?? ''] ?? '')
+
+function hasChatContext(suggestion: AiReplySuggestion): boolean {
+  return suggestion.chatContextIncluded === true && (suggestion.chatContextCount ?? 0) > 0
+}
+
+function chatContextBadgeText(suggestion: AiReplySuggestion): string {
+  return hasChatContext(suggestion)
+    ? `已参考最近 ${suggestion.chatContextCount} 条已授权存档聊天`
+    : '仅基于 CRM 档案事实'
+}
+
+function historyContextLabel(suggestion: AiReplySuggestion): string {
+  return hasChatContext(suggestion)
+    ? `含 ${suggestion.chatContextCount} 条存档聊天`
+    : '仅 CRM 事实'
+}
 
 function errorText(error: unknown): string {
   return error instanceof ApiError || error instanceof Error ? error.message : '操作失败，请重试'
@@ -174,9 +196,9 @@ async function copy(): Promise<void> {
   errorMessage.value = ''
   feedback.value = ''
   try {
-    await navigator.clipboard.writeText(current.value.finalContent)
+    await copyTextWithFallback(current.value.finalContent)
     try {
-      await recordUsage('COPIED', 'navigator.clipboard:ok')
+      await recordUsage('COPIED', 'clipboard:ok')
       feedback.value = '已复制并记录；粘贴到会话前请再次确认'
     } catch (error) {
       errorMessage.value = `内容已复制，但使用日志记录失败：${errorText(error)}`
@@ -194,7 +216,15 @@ async function send(): Promise<void> {
   errorMessage.value = ''
   feedback.value = ''
   try {
-    const result = await sendTextToCurrentChat(current.value.finalContent)
+    const target: WecomSendTarget | undefined = props.externalUserid.trim()
+      ? { expectedExternalUserid: props.externalUserid.trim() }
+      : undefined
+    const result = await sendTextToCurrentChat(current.value.finalContent, target)
+    if (result.mismatch) {
+      errorMessage.value = '当前企微会话已切换，已阻止误发，正在刷新上下文'
+      emit('context-mismatch')
+      return
+    }
     try {
       await recordUsage(result.status, result.clientResult)
     } catch (error) {
@@ -210,6 +240,15 @@ async function send(): Promise<void> {
     busy.value = false
   }
 }
+
+watch(
+  () => props.customerId,
+  () => {
+    resetCandidate()
+    history.value = []
+    void load()
+  },
+)
 
 onMounted(() => { void load() })
 </script>
@@ -238,6 +277,13 @@ onMounted(() => { void load() })
 
       <article v-if="current" class="suggestion-sheet" :data-status="current.status">
         <div class="suggestion-meta"><span>{{ statusLabel }}</span><span v-if="current.provider === 'mock'" class="mock-label">Mock 演示候选</span><span v-else>{{ current.model }}</span></div>
+        <div
+          class="chat-context-badge"
+          :class="{ included: hasChatContext(current) }"
+          data-testid="ai-chat-context-badge"
+        >
+          {{ chatContextBadgeText(current) }}
+        </div>
         <p class="suggestion-reason">{{ current.reason }}</p>
         <label for="ai-reply-draft">回复正文</label>
         <textarea id="ai-reply-draft" v-model="draft" data-testid="ai-reply-draft" rows="6" maxlength="4000" :readonly="!proposed || busy" placeholder="候选正文为空" />
@@ -263,7 +309,10 @@ onMounted(() => { void load() })
       <section v-if="history.length" class="reply-history" aria-label="最近生成记录">
         <div class="history-heading"><h3>最近候选</h3><span>仅本人可见</span></div>
         <button v-for="item in history" :key="item.id" type="button" :disabled="busy" :class="{ active: current?.id === item.id }" :data-testid="`ai-history-${item.id}`" @click="selectSuggestion(item)">
-          <span>{{ templates.find((template) => template.id === item.templateId)?.name ?? item.scene }}</span>
+          <span class="history-title">
+            <span>{{ templates.find((template) => template.id === item.templateId)?.name ?? item.scene }}</span>
+            <em class="history-context" :class="{ included: hasChatContext(item) }">{{ historyContextLabel(item) }}</em>
+          </span>
           <small>{{ ({ PROPOSED: '待处理', ACCEPTED: '已采纳', REJECTED: '已驳回' } as Record<string, string>)[item.status] }}</small>
         </button>
       </section>
@@ -293,6 +342,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .suggestion-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #6d897b; font-size: 10px; }
 .suggestion-meta > span:first-child { color: #34634f; font-weight: 700; }
 .mock-label { padding: 3px 6px; border-radius: 4px; color: #866c43; background: #f5efe3; }
+.chat-context-badge { display: inline-flex; align-items: center; margin-top: 9px; padding: 4px 8px; border: 1px solid #d8e2dc; border-radius: 6px; color: #5b7266; background: #f1f5f3; font-size: 10px; font-weight: 600; }
+.chat-context-badge.included { border-color: #a9d0bd; color: #24644b; background: #e7f5ee; }
 .suggestion-reason { margin: 10px 0 16px; color: #7b9185; font-size: 10px; line-height: 1.7; }
 .suggestion-sheet textarea { min-height: 148px; margin-top: 7px; padding: 12px; resize: vertical; }
 .suggestion-sheet textarea[readonly] { color: #526c5f; background: #f3f7f4; }
@@ -314,6 +365,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .history-heading span { color: #92a398; font-size: 9px; }
 .reply-history > button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 3px; border: 0; border-bottom: 1px solid #edf2ee; color: #577566; background: transparent; font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
 .reply-history > button.active { color: #24634c; font-weight: 700; }
-.reply-history small { color: #8c9e94; font-size: 10px; }
+.history-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.history-context { padding: 1px 5px; border-radius: 4px; color: #6c8076; background: #eef3f0; font-style: normal; font-size: 9px; font-weight: 500; }
+.history-context.included { color: #28674f; background: #e6f4ec; }
+.reply-history small { flex: 0 0 auto; color: #8c9e94; font-size: 10px; }
 @container (min-width: 430px) { .reply-controls { grid-template-columns: 110px 1fr; align-items: start; } .reply-controls label { padding-top: 10px; } .reply-controls label small { display: block; margin: 2px 0 0; } .generate-action, .reply-controls > .ai-empty { grid-column: 2; } }
 </style>

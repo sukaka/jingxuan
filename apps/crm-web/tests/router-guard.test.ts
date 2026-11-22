@@ -1,11 +1,15 @@
+import { AxiosError } from 'axios'
+import type { AxiosAdapter, InternalAxiosRequestConfig } from 'axios'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Router } from 'vue-router'
 import type { AuthUser } from '../src/api/auth'
 import { fetchMe } from '../src/api/auth'
+import { http, setUnauthorizedHandler } from '../src/api/http'
 import { installAuthGuard } from '../src/router/guards'
 import { routes } from '../src/router/index'
+import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
 
 vi.mock('../src/api/auth', () => ({
@@ -29,9 +33,16 @@ function createTestRouter(): Router {
   return testRouter
 }
 
+const originalAdapter = http.defaults.adapter
+
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.mocked(fetchMe).mockReset()
+})
+
+afterEach(() => {
+  http.defaults.adapter = originalAdapter
+  setUnauthorizedHandler(null)
 })
 
 describe('路由守卫', () => {
@@ -86,6 +97,32 @@ describe('路由守卫', () => {
     await testRouter.push('/login')
 
     expect(testRouter.currentRoute.value.name).toBe('home')
+  })
+
+  it('会话过期收到业务 401 时清理登录态并单次跳转至 /login', async () => {
+    vi.mocked(fetchMe).mockResolvedValue(managerUser)
+    const testRouter = createTestRouter()
+    await testRouter.push('/dictionaries')
+    const auth = useAuthStore()
+    expect(auth.isLoggedIn).toBe(true)
+
+    const adapter: AxiosAdapter = async (config: InternalAxiosRequestConfig) => {
+      throw new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, {}, {
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: {},
+        config,
+        data: { code: 'UNAUTHORIZED', message: '会话过期' },
+      })
+    }
+    http.defaults.adapter = adapter
+
+    await expect(http.get('/customers')).rejects.toBeInstanceOf(ApiError)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(auth.isLoggedIn).toBe(false)
+    expect(testRouter.currentRoute.value.name).toBe('login')
+    expect(testRouter.currentRoute.value.query.redirect).toBe('/dictionaries')
   })
 })
 

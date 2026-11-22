@@ -6,6 +6,7 @@ import com.whale.crm.integration.wecom.domain.WecomContactSyncRepository;
 import com.whale.crm.integration.wecom.domain.WecomStaffAccount;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -16,6 +17,16 @@ import java.util.Set;
 
 @Component
 public class OfficialWecomArchiveAdapter implements WecomAdapter {
+    private static final int MAX_NESTED_DEPTH = 8;
+    private static final int MAX_MEDIA_PER_MESSAGE = 50;
+    private static final Set<String> DIRECT_MEDIA_TYPES = Set.of(
+            "IMAGE", "VOICE", "VIDEO", "EMOTION", "FILE", "MEETING_VOICE_CALL", "VOIP_DOC_SHARE");
+    private static final Set<String> NESTED_MEDIA_ITEM_TYPES = Set.of(
+            "image", "voice", "video", "emotion", "file",
+            "chatrecordimage", "chatrecordvoice", "chatrecordvideo", "chatrecordemotion", "chatrecordfile");
+    private static final Set<String> NESTED_CONTAINER_ITEM_TYPES = Set.of(
+            "mixed", "chatrecordmixed", "chatrecord", "chatrecordchatrecord");
+
     private final WecomArchiveOfficialProperties properties;
     private final WecomArchiveNativeClient nativeClient;
     private final WecomArchiveKeyService keyService;
@@ -67,14 +78,20 @@ public class OfficialWecomArchiveAdapter implements WecomAdapter {
                 if (!messageIds.add(msgId)) {
                     throw new IllegalStateException("官方归档消息 ID 重复");
                 }
-                String randomKey = keyService.decryptRandomKey(requiredText(encrypted, "encrypt_random_key"),
-                        encrypted.path("publickey_ver").asInt(-1));
-                JsonNode plaintext = objectMapper.readTree(session.decrypt(randomKey,
-                        requiredText(encrypted, "encrypt_chat_msg")));
-                if (plaintext.has("msgid") && !msgId.equals(plaintext.path("msgid").asText())) {
-                    throw new IllegalStateException("官方归档内外消息 ID 不一致");
+                try {
+                    String randomKey = keyService.decryptRandomKey(requiredText(encrypted, "encrypt_random_key"),
+                            encrypted.path("publickey_ver").asInt(-1));
+                    JsonNode plaintext = objectMapper.readTree(session.decrypt(randomKey,
+                            requiredText(encrypted, "encrypt_chat_msg")));
+                    if (plaintext.has("msgid") && !msgId.equals(plaintext.path("msgid").asText())) {
+                        throw new IllegalStateException("官方归档内外消息 ID 不一致");
+                    }
+                    messages.add(normalize(msgId, seq, plaintext));
+                } catch (BusinessException | DataAccessException ex) {
+                    throw ex;
+                } catch (Exception ex) {
+                    messages.add(blocked(msgId, seq, "UNKNOWN", "", Instant.EPOCH, "MESSAGE_PAYLOAD_INVALID"));
                 }
-                messages.add(normalize(msgId, seq, plaintext));
             }
             return new WecomArchivePage(List.copyOf(messages), previous, messages.size() == limit);
         } catch (BusinessException ex) {
@@ -106,7 +123,7 @@ public class OfficialWecomArchiveAdapter implements WecomAdapter {
         String previousMessageId = recalled ? requiredText(message.path("revoke"), "pre_msgid") : null;
         String content = recalled ? "" : contentText(message, type);
         List<com.whale.crm.integration.wecom.media.domain.WecomMediaReference> media = recalled ? List.of()
-                : mediaReferences(message);
+                : mediaReferences(message, type);
         var fromStaff = staff(from);
         if (!roomId.isBlank()) {
             String senderType = fromStaff.isPresent() ? "EMPLOYEE" : isExternalUserid(from) ? "CUSTOMER" : "UNKNOWN";
@@ -174,75 +191,159 @@ public class OfficialWecomArchiveAdapter implements WecomAdapter {
                 .filter(value -> !value.isBlank()).collect(java.util.stream.Collectors.joining("\n"));
     }
 
-    private String nestedText(JsonNode message) {
+    private String nestedText(JsonNode itemsNode) {
         java.util.ArrayList<String> texts = new java.util.ArrayList<>();
-        collectText(message, texts);
+        collectText(itemsNode, texts, 0);
         return String.join("\n", texts);
     }
 
-    private void collectText(JsonNode node, List<String> texts) {
-        if (node.isObject()) {
-            if (node.has("content")) {
-                collectText(node.get("content"), texts);
-            } else if (node.has("item")) {
-                collectText(node.get("item"), texts);
+    private void collectText(JsonNode itemsNode, List<String> texts, int depth) {
+        if (depth > MAX_NESTED_DEPTH) {
+            throw new IllegalStateException("嵌套消息层级超过上限");
+        }
+        if (!itemsNode.isArray()) {
+            return;
+        }
+        for (JsonNode item : itemsNode) {
+            String itemType = item.path("type").asText("").toLowerCase(Locale.ROOT);
+            JsonNode contentNode = item.path("content");
+            if (contentNode.isObject()) {
+                extractTextFromObject(contentNode, texts, depth);
+                continue;
             }
-        } else if (node.isArray()) {
-            node.forEach(item -> collectText(item, texts));
-        } else if (node.isTextual()) {
-            String value = node.asText();
-            if (value.strip().startsWith("{") || value.strip().startsWith("[")) {
-                try {
-                    collectText(objectMapper.readTree(value), texts);
-                } catch (Exception ex) {
-                    throw new IllegalStateException("嵌套消息内容不是有效 JSON", ex);
+            if (!contentNode.isTextual()) {
+                continue;
+            }
+            String raw = contentNode.asText();
+            if ("text".equals(itemType) || "chatrecordtext".equals(itemType)) {
+                addNestedPlainText(raw, texts);
+                continue;
+            }
+            String stripped = raw.strip();
+            if (NESTED_CONTAINER_ITEM_TYPES.contains(itemType) || stripped.startsWith("{") || stripped.startsWith("[")) {
+                JsonNode inner = parseJson(raw, "嵌套消息内容不是有效 JSON");
+                if (inner.isObject()) {
+                    extractTextFromObject(inner, texts, depth);
+                } else if (inner.isArray()) {
+                    collectText(inner, texts, depth + 1);
                 }
-            } else if (!value.isBlank()) {
-                texts.add(value);
+            } else if (!raw.isBlank()) {
+                texts.add(raw);
             }
         }
     }
 
-    private List<com.whale.crm.integration.wecom.media.domain.WecomMediaReference> mediaReferences(JsonNode message) {
+    private void extractTextFromObject(JsonNode inner, List<String> texts, int depth) {
+        if (inner.path("item").isArray()) {
+            collectText(inner.path("item"), texts, depth + 1);
+            return;
+        }
+        if (inner.path("content").isTextual()) {
+            String value = inner.path("content").asText();
+            if (!value.isBlank()) {
+                texts.add(value);
+            }
+            return;
+        }
+        String display = firstText(inner, "title", "filename");
+        if (display != null && !display.isBlank()) {
+            texts.add(display);
+        }
+    }
+
+    private void addNestedPlainText(String raw, List<String> texts) {
+        String stripped = raw.strip();
+        if (stripped.startsWith("{")) {
+            try {
+                JsonNode inner = objectMapper.readTree(raw);
+                if (inner.isObject() && inner.path("content").isTextual()) {
+                    String text = inner.path("content").asText();
+                    if (!text.isBlank()) {
+                        texts.add(text);
+                    }
+                    return;
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
+                // 文本项中以 '{' 开头的普通聊天内容按原文保留，不作为结构化 JSON 拒绝
+            }
+        }
+        if (!raw.isBlank()) {
+            texts.add(raw);
+        }
+    }
+
+    private List<com.whale.crm.integration.wecom.media.domain.WecomMediaReference> mediaReferences(
+            JsonNode message, String type) {
         java.util.ArrayList<com.whale.crm.integration.wecom.media.domain.WecomMediaReference> result =
                 new java.util.ArrayList<>();
-        collectMedia(message, "message", result);
+        if (DIRECT_MEDIA_TYPES.contains(type)) {
+            String field = type.toLowerCase(Locale.ROOT);
+            addDirectMedia(message.path(field), field, result);
+        } else if ("MIXED".equals(type)) {
+            collectNestedMedia(message.path("mixed").path("item"), result, 0);
+        } else if ("CHATRECORD".equals(type)) {
+            collectNestedMedia(message.path("chatrecord").path("item"), result, 0);
+        }
         return List.copyOf(result);
     }
 
-    private void collectMedia(JsonNode node, String kind,
-                              List<com.whale.crm.integration.wecom.media.domain.WecomMediaReference> result) {
-        if (node.isTextual()) {
-            String value = node.asText().strip();
-            if (value.startsWith("{") || value.startsWith("[")) {
-                try {
-                    collectMedia(objectMapper.readTree(value), kind, result);
-                } catch (Exception ex) {
-                    throw new IllegalStateException("嵌套媒体内容不是有效 JSON", ex);
-                }
+    private void collectNestedMedia(JsonNode itemsNode,
+                                    List<com.whale.crm.integration.wecom.media.domain.WecomMediaReference> result,
+                                    int depth) {
+        if (depth > MAX_NESTED_DEPTH) {
+            throw new IllegalStateException("嵌套消息层级超过上限");
+        }
+        if (!itemsNode.isArray()) {
+            return;
+        }
+        for (JsonNode item : itemsNode) {
+            String itemType = item.path("type").asText("").toLowerCase(Locale.ROOT);
+            boolean isMedia = NESTED_MEDIA_ITEM_TYPES.contains(itemType);
+            boolean isContainer = NESTED_CONTAINER_ITEM_TYPES.contains(itemType);
+            if (!isMedia && !isContainer) {
+                continue;
             }
-            return;
+            JsonNode payload = item.path("content");
+            if (payload.isTextual()) {
+                payload = parseJson(payload.asText(), "嵌套媒体内容不是有效 JSON");
+            }
+            if (isMedia) {
+                addDirectMedia(payload, itemType, result);
+            } else if (payload.isObject()) {
+                collectNestedMedia(payload.path("item"), result, depth + 1);
+            } else if (payload.isArray()) {
+                collectNestedMedia(payload, result, depth + 1);
+            }
         }
-        if (node.isArray()) {
-            node.forEach(item -> collectMedia(item, kind, result));
-            return;
-        }
+    }
+
+    private void addDirectMedia(JsonNode node, String kind,
+                                List<com.whale.crm.integration.wecom.media.domain.WecomMediaReference> result) {
         if (!node.isObject()) {
             return;
         }
-        String currentKind = node.path("type").asText(kind);
         String sdkFileId = node.path("sdkfileid").asText("");
-        if (!sdkFileId.isBlank()) {
-            if (sdkFileId.length() > 16384) {
-                throw new IllegalStateException("媒体文件 ID 超过允许长度");
-            }
-            String fileName = firstText(node, "filename", "title");
-            result.add(new com.whale.crm.integration.wecom.media.domain.WecomMediaReference(result.size(),
-                    sdkFileId, currentKind, node.path("md5sum").asText(null), mediaSize(node), fileName,
-                    mediaContentType(node, fileName)));
+        if (sdkFileId.isBlank()) {
             return;
         }
-        node.fields().forEachRemaining(entry -> collectMedia(entry.getValue(), entry.getKey(), result));
+        if (sdkFileId.length() > 16384) {
+            throw new IllegalStateException("媒体文件 ID 超过允许长度");
+        }
+        if (result.size() >= MAX_MEDIA_PER_MESSAGE) {
+            throw new IllegalStateException("单条消息媒体附件数量超过上限");
+        }
+        String fileName = firstText(node, "filename", "title");
+        result.add(new com.whale.crm.integration.wecom.media.domain.WecomMediaReference(result.size(),
+                sdkFileId, kind, node.path("md5sum").asText(null), mediaSize(node), fileName,
+                mediaContentType(node, fileName)));
+    }
+
+    private JsonNode parseJson(String raw, String message) {
+        try {
+            return objectMapper.readTree(raw);
+        } catch (Exception ex) {
+            throw new IllegalStateException(message, ex);
+        }
     }
 
     private Long mediaSize(JsonNode node) {

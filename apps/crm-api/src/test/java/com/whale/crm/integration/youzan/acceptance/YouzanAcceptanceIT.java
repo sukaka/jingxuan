@@ -150,9 +150,45 @@ class YouzanAcceptanceIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
         mockMvc.perform(get("/api/v1/integrations/youzan/orders").param("shopId", SHOP)
                         .cookie(manager2.cookies()))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items").isEmpty())
+                .andExpect(jsonPath("$.data.total").value(0));
         assertForeignTenantOrderIsNotExposed(orderId);
+    }
+
+    @Test
+    void sameSecondOrderPaidAfterWaitPayTransitionsDraftToPaidAndGrantsOnce() throws Exception {
+        String suffix = suffix();
+        String externalOrder = "IT-YZ-SAMESEC-" + suffix;
+        String tradeNo = "IT-YZ-SAMESEC-TRADE-" + suffix;
+        Instant sameSecond = Instant.parse("2026-10-25T10:15:30Z");
+        int grantsBefore = grantCountForCustomer(LINKED_CUSTOMER_ID);
+
+        YouzanOrderEvent waitPay = event("IT-YZ-SAMESEC-WAIT-" + suffix, "WAIT_PAY", externalOrder,
+                LINKED_EXTERNAL_CUSTOMER, null, 181100L, sameSecond, "YZ-SKU-301", 1);
+        postWebhook(waitPay);
+        awaitEvent(waitPay.eventId(), "PROCESSED");
+        long orderId = orderIdFor(externalOrder);
+        assertThat(queryString("SELECT status FROM crm_order WHERE tenant_id=1 AND id=?", orderId)).isEqualTo("DRAFT");
+        assertNoPaymentArtifacts(orderId, tradeNo);
+
+        YouzanOrderEvent paidSameSecond = event("IT-YZ-SAMESEC-PAID-" + suffix, "ORDER_PAID", externalOrder,
+                LINKED_EXTERNAL_CUSTOMER, tradeNo, 181100L, sameSecond, "YZ-SKU-301", 1);
+        postWebhook(paidSameSecond);
+        awaitEvent(paidSameSecond.eventId(), "PROCESSED");
+
+        Map<String, Object> order = jdbcTemplate.queryForMap(
+                "SELECT status,payable_fen,paid_fen FROM crm_order WHERE tenant_id=1 AND id=?", orderId);
+        assertThat(order.get("status")).isEqualTo("PAID");
+        assertThat(((Number) order.get("payable_fen")).longValue()).isEqualTo(181100L);
+        assertThat(((Number) order.get("paid_fen")).longValue()).isEqualTo(181100L);
+        assertThat(grantCountForCustomer(LINKED_CUSTOMER_ID)).isEqualTo(grantsBefore + 3);
+
+        YouzanOrderEvent duplicateSameSecond = event("IT-YZ-SAMESEC-PAID2-" + suffix, "ORDER_PAID", externalOrder,
+                LINKED_EXTERNAL_CUSTOMER, tradeNo, 181100L, sameSecond, "YZ-SKU-301", 1);
+        assertThat(postWebhook(duplicateSameSecond).at("/duplicate").asBoolean()).isTrue();
+        awaitEvent(duplicateSameSecond.eventId(), "PROCESSED");
+        assertThat(grantCountForCustomer(LINKED_CUSTOMER_ID)).isEqualTo(grantsBefore + 3);
     }
 
     @Test

@@ -934,9 +934,13 @@ paths:
   /customer-merge-candidates/scan:
     post:
       tags: [CustomerMerges]
-      summary: 按 mobile_hash / identity external_id 扫描生成 SUGGESTED 候选（幂等，不重复生成同主从）
+      operationId: scanCustomerMergeCandidates
+      summary: 按 mobile_hash / identity external_id 扫描生成 SUGGESTED 候选（customer:merge + ALL 客户数据范围 + CSRF；幂等，不重复生成同主从）
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
       responses:
         '200': {description: '{created, items} 本次新建候选'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
   /customer-merges:
     post:
@@ -3721,6 +3725,7 @@ paths:
       summary: 初始化私有上传（已认证 + 文件类别权限/机构范围；每次创建新对象）
       description: >-
         本接口没有 Idempotency-Key，每次调用创建新 PENDING 对象。CONTRACT/QUALIFICATION/CHANGE_EVIDENCE 需 institution:write 或 institution:change_request，
+        MERCHANT_RESOURCE 需 institution:write（必须给 institutionId，仅支持 PDF/JPEG/PNG），
         PAYMENT 需 order:confirm_payment，REDEMPTION 需 redemption:post，MATERIAL 需 material:write；除 PAYMENT 外必须给 institutionId。
         返回短期 PUT 预签名 URL，不是永久公开 URL，也不构成扫描豁免。
       parameters: [{$ref: '#/components/parameters/CsrfToken'}]
@@ -4159,7 +4164,7 @@ paths:
       tags: [Channels]
       operationId: updateChannel
       summary: 更新渠道（channel:write + CSRF + version 乐观锁）
-      description: businessOwnerUserId 是后续新订单的商务归因来源；修改渠道不回写历史订单的 businessOwnerAtSaleId。
+      description: businessOwnerUserId 是后续新订单的商务归因来源；修改渠道不回写历史订单的 businessOwnerAtSaleId。渠道财务字段（分佣比例、结算方式、收款账户）修改须通过 `/channels/{id}/financial-change-requests` 双人复核生效。
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
         - {$ref: '#/components/parameters/CsrfToken'}
@@ -4174,6 +4179,116 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ChannelEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /channels/{id}/status:
+    post:
+      tags: [Channels]
+      operationId: toggleChannelStatus
+      summary: 启停合作渠道状态（channel:write + CSRF + version 乐观锁）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToggleChannelStatusRequest'}
+      responses:
+        '200':
+          description: 状态已切换
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /channels/{id}/financial-change-requests:
+    post:
+      tags: [Channels]
+      operationId: createChannelFinancialChangeRequest
+      summary: 提交渠道财务字段变更申请（channel:write + CSRF + 幂等键 + version 基线；须另人复核后生效）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateChannelFinancialChangeRequest'}
+      responses:
+        '201':
+          description: 已提交待复核变更单
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelFinancialChangeRequestEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    get:
+      tags: [Channels]
+      operationId: listChannelFinancialChangeRequests
+      summary: 查询指定渠道财务变更申请列表（channel:read 或 channel:approve_finance）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Size'}
+        - {name: status, in: query, required: false, schema: {type: string, maxLength: 32}}
+      responses:
+        '200':
+          description: 渠道财务变更申请分页
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelFinancialChangeRequestPageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /channel-change-requests:
+    get:
+      tags: [Channels]
+      operationId: listChannelChangeRequests
+      summary: 查询全部渠道财务变更申请（channel:read 或 channel:approve_finance）
+      parameters:
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Size'}
+        - {name: channelId, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}}
+        - {name: status, in: query, required: false, schema: {type: string, maxLength: 32}}
+      responses:
+        '200':
+          description: 财务变更申请分页
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelFinancialChangeRequestPageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /channel-change-requests/{reqId}/review:
+    post:
+      tags: [Channels]
+      operationId: reviewChannelChangeRequest
+      summary: 复核渠道财务变更申请（channel:approve_finance + CSRF + 乐观锁；四眼原则禁止自审）
+      parameters:
+        - {name: reqId, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 1, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReviewChannelFinancialChangeRequest'}
+      responses:
+        '200':
+          description: 复核结果；APPROVE 时原子回写渠道财务字段及密文
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelFinancialChangeRequestEnvelope'}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -4516,6 +4631,25 @@ paths:
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+  /risks/sync:
+    post:
+      tags: [Risks]
+      operationId: syncRiskCases
+      summary: 手动同步多来源风险单（risk:write + CSRF；仅授权内部员工，后端租户隔离）
+      description: 聚合服务超期、对账异常、同步失败（含作用域内有赞工单）等风险源并幂等创建/更新风险单。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {name: Idempotency-Key, in: header, required: false, schema: {type: string, minLength: 1, maxLength: 128}}
+      responses:
+        '200':
+          description: 同步统计结果
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RiskSyncEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /risks/{id}:
     get:
       tags: [Risks]
@@ -5192,7 +5326,7 @@ paths:
     get:
       tags: [Notifications]
       operationId: listWecomMappings
-      summary: 查询当前租户企微通知成员映射（notification:delivery:read）
+      summary: 查询当前租户企微通知成员映射（wecom:mapping:manage 或 notification:delivery:read）
       description: 仅返回租户内 CRM 员工与企微成员映射；archiveEnabled 与 messageEnabled 分别表示归档采集和应用通知状态，不包含 Secret。
       responses:
         '200': {description: 映射列表, content: {application/json: {schema: {$ref: '#/components/schemas/WecomMappingListEnvelope'}}}}
@@ -5201,7 +5335,8 @@ paths:
     post:
       tags: [Notifications]
       operationId: createWecomMapping
-      summary: 新增企微通知成员映射（notification:delivery:retry + CSRF + 幂等键）
+      summary: 新增企微通知成员映射（wecom:mapping:manage + CSRF + 幂等键）
+      description: staffUserId 必须为当前租户内活跃 EMPLOYEE 员工。
       parameters:
         - {$ref: '#/components/parameters/CsrfToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -5218,7 +5353,8 @@ paths:
     put:
       tags: [Notifications]
       operationId: updateWecomMapping
-      summary: 修改企微通知映射或独立通知状态（notification:delivery:retry + 乐观锁）
+      summary: 修改企微通知映射或独立通知状态（wecom:mapping:manage + 乐观锁）
+      description: 当映射 archiveEnabled=true 时禁止直接篡改 corpId/wecomUserid/staffUserId（返回 409 Conflict）。
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
         - {$ref: '#/components/parameters/CsrfToken'}
@@ -5358,7 +5494,7 @@ paths:
     put:
       tags: [FollowupAutomation]
       operationId: updateFollowupAutomationPolicy
-      summary: 更新跟进间隔策略（followup:write + CSRF + 幂等键 + version + 审计）
+      summary: 更新跟进间隔策略（followup:policy:manage + CSRF + 幂等键 + version + 审计）
       parameters:
         - {$ref: '#/components/parameters/CsrfToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -5400,8 +5536,8 @@ paths:
     post:
       tags: [FollowupAutomation]
       operationId: createFollowupMonthlyBatch
-      summary: 创建三个月回访批次快照（followup:write + 客户数据范围 + CSRF + 幂等键 + 审计）
-      description: 同租户同 orderMonth 仅一个批次；创建时保存候选客户、专属管家/团队、最早到期时间和全部关联订单快照，不直接执行任务。
+      summary: 创建三个月回访批次快照（followup:write + 仅 ALL 客户数据范围 + CSRF + 幂等键 + 审计）
+      description: 同租户同 orderMonth 仅一个批次；需 customer ALL 数据范围（非 ALL 返回 403 FORBIDDEN）。创建时保存候选客户、专属管家/团队、最早到期时间和全部关联订单快照，不直接执行任务。
       parameters:
         - {$ref: '#/components/parameters/CsrfToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -5424,7 +5560,7 @@ paths:
     get:
       tags: [FollowupAutomation]
       operationId: getFollowupMonthlyBatch
-      summary: 回访批次及明细（followup:read + 逐客户数据范围）
+      summary: 回访批次及明细（followup:read + 仅 ALL 客户数据范围；非 ALL 返回 403）
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
       responses:
@@ -5440,8 +5576,8 @@ paths:
     post:
       tags: [FollowupAutomation]
       operationId: executeFollowupMonthlyBatch
-      summary: 执行 READY 回访批次（followup:write + CSRF + 幂等键 + version + 审计）
-      description: 每客户至多创建或去重一条任务；执行事实只追加 attempt。完成不代表真实企微已发送，通知渠道以共享投递记录为准。
+      summary: 执行 READY 回访批次（followup:write + 仅 ALL 客户数据范围 + CSRF + 幂等键 + version + 审计）
+      description: 需 customer ALL 数据范围（非 ALL 返回 403 FORBIDDEN）。每客户至多创建或去重一条任务；执行事实只追加 attempt。完成不代表真实企微已发送，通知渠道以共享投递记录为准。
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
         - {$ref: '#/components/parameters/CsrfToken'}
@@ -5466,8 +5602,8 @@ paths:
     post:
       tags: [FollowupAutomation]
       operationId: retryFollowupMonthlyBatch
-      summary: 重试 FAILED 回访批次（followup:write + CSRF + 幂等键 + version + 审计）
-      description: 仅处理 PENDING/FAILED 明细；已 CREATED/SKIPPED 明细不重开任务，每次最终执行追加不可变 attempt。
+      summary: 重试 FAILED 回访批次（followup:write + 仅 ALL 客户数据范围 + CSRF + 幂等键 + version + 审计）
+      description: 需 customer ALL 数据范围（非 ALL 返回 403 FORBIDDEN）。仅处理 PENDING/FAILED 明细；已 CREATED/SKIPPED 明细不重开任务，每次最终执行追加不可变 attempt。
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
         - {$ref: '#/components/parameters/CsrfToken'}
@@ -6416,8 +6552,8 @@ paths:
     patch:
       tags: [CustomerSegments]
       operationId: updateCustomerSegment
-      summary: 修改动态分组定义（customer:write + CSRF + version + 审计）
-      description: 修改只影响之后的实时成员计算；既有操作批次条件和成员快照不回写。
+      summary: 修改动态分组定义（customer:write + 创建人或 ALL 客户数据范围 + CSRF + version + 审计）
+      description: 仅创建者本人或拥有 customer ALL 数据范围的用户可修改（否则返回 403 FORBIDDEN）；修改只影响之后的实时成员计算；既有操作批次条件和成员快照不回写。
       parameters:
         - {$ref: '#/components/parameters/CsrfToken'}
       requestBody:
@@ -6439,8 +6575,8 @@ paths:
     delete:
       tags: [CustomerSegments]
       operationId: deleteCustomerSegment
-      summary: 逻辑删除动态分组（customer:write + CSRF + version + 审计）
-      description: 删除后定义不再可用；已创建的操作批次和成员快照保留且不可改删。
+      summary: 逻辑删除动态分组（customer:write + 创建人或 ALL 客户数据范围 + CSRF + version + 审计）
+      description: 仅创建者本人或拥有 customer ALL 数据范围的用户可删除（否则返回 403 FORBIDDEN）；删除后定义不再可用；已创建的操作批次和成员快照保留且不可改删。
       parameters:
         - {name: version, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}}
         - {$ref: '#/components/parameters/CsrfToken'}
@@ -6509,8 +6645,8 @@ paths:
     get:
       tags: [CustomerTimeline]
       operationId: getCustomerTimeline
-      summary: 查询客户跨领域时间线（customer:read + 客户数据范围）
-      description: 仅返回白名单摘要，不返回聊天全文；COMPLAINT 项另需 complaint:read。范围外客户按 404 处理。
+      summary: 查询客户跨领域时间线（customer:read + 客户数据范围 + 分领域读权限过滤）
+      description: 仅返回白名单摘要，不返回聊天全文；各领域时间线项分别受对应读权限门控（followup:read、task:read、order:read、appointment:read、redemption:read、refund:read、complaint:read），无权领域项自动隐藏。范围外客户按 404 处理。
       parameters:
         - name: cursor
           in: query
@@ -8039,6 +8175,7 @@ components:
         password: {type: string, maxLength: 128}
         captchaId: {type: string, maxLength: 64}
         captchaAnswer: {type: string, maxLength: 8, description: 图片中的算术结果，一次性使用}
+        tenantCode: {type: string, maxLength: 64, description: 可选组织编码；跨租户同名账号登录时用于指定租户}
     AuthUser:
       type: object
       properties:
@@ -8083,7 +8220,7 @@ components:
       properties:
         displayName: {type: string, maxLength: 64}
         teamId: {type: integer, format: int64, nullable: true}
-        password: {type: string, minLength: 8, maxLength: 64, nullable: true, description: 为空则不重置}
+        password: {type: string, minLength: 8, maxLength: 64, pattern: '(?s).*\S.*', nullable: true, description: 为空则不重置；若传入则禁止纯空白}
         version: {type: integer, format: int64}
     AssignRoles:
       type: object
@@ -8100,7 +8237,7 @@ components:
       type: object
       required: [permissionCodes]
       properties:
-        permissionCodes: {type: array, items: {type: string, pattern: '[a-z]+:[a-z_]+'}}
+        permissionCodes: {type: array, items: {type: string, pattern: '[a-z]+(?::[a-z_]+){1,3}'}}
     UserPageResponse:
       type: object
       properties:
@@ -10988,7 +11125,7 @@ components:
       required: [version, amountFen, bankTradeNo, paidAt, voucherFileId, evidenceRef]
       properties:
         version: {type: integer, format: int64, minimum: 0}
-        amountFen: {type: integer, format: int64, minimum: 1, description: 本次付款，累计不得超过 netPayableFen}
+        amountFen: {type: integer, format: int64, minimum: 0, description: 本次付款（0 分用于零净应付对账闭环），累计不得超过 netPayableFen}
         bankTradeNo: {type: string, minLength: 1, maxLength: 128, description: 已人工核验的真实银行流水，全局唯一}
         paidAt: {type: string, format: date-time}
         voucherFileId: {type: integer, format: int64, minimum: 1, description: 必须为 CLEAN 私有付款凭证}
@@ -11249,7 +11386,7 @@ components:
         redemptionBatchCount: {type: integer, format: int64, minimum: 0}
         redeemedCustomerCount: {type: integer, format: int64, minimum: 0}
         redeemedCount: {type: integer, format: int64, minimum: 0}
-        pendingReconciliationFen: {type: integer, format: int64, nullable: true, description: 已核准结算批次净应付减已付的未付余额，整数分；金额未核实时为 null，不是 0}
+        pendingReconciliationFen: {type: integer, format: int64, nullable: true, description: 已核准结算批次净应付减已付的未付余额，整数分；仅当 customer=ALL 且 institution=ALL 且拥有 settlement:read 时返回，否则与金额未核实时一样为 null}
         pendingReconciliationStatus: {type: string, enum: [VERIFIED, PENDING_VERIFICATION], description: VERIFIED 仅表示金额可核实，不表示已付款}
         conversionRates: {$ref: '#/components/schemas/OperationsConversionRates'}
     CampaignEngagementMetrics:
@@ -11646,22 +11783,84 @@ components:
             version: {type: integer, format: int64, minimum: 0}
         - $ref: '#/components/schemas/ChannelProfileFields'
     PartnerChannel:
-      allOf:
-        - type: object
-          required: [id, channelNo, name, channelType, platformCode, commissionPercent, businessOwnerUserId, businessOwnerName, realName, contactPhone, idCardNumber, settlementMethod, cooperationStartDate, cooperationEndDate, paymentAccountName, paymentAccountNo, paymentBankName, status, remarks, createdAt, version]
-          properties:
-            id: {type: integer, format: int64}
-            channelNo: {type: string}
-            name: {type: string}
-            channelType: {type: string, enum: [BLOGGER, DISTRIBUTION, REFERRAL]}
-            platformCode: {type: string, nullable: true}
-            businessOwnerUserId: {type: integer, format: int64, nullable: true}
-            businessOwnerName: {type: string, nullable: true, description: 当前租户员工显示姓名，替代列表中的用户ID}
-            status: {type: string, enum: [ACTIVE, INACTIVE, ARCHIVED]}
-            remarks: {type: string, nullable: true}
-            createdAt: {type: string, format: date-time}
-            version: {type: integer, format: int64, minimum: 0}
-        - $ref: '#/components/schemas/ChannelProfileFields'
+      type: object
+      required: [id, channelNo, name, channelType, platformCode, commissionPercent, businessOwnerUserId, businessOwnerName, realName, contactPhone, contactPhoneConfigured, idCardNumber, idCardConfigured, settlementMethod, cooperationStartDate, cooperationEndDate, paymentAccountName, paymentAccountNo, paymentAccountConfigured, paymentBankName, status, remarks, createdAt, version]
+      properties:
+        id: {type: integer, format: int64}
+        channelNo: {type: string}
+        name: {type: string}
+        channelType: {type: string, enum: [BLOGGER, DISTRIBUTION, REFERRAL]}
+        platformCode: {type: string, nullable: true}
+        commissionPercent: {type: number, nullable: true}
+        businessOwnerUserId: {type: integer, format: int64, nullable: true}
+        businessOwnerName: {type: string, nullable: true, description: 当前租户员工显示姓名，替代列表中的用户ID}
+        realName: {type: string, nullable: true}
+        contactPhone: {type: string, nullable: true, description: 脱敏手机号（无明文正则约束）}
+        contactPhoneConfigured: {type: boolean}
+        idCardNumber: {type: string, nullable: true, description: 脱敏身份证号（无明文正则约束）}
+        idCardConfigured: {type: boolean}
+        settlementMethod: {type: string, nullable: true}
+        cooperationStartDate: {type: string, format: date, nullable: true}
+        cooperationEndDate: {type: string, format: date, nullable: true}
+        paymentAccountName: {type: string, nullable: true, description: 脱敏收款账户名称}
+        paymentAccountNo: {type: string, nullable: true, description: 脱敏收款账号}
+        paymentAccountConfigured: {type: boolean}
+        paymentBankName: {type: string, nullable: true}
+        status: {type: string, enum: [ACTIVE, INACTIVE, ARCHIVED]}
+        remarks: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+        version: {type: integer, format: int64, minimum: 0}
+    ToggleChannelStatusRequest:
+      type: object
+      required: [status, version]
+      properties:
+        status: {type: string, enum: [ACTIVE, INACTIVE]}
+        version: {type: integer, format: int64, minimum: 0}
+        reason: {type: string, maxLength: 500, nullable: true}
+    CreateChannelFinancialChangeRequest:
+      type: object
+      required: [baseVersion, reason]
+      properties:
+        commissionPercent: {type: number, minimum: 0, maximum: 100, multipleOf: 0.01, nullable: true}
+        settlementMethod: {type: string, maxLength: 64, nullable: true}
+        paymentAccountName: {type: string, maxLength: 160, nullable: true}
+        paymentAccountNo: {type: string, maxLength: 64, nullable: true}
+        paymentBankName: {type: string, maxLength: 255, nullable: true}
+        baseVersion: {type: integer, format: int64, minimum: 0}
+        reason: {type: string, minLength: 1, maxLength: 1000}
+    ReviewChannelFinancialChangeRequest:
+      type: object
+      required: [decision, version]
+      properties:
+        decision: {type: string, enum: [APPROVE, REJECT]}
+        version: {type: integer, format: int64, minimum: 0}
+        comment: {type: string, maxLength: 1000, nullable: true}
+    ChannelFinancialChangeRequest:
+      type: object
+      required: [id, channelId, channelNo, channelName, status, requestedBy, requestedByName, requestedAt, reason, baseVersion, version, beforeMasked, afterMasked, commissionPercent, settlementMethod, paymentAccountName, paymentAccountNo, paymentBankName, reviewerUserId, reviewerName, reviewedAt, reviewComment]
+      properties:
+        id: {type: integer, format: int64}
+        channelId: {type: integer, format: int64}
+        channelNo: {type: string}
+        channelName: {type: string}
+        status: {type: string, enum: [PENDING, APPROVED, REJECTED]}
+        requestedBy: {type: integer, format: int64}
+        requestedByName: {type: string, nullable: true}
+        requestedAt: {type: string, format: date-time}
+        reason: {type: string}
+        baseVersion: {type: integer, format: int64}
+        version: {type: integer, format: int64}
+        beforeMasked: {type: object, additionalProperties: true, nullable: true}
+        afterMasked: {type: object, additionalProperties: true, nullable: true}
+        commissionPercent: {type: number, nullable: true}
+        settlementMethod: {type: string, nullable: true}
+        paymentAccountName: {type: string, nullable: true}
+        paymentAccountNo: {type: string, nullable: true}
+        paymentBankName: {type: string, nullable: true}
+        reviewerUserId: {type: integer, format: int64, nullable: true}
+        reviewerName: {type: string, nullable: true}
+        reviewedAt: {type: string, format: date-time, nullable: true}
+        reviewComment: {type: string, nullable: true}
     ChannelOwnerOption:
       type: object
       required: [id, displayName]
@@ -11743,6 +11942,31 @@ components:
         code: {type: string, enum: [OK]}
         message: {type: string, example: success}
         data: {$ref: '#/components/schemas/PartnerChannel'}
+        requestId: {type: string}
+        timestamp: {type: string, format: date-time}
+    ChannelFinancialChangeRequestEnvelope:
+      type: object
+      required: [code, message, data, requestId, timestamp]
+      properties:
+        code: {type: string, enum: [OK]}
+        message: {type: string, example: success}
+        data: {$ref: '#/components/schemas/ChannelFinancialChangeRequest'}
+        requestId: {type: string}
+        timestamp: {type: string, format: date-time}
+    ChannelFinancialChangeRequestPageResponse:
+      type: object
+      required: [code, message, data, requestId, timestamp]
+      properties:
+        code: {type: string, enum: [OK]}
+        message: {type: string, example: success}
+        data:
+          type: object
+          required: [items, total, page, size]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/ChannelFinancialChangeRequest'}}
+            total: {type: integer, format: int64, minimum: 0}
+            page: {type: integer, format: int32, minimum: 1}
+            size: {type: integer, format: int32, minimum: 1, maximum: 100}
         requestId: {type: string}
         timestamp: {type: string, format: date-time}
     MaterialRevisionInput:
@@ -12142,6 +12366,22 @@ components:
         code: {type: string, enum: [OK]}
         message: {type: string, example: success}
         data: {$ref: '#/components/schemas/RiskCaseDetail'}
+        requestId: {type: string}
+        timestamp: {type: string, format: date-time}
+    RiskSyncResponse:
+      type: object
+      required: [createdCount, updatedCount, syncedAt]
+      properties:
+        createdCount: {type: integer, format: int32, minimum: 0}
+        updatedCount: {type: integer, format: int32, minimum: 0}
+        syncedAt: {type: string, format: date-time}
+    RiskSyncEnvelope:
+      type: object
+      required: [code, message, data, requestId, timestamp]
+      properties:
+        code: {type: string, enum: [OK]}
+        message: {type: string, example: success}
+        data: {$ref: '#/components/schemas/RiskSyncResponse'}
         requestId: {type: string}
         timestamp: {type: string, format: date-time}
     PointsLedgerItem:

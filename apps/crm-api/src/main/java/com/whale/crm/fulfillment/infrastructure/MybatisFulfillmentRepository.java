@@ -25,7 +25,7 @@ public class MybatisFulfillmentRepository implements FulfillmentRepository {
         this.mapper = mapper;
     }
 
-    public void insertAppointment(Appointment entity) { mapper.insertAppointment(com.whale.crm.platform.context.TenantContext.currentTenantId(), entity); }
+    public void insertAppointment(long tenantId, Appointment entity) { mapper.insertAppointment(tenantId, entity); }
     public Optional<Appointment> findAppointmentByNo(long tenantId, String no) { return Optional.ofNullable(mapper.selectAppointmentByNo(tenantId, no)); }
     public int backfillAppointmentNo(long tenantId, long id, String no) { return mapper.backfillAppointmentNo(tenantId, id, no); }
     public Optional<Appointment> findAppointment(long tenantId, long id) { return Optional.ofNullable(mapper.selectAppointment(tenantId, id)); }
@@ -40,12 +40,12 @@ public class MybatisFulfillmentRepository implements FulfillmentRepository {
     public int updateAppointmentStatus(long tenantId, long id, long version, String from, String to) {
         return mapper.updateAppointmentStatus(tenantId, id, version, from, to);
     }
-    public void insertAppointmentItem(AppointmentItem entity) { mapper.insertAppointmentItem(com.whale.crm.platform.context.TenantContext.currentTenantId(), entity); }
+    public void insertAppointmentItem(long tenantId, AppointmentItem entity) { mapper.insertAppointmentItem(tenantId, entity); }
     public List<AppointmentItem> findAppointmentItems(long tenantId, long id) { return mapper.selectAppointmentItems(tenantId, id); }
-    public void insertAppointmentHistory(AppointmentHistory entity) { mapper.insertAppointmentHistory(com.whale.crm.platform.context.TenantContext.currentTenantId(), entity); }
+    public void insertAppointmentHistory(long tenantId, AppointmentHistory entity) { mapper.insertAppointmentHistory(tenantId, entity); }
     public List<AppointmentHistory> findAppointmentHistory(long tenantId, long id) { return mapper.selectAppointmentHistory(tenantId, id); }
 
-    public void insertRedemption(Redemption entity) { mapper.insertRedemption(com.whale.crm.platform.context.TenantContext.currentTenantId(), entity); }
+    public void insertRedemption(long tenantId, Redemption entity) { mapper.insertRedemption(tenantId, entity); }
     public Optional<Redemption> findRedemptionByKey(long tenantId, String key) { return Optional.ofNullable(mapper.selectRedemptionByKey(tenantId, key)); }
     public Optional<Redemption> findRedemption(long tenantId, long id) { return Optional.ofNullable(mapper.selectRedemption(tenantId, id)); }
     public Optional<Redemption> findRedemptionForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectRedemptionForUpdate(tenantId, id)); }
@@ -58,13 +58,13 @@ public class MybatisFulfillmentRepository implements FulfillmentRepository {
                                  Long projectId, String status) {
         return mapper.countRedemptions(tenantId, scope, customerId, institutionId, projectId, status);
     }
-    public void insertRedemptionLine(RedemptionLine entity) { mapper.insertRedemptionLine(com.whale.crm.platform.context.TenantContext.currentTenantId(), entity); }
+    public void insertRedemptionLine(long tenantId, RedemptionLine entity) { mapper.insertRedemptionLine(tenantId, entity); }
     public List<RedemptionLine> findRedemptionLines(long tenantId, long id) { return mapper.selectRedemptionLines(tenantId, id); }
     public List<RedemptionLine> findPostedLinesByAppointment(long tenantId, long id) { return mapper.selectPostedLinesByAppointment(tenantId, id); }
-    public void insertRedemptionHistory(RedemptionStatusHistory entity) { mapper.insertRedemptionHistory(com.whale.crm.platform.context.TenantContext.currentTenantId(), entity); }
+    public void insertRedemptionHistory(long tenantId, RedemptionStatusHistory entity) { mapper.insertRedemptionHistory(tenantId, entity); }
     public List<RedemptionStatusHistory> findRedemptionHistory(long tenantId, long id) { return mapper.selectRedemptionHistory(tenantId, id); }
 
-    public void insertReversal(RedemptionReversal entity) { mapper.insertReversal(com.whale.crm.platform.context.TenantContext.currentTenantId(), entity); }
+    public void insertReversal(long tenantId, RedemptionReversal entity) { mapper.insertReversal(tenantId, entity); }
     public Optional<RedemptionReversal> findReversalByRequestKey(long tenantId, String key) { return Optional.ofNullable(mapper.selectReversalByRequestKey(tenantId, key)); }
     public Optional<RedemptionReversal> findReversal(long tenantId, long id) { return Optional.ofNullable(mapper.selectReversal(tenantId, id)); }
     public Optional<RedemptionReversal> findReversalForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectReversalForUpdate(tenantId, id)); }
@@ -83,6 +83,6 @@ public class MybatisFulfillmentRepository implements FulfillmentRepository {
         return mapper.updateReversalStatus(tenantId, id, version, from, to, reviewedBy, reviewedAt,
                 reviewReason, reviewKey, activeRedemptionId);
     }
-    public void insertReversalHistory(RedemptionReversalHistory entity) { mapper.insertReversalHistory(com.whale.crm.platform.context.TenantContext.currentTenantId(), entity); }
+    public void insertReversalHistory(long tenantId, RedemptionReversalHistory entity) { mapper.insertReversalHistory(tenantId, entity); }
     public List<RedemptionReversalHistory> findReversalHistory(long tenantId, long id) { return mapper.selectReversalHistory(tenantId, id); }
 }

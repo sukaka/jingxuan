@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface InstitutionRepository {
-    void insertProfile(InstitutionProfile profile);
+    void insertProfile(long tenantId, InstitutionProfile profile);
     Optional<InstitutionProfile> findProfileByNo(long tenantId, String institutionNo);
     Optional<InstitutionProfile> findProfile(long tenantId, long id);
     Optional<InstitutionProfile> findProfileForUpdate(long tenantId, long id);
@@ -18,7 +18,7 @@ public interface InstitutionRepository {
     int applyProfileField(long tenantId, long id, long version, String fieldCode, String value);
     int touchInstitution(long tenantId, long id, long version);
 
-    void insertContract(InstitutionContract contract);
+    void insertContract(long tenantId, InstitutionContract contract);
     Optional<InstitutionContract> findContractByKey(long tenantId, String contractNo, int versionNo);
     Optional<InstitutionContract> findContract(long tenantId, long id);
     Optional<InstitutionContract> findContractForUpdate(long tenantId, long id);
@@ -27,7 +27,7 @@ public interface InstitutionRepository {
     long countContracts(long tenantId, InstitutionScope scope, long institutionId, String status);
     int updateContractStatus(long tenantId, long id, long version, String fromStatus, String toStatus);
 
-    void insertQualification(InstitutionQualification qualification);
+    void insertQualification(long tenantId, InstitutionQualification qualification);
     Optional<InstitutionQualification> findQualification(long tenantId, long id);
     Optional<InstitutionQualification> findQualificationForUpdate(long tenantId, long id);
     Optional<InstitutionQualification> findLatestQualification(long tenantId, long institutionId, long fileId, String title);
@@ -37,7 +37,7 @@ public interface InstitutionRepository {
     int updateQualificationStatus(long tenantId, long id, long version, String fromStatus, String toStatus,
                                   long reviewerId, Instant reviewedAt);
 
-    void insertChange(ProfileChangeRequest request);
+    void insertChange(long tenantId, ProfileChangeRequest request);
     Optional<ProfileChangeRequest> findChange(long tenantId, long id);
     Optional<ProfileChangeRequest> findChangeForUpdate(long tenantId, long id);
     Optional<ProfileChangeRequest> findActiveChange(long tenantId, String activeTarget);
@@ -48,6 +48,6 @@ public interface InstitutionRepository {
                            String currentStep, Instant completedAt, String activeTarget);
     int rebaseChange(long tenantId, long id, long version, long baseVersion, long targetVersion,
                      String currentStep, String activeTarget);
-    void insertStep(ProfileChangeStep step);
+    void insertStep(long tenantId, ProfileChangeStep step);
     List<ProfileChangeStep> findSteps(long tenantId, long changeRequestId);
 }

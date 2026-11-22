@@ -248,6 +248,70 @@ class FollowupAutomationApiIT extends AbstractMysqlIT {
                 Long.class, customerId)).isEqualTo(1);
     }
 
+    @Test
+    void policyManageAndMonthlyBatchAllScopeAreEnforced() throws Exception {
+        AuthCookies admin = login("admin");
+        AuthCookies manager1 = login("manager1");
+        AuthCookies lead1 = login("lead1");
+        AuthCookies operationLead = login("operationlead1");
+
+        String policyJson = mockMvc.perform(get("/api/v1/followup-automation/policy").cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        long policyVersion = objectMapper.readTree(policyJson).at("/data/version").asLong();
+        String policyPayload = "{\"defaultIntervalDays\":14,\"intentOverrides\":[],\"version\":"
+                + policyVersion + "}";
+
+        mockMvc.perform(manager1.withAuth(put("/api/v1/followup-automation/policy"))
+                        .header("Idempotency-Key", "hsec09-policy-m1-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(policyPayload))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(lead1.withAuth(put("/api/v1/followup-automation/policy"))
+                        .header("Idempotency-Key", "hsec09-policy-l1-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(policyPayload))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(operationLead.withAuth(put("/api/v1/followup-automation/policy"))
+                        .header("Idempotency-Key", "hsec09-policy-oplead-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(policyPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.defaultIntervalDays").value(14));
+
+        long customerId = createCustomer(manager1, "H-SEC-09-月度批次越权");
+        insertOrder(customerId, "PAID", "2026-09-10T02:00:00Z");
+
+        mockMvc.perform(get("/api/v1/followup-automation/batches/preview")
+                        .param("orderMonth", "2026-09").cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1));
+
+        createBatch(manager1, "2026-09", "hsec09-batch-m1-" + UUID.randomUUID())
+                .andExpect(status().isForbidden());
+        createBatch(lead1, "2026-09", "hsec09-batch-l1-" + UUID.randomUUID())
+                .andExpect(status().isForbidden());
+
+        String created = createBatch(admin, "2026-09", "hsec09-batch-admin-" + UUID.randomUUID())
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long batchId = batchId(created);
+
+        mockMvc.perform(get("/api/v1/followup-automation/batches/" + batchId).cookie(manager1.cookies()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/followup-automation/batches/" + batchId).cookie(lead1.cookies()))
+                .andExpect(status().isForbidden());
+        action(manager1, post("/api/v1/followup-automation/batches/" + batchId + "/execute"),
+                "{\"version\":0}", "hsec09-exec-m1-" + UUID.randomUUID())
+                .andExpect(status().isForbidden());
+        action(lead1, post("/api/v1/followup-automation/batches/" + batchId + "/execute"),
+                "{\"version\":0}", "hsec09-exec-l1-" + UUID.randomUUID())
+                .andExpect(status().isForbidden());
+        action(manager1, post("/api/v1/followup-automation/batches/" + batchId + "/retry"),
+                "{\"version\":0}", "hsec09-retry-m1-" + UUID.randomUUID())
+                .andExpect(status().isForbidden());
+        action(lead1, post("/api/v1/followup-automation/batches/" + batchId + "/retry"),
+                "{\"version\":0}", "hsec09-retry-l1-" + UUID.randomUUID())
+                .andExpect(status().isForbidden());
+    }
+
     private org.springframework.test.web.servlet.ResultActions createFollowup(
             AuthCookies actor, String body, String key) throws Exception {
         return action(actor, post("/api/v1/followups"), body, key);

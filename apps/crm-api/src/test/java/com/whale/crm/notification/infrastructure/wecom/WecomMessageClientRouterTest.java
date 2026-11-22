@@ -50,8 +50,20 @@ class WecomMessageClientRouterTest {
         verify(official).send(command);
     }
 
+    @Test
+    void officialModeRejectsDisallowedTenantBeforeCallingOfficialClient() {
+        WecomMessageClientRouter router = new WecomMessageClientRouter(properties("OFFICIAL"), official, mock, disabled);
+        WecomMessageCommand otherTenant = new WecomMessageCommand(2L, 2L, "staff-2", "标题", "脱敏内容");
+
+        WecomSendResult result = router.send(otherTenant);
+
+        assertThat(result.status()).isEqualTo(WecomSendResult.Status.FAILED);
+        assertThat(result.errorMasked()).isEqualTo("WECOM_MESSAGE_TENANT_FORBIDDEN");
+        verify(official, never()).send(any());
+    }
+
     private WecomMessageProperties properties(String mode) {
-        return new WecomMessageProperties(mode, "ww-test", "synthetic-secret", 1001L,
+        return new WecomMessageProperties(1L, mode, "ww-test", "synthetic-secret", 1001L,
                 "http://127.0.0.1:9", 100, 100, 60);
     }
 }

@@ -1,11 +1,21 @@
 -- 核心业务所需的系统参考数据，不包含城市、客户、机构、订单等演示数据。
 -- 重复执行只补齐缺失代码，不覆盖运营已维护的显示名、排序或启停状态。
 INSERT INTO sys_dictionary_type (tenant_id,dict_code,dict_name,status) VALUES
+  (1,'cities','城市','ACTIVE'),
   (1,'orderTypes','订单类型','ACTIVE'),
   (1,'institutionBusinessTypes','机构业务类型','ACTIVE'),
   (1,'institutionOwnerships','机构性质','ACTIVE'),
   (1,'merchantGrades','商户等级','ACTIVE'),
-  (1,'settlementTypes','机构结算方式','ACTIVE')
+  (1,'settlementTypes','机构结算方式','ACTIVE'),
+  (1,'customerStatuses','客户状态','ACTIVE'),
+  (1,'customerSources','客户来源','ACTIVE'),
+  (1,'customerChannels','客户渠道','ACTIVE'),
+  (1,'communicationChannels','沟通方式','ACTIVE'),
+  (1,'taskTypes','任务类型','ACTIVE'),
+  (1,'refundReasons','退款原因','ACTIVE'),
+  (1,'materialTypes','素材类型','ACTIVE'),
+  (1,'customerTiers','客户等级','ACTIVE'),
+  (1,'customerTags','客户标签','ACTIVE')
   ON DUPLICATE KEY UPDATE dict_code=VALUES(dict_code);
 
 INSERT INTO sys_dictionary_item (tenant_id,dict_type_id,option_code,option_label,sort_no,status)

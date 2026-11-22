@@ -18,11 +18,40 @@ public interface WecomCallbackMapper {
     @Select("SELECT id,corp_id AS corpId,event_fingerprint AS eventFingerprint,event_type AS eventType,change_type AS changeType,wecom_userid AS wecomUserid,external_userid AS externalUserid,event_time AS eventTime,status,attempts FROM crm_wecom_callback_event WHERE tenant_id=#{tenantId} AND status IN ('RECEIVED','RETRYABLE') AND (next_retry_at IS NULL OR next_retry_at<=#{now}) ORDER BY id LIMIT #{limit}")
     List<WecomCallbackEvent> selectPending(@Param("tenantId") long tenantId, @Param("now") Instant now, @Param("limit") int limit);
 
-    @Update("UPDATE crm_wecom_callback_event SET status='PROCESSING',attempts=attempts+1 WHERE tenant_id=#{tenantId} AND id=#{id} AND status IN ('RECEIVED','RETRYABLE') AND (next_retry_at IS NULL OR next_retry_at<=#{now}) AND attempts=#{expectedAttempts}")
-    int claim(@Param("tenantId") long tenantId, @Param("id") long id,
-              @Param("expectedAttempts") int expectedAttempts, @Param("now") Instant now);
+    @Update("UPDATE crm_wecom_callback_event "
+            + "SET status=CASE WHEN attempts>=#{maxAttempts} THEN 'FAILED' ELSE 'RETRYABLE' END,"
+            + "next_retry_at=NULL,"
+            + "lease_until=NULL,error_masked=#{error},"
+            + "processed_at=CASE WHEN attempts>=#{maxAttempts} THEN #{now} ELSE NULL END "
+            + "WHERE tenant_id=#{tenantId} AND status='PROCESSING' "
+            + "AND ((lease_until IS NOT NULL AND lease_until<#{now}) "
+            + "OR (lease_until IS NULL AND received_at<#{legacyCutoff}))")
+    int recoverExpiredProcessing(@Param("tenantId") long tenantId, @Param("now") Instant now,
+                                 @Param("legacyCutoff") Instant legacyCutoff,
+                                 @Param("maxAttempts") int maxAttempts, @Param("error") String error);
 
-    @Update("UPDATE crm_wecom_callback_event SET status=#{status},next_retry_at=#{nextRetry},error_masked=#{error},processed_at=#{processed} WHERE tenant_id=#{tenantId} AND id=#{id}")
+    @Update("UPDATE crm_wecom_callback_event SET status='PROCESSING',attempts=attempts+1,lease_until=#{leaseUntil} "
+            + "WHERE tenant_id=#{tenantId} AND id=#{id} AND status IN ('RECEIVED','RETRYABLE') "
+            + "AND (next_retry_at IS NULL OR next_retry_at<=#{now}) AND attempts=#{expectedAttempts}")
+    int claimWithLease(@Param("tenantId") long tenantId, @Param("id") long id,
+                       @Param("expectedAttempts") int expectedAttempts, @Param("now") Instant now,
+                       @Param("leaseUntil") Instant leaseUntil);
+
+    default int claim(long tenantId, long id, int expectedAttempts, Instant now) {
+        return claimWithLease(tenantId, id, expectedAttempts, now, now.plusSeconds(60));
+    }
+
+    @Update("UPDATE crm_wecom_callback_event SET status=#{status},next_retry_at=#{nextRetry},lease_until=NULL,"
+            + "error_masked=#{error},processed_at=#{processed} "
+            + "WHERE tenant_id=#{tenantId} AND id=#{id} AND status='PROCESSING' AND attempts=#{expectedAttempts}")
+    int finishClaimed(@Param("tenantId") long tenantId, @Param("id") long id,
+                      @Param("expectedAttempts") int expectedAttempts, @Param("status") String status,
+                      @Param("nextRetry") Instant nextRetry, @Param("error") String error,
+                      @Param("processed") Instant processed);
+
+    @Update("UPDATE crm_wecom_callback_event SET status=#{status},next_retry_at=#{nextRetry},lease_until=NULL,"
+            + "error_masked=#{error},processed_at=#{processed} "
+            + "WHERE tenant_id=#{tenantId} AND id=#{id} AND status='PROCESSING'")
     int finish(@Param("tenantId") long tenantId, @Param("id") long id, @Param("status") String status,
                @Param("nextRetry") Instant nextRetry, @Param("error") String error, @Param("processed") Instant processed);
 }

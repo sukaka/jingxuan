@@ -107,6 +107,10 @@ public class AiChatDelegationService {
         }
         WecomMessage message = wecomRepository.findMessageById(tenantId, sourceMessageId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "企微来源消息不存在"));
+        if (!"DIRECT".equals(message.conversationType()) || message.staffUserId() == null
+                || message.externalUserid() == null) {
+            return null;
+        }
         Customer customer = message.customerId() == null ? null
                 : customerRepository.findById(tenantId, message.customerId()).orElse(null);
         Long teamId = customer == null ? null : customer.getTeamId();
@@ -209,6 +213,7 @@ public class AiChatDelegationService {
             });
             return;
         }
+        boolean releaseForRetry = false;
         try {
             WecomSendResult result;
             try {
@@ -219,9 +224,13 @@ public class AiChatDelegationService {
             } catch (Exception ex) {
                 result = WecomSendResult.unknown(sender.mode(), "WECOM_EXTERNAL_CONTACT_RESPONSE_UNKNOWN");
             }
-            finishSend(preparation.run(), owner, result);
+            releaseForRetry = finishSend(preparation.run(), owner, result);
         } finally {
-            sendFenceService.finish(decision.authorization());
+            if (releaseForRetry) {
+                sendFenceService.releaseForRetry(decision.authorization());
+            } else {
+                sendFenceService.finish(decision.authorization());
+            }
         }
     }
 
@@ -323,9 +332,9 @@ public class AiChatDelegationService {
         });
     }
 
-    private void finishSend(AiChatDelegationRun claimed, String owner, WecomSendResult result) {
+    private boolean finishSend(AiChatDelegationRun claimed, String owner, WecomSendResult result) {
         WecomSendResult finalResult = result;
-        transactions.executeWithoutResult(status -> {
+        return Boolean.TRUE.equals(transactions.execute(status -> {
             AiChatDelegationRun current = ownedRunForUpdate(claimed.tenantId(), claimed.id(), "SENDING", owner);
             String target;
             Instant next = null;
@@ -349,7 +358,8 @@ public class AiChatDelegationService {
             auditService.record(current.tenantId(), null, "AI_CHAT_DELEGATION_SEND_" + target,
                     "AI_CHAT_DELEGATION_RUN", current.id().toString(), null,
                     auditSnapshot(target, reason, finalResult.provider()), null);
-        });
+            return "RETRY_SEND".equals(target);
+        }));
     }
 
     private void failGeneration(long tenantId, long runId, String owner, boolean terminal, String error) {

@@ -1,6 +1,14 @@
 import type { AxiosAdapter } from 'axios'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createChannel, listChannels, updateChannel } from '../src/api/channel'
+import {
+  createChannel,
+  createChannelFinancialChangeRequest,
+  listAllChannelFinancialChangeRequests,
+  listChannels,
+  reviewChannelFinancialChangeRequest,
+  toggleChannelStatus,
+  updateChannel,
+} from '../src/api/channel'
 import { http } from '../src/api/http'
 
 const originalAdapter = http.defaults.adapter
@@ -82,5 +90,26 @@ describe('P2 渠道 API 契约', () => {
       remarks: '暂停合作',
       version: 2,
     })
+  })
+
+  it('状态切换走 /status，财务变更与审批带 Idempotency-Key', async () => {
+    const { adapter, calls } = capture({ items: [], total: 0, page: 1, size: 20 })
+    http.defaults.adapter = adapter
+
+    await toggleChannelStatus(91, { status: 'INACTIVE', version: 2, reason: '暂停合作' })
+    await createChannelFinancialChangeRequest(91, { commissionPercent: 15, baseVersion: 2, reason: '年度调佣' }, 'fin-key-1')
+    await listAllChannelFinancialChangeRequests({ page: 1, size: 20, status: 'PENDING_REVIEW' })
+    await reviewChannelFinancialChangeRequest(501, { decision: 'APPROVE', version: 0, comment: '同意' }, 'rev-key-1')
+
+    expect(calls.map((c) => [c.method, c.url])).toEqual([
+      ['post', '/channels/91/status'],
+      ['post', '/channels/91/financial-change-requests'],
+      ['get', '/channel-change-requests'],
+      ['post', '/channel-change-requests/501/review'],
+    ])
+    expect(calls[0]?.data).toEqual({ status: 'INACTIVE', version: 2, reason: '暂停合作' })
+    expect(calls[1]?.idempotencyKey).toBe('fin-key-1')
+    expect(calls[2]?.params).toEqual({ page: 1, size: 20, channelId: undefined, status: 'PENDING_REVIEW' })
+    expect(calls[3]?.idempotencyKey).toBe('rev-key-1')
   })
 })

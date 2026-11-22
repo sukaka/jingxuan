@@ -521,6 +521,86 @@ class ReportingApiIT extends AbstractMysqlIT {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void pendingReconciliationDeduplicatesMultiLineBatchAndRespectsScopeAndSettlementPermission() throws Exception {
+        SelfActor selfWithSettlement = createScopedReportUserWithSettlement("SELF");
+        long customer = fixture.customer(1, selfWithSettlement.userId(), 1);
+        Fixture.CatalogIds catalog = fixture.catalog("ITR-BATCH-DEDUP", "多行核销卡", "5次", true);
+        long order = fixture.order(1, customer, selfWithSettlement.userId(), "PARTIALLY_REDEEMED", "PLATFORM",
+                20_000, "2026-10-12T03:00:00Z", "ITR_BATCH_DEDUP");
+        long item1 = fixture.orderItem(1, order, catalog, 1);
+        long item2 = fixture.orderItem(1, order, catalog, 1);
+        long item3 = fixture.orderItem(1, order, catalog, 1);
+        fixture.payment(1, order, "PLATFORM", "CONFIRMED", 20_000, "2026-10-12T03:00:00Z");
+
+        long r1 = fixture.redemption(1, order, item1, catalog, customer, selfWithSettlement.userId(),
+                "2026-10-13T03:00:00Z", 1);
+        long r2 = fixture.redemption(1, order, item2, catalog, customer, selfWithSettlement.userId(),
+                "2026-10-14T03:00:00Z", 1);
+        long r3 = fixture.redemption(1, order, item3, catalog, customer, selfWithSettlement.userId(),
+                "2026-10-15T03:00:00Z", 1);
+        fixture.extraRedemptionLine(order, catalog, customer, r1, 1);
+        fixture.extraRedemptionLine(order, catalog, customer, r2, 1);
+
+        long monthlyBatch = fixture.verifiedBatch(catalog.institutionId(), "MONTHLY", "2026-10", 10_000, 2_500);
+        fixture.settlementLine(monthlyBatch, r1);
+        fixture.settlementLine(monthlyBatch, r2);
+        long singleBatch = fixture.verifiedBatch(catalog.institutionId(), "PER_REDEMPTION",
+                "REDEMPTION:" + r3, 1_500, 0);
+        fixture.settlementLine(singleBatch, r3);
+
+        JsonNode adminData = data(withRange(get("/api/v1/reports/operations"), "ITR_BATCH_DEDUP")
+                .param("institutionId", Long.toString(catalog.institutionId()))
+                .cookie(login("admin").cookies()));
+        JsonNode adminInst = arrayRow(adminData.at("/institutionRows"), "institutionId", catalog.institutionId());
+        assertThat(adminInst.at("/redemptionBatchCount").asLong()).isEqualTo(3);
+        assertThat(adminInst.at("/redeemedCount").asLong()).isEqualTo(5);
+        assertThat(adminInst.at("/pendingReconciliationFen").asLong()).isEqualTo(9_000);
+        assertThat(adminInst.at("/pendingReconciliationStatus").asText()).isEqualTo("VERIFIED");
+
+        JsonNode opData = data(withRange(get("/api/v1/reports/operations"), "ITR_BATCH_DEDUP")
+                .param("institutionId", Long.toString(catalog.institutionId()))
+                .cookie(login("operation1").cookies()));
+        JsonNode opInst = arrayRow(opData.at("/institutionRows"), "institutionId", catalog.institutionId());
+        assertThat(opInst.at("/pendingReconciliationFen").isNull()).isTrue();
+        assertThat(opInst.at("/pendingReconciliationStatus").asText()).isEqualTo("PENDING_VERIFICATION");
+
+        JsonNode selfData = data(withRange(get("/api/v1/reports/operations"), "ITR_BATCH_DEDUP")
+                .param("institutionId", Long.toString(catalog.institutionId()))
+                .cookie(selfWithSettlement.cookies().cookies()));
+        JsonNode selfInst = arrayRow(selfData.at("/institutionRows"), "institutionId", catalog.institutionId());
+        assertThat(selfInst.at("/pendingReconciliationFen").isNull()).isTrue();
+        assertThat(selfInst.at("/pendingReconciliationStatus").asText()).isEqualTo("PENDING_VERIFICATION");
+
+        JsonNode selfDashboard = data(withRange(get("/api/v1/reports/operations-dashboard"), "ITR_BATCH_DEDUP")
+                .param("institutionId", Long.toString(catalog.institutionId()))
+                .cookie(selfWithSettlement.cookies().cookies()));
+        JsonNode dashInst = arrayRow(selfDashboard.at("/institutionRows"), "institutionId", catalog.institutionId());
+        assertThat(dashInst.at("/pendingReconciliationFen").isNull()).isTrue();
+        assertThat(dashInst.at("/pendingReconciliationStatus").asText()).isEqualTo("PENDING_VERIFICATION");
+    }
+
+    private SelfActor createScopedReportUserWithSettlement(String customerScope) throws Exception {
+        String suffix = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        String username = "it_rpt_settle_" + suffix;
+        jdbcTemplate.update("INSERT INTO sys_user (tenant_id,org_id,team_id,username,display_name,password_hash,user_type,status) "
+                        + "SELECT 1,1,1,?,'合成报表对账校验',password_hash,'EMPLOYEE','ACTIVE' FROM sys_user WHERE id=2",
+                username);
+        Long userId = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE tenant_id=1 AND username=?",
+                Long.class, username);
+        assertThat(userId).isNotNull();
+        Long financeRoleId = jdbcTemplate.queryForObject(
+                "SELECT id FROM sys_role WHERE tenant_id=1 AND role_code='FINANCE'", Long.class);
+        jdbcTemplate.update("INSERT INTO sys_user_role (tenant_id,user_id,role_id) VALUES (1,?,?)",
+                userId, financeRoleId);
+        jdbcTemplate.update("INSERT INTO sys_data_scope (tenant_id,user_id,resource,scope_type,scope_ref_id) "
+                + "VALUES (1,?,'customer',?,NULL),(1,?,'institution','ALL',NULL)", userId, customerScope, userId);
+        return new SelfActor(userId, login(username));
+    }
+
+    private record SelfActor(long userId, AuthCookies cookies) {
+    }
+
     private void scopedPayment(long customer, long tenant, long amount) {
         long order = fixture.order(tenant, customer, 2, "PAID", "PLATFORM",
                 amount, "2026-10-20T03:00:00Z", "ITR_SCOPE");
@@ -752,6 +832,39 @@ class ReportingApiIT extends AbstractMysqlIT {
             jdbc.update("INSERT INTO crm_settlement_line (id,tenant_id,settlement_batch_id,redemption_id,amount_status,"
                             + "gross_fen,commission_fen,payable_fen,rate_snapshot,pending_reason) "
                             + "VALUES (?,1,?,?,'PENDING_VERIFICATION',0,0,0,'{}','ITR')", id(), batch, redemption);
+        }
+
+        void extraRedemptionLine(long order, CatalogIds catalog, long customer, long redemption, int count) {
+            long orderItem = orderItem(1, order, catalog, count);
+            long entitlement = id();
+            long appointment = jdbc.queryForObject(
+                    "SELECT appointment_id FROM crm_redemption WHERE tenant_id=1 AND id=?",
+                    Long.class, redemption);
+            long appointmentItem = id();
+            jdbc.update("INSERT INTO crm_entitlement (id,tenant_id,customer_id,order_item_id,project_id,granted_count,"
+                            + "available_count,version_no,status) VALUES (?,1,?,?,?,?,0,0,'AVAILABLE')",
+                    entitlement, customer, orderItem, catalog.projectId(), count);
+            jdbc.update("INSERT INTO crm_appointment_item (id,tenant_id,appointment_id,entitlement_id,project_id,planned_count) "
+                            + "VALUES (?,1,?,?,?,?)",
+                    appointmentItem, appointment, entitlement, catalog.projectId(), count);
+            jdbc.update("INSERT INTO crm_redemption_line (id,tenant_id,redemption_id,appointment_item_id,entitlement_id,project_id,count) "
+                    + "VALUES (?,1,?,?,?,?,?)", id(), redemption, appointmentItem, entitlement, catalog.projectId(), count);
+        }
+
+        long verifiedBatch(long institution, String settlementType, String periodKey, long netPayableFen,
+                           long paidFen) {
+            long batch = id();
+            jdbc.update("INSERT INTO crm_settlement_batch (id,tenant_id,institution_id,settlement_type,period_key,status,"
+                            + "amount_status,gross_fen,commission_fen,net_payable_fen,paid_fen,rule_version,verification_evidence) "
+                            + "VALUES (?,1,?,?,?,'CONFIRMED','VERIFIED',?,0,?,?,'ITR-RULE','ITR-VERIFIED')",
+                    batch, institution, settlementType, periodKey + "-" + batch, netPayableFen, netPayableFen, paidFen);
+            return batch;
+        }
+
+        void settlementLine(long batchId, long redemptionId) {
+            jdbc.update("INSERT INTO crm_settlement_line (id,tenant_id,settlement_batch_id,redemption_id,amount_status,"
+                            + "gross_fen,commission_fen,payable_fen,rate_snapshot,pending_reason) "
+                            + "VALUES (?,1,?,?,'PENDING_VERIFICATION',0,0,0,'{}','ITR')", id(), batchId, redemptionId);
         }
 
         void approvedPerformanceTarget(long staff, String role, long target) {

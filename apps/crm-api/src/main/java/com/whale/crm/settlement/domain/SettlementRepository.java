@@ -4,8 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface SettlementRepository {
-    void insertBatch(long tenantId, SettlementBatch batch);
-    Optional<SettlementBatch> findBatchByPeriod(long tenantId, long institutionId, String type, String periodKey);
+    long insertBatch(long tenantId, SettlementBatch batch);
     Optional<SettlementBatch> findBatch(long tenantId, long id);
     Optional<SettlementBatch> findBatchForUpdate(long tenantId, long id);
     List<SettlementBatch> searchBatches(long tenantId, SettlementScope scope, Long institutionId,
@@ -15,8 +14,11 @@ public interface SettlementRepository {
     void insertLine(long tenantId, long batchId, long redemptionId, String rateSnapshot);
     List<SettlementLine> findLines(long tenantId, long batchId);
     Optional<SettlementLine> findLineByRedemption(long tenantId, long redemptionId);
+    List<SettlementLine> findLinesByRedemptions(long tenantId, List<Long> redemptionIds);
+    Optional<Long> lockLineIdByRedemption(long tenantId, long redemptionId);
 
     List<SettlementRedemption> lockRedemptions(long tenantId, List<Long> redemptionIds);
+    List<Long> findActiveReversalRedemptionIds(long tenantId, List<Long> redemptionIds);
 
     int updateVerification(long tenantId, long id, long version, long grossFen, long commissionFen,
                            long netPayableFen, String ruleVersion, String verificationEvidence);

@@ -1,11 +1,18 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessageBox } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
-import type { Channel } from '../src/api/channel'
-import { listChannels } from '../src/api/channel'
+import type { Channel, ChannelFinancialChangeRequest } from '../src/api/channel'
+import {
+  createChannelFinancialChangeRequest,
+  listAllChannelFinancialChangeRequests,
+  listChannels,
+  reviewChannelFinancialChangeRequest,
+  toggleChannelStatus,
+  updateChannel,
+} from '../src/api/channel'
 import { useAuthStore } from '../src/stores/auth'
 import ChannelsView from '../src/views/ChannelsView.vue'
 
@@ -13,6 +20,11 @@ vi.mock('../src/api/channel', () => ({
   createChannel: vi.fn(),
   listChannels: vi.fn(),
   updateChannel: vi.fn(),
+  toggleChannelStatus: vi.fn(),
+  createChannelFinancialChangeRequest: vi.fn(),
+  listChannelFinancialChangeRequests: vi.fn(),
+  listAllChannelFinancialChangeRequests: vi.fn(),
+  reviewChannelFinancialChangeRequest: vi.fn(),
   listChannelOwnerOptions: vi.fn().mockResolvedValue([{ id: 8, displayName: '孙周' }]),
 }))
 
@@ -31,11 +43,11 @@ const user: AuthUser = {
 
 const wrappers: VueWrapper[] = []
 
-function mountView() {
+function mountView(customUser: AuthUser = user) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
-  auth.user = user
+  auth.user = customUser
   auth.initialized = true
   const wrapper = mount(ChannelsView, {
     global: { plugins: [ElementPlus, pinia] },
@@ -45,9 +57,14 @@ function mountView() {
   return wrapper
 }
 
+beforeEach(() => {
+  vi.mocked(listAllChannelFinancialChangeRequests).mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
+})
+
 afterEach(() => {
   while (wrappers.length) wrappers.pop()?.unmount()
   document.body.innerHTML = ''
+  vi.restoreAllMocks()
   vi.clearAllMocks()
 })
 
@@ -155,5 +172,202 @@ describe('ChannelsView 真实渠道主数据', () => {
     expect(wrapper.text()).not.toContain('博主001')
     expect(wrapper.findAll('.el-table__row')).toHaveLength(0)
     expect(wrapper.text()).toContain('暂无渠道')
+  })
+
+  it('暂停渠道调用 POST /status 而不是 PATCH updateChannel', async () => {
+    const activeChannel: Channel = {
+      id: 91,
+      channelNo: 'CH-PAUSE',
+      name: '待暂停渠道',
+      channelType: 'BLOGGER',
+      platformCode: 'XHS',
+      commissionPercent: 12.5,
+      businessOwnerUserId: 8,
+      businessOwnerName: '孙周',
+      realName: '测试',
+      contactPhone: '138****0000',
+      contactPhoneConfigured: true,
+      idCardNumber: '110105********002X',
+      idCardConfigured: true,
+      settlementMethod: 'MONTHLY',
+      cooperationStartDate: '2026-01-01',
+      cooperationEndDate: '2026-12-31',
+      paymentAccountName: '张*',
+      paymentAccountNo: '****0001',
+      paymentAccountConfigured: true,
+      paymentBankName: '招商银行',
+      status: 'ACTIVE',
+      remarks: null,
+      createdAt: '2026-10-01T00:00:00Z',
+      version: 4,
+    }
+    vi.mocked(listChannels).mockResolvedValue({ items: [activeChannel], total: 1, page: 1, size: 20 })
+    vi.mocked(toggleChannelStatus).mockResolvedValue({ ...activeChannel, status: 'INACTIVE', version: 5 })
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="channel-pause-91"]').trigger('click')
+    await flushPromises()
+
+    expect(toggleChannelStatus).toHaveBeenCalledWith(91, {
+      status: 'INACTIVE',
+      version: 4,
+      reason: '运营操作暂停合作',
+    })
+    expect(updateChannel).not.toHaveBeenCalled()
+  })
+
+  it('财务审批受 channel:approve_finance 与 SoD 限制，且可提交财务变更申请', async () => {
+    const channel: Channel = {
+      id: 92,
+      channelNo: 'CH-FIN',
+      name: '调佣渠道',
+      channelType: 'BLOGGER',
+      platformCode: 'XHS',
+      commissionPercent: 10,
+      businessOwnerUserId: 8,
+      businessOwnerName: '孙周',
+      realName: null,
+      contactPhone: null,
+      contactPhoneConfigured: false,
+      idCardNumber: null,
+      idCardConfigured: false,
+      settlementMethod: 'MONTHLY',
+      cooperationStartDate: null,
+      cooperationEndDate: null,
+      paymentAccountName: null,
+      paymentAccountNo: null,
+      paymentAccountConfigured: false,
+      paymentBankName: null,
+      status: 'ACTIVE',
+      remarks: null,
+      createdAt: '2026-10-01T00:00:00Z',
+      version: 2,
+    }
+    const selfReq: ChannelFinancialChangeRequest = {
+      id: 701,
+      channelId: 92,
+      channelName: '调佣渠道',
+      status: 'PENDING_REVIEW',
+      requestedBy: 99,
+      requestedAt: '2026-10-25T01:00:00Z',
+      reason: '本人申请调佣',
+      baseVersion: 2,
+      version: 0,
+      beforeMasked: { commissionPercent: 10 },
+      afterMasked: { commissionPercent: 15 },
+    }
+    const otherReq: ChannelFinancialChangeRequest = { ...selfReq, id: 702, requestedBy: 8 }
+    vi.mocked(listChannels).mockResolvedValue({ items: [channel], total: 1, page: 1, size: 20 })
+    vi.mocked(listAllChannelFinancialChangeRequests).mockResolvedValue({
+      items: [selfReq, otherReq],
+      total: 2,
+      page: 1,
+      size: 20,
+    })
+    vi.mocked(createChannelFinancialChangeRequest).mockResolvedValue(otherReq)
+    vi.mocked(reviewChannelFinancialChangeRequest).mockResolvedValue({ ...otherReq, status: 'APPROVED', version: 1 })
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: '核对无误，同意', action: 'confirm' } as never)
+
+    const financeUser: AuthUser = {
+      userId: 99,
+      username: 'finance1',
+      displayName: '财务专员',
+      userType: 'EMPLOYEE',
+      roles: ['FINANCE'],
+      permissions: ['channel:read', 'channel:write', 'channel:approve_finance'],
+    }
+    const wrapper = mountView(financeUser)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="channel-finance-change-92"]').trigger('click')
+    await flushPromises()
+    const bankRoot = document.body.querySelector<HTMLElement>('[data-testid="finance-bank"]')!
+    const bankInput = bankRoot.matches('input') ? bankRoot as HTMLInputElement : bankRoot.querySelector<HTMLInputElement>('input')!
+    bankInput.value = '工商银行'
+    bankInput.dispatchEvent(new Event('input', { bubbles: true }))
+    const reasonRoot = document.body.querySelector<HTMLElement>('[data-testid="finance-reason"]')!
+    const reasonInput = reasonRoot.matches('textarea') ? reasonRoot as HTMLTextAreaElement : reasonRoot.querySelector<HTMLTextAreaElement>('textarea')!
+    reasonInput.value = '更换对公结算行'
+    reasonInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[data-testid="finance-submit"]')!.click()
+    await flushPromises()
+
+    expect(createChannelFinancialChangeRequest).toHaveBeenCalledWith(
+      92,
+      { baseVersion: 2, paymentBankName: '工商银行', reason: '更换对公结算行' },
+      expect.any(String),
+    )
+
+    // 切换到审批标签页：本人提交的 #701 不可自审，他人提交的 #702 可审批
+    const tabs = wrapper.findAll('.el-tabs__item')
+    await tabs[1]!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="channel-change-approve-701"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('本人不可自审')
+    await wrapper.get('[data-testid="channel-change-approve-702"]').trigger('click')
+    await flushPromises()
+
+    expect(reviewChannelFinancialChangeRequest).toHaveBeenCalledWith(
+      702,
+      { decision: 'APPROVE', version: 0, comment: '核对无误，同意' },
+      expect.any(String),
+    )
+  })
+
+  it('财务审批失败后以相同参数重试时沿用同一个 Idempotency-Key', async () => {
+    const req: ChannelFinancialChangeRequest = {
+      id: 705,
+      channelId: 92,
+      channelName: '调佣渠道',
+      status: 'PENDING_REVIEW',
+      requestedBy: 8,
+      requestedAt: '2026-10-25T01:00:00Z',
+      reason: '更换收款行',
+      baseVersion: 2,
+      version: 0,
+      beforeMasked: { paymentBankName: '旧银行' },
+      afterMasked: { paymentBankName: '新银行' },
+    }
+    vi.mocked(listChannels).mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
+    vi.mocked(listAllChannelFinancialChangeRequests).mockResolvedValue({
+      items: [req],
+      total: 1,
+      page: 1,
+      size: 20,
+    })
+    vi.mocked(reviewChannelFinancialChangeRequest)
+      .mockRejectedValueOnce(new Error('网络超时'))
+      .mockResolvedValueOnce({ ...req, status: 'APPROVED', version: 1 })
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: '同意变更', action: 'confirm' } as never)
+
+    const financeUser: AuthUser = {
+      userId: 99,
+      username: 'finance1',
+      displayName: '财务专员',
+      userType: 'EMPLOYEE',
+      roles: ['FINANCE'],
+      permissions: ['channel:read', 'channel:write', 'channel:approve_finance'],
+    }
+    const wrapper = mountView(financeUser)
+    await flushPromises()
+
+    const tabs = wrapper.findAll('.el-tabs__item')
+    await tabs[1]!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="channel-change-approve-705"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="channel-change-approve-705"]').trigger('click')
+    await flushPromises()
+
+    expect(reviewChannelFinancialChangeRequest).toHaveBeenCalledTimes(2)
+    const firstKey = vi.mocked(reviewChannelFinancialChangeRequest).mock.calls[0]?.[2]
+    const secondKey = vi.mocked(reviewChannelFinancialChangeRequest).mock.calls[1]?.[2]
+    expect(firstKey).toBeTruthy()
+    expect(secondKey).toBe(firstKey)
   })
 })

@@ -4,13 +4,16 @@ import datetime
 import hashlib
 import http.cookiejar
 import json
-import shlex
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from captcha_solver import login_with_captcha
 
 
 class ApiFailure(Exception):
@@ -28,7 +31,7 @@ class Client:
         self.user = None
 
     def login(self, username, password):
-        self.user = self.api('POST', '/auth/login', {'username': username, 'password': password}, csrf=False)
+        self.user = login_with_captcha(self.http, self.base_url, username, password)
         return self.user
 
     def api(self, method, path, body=None, key=None, csrf=True):
@@ -145,22 +148,20 @@ def sql_text(value):
 def map_operator(compose_dir, institution_id, username):
     sql = ("INSERT INTO crm_institution_user (tenant_id,institution_id,user_id,institution_role,status) "
            f"SELECT 1,{int(institution_id)},id,'OPERATOR','ACTIVE' FROM sys_user "
-           f"WHERE tenant_id=1 AND username={sql_text(username)}")
-    command = 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" medical_crm -e ' + shlex.quote(sql)
+           f"WHERE tenant_id=1 AND username={sql_text(username)};\n")
     result = subprocess.run(['docker', 'compose', '--env-file', '.env', '-f', 'compose.yml',
-                             'exec', '-T', 'mysql', 'sh', '-c', command],
-                            cwd=compose_dir, capture_output=True, text=True)
+                             'exec', '-T', 'mysql', 'sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot medical_crm'],
+                            cwd=compose_dir, input=sql, capture_output=True, text=True)
     if result.returncode:
         raise AssertionError(f'机构操作员测试夹具初始化失败：{result.stderr[-300:]}')
 
 
 def map_employee_scope(compose_dir, user_id, resource, scope_type):
     sql = ("INSERT INTO sys_data_scope (tenant_id,user_id,resource,scope_type,scope_ref_id) "
-           f"SELECT 1,{int(user_id)},{sql_text(resource)},{sql_text(scope_type)},NULL")
-    command = 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" medical_crm -e ' + shlex.quote(sql)
+           f"SELECT 1,{int(user_id)},{sql_text(resource)},{sql_text(scope_type)},NULL;\n")
     result = subprocess.run(['docker', 'compose', '--env-file', '.env', '-f', 'compose.yml',
-                             'exec', '-T', 'mysql', 'sh', '-c', command],
-                            cwd=compose_dir, capture_output=True, text=True)
+                             'exec', '-T', 'mysql', 'sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot medical_crm'],
+                            cwd=compose_dir, input=sql, capture_output=True, text=True)
     if result.returncode:
         raise AssertionError(f'员工数据范围测试夹具初始化失败：{result.stderr[-300:]}')
 

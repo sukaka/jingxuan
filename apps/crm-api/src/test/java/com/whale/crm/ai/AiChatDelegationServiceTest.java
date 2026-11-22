@@ -258,6 +258,36 @@ class AiChatDelegationServiceTest {
         verify(workerClient, never()).extract(anyLong(), anyLong(), any(), any(), any(), any());
     }
 
+    @Test
+    void retryableSendReleasesFenceForRetryWhileSentAndTerminalFinishSealFence() {
+        when(sender.send(any())).thenReturn(
+                new WecomSendResult(WecomSendResult.Status.RETRYABLE, "OFFICIAL", null, "TRANSIENT_429"),
+                new WecomSendResult(WecomSendResult.Status.SENT, "OFFICIAL", "msg-ok", null));
+        when(repository.finishSend(eq(1L), eq(11L), eq(3L), eq("worker-a"), eq("RETRY_SEND"),
+                eq("TRANSIENT_429"), eq("OFFICIAL"), isNull(), any(), any())).thenReturn(1);
+        when(repository.finishSend(eq(1L), eq(11L), eq(3L), eq("worker-a"), eq("SENT"),
+                isNull(), eq("OFFICIAL"), eq("msg-ok"), isNull(), any())).thenReturn(1);
+
+        service.send(1L, 11L, "worker-a");
+        verify(sendFenceService).releaseForRetry(any());
+        verify(sendFenceService, never()).finish(any());
+
+        service.send(1L, 11L, "worker-a");
+        verify(sendFenceService).finish(any());
+    }
+
+    @Test
+    void receiveSkipsRoomMessageWithoutInsertingNotNullDelegationRun() {
+        WecomMessage room = new WecomMessage(92L, "corp", "room-msg-1", 2L, null, "sender-ext", null,
+                "wr-room-1", "TEXT", "CUSTOMER", now, "obj-room", "hash-room", "GRANTED", "consent-ref",
+                "STORED", null, null, "GRANTED", 0L, "ROOM", "sender-ext", null, 0L, "MOCK_ARCHIVE");
+        when(repository.findRunByMessage(1L, 92L)).thenReturn(Optional.empty());
+        when(wecomRepository.findMessageById(1L, 92L)).thenReturn(Optional.of(room));
+
+        assertThat(service.receive(1L, 92L)).isNull();
+        verify(repository, never()).insertRun(any());
+    }
+
     private AiChatDelegationPolicy policy(boolean emergencyStopped) {
         return new AiChatDelegationPolicy(1L, true, emergencyStopped, 60, 10,
                 LocalTime.of(0, 0), LocalTime.of(23, 59), "Asia/Shanghai", List.of(), 2,

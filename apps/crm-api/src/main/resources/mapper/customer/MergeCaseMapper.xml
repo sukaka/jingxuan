@@ -27,6 +27,13 @@
     WHERE tenant_id = #{tenantId} AND id = #{id}
   </select>
 
+  <select id="selectByIdForUpdate" resultMap="MergeCaseMap">
+    SELECT <include refid="caseColumns"/>
+    FROM crm_merge_case
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+    FOR UPDATE
+  </select>
+
   <select id="countPair" resultType="int">
     SELECT COUNT(*) FROM crm_merge_case
     WHERE tenant_id = #{tenantId} AND primary_customer_id = #{primaryCustomerId}

@@ -18,7 +18,7 @@ public class MockRefundProviderAdapter implements RefundProviderAdapter {
 
     public MockRefundProviderAdapter(
             @Value("${app.refunds.mock.enabled:false}") boolean enabled,
-            @Value("${app.refunds.mock.secret:dev-only-refund-mock-secret}") String secret) {
+            @Value("${app.refunds.mock.secret:}") String secret) {
         this.enabled = enabled;
         this.secret = secret;
     }
@@ -30,8 +30,10 @@ public class MockRefundProviderAdapter implements RefundProviderAdapter {
 
     @Override
     public boolean verify(String rawBody, String signature, Long timestamp) {
-        if (!enabled || signature == null || signature.isBlank() || timestamp == null
-                || Math.abs(Instant.now().getEpochSecond() - timestamp) > WINDOW_SECONDS) {
+        long now = Instant.now().getEpochSecond();
+        if (!enabled || secret == null || secret.isBlank() || rawBody == null || rawBody.isBlank()
+                || signature == null || signature.isBlank() || timestamp == null
+                || timestamp < now - WINDOW_SECONDS || timestamp > now + WINDOW_SECONDS) {
             return false;
         }
         String expected = sign(rawBody, timestamp);
@@ -40,6 +42,12 @@ public class MockRefundProviderAdapter implements RefundProviderAdapter {
     }
 
     public String sign(String rawBody, long timestamp) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("Mock退款回调密钥未配置");
+        }
+        if (rawBody == null) {
+            throw new IllegalArgumentException("回调报文不能为空");
+        }
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));

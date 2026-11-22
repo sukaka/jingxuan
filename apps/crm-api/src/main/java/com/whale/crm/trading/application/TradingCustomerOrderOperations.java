@@ -40,7 +40,7 @@ public class TradingCustomerOrderOperations implements CustomerOrderOperations {
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public com.whale.crm.customer.application.MergeOrderResourceSnapshot snapshotResources(long tenantId, long customerId) {
         return new com.whale.crm.customer.application.MergeOrderResourceSnapshot(
                 repository.findOrderIdsByCustomer(tenantId, customerId),
@@ -50,18 +50,22 @@ public class TradingCustomerOrderOperations implements CustomerOrderOperations {
     @Override
     @Transactional
     public void lockResources(long tenantId, java.util.List<Long> orderIds, java.util.List<Long> entitlementIds) {
-        orderIds.stream().sorted().forEach(id -> repository.findOrderForUpdate(tenantId, id));
-        entitlementIds.stream().sorted().forEach(id -> repository.findEntitlementForUpdate(tenantId, id));
+        if (orderIds != null && !orderIds.isEmpty()) {
+            repository.findOrdersForUpdate(tenantId, orderIds);
+        }
+        if (entitlementIds != null && !entitlementIds.isEmpty()) {
+            repository.findEntitlementsForUpdate(tenantId, entitlementIds);
+        }
     }
 
     @Override
     @Transactional
     public void reassignSpecific(long tenantId, java.util.List<Long> orderIds, java.util.List<Long> entitlementIds,
                                  long fromCustomerId, long toCustomerId) {
-        if (!orderIds.isEmpty()) {
+        if (orderIds != null && !orderIds.isEmpty()) {
             repository.reassignSpecificOrders(tenantId, orderIds, fromCustomerId, toCustomerId);
         }
-        if (!entitlementIds.isEmpty()) {
+        if (entitlementIds != null && !entitlementIds.isEmpty()) {
             repository.reassignSpecificEntitlements(tenantId, entitlementIds, fromCustomerId, toCustomerId);
         }
     }

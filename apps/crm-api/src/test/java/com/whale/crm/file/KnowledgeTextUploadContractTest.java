@@ -62,4 +62,48 @@ class KnowledgeTextUploadContractTest {
             Files.deleteIfExists(invalid);
         }
     }
+
+    @Test
+    void declaredPlainTextWithCommasNewlinesQuotesAndMarkdownPrefixesIsNotRejectedAsCsvOrMarkdown() throws Exception {
+        Path file = Files.createTempFile("knowledge-plain-edge-", ".txt");
+        try {
+            Files.writeString(file, "- item 1\n* item 2, \"quoted\" and \"unclosed\r\n#1 note > info [ref]");
+            FileContentInspector.Inspection inspection = inspector.inspect(file, true, "text/plain");
+            assertThat(inspection.mimeType()).isEqualTo("text/plain");
+
+            Files.writeString(file, "#1 heading-like prefix, a, b\n\"unclosed quote");
+            assertThat(inspector.inspect(file, true, "text/plain").mimeType()).isEqualTo("text/plain");
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void declaredPlainTextRejectsWhitespaceOnlyControlCharsAndNonMaterialCommas() throws Exception {
+        Path file = Files.createTempFile("knowledge-plain-reject-", ".txt");
+        try {
+            Files.writeString(file, "   \r\n\t ");
+            assertThatThrownBy(() -> inspector.inspect(file, true, "text/plain"))
+                    .isInstanceOfSatisfying(FileContentInspector.FileContentException.class,
+                            error -> assertThat(error.code()).isEqualTo("UNSUPPORTED_CONTENT"));
+
+            Files.writeString(file, "hello\u0007world");
+            assertThatThrownBy(() -> inspector.inspect(file, true, "text/plain"))
+                    .isInstanceOfSatisfying(FileContentInspector.FileContentException.class,
+                            error -> assertThat(error.code()).isEqualTo("UNSUPPORTED_CONTENT"));
+
+            Files.writeString(file, "a,b\nc,d");
+            assertThatThrownBy(() -> inspector.inspect(file, false, "text/plain"))
+                    .isInstanceOfSatisfying(FileContentInspector.FileContentException.class,
+                            error -> assertThat(error.code()).isEqualTo("UNSUPPORTED_CONTENT"));
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void uploadInitRequestAcceptsMerchantResourceClassification() {
+        assertThat(validator.validate(new UploadInitRequest("doctor.png", "image/png", 128L,
+                "a".repeat(64), "MERCHANT_RESOURCE", 1L))).isEmpty();
+    }
 }

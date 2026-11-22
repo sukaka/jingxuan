@@ -196,7 +196,7 @@ public class WecomArchiveService {
                     source.externalUserid(), source.staffUserId(), source.conversationId(), source.messageType(),
                     source.senderType(), source.sentAt(), objectKey, sha256(encrypted), consent, evidence, status,
                     null, null, null, null, source.conversationType(), source.senderWecomUserid(),
-                    source.senderStaffUserId(), rosterVersion);
+                    source.senderStaffUserId(), rosterVersion, archiveScope);
             repository.insertMessage(tenantId, message);
             WecomMessage persisted = repository.findMessage(tenantId, corpId, source.msgId()).orElseThrow();
             Map<String, Object> payload = new LinkedHashMap<>();
@@ -274,7 +274,8 @@ public class WecomArchiveService {
 
     private void recordGap(long tenantId, String corpId, String archiveScope, String type, long seq, String detail) {
         repository.recordGap(tenantId, corpId, archiveScope, type, seq, seq, detail, Instant.now());
-        outboxService.append(tenantId, "wecom.archive.gap.v1:" + corpId + ":" + type + ":" + seq,
+        outboxService.append(tenantId,
+                "wecom.archive.gap.v1:" + corpId + ":" + archiveScope + ":" + type + ":" + seq,
                 "wecom.archive.gap.v1", "wecom", corpId,
                 Map.of("corpId", corpId, "gapType", type, "fromSeq", seq));
     }
@@ -289,7 +290,8 @@ public class WecomArchiveService {
                         cursor.lastSeq(), null, detail, now);
                 updateCursor(user.tenantId(), cursor, cursor.lastSeq(), cursor.lastSuccessAt(), now,
                         "ERROR", cursor.consecutiveFailures() + 1, detail, true, detail);
-                outboxService.append(user.tenantId(), "wecom.archive.gap.v1:" + corpId + ":COLLECTOR_ERROR:" + cursor.lastSeq(),
+                outboxService.append(user.tenantId(),
+                        "wecom.archive.gap.v1:" + corpId + ":" + archiveScope + ":COLLECTOR_ERROR:" + cursor.lastSeq(),
                         "wecom.archive.gap.v1", "wecom", corpId,
                         Map.of("corpId", corpId, "gapType", "COLLECTOR_ERROR", "fromSeq", cursor.lastSeq()));
                 auditService.record(user.tenantId(), user.userId(), "WECOM_ARCHIVE_FAILED", "WECOM_CURSOR",

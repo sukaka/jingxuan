@@ -4,11 +4,16 @@ import type { AuthUser } from '../src/api/auth'
 import { fetchMe, login, logout } from '../src/api/auth'
 import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
+import { resetReferenceNames } from '../src/views/references'
 
 vi.mock('../src/api/auth', () => ({
   login: vi.fn(),
   logout: vi.fn(),
   fetchMe: vi.fn(),
+}))
+
+vi.mock('../src/views/references', () => ({
+  resetReferenceNames: vi.fn(),
 }))
 
 const adminUser: AuthUser = {
@@ -25,6 +30,7 @@ beforeEach(() => {
   vi.mocked(login).mockReset()
   vi.mocked(logout).mockReset()
   vi.mocked(fetchMe).mockReset()
+  vi.mocked(resetReferenceNames).mockReset()
 })
 
 describe('auth store - 登录', () => {
@@ -47,6 +53,22 @@ describe('auth store - 登录', () => {
     expect(auth.hasPermission('order:write')).toBe(false)
     expect(auth.hasRole('ADMIN')).toBe(true)
     expect(auth.hasRole('MANAGER')).toBe(false)
+    expect(resetReferenceNames).toHaveBeenCalledTimes(1)
+  })
+
+  it('仅在传入非空 tenantCode 时附带租户编码', async () => {
+    vi.mocked(login).mockResolvedValue(adminUser)
+    const auth = useAuthStore()
+
+    await auth.login('admin', 'Dev@12345', 'captcha-test', '14', '  tenant-b  ')
+
+    expect(login).toHaveBeenCalledWith({
+      username: 'admin',
+      password: 'Dev@12345',
+      captchaId: 'captcha-test',
+      captchaAnswer: '14',
+      tenantCode: 'tenant-b',
+    })
   })
 
   it('机构角色按机构与角色代码校验，不使用全局角色或用户名替代', async () => {
@@ -90,6 +112,7 @@ describe('auth store - 登出', () => {
     expect(logout).toHaveBeenCalledTimes(1)
     expect(auth.user).toBeNull()
     expect(auth.isLoggedIn).toBe(false)
+    expect(resetReferenceNames).toHaveBeenCalledTimes(2)
   })
 
   it('后端不可达时登出仍清空本地状态', async () => {
@@ -127,6 +150,7 @@ describe('auth store - 会话恢复(fetchMe)', () => {
     expect(auth.user).toBeNull()
     expect(auth.isLoggedIn).toBe(false)
     expect(auth.initialized).toBe(true)
+    expect(resetReferenceNames).toHaveBeenCalledTimes(1)
   })
 
   it('网络失败同样视为未登录,不抛给路由守卫', async () => {

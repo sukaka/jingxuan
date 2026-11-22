@@ -174,7 +174,10 @@ const versionForEdit = ref<PackageVersionSnapshot | null>(null)
 const snapshotVisible = ref(false)
 const snapshot = ref<PackageVersionSnapshot | null>(null)
 
-function openVersionCreate() {
+function openVersionCreate(packageId?: number) {
+  if (typeof packageId === 'number') {
+    selectedPackageId.value = packageId
+  }
   versionForEdit.value = null
   versionFormVisible.value = true
 }
@@ -249,7 +252,7 @@ onMounted(() => {
 <template>
   <div class="proto-page">
     <PageHeader title="产品与套餐管理" description="套餐和子项目均可维护；已有销售的套餐继续使用版本化/下架机制">
-      <template #actions><el-button v-if="canWrite" @click="openProjectDialog()">＋ 新增子项目</el-button><el-button v-if="canWrite" type="primary" @click="openVersionCreate">＋ 新增套餐规格</el-button></template>
+      <template #actions><el-button v-if="canWrite" @click="openProjectDialog()">＋ 新增子项目</el-button><el-button v-if="canWrite" type="primary" @click="openVersionCreate()">＋ 新增套餐规格</el-button></template>
     </PageHeader>
     <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
     <PageCard title="组合套餐 / 销售规格" subtitle="直接展示 SKU 独立售价；套餐价不要求等于单品参考价之和，分组规则在版本快照中维护">
@@ -261,7 +264,7 @@ onMounted(() => {
             <template #default="{row}">
               <div v-for="sku in packageSpecs(row.id)" :key="sku.id" class="package-spec">
                 <div class="package-spec-line"><strong>{{ sku.specName }}</strong><span class="package-price">¥{{ fenToYuan(sku.salePriceFen) }}</span></div>
-                <div class="proto-subcell">{{ sku.selectionMode === 'CHOOSE_N' ? '从候选子项目中选择，不等于使用次数；按版本分组规则校验' : skuStatusLabel(sku.status) }}</div>
+                <div class="proto-subcell">{{ sku.selectionMode === 'CHOOSE_N' ? '从候选子项目中选择，不等于使用次数；按版本分组规则校验' : sku.selectionMode === 'USE_N' ? 'Q01 待确认（USE_N 不可发放权益）' : skuStatusLabel(sku.status) }}</div>
               </div>
               <span v-if="salesSpecsLoaded && packageSpecs(row.id).length === 0" class="proto-subcell">暂未配置销售规格</span>
               <span v-else-if="!salesSpecsLoaded" class="proto-subcell">销售规格加载失败</span>
@@ -269,7 +272,7 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="参与机构" min-width="140"><template #default="{row}"><el-button text @click.stop="openPackageDetails(row)">查看版本机构</el-button></template></el-table-column>
           <el-table-column label="状态" width="90"><template #default="{row}"><StatusPill :text="row.status==='ACTIVE'?'上架中':'已下架'" :tone="row.status==='ACTIVE'?'success':'dark'" /></template></el-table-column>
-          <el-table-column label="操作" width="310" fixed="right"><template #default="{row}"><el-button text @click.stop="openPackageDialog(row)">修改</el-button><el-button v-if="canWrite && versions.length && row.id===selectedPackageId && versions[0].status==='DRAFT'" text @click.stop="openVersionEdit(versions[0])">编辑版本</el-button><el-button v-if="canWrite && versions.length && row.id===selectedPackageId && versions[0].status==='DRAFT'" text @click.stop="activateVersion(versions[0])">激活</el-button><el-button v-if="canWrite" text @click.stop="openVersionCreate">新增规格</el-button><el-button v-if="canWrite && versions.length && row.id===selectedPackageId && versions[0].status==='ACTIVE'" text @click.stop="archiveVersion(versions[0])">下架</el-button></template></el-table-column>
+          <el-table-column label="操作" width="310" fixed="right"><template #default="{row}"><el-button v-if="canWrite" text @click.stop="openPackageDialog(row)">修改</el-button><el-button v-if="canWrite && versions.length && row.id===selectedPackageId && versions[0].status==='DRAFT'" text @click.stop="openVersionEdit(versions[0])">编辑版本</el-button><el-button v-if="canWrite && versions.length && row.id===selectedPackageId && versions[0].status==='DRAFT'" text @click.stop="activateVersion(versions[0])">激活</el-button><el-button v-if="canWrite" text :data-testid="`package-add-version-${row.id}`" @click.stop="openVersionCreate(row.id)">新增规格</el-button><el-button v-if="canWrite && versions.length && row.id===selectedPackageId && versions[0].status==='ACTIVE'" text @click.stop="archiveVersion(versions[0])">下架</el-button></template></el-table-column>
         </app-table>
       </div>
     </PageCard>

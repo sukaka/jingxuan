@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import type { VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PerformanceReport, PerformanceRole, ReportContext } from '../src/api/report'
@@ -160,6 +161,25 @@ describe('PerformanceView 管家与商务业绩', () => {
     expect(wrapper.text()).toContain('报表服务暂不可用')
     expect(wrapper.text()).not.toContain('测试商务')
     expect(wrapper.find('[data-testid="performance-retry"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('切换订单来源/收款方和点击查询按钮确实触发 load() 重查', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    vi.mocked(getPerformanceReport).mockClear()
+
+    const sourceSelect = wrapper.getComponent('.report-source') as VueWrapper
+    sourceSelect.vm.$emit('update:modelValue', 'MANUAL')
+    sourceSelect.vm.$emit('change', 'MANUAL')
+    await flushPromises()
+    expect(getPerformanceReport).toHaveBeenCalledWith(expect.objectContaining({ sourceSystem: 'MANUAL', page: 1 }))
+
+    vi.mocked(getPerformanceReport).mockClear()
+    const queryBtn = wrapper.findAll('button').find((b) => b.text() === '查询')!
+    await queryBtn.trigger('click')
+    await flushPromises()
+    expect(getPerformanceReport).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 })

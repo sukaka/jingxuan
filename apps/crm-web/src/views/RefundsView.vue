@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { Refund, RefundDetail } from '../api/refund'
@@ -150,13 +150,32 @@ function successFromDetail() {
   }
 }
 
-onMounted(() => {
-  const rawOrderId = Array.isArray(route.query.orderId) ? route.query.orderId[0] : route.query.orderId
+const ALLOWED_REFUND_STATUSES = new Set(['REQUESTED', 'APPROVED', 'REJECTED', 'PROCESSING', 'SUCCEEDED', 'FAILED'])
+
+function applyRouteQuery() {
+  const q = route?.query
+  if (!q) return
+  const rawOrderId = Array.isArray(q.orderId) ? q.orderId[0] : q.orderId
   const orderId = rawOrderId ? Number(rawOrderId) : undefined
   const validOrderId = orderId && Number.isSafeInteger(orderId) && orderId > 0 ? orderId : undefined
   query.orderId = validOrderId
+
+  const rawStatus = Array.isArray(q.status) ? q.status[0] : q.status
+  if (typeof rawStatus === 'string' && ALLOWED_REFUND_STATUSES.has(rawStatus)) {
+    query.status = rawStatus
+  }
+}
+
+watch(() => route?.query, () => {
+  applyRouteQuery()
+  query.page = 1
   void load()
-  if (route.query.create === '1') openCreate(validOrderId)
+})
+
+onMounted(() => {
+  applyRouteQuery()
+  void load()
+  if (route?.query?.create === '1') openCreate(query.orderId)
 })
 </script>
 

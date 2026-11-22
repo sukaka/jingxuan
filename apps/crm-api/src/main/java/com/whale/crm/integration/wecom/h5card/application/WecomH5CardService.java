@@ -110,7 +110,7 @@ public class WecomH5CardService {
         WecomH5Card card = repository.findByShareKey(shareKey).filter(item -> "ACTIVE".equals(item.status()))
                 .orElseThrow(this::notFound);
         return new PublicWecomH5CardResponse(card.projectNameSnapshot(), card.title(), card.summary(), card.content(),
-                publicOrigin() + "/h5-card-cover.svg");
+                publicOrigin() + "/h5-card-cover.png");
     }
 
     @Transactional
@@ -225,7 +225,7 @@ public class WecomH5CardService {
         String origin = publicOrigin();
         return new WecomH5CardResponse(card.id(), card.customerId(), card.projectId(), card.projectNameSnapshot(),
                 card.title(), card.summary(), card.content(), origin + "/h5/cards/" + card.shareKey(),
-                origin + "/h5-card-cover.svg", card.status(), card.createdAt(), card.version());
+                origin + "/h5-card-cover.png", card.status(), card.createdAt(), card.version());
     }
 
     private WecomH5CardUsageResponse usageView(WecomH5CardUsage usage) {

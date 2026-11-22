@@ -34,15 +34,23 @@ class MockYouzanAdapterTest {
         assertThat(adapter.verifyWebhook(raw + " ", new YouzanSignature(signature, timestamp)).valid()).isFalse();
         long expiredAt = timestamp - 301;
         assertThat(adapter.verifyWebhook(raw, new YouzanSignature(adapter.signMock(raw, expiredAt), expiredAt)).valid()).isFalse();
+        YouzanVerification minValue = adapter.verifyWebhook(raw,
+                new YouzanSignature(adapter.signMock(raw, Long.MIN_VALUE), Long.MIN_VALUE));
+        assertThat(minValue.valid()).isFalse();
+        assertThat(minValue.errorCode()).isEqualTo("MOCK_SIGNATURE_EXPIRED");
+        YouzanVerification futureExpired = adapter.verifyWebhook(raw,
+                new YouzanSignature(adapter.signMock(raw, timestamp + 301), timestamp + 301));
+        assertThat(futureExpired.valid()).isFalse();
+        assertThat(futureExpired.errorCode()).isEqualTo("MOCK_SIGNATURE_EXPIRED");
     }
 
     @Test
     void mockPaginationIsDeterministicAndContainsNoRealEndpoint() {
-        YouzanPullPage first = adapter.pullOrders("MOCK-SHOP-001", "0", 1);
+        YouzanPullPage first = adapter.pullOrders(1L, "MOCK-SHOP-001", "0", 1);
         assertThat(first.events()).hasSize(1);
         assertThat(first.nextCursor()).isEqualTo("1");
         assertThat(first.hasMore()).isTrue();
-        YouzanPullPage second = adapter.pullOrders("MOCK-SHOP-001", first.nextCursor(), 1);
+        YouzanPullPage second = adapter.pullOrders(1L, "MOCK-SHOP-001", first.nextCursor(), 1);
         assertThat(second.events()).hasSize(1);
         assertThat(second.events().get(0).items().get(0).externalSkuId()).isEqualTo("YZ-SKU-MISSING");
         assertThat(second.hasMore()).isFalse();
@@ -54,7 +62,7 @@ class MockYouzanAdapterTest {
         DisabledYouzanAdapter disabled = new DisabledYouzanAdapter();
         assertThat(disabled.name()).isEqualTo("REAL_YOUZAN_DISABLED");
         assertThat(disabled.verifyWebhook("{}", new YouzanSignature("x", Instant.now().getEpochSecond())).valid()).isFalse();
-        assertThatThrownBy(() -> disabled.pullOrders("MOCK-SHOP-001", "0", 1))
+        assertThatThrownBy(() -> disabled.pullOrders(1L, "MOCK-SHOP-001", "0", 1))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("FEATURE_REAL_YOUZAN");
     }

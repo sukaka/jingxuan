@@ -15,10 +15,15 @@ public interface LoginSessionRepository {
      */
     Optional<LoginSession> findByTokenHash(String tokenHash);
 
-    int revokeByTokenHash(String tokenHash, Instant revokedAt);
+    int revokeByTokenHash(long tenantId, long userId, String tokenHash, Instant revokedAt);
 
     /**
      * 吊销用户全部有效会话（停用账号/回收权限时用）。
      */
     int revokeAllByUserId(long tenantId, long userId, Instant revokedAt);
+
+    /**
+     * 分批清理过期且超过保留窗口的历史会话记录，控制单批锁行上限。
+     */
+    int deleteExpiredBefore(Instant cutoff, int limit);
 }

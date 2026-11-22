@@ -123,7 +123,7 @@ public class InstitutionMerchantResourceService {
         InstitutionMerchantResource input = new InstitutionMerchantResource(null, UlidCreator.getUlid().toString(),
                 institutionId, request.resourceType(), normalize(request.title()), normalize(request.subtitle()),
                 normalize(request.description()), request.fileId(), "PUBLISHED", user.userId(), null, null, null, null);
-        repository.insert(input);
+        repository.insert(tenantId, input);
         InstitutionMerchantResource created = repository.findByResourceNo(tenantId, input.resourceNo()).orElseThrow();
         auditService.record(tenantId, user.userId(), "INSTITUTION_MERCHANT_RESOURCE_CREATE",
                 "INSTITUTION_MERCHANT_RESOURCE", Long.toString(created.id()), null, created, null);

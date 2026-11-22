@@ -11,7 +11,7 @@ export function catalogErrorText(error: unknown): string {
 
 export function selectionModeLabel(mode: string | null | undefined): string {
   if (!mode) return '-'
-  return mode === 'USE_N' ? '固定次数' : mode === 'CHOOSE_N' ? '选择子项目' : mode === 'FIXED' ? '固定组合' : '未知选择模式'
+  return mode === 'USE_N' ? '固定次数（Q01 待确认）' : mode === 'CHOOSE_N' ? '选择子项目' : mode === 'FIXED' ? '固定组合' : '未知选择模式'
 }
 
 export function versionStatusLabel(status: string | null | undefined): string {

@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 public interface IdempotencyMapper {
 
     IdempotencyRecord selectByKey(@Param("tenantId") long tenantId, @Param("scopeCode") String scopeCode,
+                                  @Param("actorUserId") long actorUserId,
                                   @Param("idempotencyKey") String idempotencyKey);
 
     int insertRecord(IdempotencyRecord record);

@@ -63,7 +63,7 @@ function makeSku(id: number, salePriceFen = 19900): Sku {
     packageId: 101,
     packageName: `测试套餐 ${id}`,
     versionNo: 1,
-    selectionMode: 'USE_N',
+    selectionMode: 'FIXED',
     specName: `远程规格 ${id}`,
     salePriceFen,
     status: 'ACTIVE',
@@ -285,5 +285,39 @@ describe('OrdersView 新建订单远程选项', () => {
     expect(wrapper.text()).not.toContain('上架 SKU 搜索失败：')
     await choose(wrapper, 'order-sku-select', 302)
     expect(wrapper.text()).toContain('测试套餐 302')
+  })
+
+  it('手动修改应付金额后触发远程 SKU 搜索，不覆盖用户输入的金额', async () => {
+    const wrapper = await openCreate()
+    await choose(wrapper, 'order-customer-select', 42)
+    await choose(wrapper, 'order-sku-select', 301)
+
+    const payableInput = wrapper.getComponent('[data-testid="order-payable-yuan"]') as VueWrapper
+    payableInput.vm.$emit('update:modelValue', 150)
+    payableInput.vm.$emit('change', 150)
+    await flushPromises()
+
+    vi.mocked(listSkus).mockResolvedValueOnce(page([makeSku(302, 39900)]))
+    await remoteSearch(wrapper, 'order-sku-select', '另一款 SKU')
+
+    await wrapper.get('[data-testid="order-save-draft"]').trigger('click')
+    await flushPromises()
+
+    expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({
+      customerId: 42,
+      payableFen: 15000,
+    }))
+  })
+
+  it('USE_N（Q01 待确认）SKU 在下单选择器中被禁用且阻止提交草稿', async () => {
+    const useNSku = { ...makeSku(399, 29900), selectionMode: 'USE_N' }
+    vi.mocked(listSkus).mockResolvedValue(page([useNSku]))
+    const wrapper = await openCreate()
+    await choose(wrapper, 'order-customer-select', 42)
+    await choose(wrapper, 'order-sku-select', 399)
+
+    expect(wrapper.find('[data-testid="use-n-blocked"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="order-save-draft"]').attributes('disabled')).toBeDefined()
+    expect(createOrder).not.toHaveBeenCalled()
   })
 })

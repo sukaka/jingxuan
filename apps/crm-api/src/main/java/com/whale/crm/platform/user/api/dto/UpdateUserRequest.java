@@ -3,6 +3,7 @@ package com.whale.crm.platform.user.api.dto;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
@@ -15,7 +16,9 @@ public record UpdateUserRequest(
 
         @Positive(message = "teamId 无效") Long teamId,
 
-        @Size(min = 8, max = 64, message = "密码长度须为 8-64 位") String password,
+        @Size(min = 8, max = 64, message = "密码长度须为 8-64 位")
+        @Pattern(regexp = "(?s).*\\S.*", message = "密码不能为空白字符")
+        String password,
 
         @NotNull(message = "version 必填") @Min(value = 0, message = "version 无效") Long version) {
 }

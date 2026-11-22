@@ -15,6 +15,7 @@ import com.whale.crm.platform.security.InstitutionAccessSupport;
 import com.whale.crm.settlement.api.dto.CreateSettlementBatchRequest;
 import com.whale.crm.settlement.application.SettlementApplicationService;
 import com.whale.crm.settlement.domain.SettlementBatch;
+import com.whale.crm.settlement.domain.SettlementLine;
 import com.whale.crm.settlement.domain.SettlementRedemption;
 import com.whale.crm.settlement.domain.SettlementRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,7 +36,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -65,15 +65,15 @@ class SettlementBatchDayApplicationServiceTest {
                 mock(InstitutionAccessSupport.class), mock(FileApplicationService.class), mock(IdempotencyService.class),
                 mock(AuditService.class), mock(com.whale.crm.trading.application.OutboxService.class),
                 new ObjectMapper().findAndRegisterModules(), transactionManager, settlementDays, dataScopeService);
-        doAnswer(invocation -> {
+        when(repository.insertBatch(eq(1L), any())).thenAnswer(invocation -> {
             SettlementBatch draft = invocation.getArgument(1);
             inserted.set(new SettlementBatch(10L, draft.institutionId(), draft.settlementType(), draft.periodKey(),
                     draft.settlementDay(), draft.settlementDaySource(), draft.settlementDate(), draft.status(),
                     draft.amountStatus(), draft.grossFen(), draft.commissionFen(), draft.netPayableFen(),
                     draft.paidFen(), draft.ruleVersion(), draft.verificationEvidence(), draft.createdAt(),
                     draft.updatedAt(), draft.version()));
-            return null;
-        }).when(repository).insertBatch(eq(1L), any());
+            return 10L;
+        });
     }
 
     @Test
@@ -84,8 +84,9 @@ class SettlementBatchDayApplicationServiceTest {
                 .thenReturn(new SettlementDayRule.MonthlySnapshot("8", "INSTITUTION", LocalDate.of(2026, 10, 8)));
         when(repository.lockRedemptions(1, List.of(91L))).thenReturn(List.of(
                 new SettlementRedemption(91L, 1L, "POSTED", Instant.parse("2026-10-20T08:00:00Z"))));
-        when(repository.findBatchByPeriod(1, 1, "MONTHLY", "2026-10"))
-                .thenReturn(Optional.empty()).thenAnswer(invocation -> Optional.of(inserted.get()));
+        when(repository.findLinesByRedemptions(1L, List.of(91L))).thenReturn(List.of());
+        when(repository.findActiveReversalRedemptionIds(1L, List.of(91L))).thenReturn(List.of());
+        when(repository.findBatch(1L, 10L)).thenAnswer(invocation -> Optional.of(inserted.get()));
 
         var detail = service.create(1, FINANCE,
                 new CreateSettlementBatchRequest(1L, "MONTHLY", "2026-10", List.of(91L)), "monthly-day");
@@ -106,8 +107,9 @@ class SettlementBatchDayApplicationServiceTest {
                 .thenReturn(new SettlementDayRule.MonthlySnapshot("LAST_DAY", "DEFAULT", LocalDate.of(2026, 10, 31)));
         when(repository.lockRedemptions(1, List.of(91L))).thenReturn(List.of(
                 new SettlementRedemption(91L, 1L, "POSTED", Instant.parse("2026-09-30T16:00:00Z"))));
-        when(repository.findBatchByPeriod(1, 1, "MONTHLY", "2026-10"))
-                .thenReturn(Optional.empty()).thenAnswer(invocation -> Optional.of(inserted.get()));
+        when(repository.findLinesByRedemptions(1L, List.of(91L))).thenReturn(List.of());
+        when(repository.findActiveReversalRedemptionIds(1L, List.of(91L))).thenReturn(List.of());
+        when(repository.findBatch(1L, 10L)).thenAnswer(invocation -> Optional.of(inserted.get()));
 
         service.create(1, FINANCE,
                 new CreateSettlementBatchRequest(1L, "MONTHLY", "2026-10", List.of(91L)), "shanghai-boundary");
@@ -121,8 +123,9 @@ class SettlementBatchDayApplicationServiceTest {
         when(institutionRepository.findProfile(1, 1)).thenReturn(Optional.of(profile));
         when(repository.lockRedemptions(1, List.of(91L))).thenReturn(List.of(
                 new SettlementRedemption(91L, 1L, "POSTED", Instant.parse("2026-10-20T08:00:00Z"))));
-        when(repository.findBatchByPeriod(1, 1, "PER_REDEMPTION", "REDEMPTION:91"))
-                .thenReturn(Optional.empty()).thenAnswer(invocation -> Optional.of(inserted.get()));
+        when(repository.findLinesByRedemptions(1L, List.of(91L))).thenReturn(List.of());
+        when(repository.findActiveReversalRedemptionIds(1L, List.of(91L))).thenReturn(List.of());
+        when(repository.findBatch(1L, 10L)).thenAnswer(invocation -> Optional.of(inserted.get()));
 
         service.create(1, FINANCE,
                 new CreateSettlementBatchRequest(1L, "PER_REDEMPTION", "REDEMPTION:91", List.of(91L)), "per-redemption-day");
@@ -138,10 +141,13 @@ class SettlementBatchDayApplicationServiceTest {
         SettlementBatch existing = new SettlementBatch(10L, 1L, "MONTHLY", "2026-10", "5", "INSTITUTION",
                 LocalDate.of(2026, 10, 5), "DRAFT", "PENDING_VERIFICATION", 0L, 0L, 0L, 0L,
                 null, null, null, null, 0L);
-        com.whale.crm.settlement.domain.SettlementLine line =
-                mock(com.whale.crm.settlement.domain.SettlementLine.class);
+        SettlementLine line = mock(SettlementLine.class);
+        when(line.settlementBatchId()).thenReturn(10L);
         when(line.redemptionId()).thenReturn(91L);
-        when(repository.findBatchByPeriod(1, 1, "MONTHLY", "2026-10")).thenReturn(Optional.of(existing));
+        when(repository.lockRedemptions(1, List.of(91L))).thenReturn(List.of(
+                new SettlementRedemption(91L, 1L, "POSTED", Instant.parse("2026-10-20T08:00:00Z"))));
+        when(repository.findLinesByRedemptions(1L, List.of(91L))).thenReturn(List.of(line));
+        when(repository.findBatch(1L, 10L)).thenReturn(Optional.of(existing));
         when(repository.findLines(1, 10)).thenReturn(List.of(line));
 
         var detail = service.create(1, FINANCE,

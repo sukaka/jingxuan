@@ -57,6 +57,11 @@ public class MybatisAiChatSendFenceRepository implements AiChatSendFenceReposito
     }
 
     @Override
+    public int releaseForRetry(long tenantId, long runId, long expectedVersion, Instant now) {
+        return mapper.releaseForRetry(tenantId, runId, expectedVersion, now);
+    }
+
+    @Override
     public int recover(long tenantId, long runId, Instant now) {
         return mapper.recover(tenantId, runId, now);
     }

@@ -7,6 +7,8 @@ import java.util.Optional;
 public interface NotificationRepository {
     boolean recipientActive(long tenantId, long recipientUserId);
 
+    boolean employeeActive(long tenantId, long staffUserId);
+
     Optional<Notification> findByDedupeKey(long tenantId, long recipientUserId, String dedupeKey);
 
     Optional<Notification> findById(long tenantId, long id);

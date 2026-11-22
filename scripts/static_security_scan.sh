@@ -3,9 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-for tool in docker tar python3; do
+for tool in docker python3 git; do
   command -v "$tool" >/dev/null
 done
+git rev-parse --is-inside-work-tree >/dev/null
 GITLEAKS_IMAGE='zricethezav/gitleaks:v8.30.1'
 SEMGREP_IMAGE='semgrep/semgrep:1.181.1'
 for image in "$GITLEAKS_IMAGE" "$SEMGREP_IMAGE"; do
@@ -28,12 +29,48 @@ fi
 mkdir -p "$WORK/source" "$WORK/reports" "$WORK/selftest"
 chmod 700 "$WORK"
 
-tar --exclude='*/.env' --exclude='*/.env.*' --exclude='.env' --exclude='.env.*' \
-  --exclude='*.pem' --exclude='*.key' --exclude='*.p12' --exclude='*.jks' --exclude='*.keystore' \
-  --exclude='id_rsa*' --exclude='id_ed25519*' --exclude='node_modules' --exclude='target' --exclude='.venv' \
-  -cf - apps/crm-api/src apps/crm-api/pom.xml apps/crm-web/src apps/crm-web/package.json \
-  apps/crm-web/package-lock.json apps/ai-worker/app apps/ai-worker/requirements.txt \
-  scripts contracts infra docs .github README.md AGENTS.md pom.xml gitleaks.toml | tar -xf - -C "$WORK/source"
+python3 - "$ROOT" "$WORK/source" <<'PY'
+from pathlib import Path
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+repo_root = Path(sys.argv[1])
+dest_root = Path(sys.argv[2])
+exclude_dirs = {'node_modules', 'target', '.venv', 'tmp', 'release', '.git'}
+secret_name_re = re.compile(
+    r'(^|/)(?:\.env(?:\..+)?|.*\.(?:pem|key|p12|jks|keystore)|id_(?:rsa|ed25519).*)$',
+    re.IGNORECASE,
+)
+
+raw = subprocess.check_output(
+    ['git', '-C', str(repo_root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard']
+)
+entries = [item.decode('utf-8', errors='surrogateescape') for item in raw.split(b'\x00') if item]
+
+flagged_secrets = []
+staged_count = 0
+for rel in entries:
+    parts = Path(rel).parts
+    if any(part in exclude_dirs for part in parts):
+        continue
+    src = repo_root / rel
+    if src.is_symlink() or not src.is_file():
+        continue
+    if secret_name_re.search(rel) and Path(rel).name.lower() != '.env.example':
+        flagged_secrets.append(rel)
+    dst = dest_root / rel
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    staged_count += 1
+
+if flagged_secrets:
+    print('检测到被跟踪或未忽略的敏感凭据/密钥文件：', ', '.join(sorted(flagged_secrets)), file=sys.stderr)
+    sys.exit(1)
+print(f'已暂存 {staged_count} 个受管/未忽略源码文件用于静态安全扫描')
+PY
 python3 - "$WORK/selftest/fixture.txt" <<'PY'
 from pathlib import Path
 import sys
@@ -49,7 +86,8 @@ GITLEAKS_STATUS=$?
 docker run --rm -v "$WORK/source:/scan:ro" -v "$WORK/reports:/report" "$SEMGREP_IMAGE" \
   semgrep scan --config p/owasp-top-ten --metrics=off \
   --include='*.java' --include='*.py' --include='*.ts' --include='*.vue' --include='*.js' \
-  --include='*.yml' --include='*.yaml' --json --output /report/semgrep.json --error /scan
+  --include='*.yml' --include='*.yaml' --include='*.xml' --include='*.sh' \
+  --include='Dockerfile' --include='*.conf' --json --output /report/semgrep.json --error /scan
 SEMGREP_STATUS=$?
 docker run --rm -v "$WORK/selftest:/scan:ro" -v "$WORK/reports:/report" \
   -v "$ROOT/gitleaks.toml:/etc/gitleaks.toml:ro" "$GITLEAKS_IMAGE" \
@@ -87,7 +125,7 @@ summary={
         'image':'semgrep/semgrep:1.181.1','exitCode':semgrep_status,
         'findings':sast,'rules':'p/owasp-top-ten','metrics':'off',
     },
-    'sourceExclusions':['.env*','private keys','node_modules','target','.venv','tmp'],
+    'sourceExclusions':['gitignored untracked files','node_modules','target','.venv','tmp','release'],
     'limitations':'本机限定源码扫描，不是完整渗透测试、生产安全验收或秘密文件读取授权',
 }
 (root/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2)+'\n')
