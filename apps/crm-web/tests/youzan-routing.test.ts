@@ -8,17 +8,19 @@ function flatten(items: MenuEntry[]): MenuItem[] {
 }
 
 describe('有赞同步路由与菜单权限', () => {
-  it('/integrations/youzan 使用 order:read 和真实页面', () => {
+  it('/integrations/youzan 使用 order:read 或 integration:youzan:manage 和真实页面', () => {
     const route = routes.find((item) => item.path === '/integrations/youzan')
     expect(route?.name).toBe('youzan-orders')
-    expect(route?.meta).toMatchObject({ section: '集成中心', permission: 'order:read' })
+    expect(route?.meta).toMatchObject({ section: '集成中心', permission: ['order:read', 'integration:youzan:manage'] })
     expect(route?.component).toBeTypeOf('function')
   })
 
-  it('campaign:write 不替代 order:read，读取权限才显示同步菜单', () => {
+  it('campaign:write 不替代读权限，order:read 或 integration:youzan:manage 才显示同步菜单', () => {
     const writeOnly = visibleMenuItems((code) => code === 'campaign:write')
     const readOnly = visibleMenuItems((code) => code === 'order:read')
+    const manageOnly = visibleMenuItems((code) => code === 'integration:youzan:manage')
     expect(flatten(writeOnly).map((item) => item.path)).toEqual(['/', '/notifications'])
     expect(flatten(readOnly).map((item) => item.path)).toEqual(['/', '/notifications', '/orders', '/integrations/youzan'])
+    expect(flatten(manageOnly).map((item) => item.path)).toEqual(['/', '/notifications', '/integrations/youzan'])
   })
 })

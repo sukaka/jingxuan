@@ -136,6 +136,76 @@ class YouzanOfficialMessageServiceTest {
     }
 
     @Test
+    void testMessageSupportsDisabledSyncShopAndMissingOrPlaceholderKdtIdWithStrictSignatureAndFlagCheck() throws Exception {
+        YouzanShopConfig savedBeforeSync = new YouzanShopConfig(1L, 2L, "123", "测试店", "client", "secret-cipher",
+                null, null, null, "UNVERIFIED", false, null, null, null, 0L);
+        YouzanConfigRepository configs = mock(YouzanConfigRepository.class);
+        YouzanEventService events = mock(YouzanEventService.class);
+        AesGcmCipher cipher = mock(AesGcmCipher.class);
+        TaskScheduler scheduler = mock(TaskScheduler.class);
+        when(configs.findShopConfigByClientAndShop("client", "123")).thenReturn(Optional.of(savedBeforeSync));
+        when(configs.findShopConfigByClientAndShop("client", "88888888")).thenReturn(Optional.empty());
+        when(configs.findShopConfigsByClientId("client")).thenReturn(List.of(savedBeforeSync));
+        when(cipher.decrypt("secret-cipher")).thenReturn("secret");
+
+        YouzanOfficialMessageService service = new YouzanOfficialMessageService(configs, mock(YouzanRepository.class),
+                new YouzanOfficialMessageParser(new ObjectMapper()), mock(RealYouzanAdapter.class), events, cipher,
+                scheduler, runtimeConfig());
+
+        String rawSameShop = "{\"kdt_id\":123,\"test\":true,\"msg\":\"ping\"}";
+        YouzanEventResponse ackSameShop = service.receive("client", sign("client" + rawSameShop + "secret"),
+                "trade_TradePaid", rawSameShop);
+        assertThat(ackSameShop.processStatus()).isEqualTo("IGNORED");
+
+        String rawPlaceholderShop = "{\"kdt_id\":88888888,\"test\":true,\"msg\":\"console test\"}";
+        YouzanEventResponse ackPlaceholder = service.receive("client", sign("client" + rawPlaceholderShop + "secret"),
+                "test_notify", rawPlaceholderShop);
+        assertThat(ackPlaceholder.processStatus()).isEqualTo("IGNORED");
+
+        String rawNoShop = "{\"test\":true,\"msg\":\"console test\"}";
+        YouzanEventResponse ackNoShop = service.receive("client", sign("client" + rawNoShop + "secret"),
+                "test_notify", rawNoShop);
+        assertThat(ackNoShop.processStatus()).isEqualTo("IGNORED");
+
+        assertThatThrownBy(() -> service.receive("client", "forged-sign", "test_notify", rawNoShop))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("签名无效")
+                .extracting(ex -> ((BusinessException) ex).errorCode())
+                .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        // Formal business push still requires syncEnabled=true
+        assertThatThrownBy(() -> service.receive("client", sign("client" + RAW + "secret"), "trade_TradePaid", RAW))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("未授权或已停用")
+                .extracting(ex -> ((BusinessException) ex).errorCode())
+                .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        verify(events, never()).ingest(any(Long.class), any(), any(), any());
+        verify(scheduler, never()).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
+    void refundWebhookEventWithOrderNoIsIgnoredWithoutSchedulingOrderFetch() throws Exception {
+        String raw = "{\"msgId\":\"m-refund-1\",\"kdtId\":\"123\",\"msg\":{\"tid\":\"E-REFUND-1\",\"refund_id\":\"R-1\"}}";
+        YouzanConfigRepository configs = mock(YouzanConfigRepository.class);
+        YouzanEventService events = mock(YouzanEventService.class);
+        AesGcmCipher cipher = mock(AesGcmCipher.class);
+        TaskScheduler scheduler = mock(TaskScheduler.class);
+        when(configs.findShopConfigByClientAndShop("client", "123")).thenReturn(Optional.of(config()));
+        when(cipher.decrypt("secret-cipher")).thenReturn("secret");
+        YouzanOfficialMessageService service = new YouzanOfficialMessageService(configs, mock(YouzanRepository.class),
+                new YouzanOfficialMessageParser(new ObjectMapper()), mock(RealYouzanAdapter.class), events, cipher,
+                scheduler, runtimeConfig());
+
+        YouzanEventResponse response = service.receive(
+                "client", sign("client" + raw + "secret"), "trade_refund_RefundSellerAgree", raw);
+
+        assertThat(response.processStatus()).isEqualTo("IGNORED");
+        verify(events, never()).ingest(any(Long.class), any(), any(), any());
+        verify(scheduler, never()).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
     void uppercaseMd5SignatureVerifiesCleanly() throws Exception {
         String upperSign = sign("client" + RAW + "secret").toUpperCase(Locale.ROOT);
         assertThat(YouzanOfficialSignature.valid("client", "secret", RAW, upperSign)).isTrue();

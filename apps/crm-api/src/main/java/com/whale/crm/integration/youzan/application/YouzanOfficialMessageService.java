@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class YouzanOfficialMessageService {
@@ -56,6 +57,12 @@ public class YouzanOfficialMessageService {
 
     public YouzanEventResponse receive(String clientId, String eventSign, String eventType, String rawBody) {
         YouzanMessage message = parser.parse(rawBody, eventType);
+        if (message.test()) {
+            YouzanShopConfig verified = verifyTestMessage(clientId, message.shopId(), rawBody, eventSign);
+            log.info("忽略有赞官方测试消息 tenantId={} shopId={} eventType={}",
+                    verified.tenantId(), verified.shopId(), message.eventType());
+            return ignoredResponse(message);
+        }
         YouzanShopConfig config = configRepository.findShopConfigByClientAndShop(clientId, message.shopId())
                 .filter(shop -> Boolean.TRUE.equals(shop.syncEnabled()))
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "有赞店铺未授权或已停用"));
@@ -65,9 +72,9 @@ public class YouzanOfficialMessageService {
         if (!YouzanOfficialSignature.valid(clientId, cipher.decrypt(config.clientSecretCipher()), rawBody, eventSign)) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "有赞官方消息签名无效");
         }
-        if (message.test()) {
-            log.info("忽略有赞官方测试消息 tenantId={} shopId={} eventType={}",
-                    config.tenantId(), message.shopId(), message.eventType());
+        if (isRefundEventType(message.eventType())) {
+            log.warn("忽略暂不支持自动同步的有赞退款消息，请在CRM人工核实退款 tenantId={} shopId={} eventType={} messageId={}",
+                    config.tenantId(), message.shopId(), message.eventType(), message.messageId());
             return ignoredResponse(message);
         }
         if (message.orderNo() == null || message.orderNo().isBlank()) {
@@ -168,6 +175,38 @@ public class YouzanOfficialMessageService {
             return null;
         }
         return parser.parse(cipher.decrypt(raw.providerPayloadCipher()), raw.eventType()).orderNo();
+    }
+
+    private YouzanShopConfig verifyTestMessage(String clientId, String shopId, String rawBody, String eventSign) {
+        List<YouzanShopConfig> candidates = List.of();
+        if (shopId != null && !shopId.isBlank()) {
+            candidates = configRepository.findShopConfigByClientAndShop(clientId, shopId)
+                    .map(List::of)
+                    .orElse(List.of());
+        }
+        if (candidates.isEmpty()) {
+            List<YouzanShopConfig> byClient = configRepository.findShopConfigsByClientId(clientId);
+            candidates = byClient == null ? List.of() : byClient;
+        }
+        if (candidates.isEmpty()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "有赞店铺未授权或已停用");
+        }
+        List<YouzanShopConfig> enabledTenants = candidates.stream()
+                .filter(shop -> runtimeConfig.youzanRealEnabled(shop.tenantId()))
+                .toList();
+        if (enabledTenants.isEmpty()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "真实有赞接入未启用");
+        }
+        for (YouzanShopConfig shop : enabledTenants) {
+            if (YouzanOfficialSignature.valid(clientId, cipher.decrypt(shop.clientSecretCipher()), rawBody, eventSign)) {
+                return shop;
+            }
+        }
+        throw new BusinessException(ErrorCode.UNAUTHORIZED, "有赞官方消息签名无效");
+    }
+
+    private static boolean isRefundEventType(String eventType) {
+        return eventType != null && eventType.toLowerCase(Locale.ROOT).contains("refund");
     }
 
     private static YouzanEventResponse ignoredResponse(YouzanMessage message) {

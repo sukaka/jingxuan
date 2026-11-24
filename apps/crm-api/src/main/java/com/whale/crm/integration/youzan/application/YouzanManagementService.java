@@ -148,7 +148,9 @@ public class YouzanManagementService {
                 detail == null ? raw.shopId() : detail.order().order().externalShopId(),
                 raw.eventId(), raw.processStatus(), detail == null ? null : detail.order().order().status(),
                 event.externalUpdatedAt(), event.amountFen(), verificationMethod,
-                user.permissions().contains("integration:youzan:manage") ? raw.payloadMaskedJson() : null, raw.lastError());
+                user.permissions().contains("integration:youzan:manage") ? raw.payloadMaskedJson() : null, raw.lastError(),
+                event.externalCustomerId(), event.paidAt(), event.orderTypeCode(),
+                event.campaignId(), event.campaignBatchId(), event.items());
     }
 
     private boolean rawVisible(long tenantId, CurrentUser user, DataScope scope, YouzanOrderEvent event) {

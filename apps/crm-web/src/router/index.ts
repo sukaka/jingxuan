@@ -111,7 +111,7 @@ export const routes: RouteRecordRaw[] = [
     path: '/integrations/youzan',
     name: 'youzan-orders',
     component: () => import('../views/YouzanOrdersView.vue'),
-    meta: { title: '有赞订单同步', section: '集成中心', permission: 'order:read' },
+    meta: { title: '有赞订单同步', section: '集成中心', permission: ['order:read', 'integration:youzan:manage'] },
   },
   {
     path: '/customers/ownership-logs',

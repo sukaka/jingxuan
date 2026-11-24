@@ -127,6 +127,10 @@ async function copyRaw() {
             <dt>来源店铺 ID</dt>
             <dd class="detail-identifier">{{ order.externalShopId }}</dd>
           </div>
+          <div v-if="order.externalCustomerId" class="detail-item detail-item-wide">
+            <dt>外部客户标识（yz_open_id）</dt>
+            <dd class="detail-identifier" data-testid="youzan-detail-external-customer">{{ order.externalCustomerId }}</dd>
+          </div>
           <div class="detail-item detail-item-wide">
             <dt>有赞更新时间</dt>
             <dd>{{ order.sourceUpdatedAt ? formatDateTime(order.sourceUpdatedAt) : '未记录' }}</dd>

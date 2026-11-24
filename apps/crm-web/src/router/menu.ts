@@ -50,7 +50,7 @@ const ADMIN_MENU: MenuEntry[] = [
   group('trading', '交易履约', 'bag', [
     item('/entitlements', '会员权益', 'heart', 'entitlement:read'),
     item('/orders', '订单售卖', 'bag', 'order:read'),
-    item('/integrations/youzan', '有赞订单同步', 'refresh', 'order:read'),
+    item('/integrations/youzan', '有赞订单同步', 'refresh', ['order:read', 'integration:youzan:manage']),
     item('/risks', '异常订单 / 风控台账', 'shield', 'risk:read'),
     item('/appointments', '预约管理', 'calendar', 'appointment:read', { badgeKey: 'appointments' }),
     item('/redemptions', '核销记录', 'check', 'redemption:read'),

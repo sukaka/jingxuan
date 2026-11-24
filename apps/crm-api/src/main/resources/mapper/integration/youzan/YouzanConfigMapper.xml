@@ -18,6 +18,9 @@
   <select id="selectShopConfigByClientAndShop" resultType="com.whale.crm.integration.youzan.domain.YouzanShopConfig">
     SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE client_id=#{clientId} AND shop_id=#{shopId}
   </select>
+  <select id="selectShopConfigsByClientId" resultType="com.whale.crm.integration.youzan.domain.YouzanShopConfig">
+    SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE client_id=#{clientId} ORDER BY id
+  </select>
   <select id="selectShopConfigs" resultType="com.whale.crm.integration.youzan.domain.YouzanShopConfig">
     SELECT <include refid="shopColumns"/> FROM crm_youzan_shop_config WHERE tenant_id=#{tenantId} ORDER BY id
   </select>

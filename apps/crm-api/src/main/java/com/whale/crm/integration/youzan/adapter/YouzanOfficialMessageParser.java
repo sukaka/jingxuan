@@ -44,7 +44,7 @@ public class YouzanOfficialMessageParser {
             }
             validateDepth(content, 0);
             String orderNo = extractOrderNo(root, content);
-            if (messageId == null || shopId == null) {
+            if (messageId == null || (!test && shopId == null)) {
                 throw new BusinessException(ErrorCode.VALIDATION_FAILED, "有赞消息缺少msgId或kdtId");
             }
             return new YouzanMessage(messageId, eventType, shopId, orderNo,

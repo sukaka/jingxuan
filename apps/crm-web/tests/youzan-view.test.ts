@@ -683,4 +683,111 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     await flushPromises()
     expect(saveYouzanSkuMapping).toHaveBeenCalledWith(expect.objectContaining({ shopId: '123456', externalSkuId: 'YZ-SKU-TRIM', crmSkuId: 301 }), expect.any(String))
   })
+
+  it('真实订单无顶层昵称手机号且普通只读无 Raw 时，通过结构化字段展示 yz_open_id、SKU 与支付时间', async () => {
+    const realStructuredOrder: YouzanOrderView = {
+      ...order,
+      shopId: '123456',
+      externalShopId: '123456',
+      externalOrderNo: 'E202611240001',
+      payloadMaskedJson: null,
+      externalCustomerId: 'YZ-CUSTOMER-1',
+      paidAt: '2026-10-24T03:00:00Z',
+      orderTypeCode: 'REGULAR',
+      campaignId: 9,
+      campaignBatchId: 4,
+      items: [{ external_sku_id: '301:9', quantity: 2 }],
+    }
+    vi.mocked(listYouzanOrders).mockResolvedValue({ items: [realStructuredOrder], total: 1, page: 1, size: 20 })
+    const wrapper = mountView(['order:read'])
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('YZ-CUSTOMER-1')
+    expect(wrapper.text()).toContain('有赞外部客户')
+    expect(wrapper.text()).toContain('301:9 × 2')
+    expect(wrapper.text()).toContain('活动 #9')
+    expect(wrapper.text()).toContain('批次 #4')
+    expect(wrapper.text()).toContain('测试客户')
+    expect(wrapper.text()).not.toContain('未支付')
+  })
+
+  it('仅具备 integration:youzan:manage 时可读取列表并操作映射，匹配并同步自动带出外部标识建议', async () => {
+    const unresolvedOrder: YouzanOrderView = {
+      ...order,
+      mapId: null,
+      orderId: null,
+      status: 'CUSTOMER_UNRESOLVED',
+      mappingStatus: 'CUSTOMER_UNRESOLVED',
+      paidFen: null,
+      orderStatus: null,
+      verificationMethod: null,
+      payloadMaskedJson: null,
+      externalCustomerId: 'yz-open-prefill-1',
+      items: [{ external_sku_id: '555:88', quantity: 1 }],
+    }
+    vi.mocked(listYouzanOrders).mockResolvedValue({ items: [unresolvedOrder], total: 1, page: 1, size: 20 })
+    const wrapper = mountView(['integration:youzan:manage'])
+    await flushPromises()
+
+    expect(listYouzanOrders).toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('缺少 order:read')
+
+    const matchButton = wrapper.findAll('button').find((item) => item.text() === '匹配并同步')
+    await matchButton?.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="customer-link-suggestion"]').text()).toContain('yz-open-prefill-1')
+
+    await wrapper.get('[data-testid="customer-link-create"]').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="customer-link-external"]').element as HTMLInputElement).value).toBe('yz-open-prefill-1')
+    expect(saveYouzanCustomerLink).not.toHaveBeenCalled()
+  })
+
+  it('立即拉取订单在 hasMore=true 时保留游标并续拉，直到拉完复位', async () => {
+    vi.mocked(reconcileYouzanOrders)
+      .mockResolvedValueOnce({ received: 500, processed: 500, duplicates: 0, issues: 0, nextCursor: 'cursor-page-11', hasMore: true })
+      .mockResolvedValueOnce({ received: 120, processed: 120, duplicates: 0, issues: 0, nextCursor: 'cursor-page-13', hasMore: false })
+      .mockResolvedValueOnce({ received: 10, processed: 10, duplicates: 0, issues: 0, nextCursor: 'cursor-page-1', hasMore: false })
+    const wrapper = mountView(['integration:youzan:manage'])
+    await flushPromises()
+
+    const reconcileBtn = wrapper.get('[data-testid="youzan-reconcile"]')
+    expect(reconcileBtn.text()).toBe('立即拉取订单')
+
+    await reconcileBtn.trigger('click')
+    await flushPromises()
+    expect(reconcileYouzanOrders).toHaveBeenNthCalledWith(1, { shopId: 'MOCK-SHOP-001', cursor: undefined, limit: 50 }, expect.any(String))
+    expect(reconcileBtn.text()).toBe('继续拉取订单')
+
+    await reconcileBtn.trigger('click')
+    await flushPromises()
+    expect(reconcileYouzanOrders).toHaveBeenNthCalledWith(2, { shopId: 'MOCK-SHOP-001', cursor: 'cursor-page-11', limit: 50 }, expect.any(String))
+    expect(reconcileBtn.text()).toBe('立即拉取订单')
+
+    await reconcileBtn.trigger('click')
+    await flushPromises()
+    expect(reconcileYouzanOrders).toHaveBeenNthCalledWith(3, { shopId: 'MOCK-SHOP-001', cursor: undefined, limit: 50 }, expect.any(String))
+  })
+
+  it('仅具备 integration:youzan:manage 无 order:read 时打开已映射订单详情不误调内部订单接口且无 403 报错', async () => {
+    const error = vi.spyOn(ElMessage, 'error')
+    const mappedOrder: YouzanOrderView = {
+      ...order,
+      verificationMethod: 'PROVIDER_CALLBACK',
+      externalCustomerId: 'yz-open-mapped-1',
+    }
+    vi.mocked(listYouzanOrders).mockResolvedValue({ items: [mappedOrder], total: 1, page: 1, size: 20 })
+    const wrapper = mountView(['integration:youzan:manage'])
+    await flushPromises()
+
+    await wrapper.get('[data-testid="youzan-order-detail"]').trigger('click')
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    expect(getOrder).not.toHaveBeenCalled()
+    expect(error).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('#71')
+    expect(document.body.textContent).toContain('供应商支付回调')
+    expect(document.body.textContent).toContain('yz-open-mapped-1')
+  })
 })

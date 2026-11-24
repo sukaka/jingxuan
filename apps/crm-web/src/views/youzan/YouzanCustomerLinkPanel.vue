@@ -16,6 +16,7 @@ const props = defineProps<{
   shopId: string
   canWrite: boolean
   loading: boolean
+  suggestedExternalId?: string
 }>()
 const emit = defineEmits<{ saved: [] }>()
 
@@ -45,9 +46,9 @@ const customerOptions = computed(() => {
   return Array.from(options.values())
 })
 
-function openCreate() {
+function openCreate(prefill = '') {
   editingId.value = null
-  externalCustomerId.value = ''
+  externalCustomerId.value = (prefill || props.suggestedExternalId || '').trim()
   customerId.value = undefined
   version.value = undefined
   selectedCustomer.value = null
@@ -130,8 +131,14 @@ async function save() {
   <section>
     <div class="youzan-section-head">
       <div><h3>人工客户链接</h3><p>只链接当前可见 CRM 客户并记录人工理由；昵称、手机号或外部客户标识都不能自动决定客户 ID。</p></div>
-      <el-button v-if="canWrite" size="small" data-testid="customer-link-create" @click="openCreate">新增人工链接</el-button>
+      <el-button v-if="canWrite" size="small" data-testid="customer-link-create" @click="openCreate()">新增人工链接</el-button>
     </div>
+    <el-alert v-if="suggestedExternalId && canWrite" type="info" :closable="false" class="dialog-tip" data-testid="customer-link-suggestion">
+      <template #title>
+        待匹配有赞外部客户标识（yz_open_id）：<strong>{{ suggestedExternalId }}</strong>
+        <el-button text size="small" type="primary" @click="openCreate(suggestedExternalId)">使用该标识新增链接</el-button>
+      </template>
+    </el-alert>
     <app-table v-loading="loading" :data="links" size="small">
       <el-table-column prop="externalCustomerId" label="外部客户标识" min-width="170" />
       <el-table-column label="CRM 客户" width="115"><template #default="{ row }">{{ crmCustomerLabel(row.customerId) }}</template></el-table-column>

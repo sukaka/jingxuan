@@ -11,6 +11,7 @@ import com.whale.crm.integration.youzan.domain.YouzanEvent;
 import com.whale.crm.integration.youzan.domain.YouzanOrderMap;
 import com.whale.crm.integration.youzan.domain.YouzanRepository;
 import com.whale.crm.integration.youzan.domain.YouzanSkuMapping;
+import com.whale.crm.integration.youzan.domain.YouzanSyncIssue;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.CurrentUserService;
@@ -32,12 +33,15 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -204,6 +208,198 @@ class YouzanEventServiceBehaviorTest {
         InOrder ordered = inOrder(scopeSupport, orderService);
         ordered.verify(scopeSupport).requireVisibleForUpdate(TENANT_ID, 1010L, actor);
         ordered.verify(orderService).createExternalOrder(eq(TENANT_ID), eq(actor), any(), eq("YOUZAN"), eq(SHOP), eq("EXT-NEW-1"));
+    }
+
+    @Test
+    void orderClosedWithoutExistingOrderCompletesCleanlyWithoutOrderOrIssues() throws Exception {
+        YouzanRepository repository = mock(YouzanRepository.class);
+        AesGcmCipher cipher = mock(AesGcmCipher.class);
+        OrderApplicationService orderService = mock(OrderApplicationService.class);
+        PaymentApplicationService paymentService = mock(PaymentApplicationService.class);
+        CustomerScopeSupport scopeSupport = mock(CustomerScopeSupport.class);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        AuditService auditService = mock(AuditService.class);
+        OutboxService outboxService = mock(OutboxService.class);
+
+        Instant now = Instant.parse("2026-10-24T12:00:00Z");
+        CurrentUser actor = new CurrentUser(1L, TENANT_ID, "admin", "管理员", "EMPLOYEE", null,
+                Set.of("ADMIN"), Set.of("order:write"), Set.of());
+        when(currentUserService.loadFirstActiveByRole(TENANT_ID, "ADMIN")).thenReturn(Optional.of(actor));
+
+        YouzanOrderEvent closedEvent = new YouzanOrderEvent("EV-CLOSED-1", "ORDER_CLOSED", SHOP, "EXT-CLOSED-1",
+                "UNMAPPED-CUST", null, "TRADE_CLOSED_BY_USER", 181100L, null, now, "REGULAR", null, null,
+                "PLATFORM", null, List.of(new YouzanOrderLine("UNMAPPED-SKU", 1)));
+        String json = mapper.writeValueAsString(closedEvent);
+        YouzanEvent raw = new YouzanEvent(204L, SHOP, "EV-CLOSED-1", "ORDER_CLOSED", "EXT-CLOSED-1",
+                "{}", "cipher-closed", true, "PULL", "RECEIVED", 0, null, null, now, null, null, 0L);
+        YouzanEvent done = new YouzanEvent(204L, SHOP, "EV-CLOSED-1", "ORDER_CLOSED", "EXT-CLOSED-1",
+                "{}", "cipher-closed", true, "PULL", "PROCESSED", 1, null, null, now, now, null, 1L);
+
+        when(repository.findEventForUpdate(TENANT_ID, 204L)).thenReturn(Optional.of(raw));
+        when(cipher.decrypt("cipher-closed")).thenReturn(json);
+        when(repository.findOrderMap(TENANT_ID, SHOP, "EXT-CLOSED-1")).thenReturn(Optional.empty());
+        when(repository.updateEventStatus(eq(TENANT_ID), eq(204L), eq(0L), eq("PROCESSED"), any(), any(), any(), eq(null)))
+                .thenReturn(1);
+        when(repository.findEvent(TENANT_ID, 204L)).thenReturn(Optional.of(done));
+
+        YouzanEventService service = new YouzanEventService(repository, mapper, cipher, orderService, paymentService,
+                scopeSupport, currentUserService, auditService, outboxService, txManager(), mock(TaskExecutor.class));
+
+        YouzanEventResponse response = service.process(TENANT_ID, 204L);
+
+        assertThat(response.processStatus()).isEqualTo("PROCESSED");
+        assertThat(response.orderId()).isNull();
+        verify(orderService, never()).createExternalOrder(anyLong(), any(), any(), any(), any(), any());
+        verify(paymentService, never()).confirmProviderCallback(anyLong(), any(), anyLong(), any(), any());
+        verify(repository, never()).insertIssue(anyLong(), any());
+        verify(auditService).record(eq(TENANT_ID), eq(1L), eq("YOUZAN_ORDER_CLOSED_IGNORED"), eq("YOUZAN"),
+                eq("EXT-CLOSED-1"), any(), any(), any());
+    }
+
+    @Test
+    void orderClosedWithoutOrderResolvesHistoricalUnpaidOpenIssuesAndSkipsWhenExternallyPaid() throws Exception {
+        YouzanRepository repository = mock(YouzanRepository.class);
+        AesGcmCipher cipher = mock(AesGcmCipher.class);
+        OrderApplicationService orderService = mock(OrderApplicationService.class);
+        PaymentApplicationService paymentService = mock(PaymentApplicationService.class);
+        CustomerScopeSupport scopeSupport = mock(CustomerScopeSupport.class);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        AuditService auditService = mock(AuditService.class);
+        OutboxService outboxService = mock(OutboxService.class);
+
+        Instant now = Instant.parse("2026-10-24T12:10:00Z");
+        CurrentUser actor = new CurrentUser(1L, TENANT_ID, "admin", "管理员", "EMPLOYEE", null,
+                Set.of("ADMIN"), Set.of("order:write"), Set.of());
+        when(currentUserService.loadFirstActiveByRole(TENANT_ID, "ADMIN")).thenReturn(Optional.of(actor));
+
+        YouzanOrderEvent closedUnpaid = new YouzanOrderEvent("EV-CLOSED-HIST", "ORDER_CLOSED", SHOP, "EXT-HIST-1",
+                "UNMAPPED-CUST", null, "TRADE_CLOSED_BY_USER", 181100L, null, now, "REGULAR", null, null,
+                "PLATFORM", null, List.of(new YouzanOrderLine("UNMAPPED-SKU", 1)));
+        YouzanEvent rawUnpaid = new YouzanEvent(207L, SHOP, "EV-CLOSED-HIST", "ORDER_CLOSED", "EXT-HIST-1",
+                "{}", "cipher-closed-hist", true, "PULL", "RECEIVED", 0, null, null, now, null, null, 0L);
+        YouzanEvent doneUnpaid = new YouzanEvent(207L, SHOP, "EV-CLOSED-HIST", "ORDER_CLOSED", "EXT-HIST-1",
+                "{}", "cipher-closed-hist", true, "PULL", "PROCESSED", 1, null, null, now, now, null, 1L);
+        YouzanSyncIssue historicalIssue = new YouzanSyncIssue(881L, 199L, "MAPPING_FAILED", "OPEN",
+                "外部SKU未映射: UNMAPPED-SKU", 1, "外部SKU未映射: UNMAPPED-SKU", null, now.minusSeconds(300),
+                null, null, 2L);
+
+        when(repository.findEventForUpdate(TENANT_ID, 207L)).thenReturn(Optional.of(rawUnpaid));
+        when(cipher.decrypt("cipher-closed-hist")).thenReturn(mapper.writeValueAsString(closedUnpaid));
+        when(repository.findOrderMap(TENANT_ID, SHOP, "EXT-HIST-1")).thenReturn(Optional.empty());
+        when(repository.updateEventStatus(eq(TENANT_ID), eq(207L), eq(0L), eq("PROCESSED"), any(), any(), any(), eq(null)))
+                .thenReturn(1);
+        when(repository.findOpenUnpaidIssuesByExternalOrderForUpdate(TENANT_ID, SHOP, "EXT-HIST-1", 207L))
+                .thenReturn(List.of(historicalIssue));
+        when(repository.updateIssueStatus(eq(TENANT_ID), eq(881L), eq(2L), eq("RESOLVED"), eq(1),
+                eq("外部SKU未映射: UNMAPPED-SKU"), eq(null), any(Instant.class), eq(1L)))
+                .thenReturn(1);
+        when(repository.findEvent(TENANT_ID, 207L)).thenReturn(Optional.of(doneUnpaid));
+
+        YouzanEventService service = new YouzanEventService(repository, mapper, cipher, orderService, paymentService,
+                scopeSupport, currentUserService, auditService, outboxService, txManager(), mock(TaskExecutor.class));
+
+        YouzanEventResponse unpaidResponse = service.process(TENANT_ID, 207L);
+        assertThat(unpaidResponse.processStatus()).isEqualTo("PROCESSED");
+        verify(repository).updateIssueStatus(eq(TENANT_ID), eq(881L), eq(2L), eq("RESOLVED"), eq(1),
+                eq("外部SKU未映射: UNMAPPED-SKU"), eq(null), any(Instant.class), eq(1L));
+        verify(auditService).record(eq(TENANT_ID), eq(1L), eq("YOUZAN_ORDER_CLOSED_IGNORED"), eq("YOUZAN"),
+                eq("EXT-HIST-1"), eq(null),
+                argThat(after -> after instanceof Map<?, ?> map
+                        && List.of(881L).equals(map.get("resolvedHistoricalIssueIds"))),
+                eq(null));
+
+        YouzanOrderEvent closedAfterExternalPay = new YouzanOrderEvent("EV-CLOSED-PAID-EXT", "ORDER_CLOSED", SHOP,
+                "EXT-HIST-2", "UNMAPPED-CUST", "TR-EXT-2", "TRADE_CLOSED", 181100L, now.minusSeconds(60), now,
+                "REGULAR", null, null, "PLATFORM", null, List.of(new YouzanOrderLine("UNMAPPED-SKU", 1)));
+        YouzanEvent rawPaidExt = new YouzanEvent(208L, SHOP, "EV-CLOSED-PAID-EXT", "ORDER_CLOSED", "EXT-HIST-2",
+                "{}", "cipher-closed-paid-ext", true, "PULL", "RECEIVED", 0, null, null, now, null, null, 0L);
+        YouzanEvent donePaidExt = new YouzanEvent(208L, SHOP, "EV-CLOSED-PAID-EXT", "ORDER_CLOSED", "EXT-HIST-2",
+                "{}", "cipher-closed-paid-ext", true, "PULL", "PROCESSED", 1, null, null, now, now, null, 1L);
+        when(repository.findEventForUpdate(TENANT_ID, 208L)).thenReturn(Optional.of(rawPaidExt));
+        when(cipher.decrypt("cipher-closed-paid-ext")).thenReturn(mapper.writeValueAsString(closedAfterExternalPay));
+        when(repository.findOrderMap(TENANT_ID, SHOP, "EXT-HIST-2")).thenReturn(Optional.empty());
+        when(repository.updateEventStatus(eq(TENANT_ID), eq(208L), eq(0L), eq("PROCESSED"), any(), any(), any(), eq(null)))
+                .thenReturn(1);
+        when(repository.findEvent(TENANT_ID, 208L)).thenReturn(Optional.of(donePaidExt));
+
+        YouzanEventResponse paidExtResponse = service.process(TENANT_ID, 208L);
+        assertThat(paidExtResponse.processStatus()).isEqualTo("PROCESSED");
+        verify(repository, never()).findOpenUnpaidIssuesByExternalOrderForUpdate(TENANT_ID, SHOP, "EXT-HIST-2", 208L);
+        verify(repository, never()).updateIssueStatus(eq(TENANT_ID), eq(882L), anyLong(), any(), anyInt(),
+                any(), any(), any(), any());
+    }
+
+    @Test
+    void orderClosedCancelsUnpaidOrderAndFlagsPaidOrderAsPaymentMismatchWithoutMutatingPaidFacts() throws Exception {
+        YouzanRepository repository = mock(YouzanRepository.class);
+        AesGcmCipher cipher = mock(AesGcmCipher.class);
+        OrderApplicationService orderService = mock(OrderApplicationService.class);
+        PaymentApplicationService paymentService = mock(PaymentApplicationService.class);
+        CustomerScopeSupport scopeSupport = mock(CustomerScopeSupport.class);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+
+        Instant t0 = Instant.parse("2026-10-24T12:00:00Z");
+        Instant t1 = Instant.parse("2026-10-24T12:05:00Z");
+        CurrentUser actor = new CurrentUser(1L, TENANT_ID, "admin", "管理员", "EMPLOYEE", null,
+                Set.of("ADMIN"), Set.of("order:write"), Set.of());
+        when(currentUserService.loadFirstActiveByRole(TENANT_ID, "ADMIN")).thenReturn(Optional.of(actor));
+
+        YouzanOrderEvent closeDraft = new YouzanOrderEvent("EV-CLOSE-DRAFT", "ORDER_CLOSED", SHOP, "EXT-DRAFT-1",
+                "EXT-CUST-1", null, "TRADE_CLOSED_BY_USER", 181100L, null, t1, "REGULAR", null, null,
+                "PLATFORM", null, List.of(new YouzanOrderLine("YZ-SKU-1", 1)));
+        YouzanEvent rawDraft = new YouzanEvent(205L, SHOP, "EV-CLOSE-DRAFT", "ORDER_CLOSED", "EXT-DRAFT-1",
+                "{}", "cipher-close-draft", true, "PULL", "RECEIVED", 0, null, null, t1, null, null, 0L);
+        YouzanEvent doneDraft = new YouzanEvent(205L, SHOP, "EV-CLOSE-DRAFT", "ORDER_CLOSED", "EXT-DRAFT-1",
+                "{}", "cipher-close-draft", true, "PULL", "PROCESSED", 1, null, null, t1, t1, 905L, 1L);
+        YouzanOrderMap draftMap = new YouzanOrderMap(55L, SHOP, "EXT-DRAFT-1", 905L, t0, t0, 0L);
+        Order draftOrder = order(905L, 1010L, "DRAFT", 181100L, 0L, 0L);
+        OrderFulfillmentView draftView = new OrderFulfillmentView(new OrderDetail(draftOrder, List.of(), List.of(), List.of()), List.of());
+
+        when(repository.findEventForUpdate(TENANT_ID, 205L)).thenReturn(Optional.of(rawDraft));
+        when(cipher.decrypt("cipher-close-draft")).thenReturn(mapper.writeValueAsString(closeDraft));
+        when(repository.findOrderMap(TENANT_ID, SHOP, "EXT-DRAFT-1")).thenReturn(Optional.of(draftMap));
+        when(repository.findOrderMapForUpdate(TENANT_ID, SHOP, "EXT-DRAFT-1")).thenReturn(Optional.of(draftMap));
+        when(orderService.detail(TENANT_ID, actor, 905L)).thenReturn(draftView, draftView);
+        when(repository.updateOrderMapTime(TENANT_ID, 55L, 0L, t1)).thenReturn(1);
+        when(repository.updateEventStatus(eq(TENANT_ID), eq(205L), eq(0L), eq("PROCESSED"), any(), any(), any(), eq(905L)))
+                .thenReturn(1);
+        when(repository.findEvent(TENANT_ID, 205L)).thenReturn(Optional.of(doneDraft));
+
+        YouzanEventService service = new YouzanEventService(repository, mapper, cipher, orderService, paymentService,
+                scopeSupport, currentUserService, mock(AuditService.class), mock(OutboxService.class),
+                txManager(), mock(TaskExecutor.class));
+
+        YouzanEventResponse draftResponse = service.process(TENANT_ID, 205L);
+        assertThat(draftResponse.processStatus()).isEqualTo("PROCESSED");
+        InOrder ordered = inOrder(scopeSupport, orderService);
+        ordered.verify(scopeSupport).requireVisibleForUpdate(TENANT_ID, 1010L, actor);
+        ordered.verify(orderService).cancel(eq(TENANT_ID), eq(actor), eq(905L), any());
+
+        YouzanOrderEvent closePaid = new YouzanOrderEvent("EV-CLOSE-PAID", "ORDER_CLOSED", SHOP, "EXT-PAID-1",
+                "EXT-CUST-1", null, "TRADE_CLOSED", 181100L, null, t1, "REGULAR", null, null,
+                "PLATFORM", null, List.of(new YouzanOrderLine("YZ-SKU-1", 1)));
+        YouzanEvent rawPaid = new YouzanEvent(206L, SHOP, "EV-CLOSE-PAID", "ORDER_CLOSED", "EXT-PAID-1",
+                "{}", "cipher-close-paid", true, "PULL", "RECEIVED", 0, null, null, t1, null, null, 0L);
+        YouzanEvent mismatchPaid = new YouzanEvent(206L, SHOP, "EV-CLOSE-PAID", "ORDER_CLOSED", "EXT-PAID-1",
+                "{}", "cipher-close-paid", true, "PULL", "PAYMENT_MISMATCH", 1, "有赞订单已关闭，但CRM订单已支付，请核实是否需在CRM人工退款",
+                null, t1, t1, null, 1L);
+        YouzanOrderMap paidMap = new YouzanOrderMap(56L, SHOP, "EXT-PAID-1", 906L, t0, t0, 0L);
+        Order paidOrder = order(906L, 1010L, "PAID", 181100L, 181100L, 2L);
+        OrderFulfillmentView paidView = new OrderFulfillmentView(new OrderDetail(paidOrder, List.of(), List.of(), List.of()), List.of());
+
+        when(repository.findEventForUpdate(TENANT_ID, 206L)).thenReturn(Optional.of(rawPaid));
+        when(cipher.decrypt("cipher-close-paid")).thenReturn(mapper.writeValueAsString(closePaid));
+        when(repository.findOrderMap(TENANT_ID, SHOP, "EXT-PAID-1")).thenReturn(Optional.of(paidMap));
+        when(orderService.detail(TENANT_ID, actor, 906L)).thenReturn(paidView, paidView);
+        when(repository.updateEventStatus(eq(TENANT_ID), eq(206L), eq(0L), eq("PAYMENT_MISMATCH"), any(), any(), any(), any()))
+                .thenReturn(1);
+        when(repository.findEvent(TENANT_ID, 206L)).thenReturn(Optional.of(mismatchPaid));
+
+        YouzanEventResponse paidResponse = service.process(TENANT_ID, 206L);
+        assertThat(paidResponse.processStatus()).isEqualTo("PAYMENT_MISMATCH");
+        assertThat(paidResponse.lastError()).contains("人工退款");
+        verify(orderService, never()).cancel(eq(TENANT_ID), eq(actor), eq(906L), any());
+        verify(repository).insertIssue(eq(TENANT_ID), any());
     }
 
     private static Order order(long id, long customerId, String status, long payableFen, long paidFen, long version) {

@@ -23,6 +23,7 @@ public class MybatisYouzanConfigRepository implements YouzanConfigRepository {
     public Optional<YouzanShopConfig> findShopConfig(long tenantId, String shopId) { return Optional.ofNullable(mapper.selectShopConfig(tenantId, shopId)); }
     public Optional<YouzanShopConfig> findShopConfigForUpdate(long tenantId, String shopId) { return Optional.ofNullable(mapper.selectShopConfigForUpdate(tenantId, shopId)); }
     public Optional<YouzanShopConfig> findShopConfigByClientAndShop(String clientId, String shopId) { return Optional.ofNullable(mapper.selectShopConfigByClientAndShop(clientId, shopId)); }
+    public List<YouzanShopConfig> findShopConfigsByClientId(String clientId) { return mapper.selectShopConfigsByClientId(clientId); }
     public List<YouzanShopConfig> findShopConfigs(long tenantId) { return mapper.selectShopConfigs(tenantId); }
     public List<YouzanShopConfig> findSyncEnabledShopConfigs() { return mapper.selectSyncEnabledShopConfigs(); }
     public int updateShopConfig(long tenantId, long id, long version, YouzanShopConfig config) { return mapper.updateShopConfig(tenantId, id, version, config); }

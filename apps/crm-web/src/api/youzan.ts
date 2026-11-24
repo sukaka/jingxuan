@@ -1,6 +1,11 @@
 import type { ApiResponse, PageResult } from '../types/api'
 import { http } from './http'
 
+export interface YouzanOrderLineItem {
+  external_sku_id: string
+  quantity: number
+}
+
 export interface YouzanOrderView {
   mapId: number | null
   shopId: string
@@ -18,6 +23,12 @@ export interface YouzanOrderView {
   verificationMethod: string | null
   payloadMaskedJson: string | null
   errorReason: string | null
+  externalCustomerId?: string | null
+  paidAt?: string | null
+  orderTypeCode?: string | null
+  campaignId?: number | null
+  campaignBatchId?: number | null
+  items?: YouzanOrderLineItem[]
 }
 
 export interface YouzanSyncResponse {

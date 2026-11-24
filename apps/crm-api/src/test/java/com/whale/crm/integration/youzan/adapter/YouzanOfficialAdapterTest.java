@@ -306,6 +306,33 @@ class YouzanOfficialAdapterTest {
     }
 
     @Test
+    void orderMapperMapsClosedStatusesToOrderClosedAndParserAllowsMissingKdtIdOnlyForTestMessages() throws Exception {
+        YouzanOrderMapper mapper = new YouzanOrderMapper();
+        for (String closedStatus : new String[]{"TRADE_CLOSED", "TRADE_CLOSED_BY_USER"}) {
+            JsonNode closedOrder = objectMapper.readTree("""
+                    {"order_info":{"tid":"E-CLOSED-1","status":"%s","update_time":"2026-10-24 11:00:00"},
+                     "pay_info":{"payment":"36.22"},
+                     "buyer_info":{"yz_open_id":"yz-closed-1"},
+                     "orders":[{"item_id":301,"sku_id":9,"num":1}]}
+                    """.formatted(closedStatus));
+            assertThat(mapper.hasCompleteDetail(closedOrder)).isTrue();
+            YouzanOrderEvent event = mapper.toOrderEventFromFullOrderInfo("123", "m-closed", closedOrder);
+            assertThat(event.eventType()).isEqualTo("ORDER_CLOSED");
+            assertThat(event.status()).isEqualTo(closedStatus);
+        }
+
+        YouzanOfficialMessageParser parser = new YouzanOfficialMessageParser(objectMapper);
+        YouzanMessage testWithoutShop = parser.parse("{\"test\":true,\"msg\":\"ping\"}", "test_notify");
+        assertThat(testWithoutShop.test()).isTrue();
+        assertThat(testWithoutShop.messageId()).isEqualTo("TEST");
+        assertThat(testWithoutShop.shopId()).isNull();
+
+        assertThatThrownBy(() -> parser.parse("{\"msgId\":\"m-no-shop\",\"msg\":{\"tid\":\"E-1\"}}", "trade_TradePaid"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("kdtId");
+    }
+
+    @Test
     void routerReturnsClearShopNotReadyErrorWhenRealEnabledButShopNotConfiguredOrDisabled() {
         @SuppressWarnings("unchecked")
         ObjectProvider<MockYouzanAdapter> mocks = mock(ObjectProvider.class);

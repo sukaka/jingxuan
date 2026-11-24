@@ -37,6 +37,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -162,6 +163,9 @@ public class YouzanEventService {
         }
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
         YouzanOrderMap existing = repository.findOrderMap(tenantId, event.shopId(), event.externalOrderNo()).orElse(null);
+        if ("ORDER_CLOSED".equals(event.eventType())) {
+            return processOrderClosed(tenantId, eventId, raw, event, existing);
+        }
         OrderFulfillmentView existingOrder = null;
         CurrentUser actor = null;
         if (existing != null) {
@@ -240,6 +244,78 @@ public class YouzanEventService {
         return "DRAFT".equals(status) || "PENDING_PAYMENT".equals(status);
     }
 
+    private YouzanEventResponse processOrderClosed(long tenantId, long eventId, YouzanEvent raw,
+                                                   YouzanOrderEvent event, YouzanOrderMap existing) {
+        CurrentUser actor = actor(tenantId);
+        if (existing == null) {
+            return completeClosedWithoutOrder(tenantId, eventId, raw, event, actor.userId());
+        }
+        OrderFulfillmentView existingOrder = orderService.detail(tenantId, actor, existing.crmOrderId());
+        if (existingOrder == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "内部订单不存在或不可见");
+        }
+        if (event.externalUpdatedAt() != null && existing.lastExternalUpdatedAt() != null
+                && event.externalUpdatedAt().isBefore(existing.lastExternalUpdatedAt())) {
+            return complete(tenantId, eventId, raw, existing.crmOrderId(), true, actor.userId());
+        }
+        // 先锁 crm_customer 再写 crm_order，与 MergeApplicationService.confirm 保持一致（M3 §3.2）
+        scopeSupport.requireVisibleForUpdate(tenantId, existingOrder.order().order().customerId(), actor);
+        OrderFulfillmentView order = orderService.detail(tenantId, actor, existing.crmOrderId());
+        String status = order.order().order().status();
+        if (isUnpaidStatus(status)) {
+            orderService.cancel(tenantId, actor, existing.crmOrderId(),
+                    new OrderReviewRequest(order.order().order().version(), "有赞订单已关闭"));
+            return complete(tenantId, eventId, raw, existing.crmOrderId(), false, actor.userId());
+        }
+        if ("CANCELED".equals(status) || "REFUNDED".equals(status)) {
+            return complete(tenantId, eventId, raw, existing.crmOrderId(), true, actor.userId());
+        }
+        throw new ProcessingFailure("PAYMENT_MISMATCH", "有赞订单已关闭，但CRM订单已支付，请核实是否需在CRM人工退款");
+    }
+
+    private YouzanEventResponse completeClosedWithoutOrder(long tenantId, long eventId, YouzanEvent raw,
+                                                           YouzanOrderEvent event, long actorUserId) {
+        if (repository.updateEventStatus(tenantId, eventId, raw.version(), "PROCESSED", null, null,
+                Instant.now(), null) == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "原始事件已被其他任务处理");
+        }
+        resolveOpenIssues(tenantId, eventId, actorUserId);
+        List<Long> resolvedHistoricalIssueIds = event.paidAt() == null
+                ? resolveHistoricalUnpaidIssues(tenantId, raw.shopId(), raw.externalOrderNo(), eventId, actorUserId)
+                : List.of();
+        Map<String, Object> auditAfter = new LinkedHashMap<>();
+        auditAfter.put("shopId", raw.shopId());
+        auditAfter.put("externalOrderNo", raw.externalOrderNo());
+        auditAfter.put("status", "PROCESSED");
+        auditAfter.put("closedWithoutOrder", true);
+        if (!resolvedHistoricalIssueIds.isEmpty()) {
+            auditAfter.put("resolvedHistoricalIssueIds", resolvedHistoricalIssueIds);
+        }
+        auditService.record(tenantId, actorUserId, "YOUZAN_ORDER_CLOSED_IGNORED", "YOUZAN",
+                raw.externalOrderNo(), null, auditAfter, null);
+        YouzanEvent processed = repository.findEvent(tenantId, eventId).orElseThrow();
+        return response(tenantId, processed, false);
+    }
+
+    private List<Long> resolveHistoricalUnpaidIssues(long tenantId, String shopId, String externalOrderNo,
+                                                     long currentEventId, long actorUserId) {
+        List<YouzanSyncIssue> candidates = repository.findOpenUnpaidIssuesByExternalOrderForUpdate(
+                tenantId, shopId, externalOrderNo, currentEventId);
+        if (candidates == null || candidates.isEmpty()) {
+            return List.of();
+        }
+        Instant now = Instant.now();
+        List<Long> resolvedIds = new ArrayList<>();
+        for (YouzanSyncIssue issue : candidates) {
+            if (repository.updateIssueStatus(tenantId, issue.id(), issue.version(), "RESOLVED", issue.attempts(),
+                    issue.lastError(), null, now, actorUserId) != 1) {
+                throw new BusinessException(ErrorCode.CONFLICT, "历史同步异常状态已变化，请重试");
+            }
+            resolvedIds.add(issue.id());
+        }
+        return resolvedIds;
+    }
+
     private YouzanEventResponse complete(long tenantId, long eventId, YouzanEvent raw, long orderId, boolean duplicate,
                                          long actorUserId) {
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
@@ -253,6 +329,17 @@ public class YouzanEventService {
                 Instant.now(), orderId) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "原始事件已被其他任务处理");
         }
+        resolveOpenIssues(tenantId, eventId, actorUserId);
+        outboxService.append(tenantId, "youzan.order.processed.v1:" + raw.eventId(), "youzan.order.processed.v1",
+                "youzan", Long.toString(orderId), Map.of("shopId", raw.shopId(),
+                        "externalOrderNo", raw.externalOrderNo(), "orderId", orderId));
+        auditService.record(tenantId, actorUserId, "YOUZAN_ORDER_PROCESSED", "ORDER", Long.toString(orderId), null,
+                Map.of("shopId", raw.shopId(), "externalOrderNo", raw.externalOrderNo(), "status", "PROCESSED"), null);
+        YouzanEvent processed = repository.findEvent(tenantId, eventId).orElseThrow();
+        return response(tenantId, processed, duplicate);
+    }
+
+    private void resolveOpenIssues(long tenantId, long eventId, long actorUserId) {
         for (String type : List.of("MAPPING_FAILED", "CUSTOMER_UNRESOLVED", "PAYMENT_MISMATCH", "RETRY")) {
             repository.findIssueByEventAndType(tenantId, eventId, type).ifPresent(issue -> {
                 if (!"RESOLVED".equals(issue.status())) {
@@ -261,13 +348,6 @@ public class YouzanEventService {
                 }
             });
         }
-        outboxService.append(tenantId, "youzan.order.processed.v1:" + raw.eventId(), "youzan.order.processed.v1",
-                "youzan", Long.toString(orderId), Map.of("shopId", raw.shopId(),
-                        "externalOrderNo", raw.externalOrderNo(), "orderId", orderId));
-        auditService.record(tenantId, actorUserId, "YOUZAN_ORDER_PROCESSED", "ORDER", Long.toString(orderId), null,
-                Map.of("shopId", raw.shopId(), "externalOrderNo", raw.externalOrderNo(), "status", "PROCESSED"), null);
-        YouzanEvent processed = repository.findEvent(tenantId, eventId).orElseThrow();
-        return response(tenantId, processed, duplicate);
     }
 
     private YouzanEventResponse markFailure(long tenantId, long eventId, String type, String error) {

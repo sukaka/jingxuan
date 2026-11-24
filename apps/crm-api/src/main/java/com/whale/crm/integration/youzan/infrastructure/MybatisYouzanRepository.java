@@ -70,6 +70,9 @@ public class MybatisYouzanRepository implements YouzanRepository {
     public Optional<YouzanSyncIssue> findIssue(long tenantId, long id) { return Optional.ofNullable(mapper.selectIssue(tenantId, id)); }
     public Optional<YouzanSyncIssue> findIssueForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectIssueForUpdate(tenantId, id)); }
     public Optional<YouzanSyncIssue> findIssueByEventAndType(long tenantId, long eventId, String issueType) { return Optional.ofNullable(mapper.selectIssueByEventAndType(tenantId, eventId, issueType)); }
+    public List<YouzanSyncIssue> findOpenUnpaidIssuesByExternalOrderForUpdate(long tenantId, String shopId, String externalOrderNo, long excludeEventId) {
+        return mapper.selectOpenUnpaidIssuesByExternalOrderForUpdate(tenantId, shopId, externalOrderNo, excludeEventId);
+    }
     public List<YouzanSyncIssue> findIssues(long tenantId, String status, int offset, int size) { return mapper.selectIssues(tenantId, status, offset, size); }
     public List<YouzanSyncIssue> findScopedIssues(long tenantId, String status, CustomerScopeSupport.ScopeQuery scope, int offset, int size) { return mapper.selectScopedIssues(tenantId, status, scope, offset, size); }
     public long countIssues(long tenantId, String status) { return mapper.countIssues(tenantId, status); }

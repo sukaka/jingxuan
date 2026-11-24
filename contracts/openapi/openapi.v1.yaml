@@ -10426,10 +10426,16 @@ components:
         lastSyncAt: {type: string, format: date-time, nullable: true}
         todayEvents: {type: integer, format: int64, minimum: 0, description: 当前数据库日期 received_at 起收到的原始事件数，不等于支付订单数}
         campaignOrders: {type: integer, format: int64, minimum: 0, description: payload 中 campaign_id 非空的不同 external_order_no 数量，不限制支付状态}
+    YouzanOrderLine:
+      type: object
+      required: [external_sku_id, quantity]
+      properties:
+        external_sku_id: {type: string, description: '有赞外部商品 SKU 标识（item_id:sku_id）'}
+        quantity: {type: integer, format: int32, minimum: 1}
     YouzanOrderView:
       type: object
-      required: [mapId, shopId, externalOrderNo, orderId, status, paidFen, sourceSystem, externalShopId, eventId, mappingStatus, orderStatus, sourceUpdatedAt, externalAmountFen, verificationMethod, payloadMaskedJson, errorReason]
-      description: Raw 与内部订单的联合视图；未映射/未匹配时 mapId/orderId/orderStatus/paidFen/verificationMethod 为空。payloadMaskedJson 仅向 integration:youzan:manage 返回脱敏文本，其他 order:read 用户为 null，不返回 payload_cipher。
+      required: [mapId, shopId, externalOrderNo, orderId, status, paidFen, sourceSystem, externalShopId, eventId, mappingStatus, orderStatus, sourceUpdatedAt, externalAmountFen, verificationMethod, payloadMaskedJson, errorReason, externalCustomerId, paidAt, orderTypeCode, campaignId, campaignBatchId, items]
+      description: Raw 与内部订单的联合视图；未映射/未匹配时 mapId/orderId/orderStatus/paidFen/verificationMethod 为空。非敏感结构化字段（externalCustomerId/paidAt/orderTypeCode/campaignId/campaignBatchId/items）对授权用户可见；payloadMaskedJson 仅向 integration:youzan:manage 返回脱敏文本，其他 order:read 用户为 null，不返回 payload_cipher。
       properties:
         mapId: {type: integer, format: int64, nullable: true, description: 外部订单映射 ID；未映射为 null}
         shopId: {type: string}
@@ -10451,6 +10457,16 @@ components:
         verificationMethod: {type: string, enum: [MANUAL_REVIEW, PROVIDER_CALLBACK], nullable: true, description: 首笔内部支付的验证方式；无支付为 null}
         payloadMaskedJson: {type: string, nullable: true, description: '仅 integration:youzan:manage 可见的递归脱敏原始 JSON 文本；普通 order:read 为 null，不是密文或公开原始明文'}
         errorReason: {type: string, nullable: true, description: 脱敏处理异常原因}
+        externalCustomerId: {type: string, nullable: true, description: '有赞外部客户标识（yz_open_id），非手机号或昵称'}
+        paidAt: {type: string, format: date-time, nullable: true, description: 有赞外部支付时间}
+        orderTypeCode: {type: string, nullable: true, description: 标准化订单类型代码}
+        campaignId: {type: integer, format: int64, nullable: true, description: 关联活动 ID}
+        campaignBatchId: {type: integer, format: int64, nullable: true, description: 关联活动批次 ID}
+        items:
+          type: array
+          description: 外部商品 SKU 明细列表
+          items:
+            $ref: '#/components/schemas/YouzanOrderLine'
     YouzanEventResponse:
       type: object
       required: [id, eventId, eventType, externalOrderNo, processStatus, processAttempts, lastError, orderId, receivedAt, processedAt, duplicate]

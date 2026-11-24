@@ -9,6 +9,7 @@ public interface YouzanConfigRepository {
     Optional<YouzanShopConfig> findShopConfig(long tenantId, String shopId);
     Optional<YouzanShopConfig> findShopConfigForUpdate(long tenantId, String shopId);
     Optional<YouzanShopConfig> findShopConfigByClientAndShop(String clientId, String shopId);
+    List<YouzanShopConfig> findShopConfigsByClientId(String clientId);
     List<YouzanShopConfig> findShopConfigs(long tenantId);
     List<YouzanShopConfig> findSyncEnabledShopConfigs();
     int updateShopConfig(long tenantId, long id, long version, YouzanShopConfig config);

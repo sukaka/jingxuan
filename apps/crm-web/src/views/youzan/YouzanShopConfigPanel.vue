@@ -101,7 +101,7 @@ function statusText(status: string) {
           <div class="proto-note">使用有赞云无容器自用型应用凭证。修改 client_id 或 client_secret 会清空已缓存 Token 并将连接状态重置为待验证（UNVERIFIED）；仅修改店铺名称或同步开关会保留已验证连接与 Token。</div>
         </el-form-item>
         <el-form-item label="真实同步开关"><el-switch v-model="form.syncEnabled" active-text="允许同步" inactive-text="仅保存配置" /><div class="proto-note">开启真实同步还需在本页打开企业全局开关或服务端配置 FEATURE_REAL_YOUZAN=true，并通过连接测试。</div></el-form-item>
-        <el-form-item label="官方消息推送地址"><el-input :model-value="webhookPath" readonly data-testid="youzan-shop-webhook-path"><template #prepend>CRM</template></el-input><div class="proto-note">在有赞云控制台配置公网 HTTPS 域名地址并订阅已授权交易消息；入口返回 HTTP 200 {"code":0,"msg":"success"} 用于有赞云验证，且服务端出口 IP 需加入有赞 IP 白名单。</div></el-form-item>
+        <el-form-item label="官方消息推送地址"><el-input :model-value="webhookPath" readonly data-testid="youzan-shop-webhook-path"><template #prepend>CRM</template></el-input><div class="proto-note">在有赞云控制台配置公网 HTTPS 域名地址并订阅已授权交易消息；保存店铺凭证并开启全局开关后即可通过有赞云测试推送验证（返回 HTTP 200 {"code":0,"msg":"success"}），且服务端出口 IP 需加入有赞 IP 白名单。</div></el-form-item>
       </el-form>
       <template #footer><el-button :disabled="saving" @click="formVisible = false">取消</el-button><el-button type="primary" :loading="saving" data-testid="youzan-shop-save" @click="save">保存配置</el-button></template>
     </el-dialog>

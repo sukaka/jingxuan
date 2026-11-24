@@ -22,6 +22,7 @@ public class YouzanOrderMapper {
     private static final DateTimeFormatter PROVIDER_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final Set<String> PAID_STATUSES = Set.of("TRADE_PAID", "WAIT_CONFIRM",
             "WAIT_SELLER_SEND_GOODS", "WAIT_BUYER_CONFIRM_GOODS", "TRADE_SUCCESS");
+    private static final Set<String> CLOSED_STATUSES = Set.of("TRADE_CLOSED", "TRADE_CLOSED_BY_USER");
 
     public YouzanOrderEvent toOrderEvent(String shopId, String eventId, JsonNode root) {
         JsonNode full = root == null ? null : root.path("data").path("full_order_info");
@@ -40,7 +41,9 @@ public class YouzanOrderMapper {
         Instant updatedAt = requiredTime(info, "update_time");
         String actualEventId = eventId == null || eventId.isBlank()
                 ? "PULL:" + tid + ":" + updatedAt.toEpochMilli() : eventId;
-        String eventType = PAID_STATUSES.contains(status) ? "ORDER_PAID" : "ORDER_PENDING";
+        String eventType = PAID_STATUSES.contains(status)
+                ? "ORDER_PAID"
+                : CLOSED_STATUSES.contains(status) ? "ORDER_CLOSED" : "ORDER_PENDING";
         Long amountFen = moneyToFen(text(pay, "payment"));
         Instant paidAt = optionalTime(pay, info, "pay_time");
         String tradeNo = singleTradeNo(pay);

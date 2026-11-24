@@ -108,6 +108,10 @@ class YouzanManagementServiceTest {
         assertThat(view.externalShopId()).isEqualTo(SHOP);
         assertThat(view.payloadMaskedJson()).isNull();
         assertThat(view.errorReason()).contains("YZ-SKU-MISSING");
+        assertThat(view.externalCustomerId()).isEqualTo("external-customer-1");
+        assertThat(view.orderTypeCode()).isEqualTo("REGULAR");
+        assertThat(view.items()).hasSize(1);
+        assertThat(view.items().get(0).externalSkuId()).isEqualTo("301:9");
         assertThat(objectMapper.writeValueAsString(view))
                 .doesNotContain("cipher-raw-secret", "13900000000", "raw-nickname", "raw-address", maskedPayload());
         verify(scopeSupport).requireVisible(TENANT_ID, 1010, manager);
@@ -388,6 +392,7 @@ class YouzanManagementServiceTest {
                 {"event_id":"%s","event_type":"ORDER_PAID","shop_id":"%s",
                 "external_order_no":"%s","external_customer_id":"external-customer-1",
                 "amount_fen":181100,"external_updated_at":"2026-10-24T04:00:00Z",
+                "order_type_code":"REGULAR","items":[{"external_sku_id":"301:9","quantity":2}],
                 "mobile":"13900000000","nickname":"raw-nickname",
                 "receiver":{"address":"raw-address"}}
                 """.formatted(eventId, SHOP, externalOrderNo);

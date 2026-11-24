@@ -125,10 +125,11 @@ describe('YouzanOrderDetailDrawer 业务信息与脱敏原始详情', () => {
     expect(rawElement()?.textContent).toBe(formattedPayload)
   })
 
-  it('普通管家不渲染 Raw、展开入口或复制按钮', async () => {
-    mountDrawer(['order:read'])
+  it('普通管家不渲染 Raw、展开入口或复制按钮，但可看到非敏感外部客户标识', async () => {
+    mountDrawer(['order:read'], { ...order, externalCustomerId: 'yz-open-detail-1' })
     await settle()
 
+    expect(document.body.querySelector('[data-testid="youzan-detail-external-customer"]')?.textContent).toBe('yz-open-detail-1')
     expect(document.body.querySelector('[data-testid="youzan-raw-section"]')).toBeNull()
     expect(document.body.querySelector('[data-testid="youzan-raw-toggle"]')).toBeNull()
     expect(document.body.querySelector('[data-testid="youzan-raw-copy"]')).toBeNull()

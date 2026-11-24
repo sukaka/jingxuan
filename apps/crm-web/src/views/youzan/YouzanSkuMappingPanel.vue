@@ -14,6 +14,7 @@ const props = defineProps<{
   shopId: string
   canWrite: boolean
   loading: boolean
+  suggestedExternalId?: string
 }>()
 const emit = defineEmits<{ saved: [] }>()
 
@@ -38,9 +39,9 @@ const skuOptions = computed(() => {
   return Array.from(options.values())
 })
 
-function openCreate() {
+function openCreate(prefill = '') {
   editingId.value = null
-  externalSkuId.value = ''
+  externalSkuId.value = (prefill || props.suggestedExternalId || '').trim()
   crmSkuId.value = undefined
   version.value = undefined
   selectedSku.value = null
@@ -120,8 +121,14 @@ async function save() {
   <section>
     <div class="youzan-section-head">
       <div><h3>SKU 映射管理</h3><p>外部 SKU 与 CRM 标准 SKU 一对一关联，“有效”仅代表映射配置可用，不代表订单已处理成功。</p></div>
-      <el-button v-if="canWrite" size="small" data-testid="sku-mapping-create" @click="openCreate">新增映射</el-button>
+      <el-button v-if="canWrite" size="small" data-testid="sku-mapping-create" @click="openCreate()">新增映射</el-button>
     </div>
+    <el-alert v-if="suggestedExternalId && canWrite" type="info" :closable="false" class="dialog-tip" data-testid="sku-mapping-suggestion">
+      <template #title>
+        待映射有赞外部 SKU（item_id:sku_id）：<strong>{{ suggestedExternalId }}</strong>
+        <el-button text size="small" type="primary" @click="openCreate(suggestedExternalId)">使用该标识新增映射</el-button>
+      </template>
+    </el-alert>
     <app-table v-loading="loading" :data="mappings" size="small">
       <el-table-column prop="externalSkuId" label="有赞外部 SKU" min-width="170" />
       <el-table-column label="CRM SKU" min-width="150"><template #default="{ row }">#{{ row.crmSkuId }}</template></el-table-column>

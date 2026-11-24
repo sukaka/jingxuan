@@ -82,6 +82,10 @@ public interface YouzanMapper {
     YouzanSyncIssue selectIssueForUpdate(@Param("tenantId") long tenantId, @Param("id") long id);
     YouzanSyncIssue selectIssueByEventAndType(@Param("tenantId") long tenantId, @Param("eventId") long eventId,
                                               @Param("issueType") String issueType);
+    List<YouzanSyncIssue> selectOpenUnpaidIssuesByExternalOrderForUpdate(@Param("tenantId") long tenantId,
+                                                                         @Param("shopId") String shopId,
+                                                                         @Param("externalOrderNo") String externalOrderNo,
+                                                                         @Param("excludeEventId") long excludeEventId);
     List<YouzanSyncIssue> selectIssues(@Param("tenantId") long tenantId, @Param("status") String status,
                                        @Param("offset") int offset, @Param("size") int size);
     List<YouzanSyncIssue> selectScopedIssues(@Param("tenantId") long tenantId, @Param("status") String status,

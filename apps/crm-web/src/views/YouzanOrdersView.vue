@@ -38,8 +38,9 @@ import './fulfillment/fulfillment.css'
 import './youzan/youzan.css'
 
 const auth = useAuthStore()
-const canRead = computed(() => auth.hasPermission('order:read'))
-const canWrite = computed(() => auth.hasPermission('campaign:write'))
+const canReadOrders = computed(() => auth.hasPermission('order:read'))
+const canRead = computed(() => canReadOrders.value || auth.hasPermission('integration:youzan:manage'))
+const canWrite = computed(() => auth.hasPermission('campaign:write') || auth.hasPermission('integration:youzan:manage'))
 const canManage = computed(() => auth.hasPermission('integration:youzan:manage'))
 const canManageRuntime = computed(() => auth.hasPermission('integration:runtime:manage'))
 const activeTab = ref('orders')
@@ -50,6 +51,8 @@ const isMockShop = computed(() => normalizedShopId.value.startsWith('MOCK-'))
 const currentShop = computed(() => shops.value.find((item) => item.shopId === normalizedShopId.value) ?? null)
 const activeRealShops = computed(() => shops.value.filter((item) => item.syncEnabled && item.connectionStatus === 'CONNECTED'))
 const hasActiveRealIntegration = computed(() => (!isMockShop.value && Boolean(normalizedShopId.value)) || activeRealShops.value.length > 0)
+const pendingCustomerExternalId = ref('')
+const pendingSkuExternalId = ref('')
 function shopStatusNote(shop: YouzanShopConfig): string {
   if (shop.connectionStatus === 'CONNECTED') return '连接通过，同步未启用'
   if (shop.connectionStatus === 'FAILED') return '连接失败'
@@ -62,19 +65,63 @@ function raw(row: YouzanOrderView): Record<string, unknown> {
   try { return row.payloadMaskedJson ? JSON.parse(row.payloadMaskedJson) as Record<string, unknown> : {} } catch { return {} }
 }
 function text(value: unknown) { return value == null || value === '' ? '—' : String(value) }
-function goods(row: YouzanOrderView) {
+function externalCustomerIdOf(row: YouzanOrderView): string | null {
+  if (row.externalCustomerId) return row.externalCustomerId
+  const value = raw(row).external_customer_id
+  return typeof value === 'string' && value.trim() ? value : null
+}
+function buyerHeadline(row: YouzanOrderView): string {
+  const data = raw(row)
+  if (data.nickname != null && data.nickname !== '') return String(data.nickname)
+  return externalCustomerIdOf(row) || '—'
+}
+function buyerSubline(row: YouzanOrderView): string {
+  const data = raw(row)
+  if (data.mobile != null && data.mobile !== '') return String(data.mobile)
+  const extId = externalCustomerIdOf(row)
+  if (data.nickname != null && data.nickname !== '') return extId || '—'
+  return extId ? '有赞外部客户' : '—'
+}
+function orderItemsOf(row: YouzanOrderView): Array<{ external_sku_id?: unknown; quantity?: unknown }> {
+  if (Array.isArray(row.items) && row.items.length > 0) return row.items
   const items = raw(row).items
-  return Array.isArray(items) ? items.map((item) => {
-    const line = item as Record<string, unknown>
-    return `${text(line.external_sku_id)} × ${text(line.quantity)}`
-  }).join('、') : '—'
+  return Array.isArray(items) ? (items as Array<{ external_sku_id?: unknown; quantity?: unknown }>) : []
+}
+function goods(row: YouzanOrderView) {
+  const items = orderItemsOf(row)
+  return items.length > 0 ? items.map((line) => `${text(line.external_sku_id)} × ${text(line.quantity)}`).join('、') : '—'
+}
+function orderTypeOf(row: YouzanOrderView) {
+  return text(row.orderTypeCode ?? raw(row).order_type_code)
+}
+function campaignIdOf(row: YouzanOrderView) {
+  return text(row.campaignId ?? raw(row).campaign_id)
+}
+function campaignBatchIdOf(row: YouzanOrderView) {
+  return text(row.campaignBatchId ?? raw(row).campaign_batch_id)
+}
+function paidAtOf(row: YouzanOrderView): string | null {
+  if (row.paidAt) return row.paidAt
+  const value = raw(row).paid_at
+  return value ? String(value) : null
 }
 function linkedCustomer(row: YouzanOrderView) {
-  const link = links.value.find((item) => item.externalCustomerId === raw(row).external_customer_id)
+  const extId = externalCustomerIdOf(row)
+  const link = extId ? links.value.find((item) => item.externalCustomerId === extId) : undefined
   return link ? customerNames.value[link.customerId] || `客户 #${link.customerId}` : '—'
 }
 function matchAndSync(row: YouzanOrderView) {
-  activeTab.value = row.mappingStatus === 'CUSTOMER_UNRESOLVED' ? 'customers' : 'mappings'
+  if (row.mappingStatus === 'CUSTOMER_UNRESOLVED') {
+    pendingCustomerExternalId.value = externalCustomerIdOf(row) ?? ''
+    activeTab.value = 'customers'
+    return
+  }
+  const activeMapped = new Set(mappings.value.filter((item) => item.status === 'ACTIVE').map((item) => item.externalSkuId))
+  const items = orderItemsOf(row)
+  const missing = items.find((line) => typeof line.external_sku_id === 'string' && !activeMapped.has(line.external_sku_id))
+  const skuId = missing?.external_sku_id ?? items[0]?.external_sku_id
+  pendingSkuExternalId.value = typeof skuId === 'string' ? skuId : ''
+  activeTab.value = 'mappings'
 }
 
 const orders = ref<YouzanOrderView[]>([])
@@ -187,6 +234,10 @@ async function loadShops() {
 
 function selectShop(id: string) {
   syncCursor.value = ''
+  reconcileCursor.value = ''
+  reconcileHasMore.value = false
+  pendingCustomerExternalId.value = ''
+  pendingSkuExternalId.value = ''
   syncAttempt = null
   shopId.value = id.trim()
   search()
@@ -214,7 +265,7 @@ function orderRowKey(order: YouzanOrderView): string {
 async function openOrder(order: YouzanOrderView) {
   detailLoadingId.value = orderRowKey(order)
   selectedOrder.value = order
-  if (order.orderId == null) {
+  if (order.orderId == null || !canReadOrders.value) {
     detailVisible.value = true
     detailLoadingId.value = null
     return
@@ -233,17 +284,23 @@ async function openOrder(order: YouzanOrderView) {
 
 const syncing = ref(false)
 const syncCursor = ref('')
+const reconcileCursor = ref('')
+const reconcileHasMore = ref(false)
 let syncAttempt: { signature: string; key: string } | null = null
 
 watch(shopId, () => {
   syncCursor.value = ''
+  reconcileCursor.value = ''
+  reconcileHasMore.value = false
+  pendingCustomerExternalId.value = ''
+  pendingSkuExternalId.value = ''
   syncAttempt = null
 }, { flush: 'sync' })
 
 async function runSync(mode: 'sync' | 'reconcile') {
   if (syncing.value) return
   const targetShopId = normalizedShopId.value
-  const cursor = mode === 'sync' ? syncCursor.value : ''
+  const cursor = mode === 'sync' ? syncCursor.value : (reconcileHasMore.value ? reconcileCursor.value : '')
   const signature = `${targetShopId}:${mode}:${cursor}`
   if (syncAttempt?.signature !== signature) syncAttempt = { signature, key: createYouzanKey(`youzan.${mode}`) }
   const key = syncAttempt.key
@@ -254,14 +311,23 @@ async function runSync(mode: 'sync' | 'reconcile') {
       : await reconcileYouzanOrders({ shopId: targetShopId, cursor: cursor || undefined, limit: 50 }, key)
     syncAttempt = null
     if (normalizedShopId.value === targetShopId) {
-      syncCursor.value = result.nextCursor ?? ''
+      if (mode === 'sync') {
+        syncCursor.value = result.nextCursor ?? ''
+      } else if (result.hasMore && result.nextCursor) {
+        reconcileCursor.value = result.nextCursor
+        reconcileHasMore.value = true
+      } else {
+        reconcileCursor.value = ''
+        reconcileHasMore.value = false
+      }
     }
     await Promise.allSettled([loadOrders(), loadIssues(), loadReport()])
     const syncLabel = targetShopId.startsWith('MOCK-') ? '模拟同步' : '同步'
+    const moreHint = result.hasMore ? '；仍有后续页，请继续拉取' : ''
     if (result.issues > 0) {
-      ElMessage.warning(`${syncLabel}返回 ${result.issues} 条异常，不能视为全部成功；已处理 ${result.processed} 条，重复 ${result.duplicates} 条`)
+      ElMessage.warning(`${syncLabel}返回 ${result.issues} 条异常，不能视为全部成功；已处理 ${result.processed} 条，重复 ${result.duplicates} 条${moreHint}`)
     } else {
-      ElMessage.success(`${syncLabel}完成：接收 ${result.received} 条，处理 ${result.processed} 条，重复 ${result.duplicates} 条`)
+      ElMessage.success(`${syncLabel}完成：接收 ${result.received} 条，处理 ${result.processed} 条，重复 ${result.duplicates} 条${moreHint}`)
     }
   } catch (error) {
     ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
@@ -302,7 +368,7 @@ onMounted(() => {
 <template>
   <div class="proto-page">
     <PageHeader title="有赞订单同步中心" description="线上订单自动进入 CRM：去重 → 匹配客户 → 识别套餐 → 保留活动归属 → 生成订单/权益">
-      <template #actions><el-button type="info" plain @click="showPrerequisites = true">接口前置条件</el-button><el-button v-if="canManage" text data-testid="youzan-sync" @click="runSync('sync')">手动单页同步</el-button><el-button v-if="canManage" type="primary" :loading="syncing" data-testid="youzan-reconcile" @click="runSync('reconcile')">立即拉取订单</el-button></template>
+      <template #actions><el-button type="info" plain @click="showPrerequisites = true">接口前置条件</el-button><el-button v-if="canManage" text data-testid="youzan-sync" @click="runSync('sync')">手动单页同步</el-button><el-button v-if="canManage" type="primary" :loading="syncing" data-testid="youzan-reconcile" @click="runSync('reconcile')">{{ reconcileHasMore ? '继续拉取订单' : '立即拉取订单' }}</el-button></template>
     </PageHeader>
     <div v-if="isMockShop && activeRealShops.length === 0" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟</span><strong>真实接入功能已预建 · 默认禁用 · Q11 待授权联调</strong><p>模拟回调不代表真实资金到账；真实店铺须完成授权、沙箱验收后另行启用。</p></div>
     <div v-else-if="isMockShop" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟视图</span><strong>当前查看模拟店铺（{{ normalizedShopId }}）；已存在 {{ activeRealShops.length }} 个已连接并启用的真实店铺</strong><p>模拟数据不代表真实资金到账；如需操作真实店铺，请切换为对应有赞店铺 ID（kdt_id）或在「店铺接入」中选择。</p></div>
@@ -312,7 +378,7 @@ onMounted(() => {
       <strong v-else>当前查看有赞店铺 {{ normalizedShopId }}{{ currentShop ? `（${currentShop.shopName} · ${shopStatusNote(currentShop)}）` : '' }}</strong>
       <p>订单与支付状态以有赞官方接口及 CRM 支付核验为准；消息推送与重叠窗口自动幂等去重，异常请前往异常队列处理。</p>
     </div>
-    <el-alert v-if="!canRead" type="error" title="缺少 order:read 权限，无法查看有赞同步数据" :closable="false" />
+    <el-alert v-if="!canRead" type="error" title="缺少 order:read 权限（或 integration:youzan:manage 权限），无法查看有赞同步数据" :closable="false" />
     <template v-else>
       <IntegrationRuntimeSettings v-if="canManageRuntime" provider="youzan" />
       <div class="proto-stat-grid"><StatCard label="今日拉取" :value="`${report?.todayEvents ?? 0} 单`" sub="按实际接收时间" icon="bag" /><StatCard label="待匹配" :value="`${pendingMatches} 单`" sub="需要确认 CRM 客户" icon="users" /><StatCard label="同步异常" :value="`${syncErrors} 单`" sub="商品映射或支付核验异常" icon="shield" /><StatCard label="活动订单" :value="`${report?.campaignOrders ?? 0} 单`" sub="保留活动与批次归属" icon="activity" /></div>
@@ -335,12 +401,12 @@ onMounted(() => {
           <div class="proto-table-wrap">
             <app-table v-loading="orderLoading" :data="orders" :row-key="orderRowKey">
               <el-table-column prop="externalOrderNo" label="有赞订单号" min-width="160" />
-              <el-table-column label="客户昵称 / 手机" min-width="135"><template #default="{row}">{{ text(raw(row).nickname) }}<div class="proto-subcell">{{ text(raw(row).mobile) }}</div></template></el-table-column>
+              <el-table-column label="客户昵称 / 手机" min-width="135"><template #default="{row}">{{ buyerHeadline(row) }}<div class="proto-subcell">{{ buyerSubline(row) }}</div></template></el-table-column>
               <el-table-column label="商品" min-width="155"><template #default="{row}">{{ goods(row) }}</template></el-table-column>
               <el-table-column label="实付" width="95" align="right"><template #default="{row}">{{ fenToYuan(row.externalAmountFen) }}</template></el-table-column>
-              <el-table-column label="订单类型" width="110"><template #default="{row}"><span class="proto-pill" :class="orderTypeTone(text(raw(row).order_type_code))">{{ orderTypeLabel(text(raw(row).order_type_code)) }}</span></template></el-table-column>
-              <el-table-column label="活动 / 批次" min-width="110"><template #default="{row}">活动 #{{ text(raw(row).campaign_id) }}<div class="proto-subcell">批次 #{{ text(raw(row).campaign_batch_id) }}</div></template></el-table-column>
-              <el-table-column label="支付时间" min-width="150"><template #default="{row}">{{ raw(row).paid_at ? formatDateTime(String(raw(row).paid_at)) : '未支付' }}</template></el-table-column>
+              <el-table-column label="订单类型" width="110"><template #default="{row}"><span class="proto-pill" :class="orderTypeTone(orderTypeOf(row))">{{ orderTypeLabel(orderTypeOf(row)) }}</span></template></el-table-column>
+              <el-table-column label="活动 / 批次" min-width="110"><template #default="{row}">活动 #{{ campaignIdOf(row) }}<div class="proto-subcell">批次 #{{ campaignBatchIdOf(row) }}</div></template></el-table-column>
+              <el-table-column label="支付时间" min-width="150"><template #default="{row}">{{ paidAtOf(row) ? formatDateTime(paidAtOf(row)) : '未支付' }}</template></el-table-column>
               <el-table-column label="CRM匹配" min-width="105"><template #default="{row}">{{ linkedCustomer(row) }}</template></el-table-column>
               <el-table-column label="状态" width="120"><template #default="{row}"><StatusPill :text="mappingStatusLabel(row.mappingStatus)" :tone="mappingStatusTone(row.mappingStatus)" /></template></el-table-column>
               <el-table-column label="操作" width="190" fixed="right"><template #default="{row}"><el-button v-if="row.mappingStatus !== 'PROCESSED'" size="small" type="primary" @click="matchAndSync(row)">匹配并同步</el-button><span v-else class="proto-muted">已入队</span><el-button text data-testid="youzan-order-detail" @click="openOrder(row)">脱敏详情</el-button></template></el-table-column>
@@ -363,11 +429,11 @@ onMounted(() => {
         </template>
 
         <template v-else-if="activeTab === 'mappings'">
-          <YouzanSkuMappingPanel :mappings="mappings" :shop-id="normalizedShopId" :can-write="canWrite" :loading="mappingsLoading" @saved="loadMappings" />
+          <YouzanSkuMappingPanel :mappings="mappings" :shop-id="normalizedShopId" :can-write="canWrite" :loading="mappingsLoading" :suggested-external-id="pendingSkuExternalId" @saved="pendingSkuExternalId = ''; loadMappings()" />
         </template>
 
         <template v-else-if="activeTab === 'customers'">
-          <YouzanCustomerLinkPanel :links="links" :shop-id="normalizedShopId" :can-write="canWrite" :loading="linksLoading" @saved="loadLinks" />
+          <YouzanCustomerLinkPanel :links="links" :shop-id="normalizedShopId" :can-write="canWrite" :loading="linksLoading" :suggested-external-id="pendingCustomerExternalId" @saved="pendingCustomerExternalId = ''; loadLinks()" />
         </template>
 
         <template v-else>

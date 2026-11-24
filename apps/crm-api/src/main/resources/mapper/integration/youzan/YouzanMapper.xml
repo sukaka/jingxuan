@@ -246,6 +246,18 @@
   <select id="selectIssueByEventAndType" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncIssue">
     SELECT <include refid="issueColumns"/> FROM crm_youzan_sync_issue WHERE tenant_id=#{tenantId} AND event_id=#{eventId} AND issue_type=#{issueType}
   </select>
+  <select id="selectOpenUnpaidIssuesByExternalOrderForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncIssue">
+    SELECT <include refid="aliasedIssueColumns"/> FROM crm_youzan_sync_issue i
+    INNER JOIN crm_youzan_event e ON e.tenant_id=i.tenant_id AND e.id=i.event_id
+    WHERE i.tenant_id=#{tenantId}
+      AND e.shop_id=#{shopId}
+      AND e.external_order_no=#{externalOrderNo}
+      AND e.id &lt;&gt; #{excludeEventId}
+      AND e.event_type IN ('ORDER_PENDING', 'WAIT_PAY')
+      AND i.status='OPEN'
+      AND i.issue_type IN ('MAPPING_FAILED', 'CUSTOMER_UNRESOLVED', 'RETRY')
+    ORDER BY i.id FOR UPDATE OF i
+  </select>
   <select id="selectIssues" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncIssue">
     SELECT <include refid="issueColumns"/> FROM crm_youzan_sync_issue WHERE tenant_id=#{tenantId}
     <if test="status != null and status != ''">AND status=#{status}</if>

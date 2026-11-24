@@ -15,6 +15,7 @@ public interface YouzanConfigMapper {
     YouzanShopConfig selectShopConfig(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
     YouzanShopConfig selectShopConfigForUpdate(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
     YouzanShopConfig selectShopConfigByClientAndShop(@Param("clientId") String clientId, @Param("shopId") String shopId);
+    List<YouzanShopConfig> selectShopConfigsByClientId(@Param("clientId") String clientId);
     List<YouzanShopConfig> selectShopConfigs(@Param("tenantId") long tenantId);
     List<YouzanShopConfig> selectSyncEnabledShopConfigs();
     int updateShopConfig(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
