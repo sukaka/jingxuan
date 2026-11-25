@@ -29,7 +29,7 @@
   <!-- 范围与客户列表同语义：跟进挂在可见客户上（TEAM=客户团队可见或本人持有；SELF=本人持有客户或本人登记） -->
   <sql id="scopedWhere">
     FROM crm_followup f
-    INNER JOIN crm_customer c ON c.tenant_id = f.tenant_id AND c.id = f.customer_id
+    INNER JOIN crm_customer c ON c.tenant_id = f.tenant_id AND c.id = f.customer_id AND c.deleted = 0
     LEFT JOIN sys_user o ON o.tenant_id = f.tenant_id AND o.id = f.owner_staff_id
     WHERE f.tenant_id = #{tenantId} AND f.deleted = 0
     <choose>

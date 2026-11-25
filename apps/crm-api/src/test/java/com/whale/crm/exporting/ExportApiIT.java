@@ -3,6 +3,11 @@ package com.whale.crm.exporting;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.whale.crm.customer.application.MobileSupport;
 import com.whale.crm.exporting.application.ExportWorker;
+import com.whale.crm.exporting.domain.ExportDataQuery;
+import com.whale.crm.exporting.domain.ExportDataRepository;
+import com.whale.crm.exporting.domain.ExportFilter;
+import com.whale.crm.exporting.domain.ExportRestriction;
+import com.whale.crm.exporting.domain.ExportScope;
 import com.whale.crm.exporting.domain.ExportType;
 import com.whale.crm.exporting.infrastructure.ExportProperties;
 import com.whale.crm.file.application.ClamAvScanner;
@@ -68,17 +73,20 @@ class ExportApiIT extends AbstractMysqlIT {
     @Autowired MobileSupport mobileSupport;
     @Autowired ExportWorker worker;
     @Autowired ExportProperties exportProperties;
+    @Autowired ExportDataRepository exportDataRepository;
 
     private final Map<String, byte[]> objects = new HashMap<>();
     private final List<byte[]> scannedContents = new ArrayList<>();
     private AuthCookies admin;
     private AuthCookies lead1;
+    private AuthCookies lead2;
     private AuthCookies manager1;
 
     @BeforeAll
     void loginUsers() throws Exception {
         admin = login("admin");
         lead1 = login("lead1");
+        lead2 = login("lead2");
         manager1 = login("manager1");
     }
 
@@ -403,6 +411,159 @@ class ExportApiIT extends AbstractMysqlIT {
         mockMvc.perform(get("/api/v1/exports/{id}/download", id).cookie(admin.cookies()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.data.downloadUrl").doesNotExist());
+    }
+
+    @Test
+    void redemptionExportFollowsRealTimeCustomerOwnershipAndSoftDeleteRules() throws Exception {
+        CustomerFixture transferred = insertCustomer(1L, 2L, "13900000801", unique("RD-CITY-"), "transferred");
+        CustomerFixture softDeleted = insertCustomer(1L, 2L, "13900000802", unique("RD-CITY-"), "soft-deleted");
+        long transferredRedemptionId = insertRedemption(transferred.id(), 1L, 2L, 1L);
+        long deletedRedemptionId = insertRedemption(softDeleted.id(), 1L, 2L, 1L);
+
+        // 客户从 manager1(id=2, team=1) 转移给 manager2(id=3, team=2)，历史核销快照保持 (owner=2, team=1)
+        jdbcTemplate.update("UPDATE crm_customer SET owner_staff_id=3,team_id=2 WHERE tenant_id=1 AND id=?",
+                transferred.id());
+        // 另一客户软删
+        jdbcTemplate.update("UPDATE crm_customer SET deleted=1 WHERE tenant_id=1 AND id=?", softDeleted.id());
+
+        // 原组主管 lead1（TEAM=1）导不出已转移客户与已软删客户的核销
+        JsonNode oldTeamExport = createSucceeded(lead1, ExportType.REDEMPTION,
+                List.of("redemptionId", "customerNo", "status"), unique("转移后旧组导出 "),
+                Map.of("customerId", transferred.id()), Map.of("teamIds", List.of(1)));
+        assertThat(oldTeamExport.get("rowCount").asLong()).isZero();
+        assertThat(csv(oldTeamExport)).doesNotContain(transferred.customerNo(), Long.toString(transferredRedemptionId));
+
+        JsonNode oldTeamDeletedExport = createSucceeded(lead1, ExportType.REDEMPTION,
+                List.of("redemptionId", "customerNo", "status"), unique("软删客户旧组导出 "),
+                Map.of("customerId", softDeleted.id()), null);
+        assertThat(oldTeamDeletedExport.get("rowCount").asLong()).isZero();
+        assertThat(csv(oldTeamDeletedExport)).doesNotContain(softDeleted.customerNo(), Long.toString(deletedRedemptionId));
+
+        // 新组主管 lead2（TEAM=2）无论是否带 teamIds/ownerId 收窄，都能导出新归属客户的核销
+        JsonNode newTeamExport = createSucceeded(lead2, ExportType.REDEMPTION,
+                List.of("redemptionId", "customerNo", "status"), unique("转移后新组导出 "),
+                Map.of("customerId", transferred.id()), Map.of("teamIds", List.of(2), "ownerId", 3));
+        assertThat(newTeamExport.get("rowCount").asLong()).isEqualTo(1L);
+        assertThat(csv(newTeamExport)).contains(transferred.customerNo(), Long.toString(transferredRedemptionId));
+
+        // 非机构 ALL 范围也排除软删客户
+        JsonNode adminDeletedExport = createSucceeded(admin, ExportType.REDEMPTION,
+                List.of("redemptionId", "customerNo", "status"), unique("软删客户全量导出 "),
+                Map.of("customerId", softDeleted.id()), null);
+        assertThat(adminDeletedExport.get("rowCount").asLong()).isZero();
+        assertThat(csv(adminDeletedExport)).doesNotContain(softDeleted.customerNo(), Long.toString(deletedRedemptionId));
+
+        // SELF 视角验证：旧管家(2)排除、新管家(3)包含；软删客户对原管家排除
+        ExportFilter transferredFilter = new ExportFilter(transferred.id(), null, null, null, null, null, null, null);
+        ExportScope oldManagerScope = new ExportScope(ExportScope.Kind.SELF, java.util.Set.of(), 2L, java.util.Set.of());
+        ExportScope newManagerScope = new ExportScope(ExportScope.Kind.SELF, java.util.Set.of(), 3L, java.util.Set.of());
+        ExportDataQuery oldSelfQuery = new ExportDataQuery(1L, ExportType.REDEMPTION, oldManagerScope,
+                ExportRestriction.none(), transferredFilter, 0L, 10);
+        ExportDataQuery newSelfQuery = new ExportDataQuery(1L, ExportType.REDEMPTION, newManagerScope,
+                ExportRestriction.none(), transferredFilter, 0L, 10);
+        assertThat(exportDataRepository.count(oldSelfQuery)).isZero();
+        assertThat(exportDataRepository.page(oldSelfQuery)).isEmpty();
+        assertThat(exportDataRepository.count(newSelfQuery)).isEqualTo(1L);
+        assertThat(exportDataRepository.page(newSelfQuery))
+                .extracting(row -> ((Number) row.get("redemptionId")).longValue())
+                .containsExactly(transferredRedemptionId);
+
+        ExportFilter deletedFilter = new ExportFilter(softDeleted.id(), null, null, null, null, null, null, null);
+        ExportDataQuery deletedSelfQuery = new ExportDataQuery(1L, ExportType.REDEMPTION, oldManagerScope,
+                ExportRestriction.none(), deletedFilter, 0L, 10);
+        assertThat(exportDataRepository.count(deletedSelfQuery)).isZero();
+        assertThat(exportDataRepository.page(deletedSelfQuery)).isEmpty();
+
+        // INSTITUTION 视角与 FulfillmentMapper 一致：按 r.institution_id 隔离，不因 c.deleted 隐藏机构已核销单
+        ExportScope inst1Scope = new ExportScope(ExportScope.Kind.INSTITUTION, java.util.Set.of(), 10L, java.util.Set.of(1L));
+        ExportScope inst2Scope = new ExportScope(ExportScope.Kind.INSTITUTION, java.util.Set.of(), 11L, java.util.Set.of(2L));
+        ExportDataQuery inst1DeletedQuery = new ExportDataQuery(1L, ExportType.REDEMPTION, inst1Scope,
+                ExportRestriction.none(), deletedFilter, 0L, 10);
+        ExportDataQuery inst2DeletedQuery = new ExportDataQuery(1L, ExportType.REDEMPTION, inst2Scope,
+                ExportRestriction.none(), deletedFilter, 0L, 10);
+        assertThat(exportDataRepository.count(inst1DeletedQuery)).isEqualTo(1L);
+        assertThat(exportDataRepository.page(inst1DeletedQuery))
+                .extracting(row -> ((Number) row.get("redemptionId")).longValue())
+                .containsExactly(deletedRedemptionId);
+        assertThat(exportDataRepository.count(inst2DeletedQuery)).isZero();
+        assertThat(exportDataRepository.page(inst2DeletedQuery)).isEmpty();
+    }
+
+    @Test
+    void multiPageKeysetExportCoversAllFourDatasetsCompletelyInIdOrder() throws Exception {
+        String city = unique("KS-CITY-").substring(0, 24);
+        List<CustomerFixture> customers = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            customers.add(insertCustomer(1L, 2L, "1390000090" + i, city, "page-" + i));
+        }
+        CustomerFixture host = customers.get(0);
+        List<String> expectedOrderNos = new ArrayList<>();
+        List<Long> expectedRedemptionIds = new ArrayList<>();
+        List<String> expectedFollowupSummaries = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            String orderNo = unique("KS-ORD-" + i + "-");
+            jdbcTemplate.update("INSERT INTO crm_order (tenant_id,order_no,customer_id,sold_by_user_id,owner_at_sale_id,"
+                            + "source_system,order_type_code,status,receiver_type,list_amount_fen,discount_amount_fen,"
+                            + "payable_fen,paid_fen,refunded_fen,ordered_at) VALUES (1,?,?,2,2,'CRM','REGULAR','PAID',"
+                            + "'PLATFORM',1000,0,1000,1000,0,UTC_TIMESTAMP(3))", orderNo, host.id());
+            expectedOrderNos.add(orderNo);
+            expectedRedemptionIds.add(insertRedemption(host.id(), 1L, 2L, 1L));
+            String summary = "KS-FU-" + i;
+            jdbcTemplate.update("INSERT INTO crm_followup (tenant_id,customer_id,owner_staff_id,channel_code,contact_at,"
+                    + "summary,estimated_amount_fen,created_by) VALUES (1,?,2,'WECOM',UTC_TIMESTAMP(3),?,100,2)",
+                    host.id(), summary);
+            expectedFollowupSummaries.add(summary);
+        }
+
+        int originalPageSize = exportProperties.getPageSize();
+        exportProperties.setPageSize(2);
+        try {
+            JsonNode customerJob = createSucceeded(admin, ExportType.CUSTOMER, List.of("customerNo"),
+                    unique("多页客户导出 "), Map.of("cityCode", city), null);
+            JsonNode orderJob = createSucceeded(admin, ExportType.ORDER, List.of("orderNo"),
+                    unique("多页订单导出 "), Map.of("customerId", host.id()), null);
+            JsonNode redemptionJob = createSucceeded(admin, ExportType.REDEMPTION, List.of("redemptionId"),
+                    unique("多页核销导出 "), Map.of("customerId", host.id()), null);
+            JsonNode followupJob = createSucceeded(admin, ExportType.FOLLOWUP, List.of("summary"),
+                    unique("多页跟进导出 "), Map.of("customerId", host.id()), null);
+
+            assertThat(customerJob.get("rowCount").asLong()).isEqualTo(5L);
+            assertThat(dataLines(csv(customerJob)))
+                    .containsExactlyElementsOf(customers.stream().map(CustomerFixture::customerNo).toList());
+
+            assertThat(orderJob.get("rowCount").asLong()).isEqualTo(5L);
+            assertThat(dataLines(csv(orderJob))).containsExactlyElementsOf(expectedOrderNos);
+
+            assertThat(redemptionJob.get("rowCount").asLong()).isEqualTo(5L);
+            assertThat(dataLines(csv(redemptionJob)))
+                    .containsExactlyElementsOf(expectedRedemptionIds.stream().map(String::valueOf).toList());
+
+            assertThat(followupJob.get("rowCount").asLong()).isEqualTo(5L);
+            assertThat(dataLines(csv(followupJob))).containsExactlyElementsOf(expectedFollowupSummaries);
+        } finally {
+            exportProperties.setPageSize(originalPageSize);
+        }
+    }
+
+    private long insertRedemption(long customerId, long institutionId, long ownerStaffId, long teamId) {
+        String appointmentNo = unique("IT-APPT-");
+        jdbcTemplate.update("INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,"
+                        + "owner_staff_id,team_id,scheduled_at,status,created_by) VALUES (1,?,?,?,?,?,UTC_TIMESTAMP(3),'SERVICE_DONE',?)",
+                appointmentNo, customerId, institutionId, ownerStaffId, teamId, ownerStaffId);
+        long appointmentId = jdbcTemplate.queryForObject(
+                "SELECT id FROM crm_appointment WHERE tenant_id=1 AND appointment_no=?", Long.class, appointmentNo);
+        String key = unique("it-redemption-");
+        jdbcTemplate.update("INSERT INTO crm_redemption (tenant_id,appointment_id,customer_id,institution_id,owner_staff_id,"
+                        + "team_id,service_at,evidence_ref,status,settlement_status,idempotency_key,posted_by,posted_at) "
+                        + "VALUES (1,?,?,?,?,?,UTC_TIMESTAMP(3),'EVIDENCE','POSTED','PENDING_VERIFICATION',?,10,UTC_TIMESTAMP(3))",
+                appointmentId, customerId, institutionId, ownerStaffId, teamId, key);
+        return jdbcTemplate.queryForObject(
+                "SELECT id FROM crm_redemption WHERE tenant_id=1 AND idempotency_key=?", Long.class, key);
+    }
+
+    private List<String> dataLines(String csvContent) {
+        List<String> lines = csvContent.lines().toList();
+        return lines.size() <= 1 ? List.of() : lines.subList(1, lines.size());
     }
 
     private JsonNode createSucceeded(AuthCookies auth, ExportType type, List<String> columns, String reason,

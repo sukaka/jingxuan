@@ -224,6 +224,65 @@ class CustomerSegmentApiIT extends AbstractMysqlIT {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void segmentPreviewAndMembersReturnAllSortedLongTagsWithoutTruncation() throws Exception {
+        AuthCookies admin = login("admin");
+        String cityCode = "SGT" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        long taggedCustomerId = customer(admin, "SEG-LONG-TAGS-" + cityCode);
+        long emptyCustomerId = customer(admin, "SEG-NO-TAGS-" + cityCode);
+        jdbcTemplate.update("UPDATE crm_customer SET city_code=? WHERE tenant_id=1 AND id IN (?,?)",
+                cityCode, taggedCustomerId, emptyCustomerId);
+
+        java.util.List<String> expectedSorted = new java.util.ArrayList<>();
+        for (int i = 24; i >= 0; i--) {
+            String code = String.format("SEG_TAG_%02d_%s", i, "B".repeat(41));
+            jdbcTemplate.update("INSERT INTO crm_customer_tag (tenant_id,customer_id,tag_code,created_by) VALUES (1,?,?,1)",
+                    taggedCustomerId, code);
+            expectedSorted.add(code);
+        }
+        java.util.Collections.sort(expectedSorted);
+
+        Map<String, Object> filters = Map.of("cityCodes", List.of(cityCode));
+        String previewJson = mockMvc.perform(admin.withAuth(post("/api/v1/customer-segments/preview"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("filters", filters, "page", 1, "size", 20))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andReturn().getResponse().getContentAsString();
+        assertSegmentTags(previewJson, taggedCustomerId, emptyCustomerId, expectedSorted);
+
+        String created = createSegment(admin, "SEG-TAGS-" + cityCode, filters, key("seg-long-tags"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long segmentId = objectMapper.readTree(created).at("/data/id").asLong();
+
+        String membersJson = mockMvc.perform(get("/api/v1/customer-segments/{id}/members?page=1&size=20", segmentId)
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andReturn().getResponse().getContentAsString();
+        assertSegmentTags(membersJson, taggedCustomerId, emptyCustomerId, expectedSorted);
+    }
+
+    private void assertSegmentTags(String responseJson, long taggedCustomerId, long emptyCustomerId,
+                                   List<String> expectedSorted) throws Exception {
+        var items = objectMapper.readTree(responseJson).at("/data/items");
+        java.util.List<String> actualTagged = new java.util.ArrayList<>();
+        java.util.List<String> actualEmpty = null;
+        for (var item : items) {
+            long id = item.get("id").asLong();
+            if (id == taggedCustomerId) {
+                item.get("tagCodes").forEach(node -> actualTagged.add(node.asText()));
+            } else if (id == emptyCustomerId) {
+                java.util.List<String> emptyTags = new java.util.ArrayList<>();
+                item.get("tagCodes").forEach(node -> emptyTags.add(node.asText()));
+                actualEmpty = emptyTags;
+            }
+        }
+        assertThat(actualTagged).hasSize(25).containsExactlyElementsOf(expectedSorted);
+        assertThat(actualEmpty).isNotNull().isEmpty();
+    }
+
     private org.springframework.test.web.servlet.ResultActions createSegment(
             AuthCookies user, String name, Map<String, Object> filters, String idempotencyKey) throws Exception {
         return mockMvc.perform(user.withAuth(post("/api/v1/customer-segments"))

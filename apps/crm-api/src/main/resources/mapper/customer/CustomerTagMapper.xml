@@ -8,6 +8,18 @@
     ORDER BY tag_code ASC
   </select>
 
+  <select id="selectTagCodesByCustomerIds"
+          resultType="com.whale.crm.customer.infrastructure.mapper.CustomerTagMapper$CustomerTagRow">
+    SELECT customer_id AS customerId, tag_code AS tagCode
+    FROM crm_customer_tag
+    WHERE tenant_id = #{tenantId}
+      AND customer_id IN
+      <foreach collection="customerIds" item="customerId" open="(" separator="," close=")">
+        #{customerId}
+      </foreach>
+    ORDER BY customer_id ASC, tag_code ASC
+  </select>
+
   <insert id="insertTag">
     INSERT INTO crm_customer_tag (tenant_id, customer_id, tag_code, created_by)
     VALUES (#{tenantId}, #{customerId}, #{tagCode}, #{createdBy})

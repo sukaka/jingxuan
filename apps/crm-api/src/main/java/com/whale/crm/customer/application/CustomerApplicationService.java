@@ -415,7 +415,7 @@ public class CustomerApplicationService {
                 row.getCustomerStatus(), row.getTierCode(), row.getIntentLevel(), row.getOwnerStaffId(),
                 row.getOwnerName(), row.getTeamId(), row.getPointsCached(), row.getLastFollowupAt(),
                 row.getCreatedAt(), row.getVersion(), row.getSourceCode(), row.getChannelCode(), row.getSpendingLevel(),
-                row.getBirthday(), row.getTagCodes() == null ? List.of() : List.of(row.getTagCodes().split(",")),
+                row.getBirthday(), row.getTagCodes(),
                 row.getNextFollowupAt());
     }
 

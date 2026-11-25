@@ -2,6 +2,7 @@ package com.whale.crm.customer.domain;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * 客户列表查询投影：crm_customer 联表 sys_user 取 ownerName。mobileCipher 永不进入投影，
@@ -26,7 +27,7 @@ public class CustomerListRow {
     private String channelCode;
     private String spendingLevel;
     private LocalDate birthday;
-    private String tagCodes;
+    private List<String> tagCodes = List.of();
     private Instant nextFollowupAt;
     private Integer pointsCached;
     private Instant lastFollowupAt;
@@ -145,8 +146,8 @@ public class CustomerListRow {
     public void setSpendingLevel(String value) { spendingLevel = value; }
     public LocalDate getBirthday() { return birthday; }
     public void setBirthday(LocalDate value) { birthday = value; }
-    public String getTagCodes() { return tagCodes; }
-    public void setTagCodes(String value) { tagCodes = value; }
+    public List<String> getTagCodes() { return tagCodes == null ? List.of() : tagCodes; }
+    public void setTagCodes(List<String> value) { tagCodes = value == null ? List.of() : List.copyOf(value); }
     public Instant getNextFollowupAt() { return nextFollowupAt; }
     public void setNextFollowupAt(Instant value) { nextFollowupAt = value; }
 

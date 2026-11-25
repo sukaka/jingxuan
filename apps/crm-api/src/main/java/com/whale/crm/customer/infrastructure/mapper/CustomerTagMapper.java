@@ -10,6 +10,12 @@ public interface CustomerTagMapper {
 
     List<String> selectTagCodes(@Param("tenantId") long tenantId, @Param("customerId") long customerId);
 
+    List<CustomerTagRow> selectTagCodesByCustomerIds(@Param("tenantId") long tenantId,
+                                                     @Param("customerIds") List<Long> customerIds);
+
+    record CustomerTagRow(long customerId, String tagCode) {
+    }
+
     int insertTag(@Param("tenantId") long tenantId, @Param("customerId") long customerId,
                   @Param("tagCode") String tagCode, @Param("createdBy") Long createdBy);
 

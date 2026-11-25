@@ -3,20 +3,24 @@ package com.whale.crm.customer.infrastructure;
 import com.whale.crm.customer.domain.Customer;
 import com.whale.crm.customer.domain.CustomerListRow;
 import com.whale.crm.customer.domain.CustomerRepository;
+import com.whale.crm.customer.domain.CustomerTagRepository;
 import com.whale.crm.customer.infrastructure.mapper.CustomerMapper;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
 public class MybatisCustomerRepository implements CustomerRepository {
 
     private final CustomerMapper customerMapper;
+    private final CustomerTagRepository customerTagRepository;
 
-    public MybatisCustomerRepository(CustomerMapper customerMapper) {
+    public MybatisCustomerRepository(CustomerMapper customerMapper, CustomerTagRepository customerTagRepository) {
         this.customerMapper = customerMapper;
+        this.customerTagRepository = customerTagRepository;
     }
 
     @Override
@@ -24,8 +28,22 @@ public class MybatisCustomerRepository implements CustomerRepository {
                                         String keyword, String mobileHashKeyword, String status, String cityCode,
                                         String sourceCode, String channelCode, String tierCode, Long ownerId,
                                         Instant followupDueBefore, int offset, int size) {
-        return customerMapper.search(tenantId, scopeType, teamIds, selfId, keyword, mobileHashKeyword, status,
-                cityCode, sourceCode, channelCode, tierCode, ownerId, followupDueBefore, offset, size);
+        List<CustomerListRow> rows = customerMapper.search(tenantId, scopeType, teamIds, selfId, keyword,
+                mobileHashKeyword, status, cityCode, sourceCode, channelCode, tierCode, ownerId,
+                followupDueBefore, offset, size);
+        attachTagCodes(tenantId, rows);
+        return rows;
+    }
+
+    private void attachTagCodes(long tenantId, List<CustomerListRow> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        List<Long> customerIds = rows.stream().map(CustomerListRow::getId).toList();
+        Map<Long, List<String>> tagsByCustomer = customerTagRepository.findTagCodesByCustomerIds(tenantId, customerIds);
+        for (CustomerListRow row : rows) {
+            row.setTagCodes(tagsByCustomer.getOrDefault(row.getId(), List.of()));
+        }
     }
 
     @Override
