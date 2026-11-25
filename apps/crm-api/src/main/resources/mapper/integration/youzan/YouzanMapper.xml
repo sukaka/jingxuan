@@ -107,11 +107,14 @@
     <if test="scope != null and scope.scopeType != 'ALL'"><include refid="eventScopeCondition"/></if>
   </select>
   <select id="countTodayEvents" resultType="long">
-    SELECT COUNT(*) FROM crm_youzan_event WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND received_at &gt;= CURRENT_DATE
+    SELECT COUNT(*) FROM crm_youzan_event
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+      AND received_at &gt;= #{todayStartUtc} AND received_at &lt; #{todayEndUtcExclusive}
   </select>
   <select id="countScopedTodayEvents" resultType="long">
     SELECT COUNT(*) FROM crm_youzan_event e
-    WHERE e.tenant_id=#{tenantId} AND e.shop_id=#{shopId} AND e.received_at &gt;= CURRENT_DATE
+    WHERE e.tenant_id=#{tenantId} AND e.shop_id=#{shopId}
+      AND e.received_at &gt;= #{todayStartUtc} AND e.received_at &lt; #{todayEndUtcExclusive}
     <if test="scope != null and scope.scopeType != 'ALL'"><include refid="eventScopeCondition"/></if>
   </select>
   <select id="countCampaignOrders" resultType="long">

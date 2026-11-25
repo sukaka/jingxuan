@@ -39,14 +39,18 @@ import com.whale.crm.product.domain.PackageVersionSnapshot;
 import com.whale.crm.trading.application.OrderApplicationService;
 import com.whale.crm.trading.application.OutboxService;
 import com.whale.crm.trading.domain.OrderFulfillmentView;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +60,7 @@ import java.util.UUID;
 
 @Service
 public class YouzanManagementService {
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private static final Duration MAX_WINDOW = Duration.ofDays(90);
     private static final int MAX_SCHEDULED_PAGES = 100;
     private final YouzanRepository repository;
@@ -71,13 +76,26 @@ public class YouzanManagementService {
     private final ObjectMapper objectMapper;
     private final AesGcmCipher cipher;
     private final TransactionTemplate transactionTemplate;
+    private final Clock clock;
 
+    @Autowired
     public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
                                    YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
                                    OrderApplicationService orderService, CatalogApplicationService catalogService,
                                    CustomerScopeSupport scopeSupport, IdempotencyService idempotencyService,
                                    AuditService auditService, OutboxService outboxService, ObjectMapper objectMapper,
                                    AesGcmCipher cipher, PlatformTransactionManager transactionManager) {
+        this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
+                scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
+                transactionManager, Clock.system(BUSINESS_ZONE));
+    }
+
+    public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
+                                   YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
+                                   OrderApplicationService orderService, CatalogApplicationService catalogService,
+                                   CustomerScopeSupport scopeSupport, IdempotencyService idempotencyService,
+                                   AuditService auditService, OutboxService outboxService, ObjectMapper objectMapper,
+                                   AesGcmCipher cipher, PlatformTransactionManager transactionManager, Clock clock) {
         this.repository = repository;
         this.configRepository = configRepository;
         this.eventService = eventService;
@@ -91,6 +109,7 @@ public class YouzanManagementService {
         this.objectMapper = objectMapper;
         this.cipher = cipher;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     public PageResponse<YouzanOrderView> orders(long tenantId, CurrentUser user, String shopId, int page, int size) {
@@ -268,10 +287,14 @@ public class YouzanManagementService {
             return new YouzanReconcileReport(shopId, 0, 0, 0, null, 0, 0);
         }
         YouzanSyncCursor cursor = repository.findCursor(tenantId, shopId).orElse(null);
+        LocalDate businessToday = clock.instant().atZone(BUSINESS_ZONE).toLocalDate();
+        Instant todayStartUtc = businessToday.atStartOfDay(BUSINESS_ZONE).toInstant();
+        Instant todayEndUtcExclusive = businessToday.plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant();
         if (scope.type() == DataScope.ScopeType.ALL || user.permissions().contains("integration:youzan:manage")) {
             return new YouzanReconcileReport(shopId, repository.countEvents(tenantId, shopId),
                     repository.countOrderMaps(tenantId, shopId), repository.countIssues(tenantId, "OPEN"),
-                    cursor == null ? null : cursor.lastSyncAt(), repository.countTodayEvents(tenantId, shopId),
+                    cursor == null ? null : cursor.lastSyncAt(),
+                    repository.countTodayEvents(tenantId, shopId, todayStartUtc, todayEndUtcExclusive),
                     repository.countCampaignOrders(tenantId, shopId));
         }
         CustomerScopeSupport.ScopeQuery scopeQuery = scopeQuery(scope, user);
@@ -280,7 +303,7 @@ public class YouzanManagementService {
                 repository.countScopedOrderMaps(tenantId, shopId, scopeQuery),
                 repository.countScopedIssues(tenantId, "OPEN", scopeQuery),
                 cursor == null ? null : cursor.lastSyncAt(),
-                repository.countScopedTodayEvents(tenantId, shopId, scopeQuery),
+                repository.countScopedTodayEvents(tenantId, shopId, scopeQuery, todayStartUtc, todayEndUtcExclusive),
                 repository.countScopedCampaignOrders(tenantId, shopId, scopeQuery));
     }
 

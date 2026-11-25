@@ -35,8 +35,13 @@ public class MybatisYouzanRepository implements YouzanRepository {
     public List<YouzanEvent> findPendingEvents(long tenantId, String shopId, Instant retryBefore, int limit) { return mapper.selectPendingEvents(tenantId, shopId, retryBefore, limit); }
     public long countEvents(long tenantId, String shopId) { return mapper.countEvents(tenantId, shopId); }
     public long countScopedEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedEvents(tenantId, shopId, scope); }
-    public long countTodayEvents(long tenantId, String shopId) { return mapper.countTodayEvents(tenantId, shopId); }
-    public long countScopedTodayEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedTodayEvents(tenantId, shopId, scope); }
+    public long countTodayEvents(long tenantId, String shopId, Instant todayStartUtc, Instant todayEndUtcExclusive) {
+        return mapper.countTodayEvents(tenantId, shopId, todayStartUtc, todayEndUtcExclusive);
+    }
+    public long countScopedTodayEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope,
+                                       Instant todayStartUtc, Instant todayEndUtcExclusive) {
+        return mapper.countScopedTodayEvents(tenantId, shopId, scope, todayStartUtc, todayEndUtcExclusive);
+    }
     public long countCampaignOrders(long tenantId, String shopId) { return mapper.countCampaignOrders(tenantId, shopId); }
     public long countScopedCampaignOrders(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedCampaignOrders(tenantId, shopId, scope); }
     public List<YouzanEvent> findLatestOrderEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope, int offset, int size) { return mapper.selectLatestOrderEvents(tenantId, shopId, scope, offset, size); }

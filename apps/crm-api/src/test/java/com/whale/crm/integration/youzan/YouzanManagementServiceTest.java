@@ -40,7 +40,10 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -372,6 +375,68 @@ class YouzanManagementServiceTest {
         assertThat(linkResult.id()).isEqualTo(12L);
         verify(scopeSupport).requireVisible(tenantTwo, 2010L, tenantTwoAdmin);
         verify(repository).insertCustomerLink(eq(tenantTwo), any(YouzanCustomerLink.class));
+    }
+
+    @Test
+    void reportComputesAsiaShanghaiTodayUtcWindowAcrossUtcMidnight() {
+        // 北京时间 2026-10-25 00:30:00 = UTC 2026-10-24T16:30:00Z（跨 UTC 0 点，与 UTC 日期差 1 天）
+        YouzanManagementService beijingEarlyMorning = serviceWithClock(
+                Clock.fixed(Instant.parse("2026-10-24T16:30:00Z"), ZoneOffset.UTC));
+        Instant expectedStart = Instant.parse("2026-10-24T16:00:00Z");
+        Instant expectedEndExclusive = Instant.parse("2026-10-25T16:00:00Z");
+
+        CurrentUser admin = user(1L, "order:read", "integration:youzan:manage");
+        when(scopeSupport.scope(admin)).thenReturn(DataScope.all());
+        when(repository.findCursor(TENANT_ID, SHOP)).thenReturn(Optional.empty());
+        when(repository.countEvents(TENANT_ID, SHOP)).thenReturn(10L);
+        when(repository.countOrderMaps(TENANT_ID, SHOP)).thenReturn(8L);
+        when(repository.countIssues(TENANT_ID, "OPEN")).thenReturn(1L);
+        when(repository.countTodayEvents(TENANT_ID, SHOP, expectedStart, expectedEndExclusive)).thenReturn(3L);
+        when(repository.countCampaignOrders(TENANT_ID, SHOP)).thenReturn(2L);
+
+        YouzanReconcileReport adminReport = beijingEarlyMorning.report(TENANT_ID, admin, SHOP);
+        assertThat(adminReport.todayEvents()).isEqualTo(3L);
+        verify(repository).countTodayEvents(TENANT_ID, SHOP, expectedStart, expectedEndExclusive);
+
+        CurrentUser manager = user(2L, "order:read");
+        DataScope selfScope = DataScope.self();
+        CustomerScopeSupport.ScopeQuery selfQuery = new CustomerScopeSupport.ScopeQuery("SELF", List.of(), 2L);
+        when(scopeSupport.scope(manager)).thenReturn(selfScope);
+        when(scopeSupport.queryOf(selfScope, manager)).thenReturn(selfQuery);
+        when(repository.countScopedEvents(TENANT_ID, SHOP, selfQuery)).thenReturn(5L);
+        when(repository.countScopedOrderMaps(TENANT_ID, SHOP, selfQuery)).thenReturn(4L);
+        when(repository.countScopedIssues(TENANT_ID, "OPEN", selfQuery)).thenReturn(1L);
+        when(repository.countScopedTodayEvents(TENANT_ID, SHOP, selfQuery, expectedStart, expectedEndExclusive))
+                .thenReturn(2L);
+        when(repository.countScopedCampaignOrders(TENANT_ID, SHOP, selfQuery)).thenReturn(1L);
+
+        YouzanReconcileReport managerReport = beijingEarlyMorning.report(TENANT_ID, manager, SHOP);
+        assertThat(managerReport.todayEvents()).isEqualTo(2L);
+        verify(repository).countScopedTodayEvents(TENANT_ID, SHOP, selfQuery, expectedStart, expectedEndExclusive);
+
+        // 北京时间 2026-10-25 08:30:00 = UTC 2026-10-25T00:30:00Z，应与 00:30 属于同一业务日区间
+        YouzanManagementService beijingMorning = serviceWithClock(
+                Clock.fixed(Instant.parse("2026-10-25T00:30:00Z"), ZoneId.of("Asia/Shanghai")));
+        beijingMorning.report(TENANT_ID, admin, SHOP);
+        verify(repository, times(2)).countTodayEvents(TENANT_ID, SHOP, expectedStart, expectedEndExclusive);
+
+        // 北京时间 2026-10-24 23:59:59.999 = UTC 2026-10-24T15:59:59.999Z，应落入前一个业务日
+        Instant prevDayStart = Instant.parse("2026-10-23T16:00:00Z");
+        Instant prevDayEndExclusive = Instant.parse("2026-10-24T16:00:00Z");
+        when(repository.countTodayEvents(TENANT_ID, SHOP, prevDayStart, prevDayEndExclusive)).thenReturn(7L);
+        YouzanManagementService beijingPrevDayLastMs = serviceWithClock(
+                Clock.fixed(Instant.parse("2026-10-24T15:59:59.999Z"), ZoneId.of("Asia/Shanghai")));
+        assertThat(beijingPrevDayLastMs.report(TENANT_ID, admin, SHOP).todayEvents()).isEqualTo(7L);
+        verify(repository).countTodayEvents(TENANT_ID, SHOP, prevDayStart, prevDayEndExclusive);
+    }
+
+    private YouzanManagementService serviceWithClock(Clock clock) {
+        return new YouzanManagementService(repository,
+                mock(com.whale.crm.integration.youzan.domain.YouzanConfigRepository.class),
+                eventService, mock(YouzanAdapterRouter.class), orderService,
+                catalogService, scopeSupport, idempotencyService,
+                auditService, mock(OutboxService.class), objectMapper, cipher,
+                new SimpleTxManager(), clock);
     }
 
     private void stubList(YouzanEvent raw) {

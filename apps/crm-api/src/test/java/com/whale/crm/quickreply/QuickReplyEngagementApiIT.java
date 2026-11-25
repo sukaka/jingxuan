@@ -89,6 +89,65 @@ class QuickReplyEngagementApiIT extends AbstractMysqlIT {
         assertThat(queryLong("SELECT COUNT(*) FROM crm_quick_reply_usage WHERE template_id=?", templateId)).isEqualTo(3);
     }
 
+    @Test
+    void statisticsRespectsAsiaShanghaiHalfOpenSendTimeBoundariesAndOpenEndedRanges() throws Exception {
+        AuthCookies admin = login("admin");
+        String suffix = suffix().toUpperCase();
+        long customerId = newCustomer(suffix);
+        long templateId = newTemplate(suffix);
+        long adminUserId = queryLong("SELECT id FROM sys_user WHERE tenant_id=1 AND username='admin'");
+
+        // 业务日 2026-11-10 (Asia/Shanghai) = [2026-11-09 16:00:00.000 UTC, 2026-11-10 16:00:00.000 UTC)
+        // 特意让 created_at 落在区间外，验证统计口径与 lastUsedAt 均严格以 send_time 为准
+        insertRawUsage(templateId, adminUserId, customerId, suffix, "before-start",
+                "COPIED", "2026-11-09 15:59:59.999", "2026-11-10 08:00:00.000");
+        insertRawUsage(templateId, adminUserId, customerId, suffix, "at-start",
+                "COPIED", "2026-11-09 16:00:00.000", "2026-11-08 00:00:00.000");
+        insertRawUsage(templateId, adminUserId, customerId, suffix, "cross-utc-midnight",
+                "SDK_SUCCESS", "2026-11-09 16:30:00.000", "2026-11-08 00:00:00.000");
+        insertRawUsage(templateId, adminUserId, customerId, suffix, "before-end",
+                "SDK_FAILED", "2026-11-10 15:59:59.999", "2026-11-12 00:00:00.000");
+        insertRawUsage(templateId, adminUserId, customerId, suffix, "at-end-exclusive",
+                "SDK_SUCCESS", "2026-11-10 16:00:00.000", "2026-11-10 08:00:00.000");
+
+        JsonNode singleDay = data(get("/api/v1/quick-replies/statistics")
+                .param("from", "2026-11-10").param("to", "2026-11-10")
+                .param("employeeId", Long.toString(adminUserId))
+                .cookie(admin.cookies()));
+        JsonNode dayStat = findById(singleDay, templateId);
+        assertThat(dayStat.at("/totalCount").asLong()).isEqualTo(3);
+        assertThat(dayStat.at("/copiedCount").asLong()).isEqualTo(1);
+        assertThat(dayStat.at("/successCount").asLong()).isEqualTo(1);
+        assertThat(dayStat.at("/failedCount").asLong()).isEqualTo(1);
+        assertThat(dayStat.at("/lastUsedAt").asText()).isEqualTo("2026-11-10T15:59:59.999Z");
+
+        JsonNode fromOnly = data(get("/api/v1/quick-replies/statistics")
+                .param("from", "2026-11-10")
+                .param("employeeId", Long.toString(adminUserId))
+                .cookie(admin.cookies()));
+        assertThat(findById(fromOnly, templateId).at("/totalCount").asLong()).isEqualTo(4);
+
+        JsonNode toOnly = data(get("/api/v1/quick-replies/statistics")
+                .param("to", "2026-11-10")
+                .param("employeeId", Long.toString(adminUserId))
+                .cookie(admin.cookies()));
+        assertThat(findById(toOnly, templateId).at("/totalCount").asLong()).isEqualTo(4);
+
+        mockMvc.perform(get("/api/v1/quick-replies/statistics")
+                        .param("from", "2026-11-11").param("to", "2026-11-10")
+                        .cookie(admin.cookies()))
+                .andExpect(status().isBadRequest());
+    }
+
+    private void insertRawUsage(long templateId, long employeeId, long customerId, String suffix, String keyPart,
+                                String sendStatus, String sendTimeUtc, String createdAtUtc) {
+        jdbcTemplate.update("INSERT INTO crm_quick_reply_usage (tenant_id,template_id,employee_id,customer_id,"
+                        + "external_userid,scene,original_content,final_content,edited,send_status,client_result,"
+                        + "send_time,idempotency_key,created_at) VALUES (1,?,?,?,?, 'FOLLOWUP','原文','终文',0,?,'ok',?,?,?)",
+                templateId, employeeId, customerId, "ENGAGEMENT-EXTERNAL-" + suffix, sendStatus,
+                sendTimeUtc, "qr-boundary-" + suffix + "-" + keyPart, createdAtUtc);
+    }
+
     private long newTemplate(String suffix) throws Exception {
         AuthCookies admin = login("admin");
         long categoryId = queryLong("SELECT id FROM crm_quick_reply_category WHERE tenant_id=1 AND code='PROJECT'");

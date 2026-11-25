@@ -30,9 +30,13 @@ public interface YouzanMapper {
     long countEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
     long countScopedEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                            @Param("scope") CustomerScopeSupport.ScopeQuery scope);
-    long countTodayEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
+    long countTodayEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                          @Param("todayStartUtc") Instant todayStartUtc,
+                          @Param("todayEndUtcExclusive") Instant todayEndUtcExclusive);
     long countScopedTodayEvents(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
-                                @Param("scope") CustomerScopeSupport.ScopeQuery scope);
+                                @Param("scope") CustomerScopeSupport.ScopeQuery scope,
+                                @Param("todayStartUtc") Instant todayStartUtc,
+                                @Param("todayEndUtcExclusive") Instant todayEndUtcExclusive);
     long countCampaignOrders(@Param("tenantId") long tenantId, @Param("shopId") String shopId);
     long countScopedCampaignOrders(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                                    @Param("scope") CustomerScopeSupport.ScopeQuery scope);

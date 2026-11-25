@@ -18,8 +18,9 @@ public interface YouzanRepository {
                           Instant nextRetryAt, Instant processedAt, Long orderId);
     long countEvents(long tenantId, String shopId);
     long countScopedEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope);
-    long countTodayEvents(long tenantId, String shopId);
-    long countScopedTodayEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope);
+    long countTodayEvents(long tenantId, String shopId, Instant todayStartUtc, Instant todayEndUtcExclusive);
+    long countScopedTodayEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope,
+                                Instant todayStartUtc, Instant todayEndUtcExclusive);
     long countCampaignOrders(long tenantId, String shopId);
     long countScopedCampaignOrders(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope);
     List<YouzanEvent> findLatestOrderEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope,

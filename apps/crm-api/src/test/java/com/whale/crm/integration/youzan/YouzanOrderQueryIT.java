@@ -2,9 +2,11 @@ package com.whale.crm.integration.youzan;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.integration.youzan.adapter.MockYouzanAdapter;
 import com.whale.crm.integration.youzan.adapter.YouzanOrderEvent;
 import com.whale.crm.integration.youzan.adapter.YouzanOrderLine;
+import com.whale.crm.integration.youzan.domain.YouzanRepository;
 import com.whale.crm.platform.security.crypto.AesGcmCipher;
 import com.whale.crm.platform.support.AbstractMysqlIT;
 import org.junit.jupiter.api.BeforeAll;
@@ -18,6 +20,10 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -38,6 +44,8 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
     private MockYouzanAdapter adapter;
     @Autowired
     private AesGcmCipher cipher;
+    @Autowired
+    private YouzanRepository youzanRepository;
 
     private AuthCookies admin;
     private AuthCookies manager1;
@@ -325,6 +333,95 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
         mockMvc.perform(get("/api/v1/integrations/youzan/orders/{id}", foreignRawId)
                         .cookie(admin.cookies()).header("X-Tenant-Id", "999"))
                 .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void todayEventsUsesAsiaShanghaiClosedOpenUtcWindowAcrossUtcMidnight() throws Exception {
+        Map<String, Object> manager1Row = jdbcTemplate.queryForMap(
+                "SELECT id,team_id FROM sys_user WHERE tenant_id=1 AND username='manager1'");
+        long manager1Id = ((Number) manager1Row.get("id")).longValue();
+        long manager1TeamId = ((Number) manager1Row.get("team_id")).longValue();
+        long manager2Id = queryLong("SELECT id FROM sys_user WHERE tenant_id=1 AND username='manager2'");
+        long manager1CustomerId = insertCustomer(manager1Id, manager1TeamId, "YZ-TZ-" + suffix());
+
+        // 1. 固定业务日 2026-10-25 (Asia/Shanghai) = [2026-10-24T16:00:00Z, 2026-10-25T16:00:00Z)
+        // 验证跨 UTC 0 点（北京时间 00:30 = UTC 前一日 16:30）、闭开区间边界及租户/店铺/数据范围隔离
+        String fixedShop = shop("tz-fixed");
+        String otherShop = shop("tz-other");
+        String fixedExtCustomer = "IT-YZ-TZ-CUST-" + suffix();
+        linkCustomer(fixedShop, fixedExtCustomer, manager1CustomerId);
+        Instant fixedStartUtc = Instant.parse("2026-10-24T16:00:00Z");
+        Instant fixedEndUtcExclusive = Instant.parse("2026-10-25T16:00:00Z");
+
+        insertRawAt(1, fixedShop, event(fixedShop, "IT-YZ-TZ-BEFORE-" + suffix(), "ORD-TZ-1-" + suffix(),
+                fixedExtCustomer, null, "YZ-SKU-MISSING", 100, fixedStartUtc), Instant.parse("2026-10-24T15:59:59.999Z"));
+        insertRawAt(1, fixedShop, event(fixedShop, "IT-YZ-TZ-START-" + suffix(), "ORD-TZ-2-" + suffix(),
+                fixedExtCustomer, null, "YZ-SKU-MISSING", 100, fixedStartUtc), Instant.parse("2026-10-24T16:00:00.000Z"));
+        insertRawAt(1, fixedShop, event(fixedShop, "IT-YZ-TZ-0030-" + suffix(), "ORD-TZ-3-" + suffix(),
+                fixedExtCustomer, null, "YZ-SKU-MISSING", 100, fixedStartUtc), Instant.parse("2026-10-24T16:30:00.000Z"));
+        insertRawAt(1, fixedShop, event(fixedShop, "IT-YZ-TZ-END-MS-" + suffix(), "ORD-TZ-4-" + suffix(),
+                fixedExtCustomer, null, "YZ-SKU-MISSING", 100, fixedStartUtc), Instant.parse("2026-10-25T15:59:59.999Z"));
+        insertRawAt(1, fixedShop, event(fixedShop, "IT-YZ-TZ-NEXT-" + suffix(), "ORD-TZ-5-" + suffix(),
+                fixedExtCustomer, null, "YZ-SKU-MISSING", 100, fixedStartUtc), Instant.parse("2026-10-25T16:00:00.000Z"));
+        insertRawAt(2, fixedShop, event(fixedShop, "IT-YZ-TZ-T2-" + suffix(), "ORD-TZ-6-" + suffix(),
+                fixedExtCustomer, null, "YZ-SKU-MISSING", 100, fixedStartUtc), Instant.parse("2026-10-24T16:30:00.000Z"));
+        insertRawAt(1, otherShop, event(otherShop, "IT-YZ-TZ-SHOP-" + suffix(), "ORD-TZ-7-" + suffix(),
+                fixedExtCustomer, null, "YZ-SKU-MISSING", 100, fixedStartUtc), Instant.parse("2026-10-24T16:30:00.000Z"));
+
+        assertThat(youzanRepository.countTodayEvents(1L, fixedShop, fixedStartUtc, fixedEndUtcExclusive))
+                .isEqualTo(3L);
+        assertThat(youzanRepository.countScopedTodayEvents(1L, fixedShop,
+                new CustomerScopeSupport.ScopeQuery("SELF", List.of(), manager1Id), fixedStartUtc, fixedEndUtcExclusive))
+                .isEqualTo(3L);
+        assertThat(youzanRepository.countScopedTodayEvents(1L, fixedShop,
+                new CustomerScopeSupport.ScopeQuery("SELF", List.of(), manager2Id), fixedStartUtc, fixedEndUtcExclusive))
+                .isZero();
+
+        // 2. 端到端 HTTP /reconcile-report 校验当前 Asia/Shanghai 业务日 [todayStartUtc, todayEndUtcExclusive)
+        String liveShop = shop("tz-live");
+        String liveExtCustomer = "IT-YZ-TZ-LIVE-CUST-" + suffix();
+        linkCustomer(liveShop, liveExtCustomer, manager1CustomerId);
+        ZoneId shanghai = ZoneId.of("Asia/Shanghai");
+        LocalDate businessToday = LocalDate.now(shanghai);
+        Instant todayStartUtc = businessToday.atStartOfDay(shanghai).toInstant();
+        Instant todayEndUtcExclusive = businessToday.plusDays(1).atStartOfDay(shanghai).toInstant();
+
+        insertRawAt(1, liveShop, event(liveShop, "IT-YZ-LIVE-YESTERDAY-" + suffix(), "ORD-LIVE-1-" + suffix(),
+                liveExtCustomer, null, "YZ-SKU-MISSING", 100, todayStartUtc), todayStartUtc.minusMillis(1));
+        insertRawAt(1, liveShop, event(liveShop, "IT-YZ-LIVE-START-" + suffix(), "ORD-LIVE-2-" + suffix(),
+                liveExtCustomer, null, "YZ-SKU-MISSING", 100, todayStartUtc), todayStartUtc);
+        insertRawAt(1, liveShop, event(liveShop, "IT-YZ-LIVE-0030-" + suffix(), "ORD-LIVE-3-" + suffix(),
+                liveExtCustomer, null, "YZ-SKU-MISSING", 100, todayStartUtc), todayStartUtc.plus(30, ChronoUnit.MINUTES));
+        insertRawAt(1, liveShop, event(liveShop, "IT-YZ-LIVE-TOMORROW-" + suffix(), "ORD-LIVE-4-" + suffix(),
+                liveExtCustomer, null, "YZ-SKU-MISSING", 100, todayStartUtc), todayEndUtcExclusive);
+
+        JsonNode adminReport = data(admin.withAuth(
+                get("/api/v1/integrations/youzan/reconcile-report").param("shopId", liveShop)));
+        assertThat(adminReport.at("/totalEvents").asLong()).isEqualTo(4L);
+        assertThat(adminReport.at("/todayEvents").asLong()).isEqualTo(2L);
+
+        JsonNode manager1Report = data(manager1.withAuth(
+                get("/api/v1/integrations/youzan/reconcile-report").param("shopId", liveShop)));
+        assertThat(manager1Report.at("/totalEvents").asLong()).isEqualTo(4L);
+        assertThat(manager1Report.at("/todayEvents").asLong()).isEqualTo(2L);
+
+        JsonNode manager2Report = data(manager2.withAuth(
+                get("/api/v1/integrations/youzan/reconcile-report").param("shopId", liveShop)));
+        assertThat(manager2Report.at("/totalEvents").asLong()).isZero();
+        assertThat(manager2Report.at("/todayEvents").asLong()).isZero();
+    }
+
+    private long insertRawAt(long tenantId, String shop, YouzanOrderEvent event, Instant receivedAtUtc) throws Exception {
+        String raw = json(event);
+        String receivedAtSql = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+                .withZone(ZoneOffset.UTC).format(receivedAtUtc);
+        jdbcTemplate.update("INSERT INTO crm_youzan_event (tenant_id,shop_id,event_id,event_type,external_order_no,"
+                        + "payload_masked_json,payload_cipher,signature_valid,source_system,process_status,"
+                        + "process_attempts,last_error,received_at) VALUES (?,?,?,?,?,?,?,1,'PULL','MAPPING_FAILED',1,'err',?)",
+                tenantId, shop, event.eventId(), event.eventType(), event.externalOrderNo(), raw,
+                cipher.encrypt(raw), receivedAtSql);
+        return queryLong("SELECT id FROM crm_youzan_event WHERE tenant_id=? AND shop_id=? AND event_id=?",
+                tenantId, shop, event.eventId());
     }
 
     private void seedSkuAndCustomer(String shop, String externalCustomer, boolean linked) {
