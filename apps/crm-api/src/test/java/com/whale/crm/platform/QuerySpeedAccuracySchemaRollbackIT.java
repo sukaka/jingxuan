@@ -58,7 +58,7 @@ class QuerySpeedAccuracySchemaRollbackIT {
 
             // 2. 应用 V56 迁移
             Flyway.configure().dataSource(ds).schemas(schema)
-                    .locations("classpath:db/migration").load().migrate();
+                    .locations("classpath:db/migration").target("56").load().migrate();
 
             // 3. 核验列宽对齐、新增列、全部索引与回填准确性
             assertV56AppliedState(jdbc, schema);
@@ -96,7 +96,7 @@ class QuerySpeedAccuracySchemaRollbackIT {
             // 6. 清除 V56 Flyway 记录后重新应用 V56，验证可重复执行且回填/索引结果完全一致
             jdbc.update("DELETE FROM flyway_schema_history WHERE version='56'");
             Flyway.configure().dataSource(ds).schemas(schema)
-                    .locations("classpath:db/migration").load().migrate();
+                    .locations("classpath:db/migration").target("56").load().migrate();
             assertV56AppliedState(jdbc, schema);
         } finally {
             dropSchema(schema);
