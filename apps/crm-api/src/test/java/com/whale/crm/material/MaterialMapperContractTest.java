@@ -180,7 +180,8 @@ class MaterialMapperContractTest {
         assertThat(sql).doesNotContain("ROW_NUMBER()", "tags_json LIKE")
                 .contains("m.latest_revision_id", "m.current_revision_id",
                         "r_lat.id IS NOT NULL AND EXISTS ( SELECT 1 FROM crm_material_tag mt",
-                        "r_lat.id IS NULL AND r_cur.id IS NOT NULL", "JSON_TABLE(r_cur.tags_json");
+                        "r_lat.id IS NULL AND r_cur.id IS NOT NULL", "JSON_TABLE(r_cur.tags_json",
+                        "TRIM(JSON_UNQUOTE(jt.elem)) COLLATE utf8mb4_0900_ai_ci=TRIM(?)");
     }
 
     @Test

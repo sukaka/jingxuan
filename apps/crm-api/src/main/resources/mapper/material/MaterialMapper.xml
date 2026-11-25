@@ -110,7 +110,7 @@
           AND JSON_VALID(r_cur.tags_json)=1 AND JSON_TYPE(r_cur.tags_json)='ARRAY'
           AND EXISTS (
             SELECT 1 FROM JSON_TABLE(r_cur.tags_json, '$[*]' COLUMNS (elem JSON PATH '$')) jt
-            WHERE JSON_TYPE(jt.elem)='STRING' AND TRIM(JSON_UNQUOTE(jt.elem))=TRIM(#{criteria.keyword})
+            WHERE JSON_TYPE(jt.elem)='STRING' AND TRIM(JSON_UNQUOTE(jt.elem)) COLLATE utf8mb4_0900_ai_ci=TRIM(#{criteria.keyword})
           )))
     </if>
     <if test="criteria.categoryCode != null and criteria.categoryCode != ''">AND COALESCE(r_lat.category_code,r_cur.category_code)=#{criteria.categoryCode}</if>

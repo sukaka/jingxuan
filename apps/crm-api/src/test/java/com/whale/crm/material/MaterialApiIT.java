@@ -190,6 +190,8 @@ class MaterialApiIT extends AbstractMysqlIT {
         String tagInitial = "init-" + suffix;
         String tagUpdated = "upd-" + suffix;
         String tagApproved = "app-" + suffix;
+        String tagMixedFallback = "Vip-Fallback-" + suffix;
+        String tagMixedFallbackLower = "vip-fallback-" + suffix;
         String tagPending = "pend-" + suffix;
         String tagSuperVip = "supervip-" + suffix;
 
@@ -219,7 +221,7 @@ class MaterialApiIT extends AbstractMysqlIT {
                         "title", "生命周期素材-" + suffix,
                         "categoryCode", "GUIDE",
                         "summary", "更新摘要",
-                        "tags", List.of(tagUpdated, tagApproved, "Vip-" + suffix, "vip-" + suffix),
+                        "tags", List.of(tagUpdated, tagApproved, "Vip-" + suffix, "vip-" + suffix, tagMixedFallback),
                         "fileId", fileId,
                         "changeNote", "v1-edit"))));
         assertThat(patched.at("/version").asLong()).isEqualTo(1L);
@@ -227,12 +229,14 @@ class MaterialApiIT extends AbstractMysqlIT {
                 "SELECT latest_revision_id FROM crm_material WHERE tenant_id=1 AND id=?", Long.class, materialId))
                 .isEqualTo(r1Id);
         assertThat(tagCodes(materialId)).doesNotContain(tagInitial)
-                .contains(tagUpdated, tagApproved);
+                .contains(tagUpdated, tagApproved, tagMixedFallback);
 
         // Removed tag no longer matches; case-insensitive tag lookup matches "vip-<suffix>" against "Vip-<suffix>"
         mockMvc.perform(get("/api/v1/materials").param("keyword", tagInitial).cookie(admin.cookies()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
         mockMvc.perform(get("/api/v1/materials").param("keyword", "vip-" + suffix).cookie(admin.cookies()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1));
+        mockMvc.perform(get("/api/v1/materials").param("keyword", tagMixedFallbackLower).cookie(admin.cookies()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1));
 
         // Submit & approve r1
@@ -260,11 +264,20 @@ class MaterialApiIT extends AbstractMysqlIT {
                 .isEqualTo(r2Id);
         assertThat(tagCodes(materialId)).containsExactlyInAnyOrder(tagPending, tagSuperVip);
 
+        // While r2 is DRAFT, ordinary reader (manager1) still matches r1's mixed-case tag case-insensitively via r_cur
+        mockMvc.perform(get("/api/v1/materials").param("keyword", tagMixedFallbackLower).cookie(manager.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].revisions[0].id").value(r1Id));
+        mockMvc.perform(get("/api/v1/materials").param("keyword", tagPending).cookie(manager.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+
         data(operation.withAuth(post("/api/v1/materials/{id}/revisions/{rid}/submit", materialId, r2Id))
                 .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"));
 
         // 4. Dual-revision visibility & tag isolation:
-        // Admin sees r2 (PENDING): matches tagPending, does NOT match tagApproved
+        // Admin sees r2 (PENDING): matches tagPending, does NOT match tagApproved or r1's mixed-case fallback tag
         mockMvc.perform(get("/api/v1/materials").param("keyword", tagPending).cookie(admin.cookies()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(1))
@@ -272,12 +285,20 @@ class MaterialApiIT extends AbstractMysqlIT {
         mockMvc.perform(get("/api/v1/materials").param("keyword", tagApproved).cookie(admin.cookies()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(0));
+        mockMvc.perform(get("/api/v1/materials").param("keyword", tagMixedFallbackLower).cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
 
-        // Ordinary reader (manager1) sees r1 (APPROVED): MUST NOT leak unapproved r2's tagPending, MUST match tagApproved via r_cur fallback
+        // Ordinary reader (manager1) sees r1 (APPROVED): MUST NOT leak unapproved r2's tagPending,
+        // MUST match tagApproved and mixed-case "Vip-Fallback-*" (with lowercase query) via r_cur fallback
         mockMvc.perform(get("/api/v1/materials").param("keyword", tagPending).cookie(manager.cookies()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(0));
         mockMvc.perform(get("/api/v1/materials").param("keyword", tagApproved).cookie(manager.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].revisions[0].id").value(r1Id));
+        mockMvc.perform(get("/api/v1/materials").param("keyword", tagMixedFallbackLower).cookie(manager.cookies()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(1))
                 .andExpect(jsonPath("$.data.items[0].revisions[0].id").value(r1Id));
