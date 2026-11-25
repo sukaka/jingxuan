@@ -5,18 +5,23 @@ import com.whale.crm.customer.domain.CustomerListRow;
 import com.whale.crm.customer.domain.CustomerSegment;
 import com.whale.crm.customer.domain.CustomerSegmentBatch;
 import com.whale.crm.customer.domain.CustomerSegmentRepository;
+import com.whale.crm.customer.domain.CustomerTagRepository;
 import com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
 public class MybatisCustomerSegmentRepository implements CustomerSegmentRepository {
     private final CustomerSegmentMapper mapper;
+    private final CustomerTagRepository customerTagRepository;
 
-    public MybatisCustomerSegmentRepository(CustomerSegmentMapper mapper) {
+    public MybatisCustomerSegmentRepository(CustomerSegmentMapper mapper,
+                                            CustomerTagRepository customerTagRepository) {
         this.mapper = mapper;
+        this.customerTagRepository = customerTagRepository;
     }
 
     @Override
@@ -57,7 +62,15 @@ public class MybatisCustomerSegmentRepository implements CustomerSegmentReposito
     @Override
     public List<CustomerListRow> searchMembers(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                                                CustomerSegmentCriteria filters, int offset, int size) {
-        return mapper.searchMembers(tenantId, scopeType, teamIds, selfId, filters, offset, size);
+        List<CustomerListRow> rows = mapper.searchMembers(tenantId, scopeType, teamIds, selfId, filters, offset, size);
+        if (!rows.isEmpty()) {
+            List<Long> customerIds = rows.stream().map(CustomerListRow::getId).toList();
+            Map<Long, List<String>> tagsByCustomer = customerTagRepository.findTagCodesByCustomerIds(tenantId, customerIds);
+            for (CustomerListRow row : rows) {
+                row.setTagCodes(tagsByCustomer.getOrDefault(row.getId(), List.of()));
+            }
+        }
+        return rows;
     }
 
     @Override

@@ -58,7 +58,6 @@
     <result property="channelCode" column="channel_code"/>
     <result property="spendingLevel" column="spending_level"/>
     <result property="birthday" column="birthday"/>
-    <result property="tagCodes" column="tag_codes"/>
     <result property="nextFollowupAt" column="next_followup_at"/>
   </resultMap>
 
@@ -130,7 +129,6 @@
            c.display_name, c.nickname, c.mobile_cipher, c.city_code, c.customer_status, c.tier_code,
            c.intent_level, c.points_cached, c.last_followup_at, c.created_at, c.version,
            c.source_code, c.channel_code, c.spending_level, c.birthday,
-           (SELECT GROUP_CONCAT(ct.tag_code) FROM crm_customer_tag ct WHERE ct.tenant_id=c.tenant_id AND ct.customer_id=c.id) AS tag_codes,
            (SELECT MAX(f.next_followup_at) FROM crm_followup f WHERE f.tenant_id=c.tenant_id AND f.customer_id=c.id AND f.deleted=0) AS next_followup_at
     FROM crm_customer c
     LEFT JOIN sys_user o ON o.tenant_id = c.tenant_id AND o.id = c.owner_staff_id

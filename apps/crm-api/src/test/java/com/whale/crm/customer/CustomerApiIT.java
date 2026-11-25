@@ -260,4 +260,55 @@ class CustomerApiIT extends AbstractMysqlIT {
                         .content("{\"nickname\":\"ITC01-幂等-改\"}"))
                 .andExpect(status().isConflict());
     }
+
+    @Test
+    void listReturnsAllSortedLongTagsWithoutGroupConcatTruncation() throws Exception {
+        AuthCookies manager1 = login("manager1");
+        String prefix = "ITTAG-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        String body1 = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-many\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long taggedCustomerId = objectMapper.readTree(body1).at("/data/id").asLong();
+
+        String body2 = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-empty\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long emptyTagCustomerId = objectMapper.readTree(body2).at("/data/id").asLong();
+
+        // 25 个长度 52 字节的标签，逗号拼接总长 1324 字节 > MySQL 默认 group_concat_max_len=1024；倒序写入验证升序输出
+        java.util.List<String> expectedSorted = new java.util.ArrayList<>();
+        for (int i = 24; i >= 0; i--) {
+            String code = String.format("LONG_TAG_%02d_%s", i, "A".repeat(40));
+            jdbcTemplate.update("INSERT INTO crm_customer_tag (tenant_id,customer_id,tag_code,created_by) VALUES (1,?,?,2)",
+                    taggedCustomerId, code);
+            expectedSorted.add(code);
+        }
+        java.util.Collections.sort(expectedSorted);
+
+        String response = mockMvc.perform(get("/api/v1/customers?keyword=" + prefix + "&page=1&size=20")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andReturn().getResponse().getContentAsString();
+
+        var items = objectMapper.readTree(response).at("/data/items");
+        java.util.List<String> actualTagged = new java.util.ArrayList<>();
+        java.util.List<String> actualEmpty = null;
+        for (var item : items) {
+            long id = item.get("id").asLong();
+            if (id == taggedCustomerId) {
+                item.get("tagCodes").forEach(node -> actualTagged.add(node.asText()));
+            } else if (id == emptyTagCustomerId) {
+                java.util.List<String> emptyTags = new java.util.ArrayList<>();
+                item.get("tagCodes").forEach(node -> emptyTags.add(node.asText()));
+                actualEmpty = emptyTags;
+            }
+        }
+        assertThat(actualTagged).hasSize(25).containsExactlyElementsOf(expectedSorted);
+        assertThat(actualEmpty).isNotNull().isEmpty();
+    }
 }

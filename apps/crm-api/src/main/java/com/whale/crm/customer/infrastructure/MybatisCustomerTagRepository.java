@@ -4,10 +4,16 @@ import com.whale.crm.customer.domain.CustomerTagRepository;
 import com.whale.crm.customer.infrastructure.mapper.CustomerTagMapper;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 @Repository
 public class MybatisCustomerTagRepository implements CustomerTagRepository {
+
+    private static final int BATCH_SIZE = 500;
 
     private final CustomerTagMapper customerTagMapper;
 
@@ -18,6 +24,26 @@ public class MybatisCustomerTagRepository implements CustomerTagRepository {
     @Override
     public List<String> findTagCodes(long tenantId, long customerId) {
         return customerTagMapper.selectTagCodes(tenantId, customerId);
+    }
+
+    @Override
+    public Map<Long, List<String>> findTagCodesByCustomerIds(long tenantId, List<Long> customerIds) {
+        if (customerIds == null || customerIds.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> uniqueIds = customerIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (uniqueIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, List<String>> grouped = new LinkedHashMap<>();
+        for (int start = 0; start < uniqueIds.size(); start += BATCH_SIZE) {
+            List<Long> batch = uniqueIds.subList(start, Math.min(start + BATCH_SIZE, uniqueIds.size()));
+            for (CustomerTagMapper.CustomerTagRow row : customerTagMapper.selectTagCodesByCustomerIds(tenantId, batch)) {
+                grouped.computeIfAbsent(row.customerId(), ignored -> new ArrayList<>()).add(row.tagCode());
+            }
+        }
+        grouped.replaceAll((ignored, tags) -> List.copyOf(tags));
+        return Map.copyOf(grouped);
     }
 
     @Override

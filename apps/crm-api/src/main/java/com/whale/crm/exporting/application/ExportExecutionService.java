@@ -111,7 +111,7 @@ public class ExportExecutionService {
             throw new ExportExecutionException("EXPORT_CONFIGURATION_INVALID");
         }
 
-        ExportDataQuery countQuery = query(job, executed, stored, filter, 0, 1);
+        ExportDataQuery countQuery = query(job, executed, stored, filter, 0L, 1);
         long expectedRows = dataRepository.count(countQuery);
         if (expectedRows > properties.getMaxRows()) {
             throw new ExportExecutionException("ROW_LIMIT_EXCEEDED");
@@ -132,33 +132,49 @@ public class ExportExecutionService {
                           ExportScope executed, StoredExportScope stored, ExportFilter filter,
                           long expectedRows) throws IOException {
         long rowCount = 0;
-        int offset = 0;
+        long afterId = 0L;
         try (BufferedWriter writer = Files.newBufferedWriter(temporary, StandardOpenOption.TRUNCATE_EXISTING)) {
             csvEncoder.writeHeader(writer, columns);
-            while (offset < expectedRows) {
+            if (expectedRows <= 0) {
+                return 0;
+            }
+            while (true) {
                 renew(job, owner);
-                int pageSize = (int) Math.min(properties.getPageSize(), properties.getMaxRows() - rowCount);
-                if (pageSize <= 0) {
-                    throw new ExportExecutionException("ROW_LIMIT_EXCEEDED");
-                }
-                List<Map<String, Object>> rows = dataRepository.page(query(job, executed, stored, filter, offset, pageSize));
+                long remaining = (long) properties.getMaxRows() - rowCount;
+                int pageSize = (int) Math.min(properties.getPageSize(), remaining + 1);
+                List<Map<String, Object>> rows = dataRepository.page(
+                        query(job, executed, stored, filter, afterId, pageSize));
                 if (rows.isEmpty()) {
                     break;
                 }
+                long batchLastId = afterId;
                 for (Map<String, Object> row : rows) {
-                    csvEncoder.writeRow(writer, columns, safeRow(job.getExportType(), row));
+                    long currentId = extractRowId(row);
+                    if (currentId <= batchLastId) {
+                        throw new ExportExecutionException("EXPORT_CURSOR_NOT_ADVANCING");
+                    }
+                    batchLastId = currentId;
                     rowCount++;
                     if (rowCount > properties.getMaxRows()) {
                         throw new ExportExecutionException("ROW_LIMIT_EXCEEDED");
                     }
+                    csvEncoder.writeRow(writer, columns, safeRow(job.getExportType(), row));
                 }
-                offset += rows.size();
+                afterId = batchLastId;
                 if (rows.size() < pageSize) {
                     break;
                 }
             }
         }
         return rowCount;
+    }
+
+    private long extractRowId(Map<String, Object> row) {
+        Object value = row.get("rowId");
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        throw new ExportExecutionException("EXPORT_ROW_ID_MISSING");
     }
 
     private Map<String, Object> safeRow(ExportType type, Map<String, Object> row) {
@@ -172,9 +188,9 @@ public class ExportExecutionService {
     }
 
     private ExportDataQuery query(ExportJob job, ExportScope executed, StoredExportScope stored,
-                                  ExportFilter filter, int offset, int size) {
+                                  ExportFilter filter, long afterId, int size) {
         return new ExportDataQuery(job.getTenantId(), job.getExportType(), executed,
-                stored.restriction(), filter, offset, size);
+                stored.restriction(), filter, afterId, size);
     }
 
     private void renew(ExportJob job, String owner) {

@@ -7,6 +7,7 @@ import com.whale.crm.exporting.application.ExportColumnPolicy;
 import com.whale.crm.exporting.application.ExportExecutionService;
 import com.whale.crm.exporting.application.ExportScopeService;
 import com.whale.crm.exporting.domain.ExportAccessLog;
+import com.whale.crm.exporting.domain.ExportDataQuery;
 import com.whale.crm.exporting.domain.ExportDataRepository;
 import com.whale.crm.exporting.domain.ExportJob;
 import com.whale.crm.exporting.domain.ExportJobRepository;
@@ -152,5 +153,139 @@ class ExportExecutionServiceTest {
         service.execute(1L, 7L, "worker-a");
 
         assertThat(temporary.get()).doesNotExist();
+    }
+
+    @Test
+    void keysetPaginationAdvancesAfterIdAcrossPagesWithoutDuplicatesOrDrops() throws Exception {
+        when(dataRepository.count(any())).thenReturn(5L);
+        when(dataRepository.page(any())).thenAnswer(invocation -> {
+            ExportDataQuery q = invocation.getArgument(0);
+            if (q.afterId() == 0L) {
+                return List.of(
+                        Map.of("rowId", 10L, "customerNo", "C-010", "remark", "r1"),
+                        Map.of("rowId", 20L, "customerNo", "C-020", "remark", "r2"));
+            }
+            if (q.afterId() == 20L) {
+                return List.of(
+                        Map.of("rowId", 30L, "customerNo", "C-030", "remark", "r3"),
+                        Map.of("rowId", 40L, "customerNo", "C-040", "remark", "r4"));
+            }
+            if (q.afterId() == 40L) {
+                return List.of(Map.of("rowId", 50L, "customerNo", "C-050", "remark", "r5"));
+            }
+            return List.of();
+        });
+        AtomicReference<String> csv = new AtomicReference<>();
+        when(fileService.registerCleanFile(any(), any(), any())).thenAnswer(invocation -> {
+            csv.set(Files.readString(invocation.getArgument(1), StandardCharsets.UTF_8));
+            Instant expiresAt = invocation.getArgument(2);
+            return new FileMetadata(56L, 1L, "export/1/EXP-TEST.csv", "EXP-TEST.csv", "text/csv",
+                    (long) csv.get().getBytes(StandardCharsets.UTF_8).length, "b".repeat(64), "EXPORT", null,
+                    "CLEAN", 4L, null, null, expiresAt, Instant.now(), Instant.now(), 0L);
+        });
+        when(repository.markSucceeded(anyLong(), anyLong(), anyLong(), anyString(), anyLong(), anyLong(),
+                any(), anyString(), any())).thenReturn(1);
+
+        service.execute(1L, 7L, "worker-a");
+
+        ArgumentCaptor<ExportDataQuery> queries = ArgumentCaptor.forClass(ExportDataQuery.class);
+        verify(dataRepository, org.mockito.Mockito.times(3)).page(queries.capture());
+        assertThat(queries.getAllValues()).extracting(ExportDataQuery::afterId).containsExactly(0L, 20L, 40L);
+        assertThat(queries.getAllValues()).extracting(ExportDataQuery::size).containsExactly(2, 2, 2);
+        List<String> lines = csv.get().lines().toList();
+        assertThat(lines).hasSize(6);
+        assertThat(lines.subList(1, 6)).containsExactly(
+                "C-010,,r1", "C-020,,r2", "C-030,,r3", "C-040,,r4", "C-050,,r5");
+        verify(repository).markSucceeded(eq(1L), eq(7L), eq(3L), eq("worker-a"), eq(56L), eq(5L),
+                any(), anyString(), any());
+    }
+
+    @Test
+    void keysetPaginationAllowsExactMaxRows() throws Exception {
+        ExportProperties tight = new ExportProperties();
+        tight.setMaxRows(4);
+        tight.setPageSize(2);
+        service = new ExportExecutionService(repository, dataRepository, scopeService, new ExportColumnPolicy(),
+                new CsvEncoder(), fileService, currentUserService, mobileSupport, objectMapper, tight,
+                transactionManager, 60);
+
+        when(dataRepository.count(any())).thenReturn(4L);
+        when(dataRepository.page(any())).thenAnswer(invocation -> {
+            ExportDataQuery q = invocation.getArgument(0);
+            if (q.afterId() == 0L) {
+                return List.of(
+                        Map.of("rowId", 1L, "customerNo", "C-1", "remark", "a"),
+                        Map.of("rowId", 2L, "customerNo", "C-2", "remark", "b"));
+            }
+            if (q.afterId() == 2L) {
+                return List.of(
+                        Map.of("rowId", 3L, "customerNo", "C-3", "remark", "c"),
+                        Map.of("rowId", 4L, "customerNo", "C-4", "remark", "d"));
+            }
+            return List.of();
+        });
+        when(fileService.registerCleanFile(any(), any(), any())).thenReturn(
+                new FileMetadata(57L, 1L, "export/1/EXP-TEST.csv", "EXP-TEST.csv", "text/csv", 10L,
+                        "c".repeat(64), "EXPORT", null, "CLEAN", 4L, null, null,
+                        Instant.now().plusSeconds(60), Instant.now(), Instant.now(), 0L));
+        when(repository.markSucceeded(anyLong(), anyLong(), anyLong(), anyString(), anyLong(), anyLong(),
+                any(), anyString(), any())).thenReturn(1);
+
+        service.execute(1L, 7L, "worker-a");
+
+        verify(repository).markSucceeded(eq(1L), eq(7L), eq(3L), eq("worker-a"), eq(57L), eq(4L),
+                any(), anyString(), any());
+    }
+
+    @Test
+    void keysetPaginationRejectsConcurrentOverflowBeyondMaxRows() throws Exception {
+        ExportProperties tight = new ExportProperties();
+        tight.setMaxRows(4);
+        tight.setPageSize(2);
+        service = new ExportExecutionService(repository, dataRepository, scopeService, new ExportColumnPolicy(),
+                new CsvEncoder(), fileService, currentUserService, mobileSupport, objectMapper, tight,
+                transactionManager, 60);
+
+        when(dataRepository.count(any())).thenReturn(4L);
+        when(repository.markFailed(anyLong(), anyLong(), anyLong(), anyString(), anyString(), any())).thenReturn(1);
+        when(dataRepository.page(any())).thenAnswer(invocation -> {
+            ExportDataQuery q = invocation.getArgument(0);
+            if (q.afterId() == 0L) {
+                return List.of(
+                        Map.of("rowId", 1L, "customerNo", "C-1", "remark", "a"),
+                        Map.of("rowId", 2L, "customerNo", "C-2", "remark", "b"));
+            }
+            if (q.afterId() == 2L) {
+                return List.of(
+                        Map.of("rowId", 3L, "customerNo", "C-3", "remark", "c"),
+                        Map.of("rowId", 4L, "customerNo", "C-4", "remark", "d"));
+            }
+            return List.of(Map.of("rowId", 5L, "customerNo", "C-5", "remark", "overflow"));
+        });
+
+        service.execute(1L, 7L, "worker-a");
+
+        verify(fileService, never()).registerCleanFile(any(), any(), any());
+        verify(repository).markFailed(eq(1L), eq(7L), eq(3L), eq("worker-a"), eq("ROW_LIMIT_EXCEEDED"), any());
+    }
+
+    @Test
+    void keysetPaginationFailsWhenCursorDoesNotAdvance() throws Exception {
+        when(dataRepository.count(any())).thenReturn(4L);
+        when(dataRepository.page(any())).thenAnswer(invocation -> {
+            ExportDataQuery q = invocation.getArgument(0);
+            if (q.afterId() == 0L) {
+                return List.of(
+                        Map.of("rowId", 10L, "customerNo", "C-10", "remark", "a"),
+                        Map.of("rowId", 20L, "customerNo", "C-20", "remark", "b"));
+            }
+            return List.of(Map.of("rowId", 20L, "customerNo", "C-20", "remark", "dup"));
+        });
+        when(repository.markFailed(anyLong(), anyLong(), anyLong(), anyString(), anyString(), any())).thenReturn(1);
+
+        service.execute(1L, 7L, "worker-a");
+
+        verify(fileService, never()).registerCleanFile(any(), any(), any());
+        verify(repository).markFailed(eq(1L), eq(7L), eq(3L), eq("worker-a"), eq("EXPORT_CURSOR_NOT_ADVANCING"), any());
     }
 }

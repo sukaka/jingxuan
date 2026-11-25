@@ -1,6 +1,7 @@
 package com.whale.crm.customer.domain;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * crm_customer_tag 存取。标签为 (tenant_id, customer_id, tag_code) 唯一；全量替换与批量增量写入分离。
@@ -8,6 +9,8 @@ import java.util.List;
 public interface CustomerTagRepository {
 
     List<String> findTagCodes(long tenantId, long customerId);
+
+    Map<Long, List<String>> findTagCodesByCustomerIds(long tenantId, List<Long> customerIds);
 
     void insert(long tenantId, long customerId, String tagCode, Long createdBy);
 

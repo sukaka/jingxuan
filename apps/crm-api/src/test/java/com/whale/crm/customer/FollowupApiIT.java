@@ -224,6 +224,57 @@ class FollowupApiIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.data.total").value(1));
     }
 
+    @Test
+    void softDeletedCustomerFollowupsAreExcludedFromListAndTotal() throws Exception {
+        AuthCookies manager1 = login("manager1");
+        AuthCookies lead1 = login("lead1");
+        AuthCookies admin = login("admin");
+
+        long activeCustomerId = createCustomer(manager1, "ITF-在库客户");
+        long deletedCustomerId = createCustomer(manager1, "ITF-软删客户");
+        createFollowup(manager1, activeCustomerId, "在库客户跟进");
+        createFollowup(manager1, deletedCustomerId, "软删客户跟进");
+
+        long managerTotalBefore = totalFollowups(manager1);
+        long leadTotalBefore = totalFollowups(lead1);
+        long adminTotalBefore = totalFollowups(admin);
+
+        mockMvc.perform(get("/api/v1/followups?page=1&size=100").cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[?(@.customerId == " + deletedCustomerId + ")]").isNotEmpty());
+
+        jdbcTemplate.update("UPDATE crm_customer SET deleted = 1 WHERE tenant_id = 1 AND id = ?", deletedCustomerId);
+
+        for (AuthCookies actor : new AuthCookies[]{manager1, lead1, admin}) {
+            mockMvc.perform(get("/api/v1/followups?page=1&size=100").cookie(actor.cookies()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items[?(@.customerId == " + deletedCustomerId + ")]").isEmpty())
+                    .andExpect(jsonPath("$.data.items[?(@.customerId == " + activeCustomerId + ")]").isNotEmpty());
+        }
+        org.assertj.core.api.Assertions.assertThat(totalFollowups(manager1)).isEqualTo(managerTotalBefore - 1);
+        org.assertj.core.api.Assertions.assertThat(totalFollowups(lead1)).isEqualTo(leadTotalBefore - 1);
+        org.assertj.core.api.Assertions.assertThat(totalFollowups(admin)).isEqualTo(adminTotalBefore - 1);
+
+        mockMvc.perform(get("/api/v1/followups?customerId=" + deletedCustomerId).cookie(manager1.cookies()))
+                .andExpect(status().isNotFound());
+    }
+
+    private void createFollowup(AuthCookies actor, long customerId, String summary) throws Exception {
+        mockMvc.perform(actor.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "itf-create-" + java.util.UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\",\"summary\":\""
+                                + summary + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    private long totalFollowups(AuthCookies actor) throws Exception {
+        String response = mockMvc.perform(get("/api/v1/followups?page=1&size=1").cookie(actor.cookies()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(response).at("/data/total").asLong();
+    }
+
     private long createCustomer(AuthCookies actor, String nickname) throws Exception {
         String body = mockMvc.perform(actor.withAuth(post("/api/v1/customers"))
                         .contentType(MediaType.APPLICATION_JSON)
