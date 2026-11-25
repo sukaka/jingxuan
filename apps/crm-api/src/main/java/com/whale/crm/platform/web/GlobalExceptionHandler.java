@@ -30,7 +30,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> business(BusinessException ex, HttpServletRequest request) {
-        if (ex.errorCode() == ErrorCode.RATE_LIMITED && request.getRequestURI().endsWith("/auth/login")) {
+        if (ex.errorCode() == ErrorCode.RATE_LIMITED
+                && (request.getRequestURI().endsWith("/auth/login")
+                || request.getRequestURI().endsWith("/auth/password"))) {
             return ResponseEntity.status(ex.errorCode().httpStatus()).header("Retry-After", "900")
                     .body(ApiResponse.error(ex.errorCode().name(), ex.getMessage(), ex.details(), requestId(request)));
         }

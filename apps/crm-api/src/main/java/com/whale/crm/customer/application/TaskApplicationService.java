@@ -298,7 +298,7 @@ public class TaskApplicationService {
         }
         Map<String, Object> beforeSnapshot = taskSnapshot(existing);
         if (request.status() != null) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "通用PATCH禁止状态变更，请使用任务动作接口");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请通过任务状态流转操作更新任务状态");
         }
         existing.setTaskType(request.taskType() != null ? request.taskType() : existing.getTaskType());
         existing.setPriority(request.priority() != null ? request.priority() : existing.getPriority());

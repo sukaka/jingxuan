@@ -9,6 +9,6 @@ import jakarta.validation.constraints.Size;
  * 批准后（approve）才在同一事务写 owner/team 与不可覆盖归属历史。
  */
 public record CreateTransferRequest(
-        @NotNull(message = "newOwnerId 不能为空") Long newOwnerId,
+        @NotNull(message = "请选择新归属管家") Long newOwnerId,
         @NotBlank(message = "转交原因不能为空") @Size(max = 500) String reason) {
 }

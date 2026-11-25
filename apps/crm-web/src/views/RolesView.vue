@@ -12,6 +12,9 @@ const PERMISSION_GROUP_LABELS: Record<string, string> = {
   customer: '客户管理',
   followup: '客户跟进',
   task: '回访任务',
+  complaint: '客诉管理',
+  notification: '消息通知',
+  quickreply: '快捷话术',
   dictionary: '基础字典',
   product: '产品运营',
   order: '订单管理',
@@ -22,6 +25,7 @@ const PERMISSION_GROUP_LABELS: Record<string, string> = {
   institution: '机构合作',
   settlement: '财务结算',
   material: '素材管理',
+  file: '文件管理',
   campaign: '活动管理',
   channel: '渠道管理',
   report: '经营报表',
@@ -34,8 +38,32 @@ const PERMISSION_GROUP_LABELS: Record<string, string> = {
   integration: '外部集成',
 }
 
+const PERMISSION_ACTION_LABELS: Record<string, string> = {
+  read: '查看',
+  view: '查看',
+  write: '编辑',
+  create: '新建',
+  update: '修改',
+  delete: '删除',
+  manage: '管理',
+  approve: '审批',
+  confirm: '确认',
+  export: '导出',
+  config: '配置',
+  monitor: '监管查看',
+  sidebar: '侧边栏',
+}
+
 function permissionGroupLabel(resource: string): string {
   return PERMISSION_GROUP_LABELS[resource] ?? '其他权限'
+}
+
+function permissionDisplayLabel(permission: PermissionItem): string {
+  if (permission.description?.trim()) return permission.description.trim()
+  const parts = permission.permissionCode.split(':')
+  const group = PERMISSION_GROUP_LABELS[parts[0] ?? ''] ?? '系统'
+  const action = PERMISSION_ACTION_LABELS[parts[parts.length - 1] ?? ''] ?? '操作'
+  return `${group}${action}权限`
 }
 
 const roles = ref<RoleItem[]>([])
@@ -81,7 +109,7 @@ async function load() {
     roles.value = []
     permissions.value = []
     errorMessage.value =
-      error instanceof ApiError ? error.message : '加载失败,请稍后重试'
+      error instanceof ApiError ? error.message : '加载失败，请稍后重试'
   } finally {
     loading.value = false
   }
@@ -133,7 +161,7 @@ async function submitPermissions() {
   permissionSubmitting.value = true
   try {
     await updateRolePermissions(selectedRoleId.value, selectedPermissionIds.value)
-    ElMessage.success('权限已更新,该角色下用户立即生效')
+    ElMessage.success('权限已更新，该角色下用户立即生效')
     await load()
   } catch (error) {
     ElMessage.error(errorText(error))
@@ -152,7 +180,7 @@ onMounted(load)
       v-if="errorMessage"
       type="error"
       :closable="false"
-      :title="`加载失败:${errorMessage}`"
+      :title="`加载失败：${errorMessage}`"
       class="table-alert"
     />
     <div v-else class="role-layout">
@@ -174,9 +202,8 @@ onMounted(load)
           highlight-current-row
           @current-change="(row: RoleItem | null) => row && selectRole(row.id)"
         >
-          <el-table-column prop="roleCode" label="角色编码" width="160" />
-          <el-table-column prop="roleName" label="角色名称" min-width="120" />
-          <el-table-column label="权限数" width="80">
+          <el-table-column prop="roleName" label="角色名称" min-width="160" />
+          <el-table-column label="权限数" width="90">
             <template #default="{ row }">{{ row.permissions.length }}</template>
           </el-table-column>
           <template #empty>
@@ -188,7 +215,7 @@ onMounted(load)
       <el-card shadow="never" class="permission-card">
         <div class="card-toolbar">
           <span class="card-title">
-            {{ selectedRole ? `配置权限：${selectedRole.roleName}（${selectedRole.roleCode}）` : '配置权限（请先在左侧选择角色）' }}
+            {{ selectedRole ? `配置权限：${selectedRole.roleName}` : '配置权限（请先在左侧选择角色）' }}
           </span>
           <el-button
             v-if="auth.hasPermission('user:write')"
@@ -211,8 +238,7 @@ onMounted(load)
                 :value="permission.id"
                 :disabled="!auth.hasPermission('user:write')"
               >
-                {{ permission.permissionCode
-                }}<span v-if="permission.description" class="muted"> - {{ permission.description }}</span>
+                {{ permissionDisplayLabel(permission) }}
               </el-checkbox>
             </el-checkbox-group>
           </div>
@@ -224,10 +250,10 @@ onMounted(load)
     <el-dialog v-model="createDialogVisible" title="新建角色" width="440px">
       <el-form label-width="90px">
         <el-form-item label="角色编码" required>
-          <el-input v-model="createForm.roleCode" placeholder="如 OPERATION_LEAD" />
+          <el-input v-model="createForm.roleCode" placeholder="请输入唯一英文编码，创建后不可修改" />
         </el-form-item>
         <el-form-item label="角色名称" required>
-          <el-input v-model="createForm.roleName" placeholder="如 运营主管" />
+          <el-input v-model="createForm.roleName" placeholder="如：运营主管" />
         </el-form-item>
       </el-form>
       <template #footer>

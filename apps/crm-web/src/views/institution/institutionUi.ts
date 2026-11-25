@@ -81,7 +81,7 @@ export function changeTypeLabel(changeType: string): string {
 export function fieldLabel(fieldCode: string | null): string {
   const label = SENSITIVE_FIELDS.find((item) => item.code === fieldCode)?.label
   if (label) return label
-  return fieldCode ? customTextLabel(fieldCode, '未知字段') : '工作流申请'
+  return fieldCode ? customTextLabel(fieldCode, '未知字段') : '审批申请'
 }
 
 export function institutionBusinessTypeLabel(value: string | null | undefined): string {

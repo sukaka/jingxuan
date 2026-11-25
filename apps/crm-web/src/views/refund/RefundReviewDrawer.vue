@@ -54,7 +54,7 @@ async function save() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }

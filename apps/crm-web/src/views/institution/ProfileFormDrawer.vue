@@ -154,7 +154,7 @@ async function save() {
     if (error instanceof Error && /最多支持|有效/.test(error.message)) {
       ElMessage.error(error.message)
     } else {
-      ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+      ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
     }
   } finally {
     saving.value = false

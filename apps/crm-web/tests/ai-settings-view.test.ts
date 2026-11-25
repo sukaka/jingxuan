@@ -108,7 +108,7 @@ describe('AiSettingsView 管理员大模型配置', () => {
     await flushPromises()
 
     expect(saveAiConfig).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('请填写接口地址、模型和 API Key')
+    expect(wrapper.text()).toContain('请填写接口地址（Base URL）、模型名称（Model）和接口密钥（API Key）')
     wrapper.unmount()
   })
 })

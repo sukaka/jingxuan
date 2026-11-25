@@ -623,6 +623,7 @@ class TestInstallShCliAndBackups(unittest.TestCase):
         shutil.copy2(REPO_ROOT / 'infra/production/compose.yml', install_dir / 'compose.yml')
         shutil.copy2(REPO_ROOT / 'infra/production/Caddyfile.core', install_dir / 'Caddyfile.core')
         shutil.copy2(REPO_ROOT / 'infra/production/Caddyfile.files', install_dir / 'Caddyfile.files')
+        shutil.copy2(REPO_ROOT / 'infra/production/Caddyfile.sameorigin', install_dir / 'Caddyfile.sameorigin')
 
         env_file = install_dir / '.env'
         env_text = (install_dir / '.env.example').read_text(encoding='utf-8')
@@ -807,6 +808,144 @@ sys.exit(0)
             self.assertIn(f'JWT_SECRET={special_val}', lines)
             self.assertIn('OTHER=keep', lines)
             self.assertIn('NEW_KEY=val2', lines)
+
+    def test_openeuler_ip_high_port_mode_sameorigin_and_legacy_compose_admin(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            install_dir, bin_dir, log_file = self._setup_install_sandbox(tmp)
+            # Remove pre-seeded .env so install runs fresh
+            (install_dir / '.env').unlink()
+            (install_dir / 'images').mkdir()
+            (install_dir / 'images' / 'images.txt').write_text('whale-crm/crm-api:2.0.2\n', encoding='utf-8')
+            (install_dir / 'images' / 'application.tar.gz').write_bytes(b'stub-tar')
+
+            # Replace stub docker to simulate older openEuler Compose v2 WITHOUT --env-from-file
+            stdin_capture = tmp / 'admin-stdin.txt'
+            stub_docker = bin_dir / 'docker'
+            stub_docker.write_text(
+                f"""#!/usr/bin/env python3
+import json, sys
+log_path = {str(log_file)!r}
+stdin_path = {str(stdin_capture)!r}
+args = sys.argv[1:]
+with open(log_path, 'a', encoding='utf-8') as f:
+    f.write(json.dumps(args) + '\\n')
+if args == ['compose', 'version']:
+    print('Docker Compose version v2.27.1')
+    sys.exit(0)
+if args == ['info'] or args[:2] == ['image', 'inspect'] or args[:1] == ['load']:
+    sys.exit(0)
+if args[:1] == ['compose']:
+    if 'run' in args and '--help' in args:
+        print('Usage: docker compose run [OPTIONS] SERVICE [COMMAND]\\n  -e, --env stringArray\\n')
+        sys.exit(0)
+    if 'run' in args:
+        data = sys.stdin.read()
+        with open(stdin_path, 'w', encoding='utf-8') as sf:
+            sf.write(data)
+        print('初始化管理员 admin：创建成功')
+        sys.exit(0)
+    sys.exit(0)
+sys.exit(0)
+""",
+                encoding='utf-8',
+            )
+            os.chmod(stub_docker, 0o755)
+
+            # Stub curl so check_access succeeds offline
+            stub_curl = bin_dir / 'curl'
+            stub_curl.write_text('#!/usr/bin/env bash\nexit 0\n', encoding='utf-8')
+            os.chmod(stub_curl, 0o755)
+
+            env = os.environ.copy()
+            env['PATH'] = f"{bin_dir}:{env['PATH']}"
+            env['CRM_ADMIN_PASSWORD'] = 'SyntheticEulerPass2026'
+
+            res = subprocess.run(
+                [
+                    'bash', str(install_dir / 'install.sh'), 'install',
+                    '--ip', '192.168.10.25',
+                    '--skip-port-check',
+                ],
+                cwd=install_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(res.returncode, 0)
+            env_text = (install_dir / '.env').read_text(encoding='utf-8')
+            self.assertIn('HTTP_PORT=48080', env_text)
+            self.assertIn('HTTPS_PORT=48443', env_text)
+            self.assertIn('PUBLIC_URL=https://192.168.10.25:48443', env_text)
+            self.assertIn('CADDY_SITE_ADDRESS=:443', env_text)
+            self.assertIn('TLS_MODE=local-cert', env_text)
+            self.assertIn('FILES_ENABLED=true', env_text)
+            self.assertIn('FILES_PROXY_MODE=same-origin', env_text)
+            self.assertIn('FILES_PUBLIC_ENDPOINT=https://192.168.10.25:48443', env_text)
+            self.assertIn('COOKIE_SECURE=true', env_text)
+
+            rendered_caddy = (install_dir / 'runtime' / 'Caddyfile').read_text(encoding='utf-8')
+            self.assertIn('auto_https off', rendered_caddy)
+            self.assertIn('redir {$PUBLIC_URL}{uri} 308', rendered_caddy)
+            self.assertIn('tls /etc/caddy/certs/server.crt /etc/caddy/certs/server.key', rendered_caddy)
+            self.assertIn('header_up -Cookie', rendered_caddy)
+            self.assertIn('@files_bucket path /{$FILES_BUCKET}/*', rendered_caddy)
+
+            certs_dir = install_dir / 'runtime' / 'certs'
+            self.assertTrue((certs_dir / 'ca.crt').is_file())
+            self.assertTrue((certs_dir / 'server.crt').is_file())
+            self.assertTrue((certs_dir / 'server.key').is_file())
+            self.assertEqual(stat.S_IMODE((certs_dir / 'server.key').stat().st_mode), 0o600)
+            san_out = subprocess.check_output(
+                ['openssl', 'x509', '-in', str(certs_dir / 'server.crt'), '-noout', '-text'],
+                text=True,
+            )
+            self.assertIn('IP Address:192.168.10.25', san_out)
+            self.assertIn('IP Address:127.0.0.1', san_out)
+
+            # Ensure admin secret was passed via stdin and NEVER appeared in docker CLI argv
+            all_calls = [json.loads(line) for line in log_file.read_text(encoding='utf-8').splitlines()]
+            flattened = '\n'.join(' '.join(call) for call in all_calls)
+            self.assertNotIn('SyntheticEulerPass2026', flattened)
+            self.assertNotIn('--env-from-file', flattened)
+            self.assertEqual(stdin_capture.read_text(encoding='utf-8').splitlines(), ['admin', '系统管理员', 'SyntheticEulerPass2026'])
+
+            cred_text = (install_dir / 'initial-admin.txt').read_text(encoding='utf-8')
+            self.assertIn('username=admin', cred_text)
+            self.assertIn('password=SyntheticEulerPass2026', cred_text)
+            self.assertEqual(stat.S_IMODE((install_dir / 'initial-admin.txt').stat().st_mode), 0o600)
+
+    def test_port_conflict_rejected_before_creating_env(self) -> None:
+        import socket
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            install_dir, bin_dir, _ = self._setup_install_sandbox(tmp)
+            (install_dir / '.env').unlink()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(('127.0.0.1', 0))
+            sock.listen(1)
+            busy_port = sock.getsockname()[1]
+            try:
+                env = os.environ.copy()
+                env['PATH'] = f"{bin_dir}:{env['PATH']}"
+                proc = subprocess.run(
+                    [
+                        'bash', str(install_dir / 'install.sh'), 'install',
+                        '--ip', '192.168.10.25',
+                        '--http-port', str(busy_port),
+                    ],
+                    cwd=install_dir,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn(str(busy_port), proc.stderr)
+                self.assertFalse((install_dir / '.env').exists())
+            finally:
+                sock.close()
 
 
 if __name__ == '__main__':

@@ -91,7 +91,7 @@ async function loadLegacyProfile() {
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 404) return '客户不存在或不在你的数据范围内(不泄露存在性)'
+    if (error.status === 404) return '客户不存在或不在您的可见范围内'
     return error.message
   }
   return error instanceof Error ? error.message : '未知错误'
@@ -176,7 +176,7 @@ defineExpose({ reload: load })
           v-if="detail.deleted"
           type="warning"
           :closable="false"
-          title="该客户已被合并归档,档案只读;关联数据已迁移至主客户"
+          title="该客户已被合并归档，当前档案仅供查看，关联数据已迁移至主客户"
           class="crm-table-alert"
         />
 
@@ -242,7 +242,7 @@ defineExpose({ reload: load })
           <el-tab-pane label="订单与退款" name="orders"><CustomerBusinessPanel :customer-id="detail.id" type="orders" /></el-tab-pane>
           <el-tab-pane label="服务记录" name="service"><FollowupPanel :fixed-customer-id="detail.id" @saved="handleChildChanged" /></el-tab-pane>
           <el-tab-pane label="基础档案" name="profile">
-            <el-alert v-if="legacyError" type="error" :closable="false" :title="`档案加载失败:${legacyError}`" class="crm-table-alert" />
+            <el-alert v-if="legacyError" type="error" :closable="false" :title="`档案加载失败：${legacyError}`" class="crm-table-alert" />
             <section v-else v-loading="legacyLoading" class="profile-card" aria-label="客户基础档案">
               <h3 class="profile-title">基础档案</h3>
               <div v-if="legacyFields.length" class="profile-grid">

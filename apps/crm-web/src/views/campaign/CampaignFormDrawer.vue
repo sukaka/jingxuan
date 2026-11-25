@@ -243,7 +243,7 @@ async function save() {
     <el-alert
       type="info"
       :closable="false"
-      title="编码保存后固定；不允许回到草稿或编辑已归档记录，状态转换与批次归属由服务端复核"
+      title="编码保存后不可修改；已发布的活动不能退回草稿，已归档的记录不可编辑"
       class="campaign-form-tip"
     />
     <el-alert v-if="formError" type="error" :title="formError" :closable="false" class="campaign-form-tip" />
@@ -253,7 +253,7 @@ async function save() {
           <el-input v-model="form.campaignCode" :disabled="form.id !== null" maxlength="64" placeholder="例如 CMP-2026-11" data-testid="campaign-code" />
         </el-form-item>
         <el-form-item label="活动名称" required>
-          <el-input v-model="form.campaignName" maxlength="160" placeholder="输入真实活动名称" data-testid="campaign-name" @input="campaignNeedsSave = true" />
+          <el-input v-model="form.campaignName" maxlength="160" placeholder="请输入活动名称" data-testid="campaign-name" @input="campaignNeedsSave = true" />
         </el-form-item>
         <el-form-item label="活动类型" required>
           <el-select v-model="form.campaignType" class="campaign-full-width" @change="campaignNeedsSave = true">
@@ -277,7 +277,7 @@ async function save() {
 
       <section class="campaign-batch-section">
         <header>
-          <div><h3>活动批次</h3><p>活动与批次分别保存；订单只能归属到真实有效且归属正确的批次。</p></div>
+          <div><h3>活动批次</h3><p>活动与批次分别保存；订单仅可关联到有效且归属正确的活动批次。</p></div>
           <el-button :disabled="saving" data-testid="batch-add" @click="addBatch">＋ 添加批次</el-button>
         </header>
         <article v-for="(batch, index) in batches" :key="batch.key" class="campaign-batch-editor">
@@ -290,7 +290,7 @@ async function save() {
               <el-input v-model="batch.batchCode" :disabled="batch.id !== null" maxlength="64" placeholder="例如 WAVE-01" data-testid="batch-code" />
             </el-form-item>
             <el-form-item label="批次名称" required>
-              <el-input v-model="batch.batchName" :disabled="batch.readOnly" maxlength="96" placeholder="输入真实批次名称" data-testid="batch-name" @input="batch.dirty = true" />
+              <el-input v-model="batch.batchName" :disabled="batch.readOnly" maxlength="96" placeholder="请输入批次名称" data-testid="batch-name" @input="batch.dirty = true" />
             </el-form-item>
             <el-form-item label="批次状态" required>
               <el-select v-model="batch.status" :disabled="batch.readOnly" class="campaign-full-width" data-testid="batch-status" @change="batch.dirty = true">
@@ -308,7 +308,7 @@ async function save() {
           </div>
         </article>
       </section>
-      <el-alert type="warning" :closable="false" title="渠道与商务归因来自订单成交快照，本表单不提供或伪造归因编辑。" />
+      <el-alert type="warning" :closable="false" title="渠道与商务归因以订单成交记录为准，本表单不支持手动修改归因。" />
     </el-form>
     <template #footer>
       <el-button :disabled="saving" @click="close">取消</el-button>

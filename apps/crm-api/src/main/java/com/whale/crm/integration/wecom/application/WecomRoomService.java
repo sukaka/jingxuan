@@ -57,7 +57,7 @@ public class WecomRoomService {
     public WecomRoomView save(CurrentUser user, String roomId, WecomRoomSaveRequest request, String idempotencyKey) {
         String normalizedRoomId = roomId.strip();
         if (normalizedRoomId.isEmpty()) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "群聊 roomid 不能为空");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "企微群聊标识不能为空");
         }
         String corpId = request.corpId().strip();
         List<String> members = request.memberUserids().stream().map(String::strip).distinct().toList();

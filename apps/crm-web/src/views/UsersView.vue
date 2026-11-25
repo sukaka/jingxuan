@@ -65,7 +65,7 @@ function formatDateTime(value: string | null): string {
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 409) return '该记录已被他人修改,请刷新列表后重试'
+    if (error.status === 409) return '该记录已被他人修改，请刷新列表后重试'
     return error.message
   }
   return error instanceof Error ? error.message : '未知错误'
@@ -229,7 +229,7 @@ async function submitRoles() {
 async function handleDisable(user: ManagedUser) {
   try {
     await ElMessageBox.confirm(
-      `停用后 ${user.displayName}(${user.username}) 将立即被强制退出并回收权限,确定停用吗?`,
+      `停用后 ${user.displayName}（${user.username}）将立即被强制退出并回收权限，确定停用吗？`,
       '停用用户',
       { type: 'warning', confirmButtonText: '停用', cancelButtonText: '取消' },
     )
@@ -318,7 +318,7 @@ onMounted(async () => {
         v-if="errorMessage"
         type="error"
         :closable="false"
-        :title="`加载失败:${errorMessage}`"
+        :title="`加载失败：${errorMessage}`"
         class="table-alert"
       />
 
@@ -373,7 +373,7 @@ onMounted(async () => {
     <el-dialog v-model="createDialogVisible" title="新建用户" width="480px">
       <el-form label-width="90px">
         <el-form-item label="用户名" required>
-          <el-input v-model="createForm.username" placeholder="登录名,创建后不可修改" />
+          <el-input v-model="createForm.username" placeholder="登录账号，创建后不可修改" />
         </el-form-item>
         <el-form-item label="姓名" required>
           <el-input v-model="createForm.displayName" />
@@ -395,7 +395,7 @@ onMounted(async () => {
         <el-form-item label="角色">
           <el-checkbox-group v-model="createForm.roleIds">
             <el-checkbox v-for="role in allRoles" :key="role.id" :value="role.id">
-              {{ role.roleName }}({{ role.roleCode }})
+              {{ role.roleName }}
             </el-checkbox>
           </el-checkbox-group>
         </el-form-item>
@@ -416,8 +416,8 @@ onMounted(async () => {
             <el-option v-for="team in allTeams" :key="team.id" :label="team.teamName" :value="team.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="版本号">
-          <span class="muted">{{ editForm.version }}(乐观锁,保存冲突将提示刷新)</span>
+        <el-form-item label="数据版本">
+          <span class="muted">第 {{ editForm.version }} 版（多人同时编辑时将提示刷新）</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -429,7 +429,7 @@ onMounted(async () => {
     <el-dialog v-model="roleDialogVisible" :title="`分配角色 - ${roleForm.displayName}`" width="480px">
       <el-checkbox-group v-model="roleForm.roleIds">
         <el-checkbox v-for="role in allRoles" :key="role.id" :value="role.id" class="role-option">
-          {{ role.roleName }}({{ role.roleCode }})
+          {{ role.roleName }}
         </el-checkbox>
       </el-checkbox-group>
       <template #footer>

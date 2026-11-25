@@ -87,10 +87,10 @@ onMounted(async () => {
 
 <template>
   <div class="proto-page dictionaries-page">
-    <PageHeader title="基础字典 / 列表配置" description="业务下拉、状态与展示值统一配置；已引用配置只能停用，不物理删除历史事实" />
+    <PageHeader title="基础字典 / 列表配置" description="业务下拉、状态与展示值统一配置；已引用配置只能停用，不会删除历史记录" />
     <div class="dictionary-notice">
       <span class="proto-pill success">可配置化</span>
-      <p><strong>{{ types.length }} 类真实字典配置</strong><span>新增、修改与停用均写审计，已停用值不出现在新建表单。</span></p>
+      <p><strong>{{ types.length }} 类基础字典配置</strong><span>新增、修改与停用均会记录审计日志，已停用项不会出现在新建表单。</span></p>
     </div>
     <el-alert v-if="errorMessage" class="dictionary-alert" type="error" :title="errorMessage" :closable="false" />
 
@@ -108,7 +108,6 @@ onMounted(async () => {
             @click="selectType(type)"
           >
             <span class="dictionary-type-heading"><strong>{{ type.dictName }}</strong><small>{{ activeCount(type) }} 启用 / {{ grouped[type.id]?.length ?? 0 }} 总数</small></span>
-            <code>{{ type.dictCode }}</code>
           </button>
         </nav>
         <div v-if="!loading && types.length === 0" class="dictionary-types-empty">暂无字典分类</div>
@@ -117,14 +116,14 @@ onMounted(async () => {
       <PageCard
         class="dictionary-items-panel"
         :title="activeType?.dictName ?? '字典配置'"
-        :subtitle="activeType ? `维护「${activeType.dictName}」的显示名称、保存值与展示顺序；停用不影响历史数据。` : '请选择左侧字典分类'"
+        :subtitle="activeType ? `维护「${activeType.dictName}」的显示名称、选项编码与展示顺序；停用不影响历史数据。` : '请选择左侧字典分类'"
       >
         <template #actions>
           <el-button v-if="activeType && auth.hasPermission('dictionary:write')" type="primary" data-testid="dictionary-create" @click="openCreate(activeType)">新增配置</el-button>
         </template>
         <template v-if="activeType">
           <div class="dictionary-filter-bar">
-            <el-input v-model="keyword" class="dictionary-search" clearable aria-label="搜索名称或保存值" placeholder="搜索名称或保存值" data-testid="dictionary-search" />
+            <el-input v-model="keyword" class="dictionary-search" clearable aria-label="搜索名称或选项编码" placeholder="搜索名称或选项编码" data-testid="dictionary-search" />
             <el-select v-model="statusFilter" class="dictionary-status-filter" aria-label="状态筛选" data-testid="dictionary-status-filter">
               <el-option label="全部状态" value="ALL" />
               <el-option label="仅启用" value="ACTIVE" />
@@ -135,11 +134,11 @@ onMounted(async () => {
           <div class="dictionary-items-body">
             <div class="dictionary-list" :class="{ 'has-actions': auth.hasPermission('dictionary:write') }" role="table" :aria-label="`${activeType.dictName}配置列表`">
               <div class="dictionary-list-head" role="row">
-                <span role="columnheader">名称</span><span role="columnheader">保存值</span><span role="columnheader">排序</span><span role="columnheader">状态</span><span v-if="auth.hasPermission('dictionary:write')" role="columnheader">操作</span>
+                <span role="columnheader">名称</span><span role="columnheader">选项编码</span><span role="columnheader">排序</span><span role="columnheader">状态</span><span v-if="auth.hasPermission('dictionary:write')" role="columnheader">操作</span>
               </div>
               <div v-for="item in filteredItems" :key="item.id" class="dictionary-item" role="row" :data-testid="`dictionary-item-${item.id}`">
                 <div class="dictionary-cell dictionary-item-name" role="cell"><span class="dictionary-cell-label">名称</span><strong>{{ item.optionLabel }}</strong></div>
-                <div class="dictionary-cell dictionary-item-code" role="cell"><span class="dictionary-cell-label">保存值</span><code>{{ item.optionCode }}</code></div>
+                <div class="dictionary-cell dictionary-item-code" role="cell"><span class="dictionary-cell-label">选项编码</span><code>{{ item.optionCode }}</code></div>
                 <div class="dictionary-cell dictionary-item-sort" role="cell"><span class="dictionary-cell-label">排序</span><span class="number">{{ item.sortNo }}</span></div>
                 <div class="dictionary-cell" role="cell"><span class="dictionary-cell-label">状态</span><span class="proto-pill" :class="item.status === 'ACTIVE' ? 'success' : 'warning'">{{ item.status === 'ACTIVE' ? '启用' : '停用' }}</span></div>
                 <div v-if="auth.hasPermission('dictionary:write')" class="dictionary-cell dictionary-row-actions" role="cell">
@@ -150,7 +149,7 @@ onMounted(async () => {
                       <el-dropdown-menu>
                         <el-dropdown-item v-if="item.status === 'ACTIVE'" command="disable" data-testid="dictionary-disable">停用配置</el-dropdown-item>
                         <el-dropdown-item disabled class="dictionary-delete-item">
-                          <div data-testid="dictionary-delete-reason"><span>删除不可用</span><small>已引用配置仅可停用，不可物理删除</small></div>
+                          <div data-testid="dictionary-delete-reason"><span>删除不可用</span><small>已引用配置仅可停用，不可直接删除</small></div>
                         </el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
@@ -168,7 +167,7 @@ onMounted(async () => {
       </PageCard>
     </div>
 
-    <PageCard title="最近编辑日志" subtitle="来自真实审计记录，仅展示字典相关操作" class="dictionary-audits">
+    <PageCard title="最近编辑日志" subtitle="仅展示字典相关操作审计记录" class="dictionary-audits">
       <template #actions><RouterLink to="/audit-logs" class="el-button">完整审计日志</RouterLink></template>
       <div class="proto-card-body">
         <div class="dictionary-audit-list">
@@ -188,7 +187,7 @@ onMounted(async () => {
     <el-dialog v-model="dialogVisible" :title="editing ? '修改配置' : '新增配置'" width="480px">
       <el-form label-position="top">
         <el-form-item label="字典类型"><el-input :model-value="currentType?.dictName" disabled /></el-form-item>
-        <el-form-item label="保存编码" required><el-input v-model="form.optionCode" :disabled="!!editing" /></el-form-item>
+        <el-form-item label="选项编码" required><el-input v-model="form.optionCode" :disabled="!!editing" /></el-form-item>
         <el-form-item label="显示名称" required><el-input v-model="form.optionLabel" /></el-form-item>
         <el-form-item label="排序号"><el-input-number v-model="form.sortNo" :min="0" /></el-form-item>
       </el-form>

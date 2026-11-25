@@ -103,7 +103,7 @@ async function save() {
     <el-alert
       type="info"
       :closable="false"
-      title="新 SKU 默认停用。上架前后端会复核版本、权益规则与机构；选 N 项模板不会被误发权益"
+      title="新 SKU 默认停用。上架前系统会自动校验版本、权益规则与适用机构；选 N 项模板不会被误发权益"
       class="drawer-tip"
     />
     <el-form label-position="top">
@@ -118,7 +118,7 @@ async function save() {
         </el-form-item>
         <el-form-item label="销售版本" required>
           <el-select v-model="form.packageVersionId" :disabled="Boolean(sku)" :loading="versionsLoading" class="full-width">
-            <el-option v-for="item in versions.filter((v) => v.status !== 'ARCHIVED')" :key="item.id" :label="`V${item.versionNo} · ${selectionModeLabel(item.selectionMode)} · ${versionStatusLabel(item.status)}`" :value="item.id" />
+            <el-option v-for="item in versions.filter((v) => v.status !== 'ARCHIVED')" :key="item.id" :label="`第 ${item.versionNo} 版 · ${selectionModeLabel(item.selectionMode)} · ${versionStatusLabel(item.status)}`" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="销售规格" required>

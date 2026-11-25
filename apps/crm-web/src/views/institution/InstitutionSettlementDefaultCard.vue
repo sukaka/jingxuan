@@ -52,7 +52,7 @@ async function save() {
     emit('saved', saved)
     ElMessage.success('默认结算日已保存，仅之后生成的月结批次使用新值')
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -66,7 +66,7 @@ onMounted(() => { void load() })
     <section v-loading="loading" class="institution-settlement-default" aria-label="系统默认结算日设置">
       <div class="institution-settlement-default-copy">
         <h3>系统默认结算日</h3>
-        <p>机构未单独设置时继承此默认值；当前为 <strong>{{ settlementDayLabel(config?.defaultSettlementDay ?? 'LAST_DAY') }}</strong>（{{ config?.configured ? '本租户配置' : '系统内置默认' }}）。</p>
+        <p>机构未单独设置时继承此默认值；当前为 <strong>{{ settlementDayLabel(config?.defaultSettlementDay ?? 'LAST_DAY') }}</strong>（{{ config?.configured ? '已自定义配置' : '系统默认配置' }}）。</p>
       </div>
       <div class="institution-settlement-default-control">
         <el-select v-model="draft" :disabled="!canWrite || loading || saving" data-testid="settlement-default-value" aria-label="默认结算日">
@@ -74,7 +74,7 @@ onMounted(() => { void load() })
         </el-select>
         <el-button v-if="canWrite" type="primary" :loading="saving" :disabled="!config" data-testid="settlement-default-save" @click="save">保存默认设置</el-button>
       </div>
-      <el-alert type="info" :closable="false" title="结算日期按 Asia/Shanghai 业务日历确定；只影响之后生成的月结批次，历史批次保留原快照，次卡次结不适用。" />
+      <el-alert type="info" :closable="false" title="结算日期按北京时间确定；只影响之后生成的月结批次，历史批次保持原有规则，次卡次结不适用。" />
     </section>
   </PageCard>
 </template>

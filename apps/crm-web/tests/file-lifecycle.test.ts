@@ -99,7 +99,7 @@ describe('FileUploadField 真实文件生命周期', () => {
     expect(completeFileUpload).toHaveBeenCalledWith({ fileId: 701, etag: 'etag-real' })
     expect(waitForFileClean).toHaveBeenCalledWith(701)
     expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([701])
-    expect(wrapper.text()).toContain('扫描通过 · 文件 ID 701')
+    expect(wrapper.text()).toContain('扫描通过 · 文件编号 701')
   })
 
   it('PUT 失败按原初始化记录重试，不重复 init 或伪造 fileId', async () => {

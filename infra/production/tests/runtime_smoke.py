@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import http.cookiejar
 import json
+import ssl
 import sys
 import time
 import urllib.request
@@ -13,11 +14,15 @@ from captcha_solver import login_with_captcha
 
 
 class SmokeTest:
-    def __init__(self, base_url, username, password, check_files):
+    def __init__(self, base_url, username, password, check_files, cacert=None):
         self.base_url = base_url.rstrip('/')
         self.check_files = check_files
         self.cookies = http.cookiejar.CookieJar()
-        self.client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookies))
+        handlers = [urllib.request.HTTPCookieProcessor(self.cookies)]
+        if cacert is not None:
+            ctx = ssl.create_default_context(cafile=str(cacert))
+            handlers.append(urllib.request.HTTPSHandler(context=ctx))
+        self.client = urllib.request.build_opener(*handlers)
         self.username = username
         self.password = password
 
@@ -106,6 +111,7 @@ def main():
     parser.add_argument('--url', required=True)
     parser.add_argument('--credentials', type=Path, required=True)
     parser.add_argument('--files', action='store_true')
+    parser.add_argument('--cacert', type=Path, default=None)
     args = parser.parse_args()
     credentials = {}
     for line in args.credentials.read_text(encoding='utf-8').splitlines():
@@ -114,7 +120,7 @@ def main():
             credentials[key] = value
     if not credentials.get('username') or not credentials.get('password'):
         raise SystemExit('凭据文件缺少账号或密码')
-    SmokeTest(args.url, credentials['username'], credentials['password'], args.files).run()
+    SmokeTest(args.url, credentials['username'], credentials['password'], args.files, cacert=args.cacert).run()
 
 
 if __name__ == '__main__':

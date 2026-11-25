@@ -113,7 +113,7 @@ class MockExtractor:
         if any(word in text for word in ("套餐", "权益", "剩几次", "剩余几次", "还剩", "几次", "余额", "还能用", "可以用几次")):
             return "PACKAGE_QUERY", "客户查询套餐或项目权益，需读取真实权益账本后人工回复", ["VERIFY_BALANCE", "CREATE_FOLLOWUP_DRAFT"], []
         if any(word in text for word in ("多少钱", "价格", "费用", "优惠价", "怎么收费")):
-            return "PRICE_INQUIRY", "客户询问价格，需按当前销售快照人工回复", ["CREATE_FOLLOWUP_DRAFT"], []
+            return "PRICE_INQUIRY", "客户询问价格，需按当前售价规则人工回复", ["CREATE_FOLLOWUP_DRAFT"], []
         if any(word in text for word in ("复购", "再买", "续卡", "续费", "再购买", "想再做")):
             return "REPURCHASE_INTENT", "客户表达复购意向，需人工核实适合的销售方案", ["VERIFY_BALANCE", "CREATE_FOLLOWUP_DRAFT"], []
         if any(word in text for word in ("术后", "护理", "恢复", "效果", "反馈", "不适", "红肿", "痒", "疼", "刺痛", "灼热")):
@@ -156,7 +156,7 @@ class OpenAICompatibleExtractor:
                 self.base_url,
                 allow_http=settings.ai_allow_http,
                 allowed_hosts=settings.ai_allowed_hosts,
-                label="AI baseUrl",
+                label="AI 接口地址",
                 resolver=self.resolver,
                 resolve_dns=self.transport is None or self.resolver is not None,
             )

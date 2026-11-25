@@ -21,6 +21,7 @@ import StatusPill from './customer/StatusPill.vue'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import PageCard from '../components/prototype/PageCard.vue'
 import { catalogErrorText, selectionModeLabel, skuStatusLabel } from './catalog/catalogUi'
+import { displayDateTime, metricVersionText, orderSourceText } from './reporting/reportUi'
 import './customer/customer-ui.css'
 import './catalog/catalog.css'
 
@@ -211,9 +212,17 @@ async function activate(item: Sku) {
   }
 }
 
+function formatHandlingRule(rule: string): string {
+  return rule.replace(/（自动动作：NONE）/g, '（不触发自动处理）')
+}
+
+function qualityTimeZoneLabel(tz: string): string {
+  return tz === 'Asia/Shanghai' ? '北京时间' : tz
+}
+
 async function disable(item: Sku) {
   try {
-    await ElMessageBox.confirm('停用后不能用于新订单，历史快照不受影响。确认停用？', '停用 SKU', { type: 'warning' })
+    await ElMessageBox.confirm('停用后不能用于新订单，已成交订单记录不受影响。确认停用？', '停用 SKU', { type: 'warning' })
     await disableSku(item.id, item.version)
     await reloadAll()
     ElMessage.success('SKU 已停用')
@@ -258,7 +267,7 @@ onMounted(async () => {
 
 <template>
   <div class="proto-page sku-quality-page">
-    <PageHeader title="SKU 标准化与数据质量" description="SKU 主数据支持新增、修改、停用；已售版本继续保留成交快照">
+    <PageHeader title="SKU 标准化与数据质量" description="SKU 主数据支持新增、修改、停用；已售版本继续保留成交规则记录">
       <template #actions><el-button v-if="canWrite" type="primary" @click="openCreate">＋ 新增SKU</el-button></template>
     </PageHeader>
 
@@ -313,16 +322,16 @@ onMounted(async () => {
             <div><dt>90 天低频（本页）</dt><dd>{{ qualityReport.summary.lowFrequencySkuCount }} 个</dd></div>
             <div><dt>低频占比（本页）</dt><dd>{{ ratioText() }}</dd></div>
           </dl>
-          <p class="quality-meta">{{ qualityReport.from }} — {{ qualityReport.to }}（{{ qualityReport.periodDays }} 天）· {{ qualityReport.timeZone }} · 来源 {{ qualityReport.sourceSystem }} · 低频阈值 ≤ {{ qualityReport.lowFrequencyThreshold }} · {{ qualityReport.metricVersion }} · 数据水位 {{ qualityReport.sourceWatermark ?? '暂无' }}</p>
-          <p class="quality-rule">低频只提示，不自动下架；命名、规则与机构问题均需人工复核。销量和质量不使用原型演示值。</p>
+          <p class="quality-meta">{{ qualityReport.from }} — {{ qualityReport.to }}（{{ qualityReport.periodDays }} 天）· {{ qualityTimeZoneLabel(qualityReport.timeZone) }} · 来源 {{ orderSourceText(qualityReport.sourceSystem) }} · 低频阈值 ≤ {{ qualityReport.lowFrequencyThreshold }} · {{ metricVersionText(qualityReport.metricVersion) }} · 数据更新至 {{ qualityReport.sourceWatermark ? displayDateTime(qualityReport.sourceWatermark) : '暂无' }}</p>
+          <p class="quality-rule">低频只提示，不自动下架；命名、规则与机构问题均需人工复核。销量和质量均基于真实业务数据统计。</p>
           <div class="quality-table-wrap">
             <table class="quality-table">
               <thead><tr><th>检查规则</th><th>异常数</th><th>处理原则</th></tr></thead>
               <tbody>
                 <tr v-for="check in qualityReport.checks" :key="check.checkCode" :data-testid="`quality-check-${check.checkCode}`">
-                  <td><strong>{{ check.checkName }}</strong><small>{{ check.checkCode }}</small></td>
+                  <td><strong>{{ check.checkName }}</strong></td>
                   <td><span class="proto-pill" :class="check.issueCount ? 'warning' : 'success'">{{ check.issueCount }}</span></td>
-                  <td>{{ check.handlingRule }}</td>
+                  <td>{{ formatHandlingRule(check.handlingRule) }}</td>
                 </tr>
                 <tr v-if="qualityReport.checks.length === 0"><td colspan="3" class="quality-empty">当前报表未返回质量检查项</td></tr>
               </tbody>

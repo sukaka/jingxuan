@@ -202,7 +202,7 @@ public class MergeApplicationService {
                                              String reason) {
         MergeCase mergeCase = requireOpenCase(tenantId, user, caseId, version);
         if (!MergeCase.STATUS_SUGGESTED.equals(mergeCase.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "仅 SUGGESTED 状态可转为 REVIEWING");
+            throw new BusinessException(ErrorCode.CONFLICT, "仅待核查状态的合并单可进入审核中");
         }
         transition(tenantId, mergeCase, MergeCase.STATUS_REVIEWING, user.userId());
         MergeCase after = mergeCaseRepository.findById(tenantId, caseId).orElseThrow();
@@ -238,10 +238,10 @@ public class MergeApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
         }
         if (!mergeCase.isOpen()) {
-            throw new BusinessException(ErrorCode.CONFLICT, "合并单已终结（当前状态 " + mergeCase.getStatus() + "）");
+            throw new BusinessException(ErrorCode.CONFLICT, "合并单已终结（当前状态：" + mergeStatusLabel(mergeCase.getStatus()) + "）");
         }
         if (!MergeCase.STATUS_REVIEWING.equals(mergeCase.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "仅 REVIEWING 状态可确认合并");
+            throw new BusinessException(ErrorCode.CONFLICT, "仅审核中状态的合并单可确认合并");
         }
         if (primary.isDeleted() || secondary.isDeleted()) {
             throw new BusinessException(ErrorCode.CONFLICT, "客户已归档，无法执行合并");
@@ -353,7 +353,7 @@ public class MergeApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
         }
         if (!mergeCase.isOpen()) {
-            throw new BusinessException(ErrorCode.CONFLICT, "合并单已终结（当前状态 " + mergeCase.getStatus() + "）");
+            throw new BusinessException(ErrorCode.CONFLICT, "合并单已终结（当前状态：" + mergeStatusLabel(mergeCase.getStatus()) + "）");
         }
         // 双客户可见性（confirm 内另有行锁复核）
         DataScope scope = scopeSupport.scope(user);
@@ -468,5 +468,18 @@ public class MergeApplicationService {
                     return sb.toString();
                 })
                 .orElse("#" + customerId);
+    }
+
+    private static String mergeStatusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case MergeCase.STATUS_SUGGESTED -> "待核查";
+            case MergeCase.STATUS_REVIEWING -> "审核中";
+            case MergeCase.STATUS_CONFIRMED -> "已确认合并";
+            case MergeCase.STATUS_REJECTED -> "已驳回";
+            default -> "已结束";
+        };
     }
 }

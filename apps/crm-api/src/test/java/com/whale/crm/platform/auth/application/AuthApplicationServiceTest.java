@@ -7,6 +7,7 @@ import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.security.InstitutionAccessSupport;
 import com.whale.crm.platform.security.JwtAuthenticationFilter;
 import com.whale.crm.platform.security.JwtService;
+import com.whale.crm.platform.security.PasswordPolicyProperties;
 import com.whale.crm.platform.user.domain.SysUser;
 import com.whale.crm.platform.user.domain.UserRepository;
 import com.whale.crm.platform.web.BusinessException;
@@ -60,13 +61,16 @@ class AuthApplicationServiceTest {
     private LoginAttemptService loginAttemptService;
 
     private PasswordEncoder passwordEncoder;
+    private PasswordPolicyService passwordPolicyService;
     private AuthApplicationService service;
 
     @BeforeEach
     void setUp() {
         passwordEncoder = spy(new BCryptPasswordEncoder());
+        passwordPolicyService = new PasswordPolicyService(PasswordPolicyProperties.defaultPolicy());
         service = new AuthApplicationService(userRepository, currentUserService, institutionAccess,
-                loginSessionRepository, jwtService, auditService, passwordEncoder, captchaService, loginAttemptService);
+                loginSessionRepository, jwtService, auditService, passwordEncoder, captchaService,
+                loginAttemptService, passwordPolicyService);
     }
 
     @Test
@@ -210,5 +214,111 @@ class AuthApplicationServiceTest {
         verify(loginAttemptService).recordSuccess("tenant:2", "alice");
         verify(loginAttemptService, never()).recordSuccess("tenant:1", "alice");
         verify(loginAttemptService, never()).recordSuccess("alice");
+    }
+
+    @Test
+    void changePassword_successUpdatesHashRevokesAllSessionsAndAuditsWithoutSecrets() {
+        CurrentUser currentUser = new CurrentUser(42L, 3L, "alice", "Alice", "EMPLOYEE",
+                null, Set.of("MANAGER"), Set.of("customer:read"), Set.of());
+        SysUser user = new SysUser();
+        user.setId(42L);
+        user.setTenantId(3L);
+        user.setUsername("alice");
+        user.setDisplayName("Alice");
+        user.setStatus(SysUser.STATUS_ACTIVE);
+        user.setVersion(5L);
+        user.setPasswordHash(new BCryptPasswordEncoder().encode("OldPass@2026"));
+
+        when(userRepository.findById(3L, 42L)).thenReturn(Optional.of(user));
+        when(userRepository.updatePasswordHash(eq(3L), eq(42L), eq(5L), anyString())).thenReturn(1);
+        when(loginSessionRepository.revokeAllByUserId(eq(3L), eq(42L), any(Instant.class))).thenReturn(2);
+
+        service.changePassword(currentUser, "OldPass@2026", "NewPass@2026", "NewPass@2026", "192.0.2.60");
+
+        ArgumentCaptor<String> encodedCaptor = ArgumentCaptor.forClass(String.class);
+        verify(userRepository).updatePasswordHash(eq(3L), eq(42L), eq(5L), encodedCaptor.capture());
+        assertThat(new BCryptPasswordEncoder().matches("NewPass@2026", encodedCaptor.getValue())).isTrue();
+        verify(loginSessionRepository).revokeAllByUserId(eq(3L), eq(42L), any(Instant.class));
+        verify(loginAttemptService).recordPasswordChangeSuccess("tenant:3", 42L);
+
+        ArgumentCaptor<Object> snapshotCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(auditService).record(eq(3L), eq(42L), eq(AuditService.ACTION_PASSWORD_CHANGE), eq("USER"),
+                eq("42"), eq(null), snapshotCaptor.capture(), eq("用户主动修改登录密码"));
+        String snapshot = String.valueOf(snapshotCaptor.getValue());
+        assertThat(snapshot)
+                .doesNotContain("OldPass@2026")
+                .doesNotContain("NewPass@2026")
+                .doesNotContain("$2a$")
+                .doesNotContain("$2b$");
+    }
+
+    @Test
+    void changePassword_wrongCurrentPasswordRecordsFailureAndIndependentAudit() {
+        CurrentUser currentUser = new CurrentUser(42L, 3L, "alice", "Alice", "EMPLOYEE",
+                null, Set.of("MANAGER"), Set.of("customer:read"), Set.of());
+        SysUser user = new SysUser();
+        user.setId(42L);
+        user.setTenantId(3L);
+        user.setUsername("alice");
+        user.setStatus(SysUser.STATUS_ACTIVE);
+        user.setVersion(1L);
+        user.setPasswordHash(new BCryptPasswordEncoder().encode("OldPass@2026"));
+
+        when(userRepository.findById(3L, 42L)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service.changePassword(
+                currentUser, "WrongPass@2026", "NewPass@2026", "NewPass@2026", "192.0.2.61"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.errorCode()).isEqualTo(ErrorCode.VALIDATION_FAILED);
+                    assertThat(be.details()).anySatisfy(d -> assertThat(d.field()).isEqualTo("currentPassword"));
+                });
+
+        verify(loginAttemptService).recordPasswordChangeFailure("tenant:3", 42L, "192.0.2.61");
+        verify(auditService).recordIndependent(eq(3L), eq(42L), eq(AuditService.ACTION_PASSWORD_CHANGE_FAILED),
+                eq("USER"), eq("42"), eq(null), any(), eq("原密码校验失败"));
+        verify(userRepository, never()).updatePasswordHash(anyLong(), anyLong(), anyLong(), anyString());
+        verify(loginSessionRepository, never()).revokeAllByUserId(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void changePassword_weakNewPasswordDoesNotConsumeOldPasswordFailureBudget() {
+        CurrentUser currentUser = new CurrentUser(42L, 3L, "alice", "Alice", "EMPLOYEE",
+                null, Set.of("MANAGER"), Set.of("customer:read"), Set.of());
+
+        assertThatThrownBy(() -> service.changePassword(
+                currentUser, "OldPass@2026", "weakpass", "weakpass", "192.0.2.62"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode())
+                .isEqualTo(ErrorCode.VALIDATION_FAILED);
+
+        verify(loginAttemptService).checkPasswordChangeAllowed("tenant:3", 42L, "192.0.2.62");
+        verify(loginAttemptService, never()).recordPasswordChangeFailure(anyString(), anyLong(), anyString());
+        verifyNoInteractions(userRepository, auditService);
+    }
+
+    @Test
+    void changePassword_optimisticLockConflictThrows409() {
+        CurrentUser currentUser = new CurrentUser(42L, 3L, "alice", "Alice", "EMPLOYEE",
+                null, Set.of("MANAGER"), Set.of("customer:read"), Set.of());
+        SysUser user = new SysUser();
+        user.setId(42L);
+        user.setTenantId(3L);
+        user.setUsername("alice");
+        user.setStatus(SysUser.STATUS_ACTIVE);
+        user.setVersion(5L);
+        user.setPasswordHash(new BCryptPasswordEncoder().encode("OldPass@2026"));
+
+        when(userRepository.findById(3L, 42L)).thenReturn(Optional.of(user));
+        when(userRepository.updatePasswordHash(eq(3L), eq(42L), eq(5L), anyString())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.changePassword(
+                currentUser, "OldPass@2026", "NewPass@2026", "NewPass@2026", "192.0.2.63"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode())
+                .isEqualTo(ErrorCode.CONFLICT);
+
+        verify(loginSessionRepository, never()).revokeAllByUserId(anyLong(), anyLong(), any());
     }
 }

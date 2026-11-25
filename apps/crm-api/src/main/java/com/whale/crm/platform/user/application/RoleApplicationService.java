@@ -76,13 +76,13 @@ public class RoleApplicationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "角色不存在或不可见"));
         boolean actorIsAdmin = roleRepository.findActiveRoleCodes(tenantId, actorUserId).contains("ADMIN");
         if ("ADMIN".equals(role.getRoleCode()) && !actorIsAdmin) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "仅 ADMIN 角色可修改 ADMIN 角色权限");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅系统管理员可修改系统管理员角色权限");
         }
         List<String> codes = request.permissionCodes() == null
                 ? List.of()
                 : request.permissionCodes().stream().distinct().toList();
         if ("ADMIN".equals(role.getRoleCode()) && !codes.contains("user:write")) {
-            throw new BusinessException(ErrorCode.CONFLICT, "不能移除 ADMIN 角色的 user:write 权限");
+            throw new BusinessException(ErrorCode.CONFLICT, "不能移除系统管理员角色的用户管理权限");
         }
         List<String> existingCodes = roleRepository.findExistingPermissionCodes(tenantId, codes);
         if (existingCodes.size() != codes.size()) {

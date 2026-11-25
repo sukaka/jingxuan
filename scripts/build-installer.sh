@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-VERSION="${CRM_RELEASE_VERSION:-2.0.0}"
+VERSION="${CRM_RELEASE_VERSION:-2.0.2}"
 PLATFORM="${CRM_TARGET_PLATFORM:-linux/amd64}"
 VERIFY=true
 if [[ "${1:-}" == "--skip-tests" ]]; then
@@ -32,7 +32,7 @@ npm --prefix apps/crm-web ci
 npm --prefix apps/crm-web run build
 
 cp infra/production/compose.yml infra/production/install.sh infra/production/README.md "$STAGE/"
-cp infra/production/.env.example infra/production/Caddyfile.core infra/production/Caddyfile.files "$STAGE/"
+cp infra/production/.env.example infra/production/Caddyfile.core infra/production/Caddyfile.files infra/production/Caddyfile.sameorigin "$STAGE/"
 sed -i.bak "s|^RELEASE_VERSION=.*|RELEASE_VERSION=${VERSION}|" "$STAGE/.env.example"
 rm -f "$STAGE/.env.example.bak"
 chmod 755 "$STAGE/install.sh"
@@ -62,7 +62,10 @@ for image in "${IMAGES[@]:0:4}"; do
 done
 
 for image in "${IMAGES[@]:4}"; do
-  docker pull --platform "$PLATFORM" "$image"
+  local_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image" 2>/dev/null || true)"
+  if [[ "$local_platform" != "$PLATFORM" ]]; then
+    docker pull --platform "$PLATFORM" "$image"
+  fi
 done
 
 printf '%s\n' "${IMAGES[@]}" > "$STAGE/images/images.txt"
@@ -75,10 +78,27 @@ ARCHIVE_GROUPS=(
   "clamav|${IMAGES[8]}"
   "caddy|${IMAGES[9]}"
 )
+SAVE_PLATFORM_ARGS=()
+if docker save --help 2>&1 | grep -q -- '--platform'; then
+  SAVE_PLATFORM_ARGS=(--platform "$PLATFORM")
+fi
 for group in "${ARCHIVE_GROUPS[@]}"; do
   read -r -a images <<< "${group#*|}"
-  echo "打包镜像：${group%%|*}"
-  docker save "${images[@]}" | gzip -1 > "$STAGE/images/${group%%|*}.tar.gz"
+  echo "打包镜像：${group%%|*} (${PLATFORM})"
+  archive_path="$STAGE/images/${group%%|*}.tar.gz"
+  docker save "${SAVE_PLATFORM_ARGS[@]}" "${images[@]}" | gzip -1 > "$archive_path"
+  python3 - "$archive_path" "$PLATFORM" <<'PY'
+import json, sys, tarfile
+archive_path, expected = sys.argv[1], sys.argv[2]
+with tarfile.open(archive_path, 'r:gz') as tf:
+    manifest = json.loads(tf.extractfile('manifest.json').read())
+    assert manifest, f'{archive_path}: empty manifest.json'
+    for entry in manifest:
+        cfg = json.loads(tf.extractfile(entry['Config']).read())
+        actual = f"{cfg.get('os')}/{cfg.get('architecture')}"
+        if actual != expected:
+            raise SystemExit(f"错误：{archive_path} 中镜像 {entry.get('RepoTags')} 架构为 {actual}，预期 {expected}")
+PY
 done
 
 cat > "$STAGE/manifest.txt" <<EOF
@@ -88,7 +108,8 @@ BUILD_TIME_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 INSTALL_MODE=offline-images
 EOF
 
-tar -czf "$OUTPUT/${NAME}.tar.gz" -C "$OUTPUT/build" "$NAME"
+COPYFILE_DISABLE=1 tar -czf "$OUTPUT/${NAME}.tar.gz" -C "$OUTPUT/build" "$NAME"
+rm -rf "$STAGE"
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$OUTPUT" && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
 else

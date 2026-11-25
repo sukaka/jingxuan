@@ -56,7 +56,7 @@ watch(reversal, (value) => {
         <el-table-column label="权益批次" width="120"><template #default="{ row }">#{{ row.entitlementId }}</template></el-table-column>
         <el-table-column label="来源引用" min-width="130"><template #default="{ row }">{{ row.sourceRef }}</template></el-table-column>
         <el-table-column label="记账时间" width="160"><template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template></el-table-column>
-        <template #empty><el-empty :description="reversal.status === 'APPROVED' ? '审核通过但未返回补偿流水，需进一步核对' : '当前没有补偿流水，申请本身未改变余额'" /></template>
+        <template #empty><el-empty :description="reversal.status === 'APPROVED' ? '审核已通过，但暂未生成补偿流水，请刷新核对' : '当前没有补偿流水，申请本身未改变余额'" /></template>
       </app-table>
 
       <h4 class="trading-section-title">申请与审核历史</h4>

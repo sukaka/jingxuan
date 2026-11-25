@@ -77,7 +77,7 @@ public class PaymentApplicationService {
     public OrderFulfillmentView confirmProviderCallback(long tenantId, CurrentUser user, long orderId,
                                                         PaymentConfirmRequest request, String idempotencyKey) {
         if (!"YOUZAN".equals(request.paymentChannel())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "供应商支付渠道必须为YOUZAN");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "外部支付渠道仅支持有赞");
         }
         return confirmInternal(tenantId, user, orderId, request, idempotencyKey,
                 PROVIDER_IDEMPOTENCY_SCOPE, "PROVIDER_CALLBACK", "有赞支付回调");
@@ -145,7 +145,7 @@ public class PaymentApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "订单未处于待支付状态，不能确认支付或发放权益");
         }
         if (!request.amountFen().equals(before.payableFen())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "支付金额必须与订单应付金额一致；当前阶段不支持部分支付");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "支付金额必须与订单应付金额一致，暂不支持部分支付");
         }
         repository.findPaymentByTradeNo(tenantId, request.paymentChannel(), request.externalTradeNo())
                 .ifPresent(existing -> {
@@ -188,8 +188,8 @@ public class PaymentApplicationService {
             JsonNode snapshot = objectMapper.readTree(item.entitlementSnapshot());
             if ("USE_N".equals(snapshot.path("selectionMode").asText())) {
                 throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
-                        "Q01 选择规则未确认，USE_N 订单不能发放权益",
-                        List.of(new ApiResponse.ErrorDetail("Q01", "USE_N 共享次数池规则待运营确认")));
+                        "任选次数套餐规则尚未确认，暂不支持发放权益",
+                        List.of(new ApiResponse.ErrorDetail("Q01", "任选次数共享池规则待运营确认")));
             }
             for (JsonNode project : snapshot.path("projectSnapshots")) {
                 int granted = project.path("grantCount").asInt();

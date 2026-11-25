@@ -47,7 +47,7 @@ async function save() {
       : props.mode === 'contract'
         ? await requestContractActivation(props.targetId, body, idempotencyKey.value)
         : await requestQualificationReview(props.targetId, body, idempotencyKey.value)
-    ElMessage.success('工作流申请已提交，请按实际审核步骤继续处理')
+    ElMessage.success('审批申请已提交，请按审核流程继续处理')
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
@@ -64,13 +64,13 @@ async function save() {
     <el-form label-position="top" @submit.prevent>
       <el-form-item label="申请原因" required><el-input v-model="form.reason" type="textarea" :rows="3" maxlength="1000" data-testid="workflow-reason" /></el-form-item>
       <el-form-item label="申请凭证（可选，必须扫描通过）">
-        <FileUploadField v-model="form.evidenceFileId" :institution-id="institutionId" classification="CHANGE_EVIDENCE" label="上传工作流凭证" />
+        <FileUploadField v-model="form.evidenceFileId" :institution-id="institutionId" classification="CHANGE_EVIDENCE" label="上传申请凭证" />
       </el-form-item>
       <div class="institution-version">基准版本 {{ baseVersion }}</div>
     </el-form>
     <template #footer>
       <el-button :disabled="saving" @click="emit('update:modelValue', false)">取消</el-button>
-      <el-button type="primary" :loading="saving" data-testid="workflow-submit" @click="save">提交工作流申请</el-button>
+      <el-button type="primary" :loading="saving" data-testid="workflow-submit" @click="save">提交审批申请</el-button>
     </template>
   </el-dialog>
 </template>

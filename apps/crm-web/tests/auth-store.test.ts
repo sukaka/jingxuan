@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
-import { fetchMe, login, logout } from '../src/api/auth'
+import { changePassword, fetchMe, login, logout } from '../src/api/auth'
 import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
 import { resetReferenceNames } from '../src/views/references'
@@ -10,6 +10,7 @@ vi.mock('../src/api/auth', () => ({
   login: vi.fn(),
   logout: vi.fn(),
   fetchMe: vi.fn(),
+  changePassword: vi.fn(),
 }))
 
 vi.mock('../src/views/references', () => ({
@@ -30,6 +31,7 @@ beforeEach(() => {
   vi.mocked(login).mockReset()
   vi.mocked(logout).mockReset()
   vi.mocked(fetchMe).mockReset()
+  vi.mocked(changePassword).mockReset()
   vi.mocked(resetReferenceNames).mockReset()
 })
 
@@ -162,5 +164,40 @@ describe('auth store - 会话恢复(fetchMe)', () => {
     await expect(auth.fetchMe()).resolves.toBeUndefined()
     expect(auth.isLoggedIn).toBe(false)
     expect(auth.initialized).toBe(true)
+  })
+})
+
+describe('auth store - 修改密码', () => {
+  it('修改密码成功后清空本地会话和引用缓存', async () => {
+    vi.mocked(login).mockResolvedValue(adminUser)
+    vi.mocked(changePassword).mockResolvedValue(undefined)
+    const auth = useAuthStore()
+    await auth.login('admin', 'Dev@12345', 'captcha-test', '14')
+
+    await auth.changePassword({
+      currentPassword: 'Dev@12345',
+      newPassword: 'NewStrong#2026',
+      confirmPassword: 'NewStrong#2026',
+    })
+
+    expect(changePassword).toHaveBeenCalledTimes(1)
+    expect(auth.user).toBeNull()
+    expect(resetReferenceNames).toHaveBeenCalledTimes(2)
+  })
+
+  it('原密码校验失败时原样抛出且保留当前会话', async () => {
+    vi.mocked(login).mockResolvedValue(adminUser)
+    vi.mocked(changePassword).mockRejectedValue(
+      new ApiError({ status: 400, code: 'VALIDATION_FAILED', message: '原密码不正确' }),
+    )
+    const auth = useAuthStore()
+    await auth.login('admin', 'Dev@12345', 'captcha-test', '14')
+
+    await expect(auth.changePassword({
+      currentPassword: 'Wrong@123',
+      newPassword: 'NewStrong#2026',
+      confirmPassword: 'NewStrong#2026',
+    })).rejects.toMatchObject({ status: 400, code: 'VALIDATION_FAILED' })
+    expect(auth.user?.username).toBe('admin')
   })
 })

@@ -167,7 +167,7 @@ describe('RefundsView 退款状态与操作权限', () => {
     await flushPromises()
     await new Promise((resolve) => setTimeout(resolve, 40))
 
-    expect(document.body.textContent).toContain('模拟验签通道（仅本地测试）')
+    expect(document.body.textContent).toContain('模拟演示通道（仅测试环境）')
     expect(document.body.textContent).not.toContain('Mock')
 
     await wrapper.setProps({

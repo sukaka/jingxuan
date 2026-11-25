@@ -21,7 +21,7 @@ export function groupOptions(snapshot: PackageVersionSnapshot, groupCode: string
 export function selectionError(snapshot: PackageVersionSnapshot, selections: PackageSelections): string {
   if (snapshot.selectionMode !== 'CHOOSE_N') return ''
   const groups = orderedGroups(snapshot)
-  if (!groups.length) return '旧版选择子项目模板未配置结构化选项组，不能下单'
+  if (!groups.length) return '该套餐尚未配置可选项目分组，暂不能下单'
   const selectedProjects = new Set<number>()
   for (const group of groups) {
     const selected = selections[group.groupCode] ?? []

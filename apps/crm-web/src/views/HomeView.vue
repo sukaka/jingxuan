@@ -254,7 +254,7 @@ onMounted(() => { void loadDashboard() })
         </PageCard>
       </div>
     </template>
-    <footer class="proto-footer">鲸选美学 CRM · 业务数据以服务端权限与实际流水为准</footer>
+    <footer class="proto-footer">鲸选美学 CRM · 业务数据按账号权限与实际业务流水展示</footer>
   </div>
 </template>
 

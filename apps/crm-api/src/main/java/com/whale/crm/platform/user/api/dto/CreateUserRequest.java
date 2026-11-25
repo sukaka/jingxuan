@@ -21,12 +21,12 @@ public record CreateUserRequest(
         @NotBlank(message = "初始密码不能为空") @Size(min = 8, max = 64, message = "密码长度须为 8-64 位")
         String password,
 
-        @NotBlank(message = "用户类型不能为空") @Pattern(regexp = "EMPLOYEE|INSTITUTION", message = "用户类型仅支持 EMPLOYEE/INSTITUTION")
+        @NotBlank(message = "用户类型不能为空") @Pattern(regexp = "EMPLOYEE|INSTITUTION", message = "用户类型仅支持内部员工或机构账号")
         String userType,
 
-        @Positive(message = "teamId 无效") Long teamId,
+        @Positive(message = "所选团队无效") Long teamId,
 
-        List<@Positive(message = "roleId 无效") Long> roleIds) {
+        List<@Positive(message = "所选角色无效") Long> roleIds) {
     public CreateUserRequest {
         roleIds = roleIds == null ? null : List.copyOf(roleIds);
     }

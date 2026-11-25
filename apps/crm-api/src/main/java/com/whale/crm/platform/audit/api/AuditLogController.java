@@ -39,7 +39,7 @@ public class AuditLogController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) Long actorId,
             @RequestParam(required = false) @Size(max = 96) String actionCode,
-            @RequestParam(required = false) @Pattern(regexp = "[A-Za-z0-9_]{1,64}", message = "targetType 格式无效")
+            @RequestParam(required = false) @Pattern(regexp = "[A-Za-z0-9_]{1,64}", message = "操作对象类型格式无效")
             String targetType,
             HttpServletRequest request) {
         PageResponse<AuditLogResponse> result = auditService.search(

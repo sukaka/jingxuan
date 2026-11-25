@@ -8,6 +8,6 @@ import jakarta.validation.constraints.Size;
  * 驳回转交申请。
  */
 public record RejectTransferRequest(
-        @NotNull(message = "version 不能为空") Long version,
+        @NotNull(message = "数据版本号不能为空") Long version,
         @NotBlank(message = "驳回原因不能为空") @Size(max = 500) String reason) {
 }

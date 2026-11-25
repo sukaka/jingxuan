@@ -61,11 +61,11 @@ async function save() {
       voucherFileId: form.voucherFileId,
       evidenceRef: form.evidenceRef.trim(),
     }, idempotencyKey)
-    ElMessage.success('付款记录已追加；这是人工登记，不是银行到账回调')
+    ElMessage.success('付款记录已登记（人工核验登记，非银行自动通知）')
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }

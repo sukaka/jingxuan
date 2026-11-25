@@ -191,7 +191,7 @@ function validateGroups(): string {
 async function save() {
   if (!props.packageId) return
   if (form.selectionMode === 'USE_N') {
-    ElMessage.warning('USE_N 选择模式待 Q01 确认，不能创建或发放权益，请改用固定组合或选择子项目')
+    ElMessage.warning('“固定次数”模式规则待确认，暂不能创建或发放权益，请改用“固定组合”或“选择子项目”')
     return
   }
   const choiceCount = effectiveChoiceCount()
@@ -247,7 +247,7 @@ async function save() {
 <template>
   <el-drawer
     :model-value="modelValue"
-    :title="snapshot ? `编辑 V${snapshot.versionNo} 草稿` : '创建套餐版本草稿'"
+    :title="snapshot ? `编辑第 ${snapshot.versionNo} 版草稿` : '创建套餐版本草稿'"
     size="min(840px, 96vw)"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -256,14 +256,14 @@ async function save() {
       :closable="false"
       :title="form.selectionMode === 'CHOOSE_N' && form.groups.length
         ? '按组配置最少/最多选择数；激活后冻结。参考价只用于展示，套餐 SKU 售价独立'
-        : '草稿可编辑；旧版无分组 CHOOSE_N 仍按 Q01 待确认模板处理，不能上架发放权益'"
+        : '草稿可编辑；未配置选项组的“选择子项目”方案将作为待确认模板保存，暂不能上架发放权益'"
       class="drawer-tip"
     />
     <el-alert
       v-if="form.selectionMode === 'USE_N'"
       type="warning"
       :closable="false"
-      title="Q01 选择规则未确认：USE_N 仅作历史模板查看，不能激活、保存为可售规格或发放客户权益；请改用「固定组合」或「选择子项目」。"
+      title="选品规则待确认：“固定次数”模式仅支持历史模板查看，暂不能激活、保存为可售规格或发放客户权益；请改用「固定组合」或「选择子项目」。"
       class="drawer-tip"
       data-testid="version-use-n-warning"
     />
@@ -280,7 +280,7 @@ async function save() {
             />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="form.selectionMode === 'CHOOSE_N' && form.groups.length" label="兼容总选项数（由组规则计算）">
+        <el-form-item v-if="form.selectionMode === 'CHOOSE_N' && form.groups.length" label="可选项目总数（按分组自动汇总）">
           <el-input-number :model-value="effectiveChoiceCount()" disabled class="full-width" />
         </el-form-item>
         <el-form-item v-else :label="form.selectionMode === 'CHOOSE_N' ? '可选项目数 N' : '使用次数 N'" required>
@@ -293,7 +293,7 @@ async function save() {
             :rows="2"
             maxlength="4000"
             show-word-limit
-            placeholder="结构化组规则负责实际校验；此处仅记录补充说明"
+            placeholder="实际选品按下方选项组规则校验；此处仅记录补充说明"
           />
         </el-form-item>
       </div>
@@ -303,7 +303,7 @@ async function save() {
           <strong>选项组规则</strong>
           <el-button size="small" data-testid="add-selection-group" @click="addGroup">添加选项组</el-button>
         </div>
-        <el-alert v-if="form.groups.length === 0" type="warning" :closable="false" title="无结构化组时保留旧版模板行为，不能上架发放权益" class="group-tip" />
+        <el-alert v-if="form.groups.length === 0" type="warning" :closable="false" title="未配置选项组时仅可保存为模板，暂不能上架发放权益" class="group-tip" />
         <div v-for="(group, groupIndex) in form.groups" :key="groupIndex" class="selection-group-editor">
           <div class="group-editor-head">
             <strong>选项组 {{ groupIndex + 1 }}</strong>
@@ -353,7 +353,7 @@ async function save() {
           <el-form-item label="选择权重">
             <el-input-number v-model="item.selectionWeight" :min="0" :max="10000" class="full-width" />
           </el-form-item>
-          <el-form-item label="分摊基准（元，Q02 可暂留 0）">
+          <el-form-item label="分摊基准（元，待确认时可暂填 0）">
             <el-input-number v-model="item.allocationYuan" :min="0" :precision="2" :step="10" class="full-width" />
           </el-form-item>
         </div>

@@ -31,6 +31,36 @@ export interface CaptchaResponse {
   expiresIn: number
 }
 
+export interface PasswordPolicy {
+  minLength: number
+  maxLength: number
+  requireUppercase: boolean
+  requireLowercase: boolean
+  requireDigit: boolean
+  requireSpecial: boolean
+  forbidWhitespace: boolean
+  forbidUsername: boolean
+  forbidSameAsCurrent: boolean
+}
+
+export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {
+  minLength: 8,
+  maxLength: 64,
+  requireUppercase: true,
+  requireLowercase: true,
+  requireDigit: true,
+  requireSpecial: true,
+  forbidWhitespace: true,
+  forbidUsername: true,
+  forbidSameAsCurrent: true,
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string
+  newPassword: string
+  confirmPassword: string
+}
+
 export async function getCaptcha(): Promise<CaptchaResponse> {
   const res = await http.get<ApiResponse<CaptchaResponse>>('/auth/captcha')
   return res.data.data
@@ -54,4 +84,15 @@ export async function logout(): Promise<void> {
 export async function fetchMe(): Promise<AuthUser> {
   const res = await http.get<ApiResponse<AuthUser>>('/auth/me')
   return res.data.data
+}
+
+/** GET /auth/password-policy。获取当前后端生效的密码复杂度策略 */
+export async function getPasswordPolicy(): Promise<PasswordPolicy> {
+  const res = await http.get<ApiResponse<PasswordPolicy>>('/auth/password-policy')
+  return res.data.data
+}
+
+/** POST /auth/password。个人账号自助修改密码;成功后后端吊销全部会话并清 Cookie */
+export async function changePassword(request: ChangePasswordRequest): Promise<void> {
+  await http.post<ApiResponse<null>>('/auth/password', request)
 }

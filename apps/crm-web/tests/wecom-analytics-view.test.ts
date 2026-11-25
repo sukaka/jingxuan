@@ -50,7 +50,7 @@ describe('WecomAnalyticsView', () => {
     expect(getWecomAnalytics).toHaveBeenCalledWith(expect.objectContaining({ from: expect.any(String), to: expect.any(String) }))
     expect(wrapper.text()).toContain('本人负责客户')
     expect(wrapper.get('[data-testid="quick-reply-analysis"]').text()).toContain('50.00%')
-    expect(wrapper.get('[data-testid="quick-reply-analysis"]').text()).toContain('复制不是发送')
+    expect(wrapper.get('[data-testid="quick-reply-analysis"]').text()).toContain('复制不等于发送')
     expect(wrapper.get('[data-testid="ai-reply-analysis"]').text()).toContain('33.33%')
     expect(wrapper.get('[data-testid="ai-reply-analysis"]').text()).toContain('1 / 3 条创建候选')
     expect(wrapper.get('[data-testid="conversion-analysis"]').text()).toContain('66.67%')
@@ -59,6 +59,7 @@ describe('WecomAnalyticsView', () => {
     expect(wrapper.text()).toContain('H5 打开率')
     expect(wrapper.text()).toContain('不能据此评估真实模型质量')
     expect(wrapper.text()).not.toContain('CHAT_CAUSAL_ATTRIBUTION')
+    expect(wrapper.text()).not.toContain('P3_FACT_V1')
   })
 
   it('日期错误时不调用接口且清除旧结果', async () => {
@@ -77,7 +78,7 @@ describe('WecomAnalyticsView', () => {
 
   it.each([
     { userType: 'INSTITUTION', permission: true, text: '机构账号无企微客户运营分析入口' },
-    { userType: 'EMPLOYEE', permission: false, text: '缺少 report:read 权限' },
+    { userType: 'EMPLOYEE', permission: false, text: '当前账号暂无报表查看权限' },
   ])('无权限主体不读取分析 ($text)', async ({ userType, permission, text }) => {
     const wrapper = mountView(userType, permission)
     await flushPromises()

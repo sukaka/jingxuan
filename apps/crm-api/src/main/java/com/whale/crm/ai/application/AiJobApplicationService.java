@@ -138,7 +138,7 @@ public class AiJobApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "AI 任务已被他人处理，请刷新后重试");
         }
         if (!"CONFIRM".equals(request.decision()) && !"REJECT".equals(request.decision())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "decision 必须为 CONFIRM 或 REJECT");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "处理决定仅支持确认或驳回");
         }
         Long taskId = null;
         String target = "REJECT".equals(request.decision()) ? "REJECTED" : "CONFIRMED";

@@ -64,6 +64,6 @@ class MockYouzanAdapterTest {
         assertThat(disabled.verifyWebhook("{}", new YouzanSignature("x", Instant.now().getEpochSecond())).valid()).isFalse();
         assertThatThrownBy(() -> disabled.pullOrders(1L, "MOCK-SHOP-001", "0", 1))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("FEATURE_REAL_YOUZAN");
+                .hasMessageContaining("尚未启用");
     }
 }

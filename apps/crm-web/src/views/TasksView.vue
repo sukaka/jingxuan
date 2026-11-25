@@ -60,8 +60,8 @@ function formatDateTime(value: string | null | undefined) {
 }
 function priorityLabel(value: string) { return ({ URGENT: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' })[value] || '未知' }
 function taskTypeLabel(value: string) { return dicts.options('taskTypes').find((item) => item.code === value)?.label || '未知任务' }
-function actionLabel(value: string) { return ({ CLAIM: '接手', REASSIGN: '转派', RETURN: '退回', COMPLETE: '完成' })[value] || value }
-function statusLabel(value: string | null) { return value ? ({ OPEN: '待处理', PROCESSING: '处理中', DONE: '已完成', CANCELED: '已取消' })[value] || value : '—' }
+function actionLabel(value: string) { return ({ CLAIM: '接手', REASSIGN: '转派', RETURN: '退回', COMPLETE: '完成' })[value] || '其他操作' }
+function statusLabel(value: string | null) { return value ? ({ OPEN: '待处理', PROCESSING: '处理中', DONE: '已完成', CANCELED: '已取消' })[value] || '未知状态' : '—' }
 function canOperateOwnedTask(task: TaskItem) {
   return canWrite.value && task.status === 'PROCESSING' && task.assigneeUserId === auth.user?.userId && Boolean(task.claimedAt)
 }
@@ -202,7 +202,7 @@ onMounted(() => {
     </el-dialog>
 
     <el-dialog v-model="actionVisible" :title="actionTitle" width="min(520px,96vw)" :close-on-click-modal="!actionSubmitting" :close-on-press-escape="!actionSubmitting" :show-close="!actionSubmitting">
-      <p v-if="actionTask" class="action-task-title">{{ actionTask.title }} · 当前版本 {{ actionTask.version }}</p>
+      <p v-if="actionTask" class="action-task-title">{{ actionTask.title }} · 第 {{ actionTask.version }} 版</p>
       <el-form label-position="top" @submit.prevent>
         <template v-if="actionType === 'REASSIGN'">
           <el-form-item label="新处理人" required><el-select v-model="actionForm.assigneeUserId" filterable placeholder="请选择新处理人" style="width:100%" data-testid="task-action-assignee"><el-option v-for="item in owners" :key="item.id" :label="`${item.displayName}${item.teamName ? `（${item.teamName}）` : ''}`" :value="item.id" /></el-select></el-form-item>

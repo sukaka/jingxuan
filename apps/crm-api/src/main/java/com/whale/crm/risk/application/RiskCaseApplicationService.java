@@ -122,7 +122,8 @@ public class RiskCaseApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "风险单版本已变化，请刷新后重试");
         }
         if (!expectedStatus.equals(before.status())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "仅 " + expectedStatus + " 状态可执行" + action);
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "仅" + riskStatusLabel(expectedStatus) + "状态可执行" + riskActionLabel(action));
         }
         Long owner = before.ownerUserId();
         if ("CLAIM".equals(action)) {
@@ -191,5 +192,30 @@ public class RiskCaseApplicationService {
 
     private BusinessException notFound() {
         return new BusinessException(ErrorCode.NOT_FOUND, "风险单不存在或不可见");
+    }
+
+    private static String riskStatusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case "OPEN" -> "待认领";
+            case "ASSIGNED" -> "处理中";
+            case "RESOLVED" -> "已解决";
+            case "CLOSED" -> "已关闭";
+            default -> "其他";
+        };
+    }
+
+    private static String riskActionLabel(String action) {
+        if (action == null) {
+            return "当前操作";
+        }
+        return switch (action) {
+            case "CLAIM" -> "认领";
+            case "RESOLVE" -> "标记已解决";
+            case "CLOSE" -> "关闭";
+            default -> "当前操作";
+        };
     }
 }

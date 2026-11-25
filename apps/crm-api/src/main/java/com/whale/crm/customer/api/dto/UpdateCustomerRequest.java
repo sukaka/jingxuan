@@ -28,7 +28,7 @@ public record UpdateCustomerRequest(
         @Size(max = 512) String attentionProjects,
         @Size(max = 2000) String blockerNote,
         @Size(max = 2000) String remark,
-        @NotNull(message = "version 不能为空") Long version,
+        @NotNull(message = "数据版本号不能为空") Long version,
         @Size(max = 100) List<Long> projectIds) {
     public UpdateCustomerRequest {
         projectIds = projectIds == null ? null : List.copyOf(projectIds);

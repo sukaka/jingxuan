@@ -68,7 +68,7 @@ function transitionTime(status: string): string | null {
         <el-descriptions-item label="实际到院">{{ formatDateTime(transitionTime('CHECKED_IN')) }}</el-descriptions-item>
         <el-descriptions-item label="服务完成">{{ formatDateTime(transitionTime('SERVICE_DONE')) }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ formatDateTime(appointment.createdAt) }}</el-descriptions-item>
-        <el-descriptions-item label="乐观锁版本">{{ appointment.version }}</el-descriptions-item>
+        <el-descriptions-item label="记录版本">{{ appointment.version }}</el-descriptions-item>
         <el-descriptions-item label="预约备注" :span="3">{{ appointment.remark || '-' }}</el-descriptions-item>
       </el-descriptions>
 
@@ -92,7 +92,7 @@ function transitionTime(status: string): string | null {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="核销 ID" width="90"><template #default="{ row }">#{{ row.redemption.id }}</template></el-table-column>
+        <el-table-column label="核销编号" width="90"><template #default="{ row }">#{{ row.redemption.id }}</template></el-table-column>
         <el-table-column label="实际服务" width="155"><template #default="{ row }">{{ formatDateTime(row.redemption.serviceAt) }}</template></el-table-column>
         <el-table-column label="次数" width="75" align="right"><template #default="{ row }">{{ redemptionCount(row) }}</template></el-table-column>
         <el-table-column label="状态" width="125"><template #default="{ row }">{{ redemptionStatusLabel(row.redemption.status) }}</template></el-table-column>
@@ -100,7 +100,7 @@ function transitionTime(status: string): string | null {
         <template #empty><el-empty description="尚无正式核销记录" /></template>
       </app-table>
 
-      <h4 class="trading-section-title">预约状态历史（只追加）</h4>
+      <h4 class="trading-section-title">预约状态记录</h4>
       <el-timeline>
         <el-timeline-item v-for="item in detail.history" :key="item.id" :timestamp="formatDateTime(item.createdAt)">
           <strong>{{ appointmentStatusLabel(item.fromStatus) }} → {{ appointmentStatusLabel(item.toStatus) }}</strong>

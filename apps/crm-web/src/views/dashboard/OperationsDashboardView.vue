@@ -261,7 +261,7 @@ onBeforeUnmount(() => {
         <el-option v-for="row in institutionOptions" :key="row.institutionId" :label="row.institutionName || `机构 #${row.institutionId}`" :value="row.institutionId" />
       </el-select>
       <el-button class="duty-reset" data-testid="dashboard-reset" @click="reset">重置</el-button>
-      <div class="duty-freshness"><span class="duty-live-dot" :class="{ 'is-paused': !autoRefresh }" /><span>{{ autoRefresh ? '每 30 秒更新' : '自动刷新已暂停' }}</span><span>业务水位 {{ sourceWatermark }}</span><span>最近刷新 {{ refreshedAtText }}</span></div>
+      <div class="duty-freshness"><span class="duty-live-dot" :class="{ 'is-paused': !autoRefresh }" /><span>{{ autoRefresh ? '每 30 秒更新' : '自动刷新已暂停' }}</span><span>数据更新至 {{ sourceWatermark }}</span><span>最近刷新 {{ refreshedAtText }}</span></div>
       <el-button :loading="refreshing" data-testid="dashboard-refresh" @click="load(true)">刷新数据</el-button>
       <el-button :aria-pressed="autoRefresh" class="duty-auto" data-testid="dashboard-auto-refresh" @click="autoRefresh = !autoRefresh">{{ autoRefresh ? '自动刷新' : '已暂停' }}</el-button>
     </section>
@@ -345,7 +345,7 @@ onBeforeUnmount(() => {
         <footer class="dashboard-panel-note">排行按正式核销次数，不将机构代收金额混作平台实收。</footer>
       </article>
       <article class="dashboard-panel">
-        <header class="dashboard-panel-header"><div><span>活动成交</span><h2>活动与批次净支付排行</h2></div><small>成交快照 · 前 5 项</small></header>
+        <header class="dashboard-panel-header"><div><span>活动成交</span><h2>活动与批次净支付排行</h2></div><small>成交归属 · 前 5 项</small></header>
         <div v-if="report.campaignRows.length" class="dashboard-chart-frame"><DashboardChart :option="campaignChart" label="按净支付金额排序的活动与批次排行" /></div>
         <div v-else class="dashboard-empty">当前范围没有活动成交记录。无活动订单不会归入虚构活动。</div>
         <footer class="dashboard-panel-note">净支付 = 支付金额 − 成功退款，仅用于经营事实预览。</footer>

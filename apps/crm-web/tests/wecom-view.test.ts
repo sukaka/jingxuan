@@ -236,7 +236,7 @@ describe('WecomArchiveAdminView 合规归档与 W02', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="wecom-mock-banner"]').text()).toContain('模式受控')
-    expect(wrapper.text()).toContain('官方 SDK 按授权与运行开关启用')
+    expect(wrapper.text()).toContain('企业微信官方通道按授权与运行开关启用')
     expect(wrapper.text()).toContain('不接个人微信')
     expect(wrapper.get('[data-testid="wecom-data-gap"]').text()).toContain('采集覆盖缺口')
     expect(wrapper.text()).toContain('无法判断沟通情况')
@@ -250,7 +250,7 @@ describe('WecomArchiveAdminView 合规归档与 W02', () => {
   })
 
   it.each([
-    { permissions: [] as string[], userType: 'EMPLOYEE', message: '缺少 wecom:read 权限' },
+    { permissions: [] as string[], userType: 'EMPLOYEE', message: '当前账号暂无企业微信归档查看权限' },
     { permissions: ['wecom:read', 'wecom:monitor'], userType: 'INSTITUTION', message: '机构用户无企业微信归档访问入口' },
   ])('无权限或机构主体不调用归档接口且不展示操作入口 ($message)', async ({ permissions, userType, message: expected }) => {
     const wrapper = mountView(permissions, userType)
@@ -350,7 +350,7 @@ describe('WecomArchiveAdminView 合规归档与 W02', () => {
     await wrapper.get('[data-testid="wecom-sync"]').trigger('click')
     await flushPromises()
     expect(syncWecomArchive).toHaveBeenNthCalledWith(1, { corpId: 'MOCK-CORP-001', cursor: 100, limit: 50 }, expect.any(String))
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('重试将沿用同一幂等键'))
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('重试不会重复写入数据'))
 
     await wrapper.get('[data-testid="wecom-sync"]').trigger('click')
     await flushPromises()
@@ -409,7 +409,7 @@ describe('WecomArchiveView 三栏会话工作区', () => {
   })
 
   it.each([
-    { permissions: [] as string[], userType: 'EMPLOYEE', message: '缺少 wecom:read 权限' },
+    { permissions: [] as string[], userType: 'EMPLOYEE', message: '当前账号暂无企业微信会话查看权限' },
     { permissions: ['wecom:read', 'wecom:monitor'], userType: 'INSTITUTION', message: '机构用户无企业微信归档访问入口' },
   ])('主页面无权限或机构主体不调用任何 API ($message)', async ({ permissions, userType, message: expected }) => {
     const wrapper = mountWorkspace(permissions, userType)

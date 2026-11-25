@@ -199,15 +199,52 @@ async function copyEmpathy(): Promise<void> {
   }
 }
 
-function statusLabel(status: string): string {
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  WECOM_MESSAGE: '企微聊天',
+  FOLLOWUP: '跟进记录',
+}
+const RECIPIENT_SOURCE_LABELS: Record<string, string> = {
+  TEAM_MANAGER_LEAD: '本组主管',
+  TEAM_LEADER: '本组主管',
+  FALLBACK: '备用接收人',
+  OWNER: '归属管家',
+  NONE: '未匹配接收人',
+}
+const HISTORY_ACTION_LABELS: Record<string, string> = {
+  DETECT: '关键词触发',
+  CONFIRM: '确认为正式客诉',
+  DISMISS: '驳回',
+  ASSIGN: '认领处理',
+  RESOLVE: '填写处理结论',
+  CLOSE: '关闭客诉',
+}
+
+function sourceTypeLabel(type: string): string {
+  return SOURCE_TYPE_LABELS[type] ?? '其他来源'
+}
+
+function recipientSourceLabel(source: string): string {
+  return RECIPIENT_SOURCE_LABELS[source] ?? '指定接收人'
+}
+
+function historyActionLabel(action: string): string {
+  return HISTORY_ACTION_LABELS[action] ?? '状态变更'
+}
+
+function statusLabel(status: string, context: 'HIT' | 'CASE' = tab.value === 'HITS' ? 'HIT' : 'CASE'): string {
+  if (status === 'OPEN') return context === 'HIT' ? '待核查' : '待认领'
   return ({
-    OPEN: '待核查 / 待认领', CONVERTED: '已转正式单', ASSIGNED: '处理中', RESOLVED: '已处理',
+    CONVERTED: '已转正式单', ASSIGNED: '处理中', RESOLVED: '已处理',
     CLOSED: '已关闭', DISMISSED: '已驳回',
-  } as Record<string, string>)[status] ?? status
+  } as Record<string, string>)[status] ?? '未知状态'
 }
 
 function routingErrorLabel(code: string | null): string {
-  return code === 'NO_RECIPIENT' ? '无接收人，未发送通知' : code === 'AMBIGUOUS_TEAM_MANAGER_LEAD' ? '本组主管不唯一，未广播' : (code ?? '路由异常')
+  return code === 'NO_RECIPIENT'
+    ? '无接收人，未发送通知'
+    : code === 'AMBIGUOUS_TEAM_MANAGER_LEAD'
+      ? '本组存在多位主管，未自动发送'
+      : '通知分配异常'
 }
 
 onMounted(() => { if (canRead.value) void load() })
@@ -215,11 +252,11 @@ onMounted(() => { if (canRead.value) void load() })
 
 <template>
   <div class="proto-page complaints-page">
-    <PageHeader title="客诉关键词与闭环" description="关键词命中只生成待核查记录；正式确认、认领、处理、关闭与驳回均由人工执行并追加历史" />
+    <PageHeader title="客诉关键词与闭环" description="关键词命中后生成待核查记录；确认客诉、认领、处理、关闭与驳回均需人工操作并全程留痕" />
 
     <PageCard v-if="!canRead">
       <div class="complaint-empty" data-testid="complaint-permission-empty">
-        <strong>没有客诉查看权限</strong><span>页面不会请求命中证据或正式单历史。</span>
+        <strong>没有客诉查看权限</strong><span>当前账号无法查看客诉记录，请联系管理员开通相应权限。</span>
       </div>
     </PageCard>
 
@@ -231,7 +268,7 @@ onMounted(() => { if (canRead.value) void load() })
       <PageCard>
         <div class="complaint-notice">
           <strong>{{ tab === 'HITS' ? '命中不是正式客诉' : '正式单状态不可逆' }}</strong>
-          <span>{{ tab === 'HITS' ? '先人工核查证据，再决定确认或驳回；无接收人只进入异常。' : 'OPEN → ASSIGNED → RESOLVED → CLOSED；非终态可由有权限人员驳回。' }}</span>
+          <span>{{ tab === 'HITS' ? '请先人工核查聊天或跟进内容，再决定转为正式客诉或驳回；未匹配到通知接收人的记录将标记为异常。' : '处理流转：待认领 → 处理中 → 已处理 → 已关闭；未关闭的客诉可由有权限人员驳回。' }}</span>
         </div>
         <div class="complaint-filters">
           <input v-model="query.keyword" aria-label="搜索客诉" placeholder="客户编号 / 关键词 / 脱敏证据" @keyup.enter="query.page = 1; load()">
@@ -246,16 +283,16 @@ onMounted(() => { if (canRead.value) void load() })
 
         <div class="complaint-table-wrap">
           <table v-if="tab === 'HITS'">
-            <thead><tr><th>来源 / 关键词</th><th>脱敏证据</th><th>主管快照</th><th>状态</th><th>操作</th></tr></thead>
+            <thead><tr><th>来源 / 关键词</th><th>脱敏证据</th><th>通知主管</th><th>状态</th><th>操作</th></tr></thead>
             <tbody>
               <tr v-for="item in hits" :key="item.id">
-                <td><strong>{{ item.sourceType }} #{{ item.sourceId }}</strong><small>{{ item.keywordSnapshot }} · 客户 #{{ item.customerId }}</small></td>
+                <td><strong>{{ sourceTypeLabel(item.sourceType) }} #{{ item.sourceId }}</strong><small>{{ item.keywordSnapshot }} · 客户 #{{ item.customerId }}</small></td>
                 <td class="complaint-evidence">{{ item.evidenceMasked }}</td>
                 <td>
-                  <span v-if="item.recipientUserIdSnapshot">用户 #{{ item.recipientUserIdSnapshot }}<small>{{ item.recipientSourceSnapshot }}</small></span>
+                  <span v-if="item.recipientUserIdSnapshot">用户 #{{ item.recipientUserIdSnapshot }}<small>{{ recipientSourceLabel(item.recipientSourceSnapshot) }}</small></span>
                   <span v-else class="complaint-exception" :data-testid="`routing-exception-${item.id}`">{{ routingErrorLabel(item.routingError) }}</span>
                 </td>
-                <td><span class="complaint-status">{{ statusLabel(item.status) }}</span></td>
+                <td><span class="complaint-status">{{ statusLabel(item.status, 'HIT') }}</span></td>
                 <td class="complaint-actions">
                   <button type="button" :data-testid="`hit-detail-${item.id}`" @click="showHitDetail(item)">历史</button>
                   <template v-if="canWrite && item.status === 'OPEN'">
@@ -273,7 +310,7 @@ onMounted(() => { if (canRead.value) void load() })
                 <td><strong>{{ item.complaintCaseNo }}</strong><small>客户 #{{ item.customerId }} · 命中 #{{ item.complaintHitId }}</small></td>
                 <td class="complaint-evidence">{{ item.resolutionMasked || item.dismissReasonMasked || '尚未填写处理结论' }}</td>
                 <td>{{ item.assigneeUserId ? `用户 #${item.assigneeUserId}` : '未认领' }}</td>
-                <td><span class="complaint-status">{{ statusLabel(item.status) }}</span></td>
+                <td><span class="complaint-status">{{ statusLabel(item.status, 'CASE') }}</span></td>
                 <td class="complaint-actions">
                   <button type="button" :data-testid="`case-detail-${item.id}`" @click="showCaseDetail(item)">详情 / 历史</button>
                   <button v-if="canWrite && item.status === 'OPEN'" type="button" @click="openCaseAction(item, 'ASSIGN')">认领</button>
@@ -289,7 +326,7 @@ onMounted(() => { if (canRead.value) void load() })
         <div class="complaint-pagination"><span>共 {{ total }} 条</span><button type="button" :disabled="query.page <= 1" @click="query.page--; load()">上一页</button><button type="button" :disabled="query.page * query.size >= total" @click="query.page++; load()">下一页</button></div>
       </PageCard>
 
-      <PageCard v-if="action" :title="actionTitle" subtitle="写操作由后端校验数据范围、CSRF、幂等键与 version；失败重试沿用同一逻辑操作">
+      <PageCard v-if="action" :title="actionTitle" subtitle="提交后将自动校验操作权限与数据版本并留存处理记录">
         <form class="complaint-action-form" data-testid="action-submit" @submit.prevent="submitAction">
           <label for="complaint-action-reason">{{ action === 'RESOLVE' ? '处理结论' : '人工理由' }}</label>
           <textarea id="complaint-action-reason" v-model="actionReason" data-testid="action-reason" rows="4" maxlength="2000" placeholder="填写实际核查依据，不填写医疗诊断或效果承诺" />
@@ -298,9 +335,9 @@ onMounted(() => { if (canRead.value) void load() })
         </form>
       </PageCard>
 
-      <PageCard v-if="hitDetail" title="命中追加历史" subtitle="原始证据与主管快照不可覆盖">
+      <PageCard v-if="hitDetail" title="核查记录" subtitle="原始触发内容与通知主管信息永久保留，不可覆盖">
         <button type="button" @click="hitDetail = null">收起</button>
-        <ol class="complaint-history"><li v-for="entry in hitDetail.history" :key="entry.id"><strong>{{ entry.action }}</strong><span>{{ entry.fromStatus || '—' }} → {{ entry.toStatus }}</span><p>{{ entry.reasonMasked }}</p></li></ol>
+        <ol class="complaint-history"><li v-for="entry in hitDetail.history" :key="entry.id"><strong>{{ historyActionLabel(entry.action) }}</strong><span>{{ entry.fromStatus ? statusLabel(entry.fromStatus, 'HIT') : '—' }} → {{ statusLabel(entry.toStatus, 'HIT') }}</span><p>{{ entry.reasonMasked }}</p></li></ol>
       </PageCard>
 
       <PageCard v-if="caseDetail" :title="`正式单 ${caseDetail.complaintCase.complaintCaseNo}`" subtitle="共情话术仅供人工复制，不会自动发送，也不会修改订单、退款或权益">
@@ -318,7 +355,7 @@ onMounted(() => { if (canRead.value) void load() })
           <div class="script-copy-row"><button type="button" data-testid="copy-empathy" @click="copyEmpathy">复制所选话术</button><span v-if="copied" role="status">话术已复制，需人工确认后自行发送</span></div>
         </div>
         <div v-else class="complaint-no-script">当前没有启用中的共情话术，可由管理员在配置页添加。</div>
-        <ol class="complaint-history"><li v-for="entry in caseDetail.history" :key="entry.id"><strong>{{ entry.action }}</strong><span>{{ entry.fromStatus || '—' }} → {{ entry.toStatus }}</span><p>{{ entry.reasonMasked }}</p></li></ol>
+        <ol class="complaint-history"><li v-for="entry in caseDetail.history" :key="entry.id"><strong>{{ historyActionLabel(entry.action) }}</strong><span>{{ entry.fromStatus ? statusLabel(entry.fromStatus, 'CASE') : '—' }} → {{ statusLabel(entry.toStatus, 'CASE') }}</span><p>{{ entry.reasonMasked }}</p></li></ol>
       </PageCard>
       <span v-if="detailLoading" role="status">正在读取详情与历史…</span>
     </template>

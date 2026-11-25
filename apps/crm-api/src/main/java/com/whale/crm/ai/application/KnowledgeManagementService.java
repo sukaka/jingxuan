@@ -66,7 +66,7 @@ public class KnowledgeManagementService {
         KnowledgeSyncJob job = repository.findSyncJobById(user.tenantId(), jobId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步任务不存在或不可见"));
         if (!Set.of("FAILED", "RETRY").contains(job.status())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "只有 FAILED 或 RETRY 任务可以人工重试");
+            throw new BusinessException(ErrorCode.CONFLICT, "仅失败或待重试的同步任务支持人工重试");
         }
         return transactions.execute(status -> {
             if (repository.retryJob(user.tenantId(), jobId, job.version()) != 1) {

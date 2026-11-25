@@ -172,21 +172,21 @@ function loadSdk(): Promise<WecomSdk> {
     const timeout = window.setTimeout(() => {
       script.remove()
       sdkLoader = null
-      reject(new Error('企业微信 JS-SDK 加载超时'))
+      reject(new Error('企业微信连接组件加载超时，请稍后重试'))
     }, 10000)
     script.onload = () => {
       window.clearTimeout(timeout)
       if (window.ww) resolve(window.ww)
       else {
         sdkLoader = null
-        reject(new Error('企业微信 JS-SDK 初始化失败'))
+        reject(new Error('企业微信连接组件初始化失败，请刷新重试'))
       }
     }
     script.onerror = () => {
       window.clearTimeout(timeout)
       script.remove()
       sdkLoader = null
-      reject(new Error('企业微信 JS-SDK 加载失败，请检查网络'))
+      reject(new Error('企业微信连接组件加载失败，请检查网络后重试'))
     }
     document.head.appendChild(script)
   })
@@ -221,7 +221,7 @@ export async function sendImageToCurrentChat(
   target?: WecomSendTarget,
 ): Promise<WecomSendResult> {
   const trimmed = mediaId.trim()
-  if (!trimmed) throw new Error('图片素材 mediaId 不能为空')
+  if (!trimmed) throw new Error('缺少图片素材标识，暂无法发送')
   return sendPayloadToCurrentChat({
     msgtype: 'image',
     image: { mediaid: trimmed },
@@ -233,7 +233,7 @@ export async function sendFileToCurrentChat(
   target?: WecomSendTarget,
 ): Promise<WecomSendResult> {
   const trimmed = mediaId.trim()
-  if (!trimmed) throw new Error('文件素材 mediaId 不能为空')
+  if (!trimmed) throw new Error('缺少文件素材标识，暂无法发送')
   return sendPayloadToCurrentChat({
     msgtype: 'file',
     file: { mediaid: trimmed },

@@ -1,3 +1,4 @@
+import { ensureRandomUuidPolyfill } from './utils/cryptoFallback'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
@@ -8,6 +9,8 @@ import './prototype.css'
 import App from './App.vue'
 import AppTable from './components/AppTable.vue'
 import { router } from './router'
+
+ensureRandomUuidPolyfill()
 
 const app = createApp(App)
 

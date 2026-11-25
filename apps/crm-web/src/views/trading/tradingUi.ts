@@ -76,7 +76,7 @@ export function paymentStatusLabel(status: string): string {
 }
 
 export function paymentVerificationMethodLabel(method: string): string {
-  return method === 'MANUAL_REVIEW' ? '人工凭证复核' : method === 'PROVIDER_CALLBACK' ? '支付渠道回调' : '其他确认方式'
+  return method === 'MANUAL_REVIEW' ? '人工凭证复核' : method === 'PROVIDER_CALLBACK' ? '支付渠道自动确认' : '其他确认方式'
 }
 
 export function orderTypeLabel(orderType: string): string {
@@ -134,5 +134,5 @@ export function createPaymentIdempotencyKey(): string {
 
 export function tradingErrorText(error: unknown): string {
   const message = error instanceof Error ? error.message : '操作失败，请稍后重试'
-  return error instanceof ApiError && error.requestId ? `${message}（请求 ID：${error.requestId}）` : message
+  return error instanceof ApiError && error.requestId ? `${message}（请求编号：${error.requestId}）` : message
 }

@@ -86,7 +86,7 @@ function skuLabel(sku: Sku): string {
 }
 
 function statusText(status: string): string {
-  return ({ ACTIVE: '有效', INACTIVE: '已停用' } as Record<string, string>)[status] ?? status
+  return ({ ACTIVE: '有效', INACTIVE: '已停用' } as Record<string, string>)[status] ?? '未知状态'
 }
 
 async function save() {
@@ -110,7 +110,7 @@ async function save() {
     formVisible.value = false
     emit('saved')
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重新提交不会重复保存`)
   } finally {
     saving.value = false
   }
@@ -125,7 +125,7 @@ async function save() {
     </div>
     <el-alert v-if="suggestedExternalId && canWrite" type="info" :closable="false" class="dialog-tip" data-testid="sku-mapping-suggestion">
       <template #title>
-        待映射有赞外部 SKU（item_id:sku_id）：<strong>{{ suggestedExternalId }}</strong>
+        待映射有赞外部商品编码：<strong>{{ suggestedExternalId }}</strong>
         <el-button text size="small" type="primary" @click="openCreate(suggestedExternalId)">使用该标识新增映射</el-button>
       </template>
     </el-alert>
@@ -149,7 +149,7 @@ async function save() {
           <div v-if="searchError" class="youzan-error-text">{{ searchError }} <el-button text size="small" @click="searchSkus('')">重试</el-button></div>
           <div v-else-if="hasMore" class="youzan-warning-text">结果较多，请继续输入 SKU 编码、规格或套餐关键词缩小范围。</div>
         </el-form-item>
-        <div v-if="editingId" class="youzan-retry-note">乐观锁版本：{{ version }}</div>
+        <div v-if="editingId" class="youzan-retry-note">当前数据版本：{{ version }}</div>
       </el-form>
       <template #footer>
         <el-button :disabled="saving" @click="formVisible = false">取消</el-button>

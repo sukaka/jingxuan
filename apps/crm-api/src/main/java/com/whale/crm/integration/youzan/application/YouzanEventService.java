@@ -146,9 +146,11 @@ public class YouzanEventService {
         } catch (DuplicateKeyException ex) {
             return transactionTemplate.execute(status -> markDuplicate(tenantId, eventId));
         } catch (BusinessException ex) {
-            if (ex.getMessage() != null && (ex.getMessage().contains("金额") || ex.getMessage().contains("Q01"))) {
+            boolean pendingRule = ex.errorCode() == ErrorCode.PENDING_BUSINESS_RULE
+                    || (ex.getMessage() != null && ex.getMessage().contains("Q01"));
+            if (pendingRule || (ex.getMessage() != null && ex.getMessage().contains("金额"))) {
                 return transactionTemplate.execute(status -> markFailure(tenantId, eventId,
-                        ex.getMessage().contains("Q01") ? "MAPPING_FAILED" : "PAYMENT_MISMATCH", ex.getMessage()));
+                        pendingRule ? "MAPPING_FAILED" : "PAYMENT_MISMATCH", ex.getMessage()));
             }
             return transactionTemplate.execute(status -> markRetry(tenantId, eventId, ex));
         } catch (Exception ex) {

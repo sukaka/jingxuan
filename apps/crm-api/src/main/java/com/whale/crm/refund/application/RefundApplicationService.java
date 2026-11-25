@@ -144,7 +144,7 @@ public class RefundApplicationService {
                 details.put("approvedFen", refund.approvedFen());
                 details.put("succeededFen", refund.succeededFen());
                 CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("REFUND", refund.id(), "REFUND",
-                        refund.createdAt(), "退款 " + refund.refundNo(), "退款状态：" + refund.status(), details,
+                        refund.createdAt(), "退款 " + refund.refundNo(), "退款状态：" + refundStatusLabel(refund.status()), details,
                         refund.requestedBy());
                 if (cursor == null || cursor.allows(event)) {
                     events.add(event);
@@ -153,6 +153,22 @@ public class RefundApplicationService {
             page++;
         } while ((long) (page - 1) * 100 < total);
         return events;
+    }
+
+    private static String refundStatusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case "REQUESTED" -> "已申请";
+            case "APPROVED" -> "已审核通过";
+            case "REJECTED" -> "已驳回";
+            case "PROCESSING" -> "退款处理中";
+            case "SUCCEEDED" -> "退款成功";
+            case "FAILED" -> "退款失败";
+            case "CANCELED", "CANCELLED" -> "已取消";
+            default -> "其他状态";
+        };
     }
 
     @Transactional(readOnly = true)
@@ -211,7 +227,7 @@ public class RefundApplicationService {
 
     public RefundDetail handleCallback(String provider, RefundCallbackRequest request, String idempotencyKey) {
         if (!"MOCK".equals(provider)) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "真实退款供应商未启用，仅接受明确Mock回调");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "真实退款通道尚未启用，当前仅支持模拟回调确认");
         }
         String key = requireKey(idempotencyKey);
         String payload = canonical(new CallbackCanonical(provider, request.externalRefundNo(), request.amountFen(),
@@ -455,10 +471,10 @@ public class RefundApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "外部退款号不属于该退款单");
         }
         if ("MANUAL_REVIEW".equals(verificationMethod) && "MOCK".equals(payment.provider())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Mock退款必须通过验签回调确认，不能人工冒充成功");
+            throw new BusinessException(ErrorCode.CONFLICT, "模拟退款必须通过验签回调确认，不能人工标记成功");
         }
         if ("PROVIDER_CALLBACK".equals(verificationMethod) && !"MOCK".equals(payment.provider())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "非Mock退款渠道不接受Mock回调确认");
+            throw new BusinessException(ErrorCode.CONFLICT, "非模拟退款渠道不接受模拟回调确认");
         }
         if (!payment.amountFen().equals(amountFen) || !before.approvedFen().equals(amountFen)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "成功金额必须与执行及批准金额一致");

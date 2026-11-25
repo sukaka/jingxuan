@@ -6,6 +6,6 @@ import jakarta.validation.constraints.NotNull;
  * 合并单状态流转（review/confirm）。version 乐观锁。
  */
 public record ReviewMergeCaseRequest(
-        @NotNull(message = "version 不能为空") Long version,
+        @NotNull(message = "数据版本号不能为空") Long version,
         String reason) {
 }

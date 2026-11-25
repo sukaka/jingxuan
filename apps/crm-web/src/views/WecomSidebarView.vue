@@ -50,11 +50,11 @@ const OAUTH_ERROR_GUIDANCE: Record<string, { title: string; guide: string }> = {
   },
   PENDING_BUSINESS_RULE: {
     title: '企业微信侧边栏尚未完成配置',
-    guide: '请联系管理员在系统设置中核对企微 CorpId、AgentId、Secret 及应用可信域名配置。',
+    guide: '请联系管理员在系统设置中核对企业标识（CorpID）、应用编号（AgentID）、应用密钥（Secret）及应用可信域名配置。',
   },
   AUTH_PROTECTION_UNAVAILABLE: {
     title: '认证保护服务暂不可用',
-    guide: '服务端登录保护组件暂时异常，请稍后重试或联系管理员检查认证依赖。',
+    guide: '登录保护服务暂时异常，请稍后重试或联系管理员排查。',
   },
   CONFLICT: {
     title: '企微成员映射存在冲突',
@@ -62,7 +62,7 @@ const OAUTH_ERROR_GUIDANCE: Record<string, { title: string; guide: string }> = {
   },
   REDIRECT_LOOP_GUARD: {
     title: '已暂停自动授权跳转',
-    guide: '短时间内已多次尝试企微 OAuth 跳转但仍未建立会话。请检查企微可信域名、HTTPS 与 Cookie 设置后点击手动重试。',
+    guide: '短时间内已多次尝试企业微信自动授权但仍未建立登录状态。请检查企微可信域名、HTTPS 及浏览器登录凭证设置后点击手动重试。',
   },
 }
 
@@ -371,6 +371,29 @@ function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai', hour12: false }).format(date)
 }
 
+const INTENT_LABELS: Record<string, string> = {
+  HIGH: '高意向',
+  MEDIUM: '中意向',
+  LOW: '低意向',
+}
+
+const TAG_LABELS: Record<string, string> = {
+  VIP: '贵宾客户',
+  HIGH_INTENT: '高意向',
+  NEW_7D: '近 7 天新增',
+  REFERRAL_GOOD: '优质转介绍',
+  RISK: '风险关注',
+}
+
+function intentLabel(level: string | null | undefined): string {
+  if (!level) return '未评估'
+  return INTENT_LABELS[level] ?? '已评估'
+}
+
+function tagLabel(code: string): string {
+  return TAG_LABELS[code] ?? code
+}
+
 function entitlementStatus(statusCode: string): string {
   return ({ ACTIVE: '生效中', AVAILABLE: '生效中', DEPLETED: '已用完', EXHAUSTED: '已用完', EXPIRED: '已到期', REFUNDED: '已退款', REVOKED: '已收回' } as Record<string, string>)[statusCode] ?? '已结束'
 }
@@ -419,14 +442,14 @@ onUnmounted(() => {
       <h1>{{ oauthGuidance.title }}</h1>
       <p v-if="oauthErrorMessage" role="alert">{{ oauthErrorMessage }}</p>
       <div class="state-guidance">
-        <strong>排查建议（{{ oauthErrorCode || 'OAUTH_ERROR' }}）</strong>
+        <strong>排查建议</strong>
         <span>{{ oauthGuidance.guide }}</span>
       </div>
       <button class="state-action" type="button" data-testid="oauth-manual-retry" @click="retryOAuthManually">重新发起企微授权</button>
     </section>
 
     <section v-else-if="status === 'FORBIDDEN'" class="sidebar-state" data-testid="forbidden-state">
-      <span class="state-brand">鲸</span><h1>当前账号无侧边栏权限</h1><p>请联系管理员为岗位配置 `wecom:sidebar:view`，客户数据仍按原有权限范围隔离。</p>
+      <span class="state-brand">鲸</span><h1>当前账号无侧边栏权限</h1><p>请联系管理员为当前岗位配置企微侧边栏查看权限，客户数据仍按原有权限范围隔离。</p>
     </section>
 
     <section v-else-if="status === 'NOT_CHAT'" class="sidebar-state" data-testid="not-chat-state">
@@ -461,7 +484,7 @@ onUnmounted(() => {
           </div>
           <div class="customer-owner"><span>客户编号 {{ customer.customerNo }}</span><span>管家 {{ customer.ownerName || '待分配' }}</span></div>
         </template>
-        <div v-else class="unlinked-hero"><span class="state-eyebrow">当前企微客户</span><h1>尚未关联 CRM 客户</h1><p>已识别 external_userid，但它不是 CRM 主键。可在下方搜索已有 CRM 客户或新建档案完成人工匹配。</p></div>
+        <div v-else class="unlinked-hero"><span class="state-eyebrow">当前企微客户</span><h1>尚未关联 CRM 客户</h1><p>已识别当前企微外部联系人，但它不是 CRM 唯一客户编号。可在下方搜索已有 CRM 客户或新建档案完成人工匹配。</p></div>
       </header>
 
       <template v-if="hasCustomer && customer">
@@ -488,13 +511,13 @@ onUnmounted(() => {
             <div class="section-heading"><span>客户档案</span><small>实时 CRM 数据</small></div>
             <dl class="profile-list">
               <div><dt>客户等级</dt><dd>{{ customer.tierCode || '未分级' }}</dd></div>
-              <div><dt>意向程度</dt><dd>{{ customer.intentLevel || '未评估' }}</dd></div>
+              <div><dt>意向程度</dt><dd>{{ intentLabel(customer.intentLevel) }}</dd></div>
               <div><dt>归属管家</dt><dd>{{ customer.ownerName || '待分配' }}</dd></div>
               <div><dt>首次下单</dt><dd>{{ formatDate(customer.firstOrderAt) }}</dd></div>
               <div><dt>最近跟进</dt><dd>{{ formatDate(customer.lastFollowupAt) }}</dd></div>
               <div><dt>客户生日</dt><dd>{{ formatDate(customer.birthday) }}</dd></div>
             </dl>
-            <div class="profile-tags"><span>客户标签</span><div v-if="customer.tagCodes.length"><span v-for="tag in customer.tagCodes" :key="tag">{{ tag }}</span></div><p v-else>暂未设置标签</p></div>
+            <div class="profile-tags"><span>客户标签</span><div v-if="customer.tagCodes.length"><span v-for="tag in customer.tagCodes" :key="tag">{{ tagLabel(tag) }}</span></div><p v-else>暂未设置标签</p></div>
             <p class="privacy-note">手机号等敏感信息默认脱敏，明文查看仍受原权限与审计约束。</p>
           </section>
 

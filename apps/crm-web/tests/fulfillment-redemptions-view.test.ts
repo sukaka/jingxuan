@@ -216,7 +216,7 @@ describe('RedemptionsView 原核销与冲正审核', () => {
 
     await openReversals(wrapper)
     expect(wrapper.text()).toContain('仅为冲正申请，未改余额')
-    expect(wrapper.text()).toContain('审核通过，未返回补偿流水，需核对')
+    expect(wrapper.text()).toContain('审核已通过，暂未生成补偿流水，请刷新核对')
     expect(wrapper.text()).not.toContain('补偿已生效')
 
     await wrapper.findAll('[data-testid="reversal-detail"]')[1]!.trigger('click')
@@ -268,7 +268,7 @@ describe('RedemptionsView 原核销与冲正审核', () => {
     await wrapper.get('[data-testid="reversal-approve"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('审核通过，未返回补偿流水，需核对')
+    expect(wrapper.text()).toContain('审核已通过，暂未生成补偿流水，请刷新核对')
     expect(wrapper.text()).not.toContain('补偿已生效')
   })
 
@@ -283,7 +283,7 @@ describe('RedemptionsView 原核销与冲正审核', () => {
     await new Promise((resolve) => setTimeout(resolve, 30))
 
     expect(getRedemption).toHaveBeenCalledWith(701)
-    expect(document.body.textContent).toContain('事实版本 0')
+    expect(document.body.textContent).toContain('记录版本 0')
     const reason = document.body.querySelector<HTMLTextAreaElement>('textarea[data-testid="reversal-reason"], [data-testid="reversal-reason"] textarea')
     expect(reason).not.toBeNull()
     reason!.value = '真实履约异常申请'

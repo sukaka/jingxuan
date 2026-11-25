@@ -33,6 +33,7 @@ const loadError = ref('')
 const saving = ref(false)
 const idempotencyKey = ref('')
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+const timeZoneLabel = timeZone === 'Asia/Shanghai' ? '北京时间' : '本地时间'
 const appointment = computed(() => props.detail?.appointment ?? null)
 const { loadCustomerNames, customerLabel, institutionLabel } = useReferenceNames()
 
@@ -127,7 +128,7 @@ async function save() {
   saving.value = true
   try {
     await ElMessageBox.confirm(
-      `请再次核对：${summary}；实际服务时间 ${form.serviceAt.toLocaleString()}（${timeZone}）；凭证 ${form.evidenceRef.trim()}。确认后将由机构授权操作员形成正式核销记录与权益扣减流水，原记录不可直接修改。`,
+      `请再次核对：${summary}；实际服务时间 ${form.serviceAt.toLocaleString()}（${timeZoneLabel}）；凭证 ${form.evidenceRef.trim()}。确认后将由机构授权操作员形成正式核销记录与权益扣减流水，原记录不可直接修改。`,
       '二次确认正式核销',
       { type: 'warning', confirmButtonText: '确认正式核销', cancelButtonText: '返回核对' },
     )
@@ -145,7 +146,7 @@ async function save() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    if (error !== 'cancel' && error !== 'close') ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -175,20 +176,20 @@ async function save() {
             <el-select v-model="item.entitlementId" filterable class="full-width" placeholder="选择本预约的真实项目权益批次" data-testid="redemption-entitlement-select">
               <el-option v-for="option in options" :key="option.id" :label="optionLabel(option)" :value="option.id" :disabled="option.availableCount <= 0" />
             </el-select>
-            <div v-if="selectedOption(item.entitlementId)" class="fulfillment-batch-meta">当前可用 {{ selectedOption(item.entitlementId)?.availableCount }} 次，最终余额以后端事务校验为准</div>
+            <div v-if="selectedOption(item.entitlementId)" class="fulfillment-batch-meta">当前可用 {{ selectedOption(item.entitlementId)?.availableCount }} 次，最终余额以提交校验结果为准</div>
           </div>
           <el-input-number v-model="item.count" :min="1" :precision="0" :controls="false" placeholder="实际次数" class="count-input" data-testid="redemption-count" />
           <el-button text type="danger" :disabled="form.items.length === 1" @click="removeItem(index)">移除</el-button>
         </div>
         <el-empty v-if="!loading && options.length === 0 && !loadError" description="本预约没有可正式核销的有效权益批次" />
-        <el-form-item :label="`实际服务时间（${timeZone}）`" required>
+        <el-form-item :label="`实际服务时间（${timeZoneLabel}）`" required>
           <el-date-picker v-model="form.serviceAt" type="datetime" :clearable="false" class="full-width" data-testid="redemption-service-at" />
         </el-form-item>
         <el-form-item label="履约凭证引用" required>
           <el-input v-model="form.evidenceRef" maxlength="192" show-word-limit placeholder="填写真实签收或履约核验记录编号" data-testid="redemption-evidence" />
         </el-form-item>
-        <el-form-item label="已上传凭证文件 ID（可选）">
-          <el-input-number v-model="form.voucherFileId" :min="1" :precision="0" :controls="false" class="full-width" placeholder="仅填写系统中已存在的文件 ID" />
+        <el-form-item label="已上传凭证文件编号（可选）">
+          <el-input-number v-model="form.voucherFileId" :min="1" :precision="0" :controls="false" class="full-width" placeholder="填写系统中已上传的凭证文件编号" />
         </el-form-item>
       </el-form>
     </template>

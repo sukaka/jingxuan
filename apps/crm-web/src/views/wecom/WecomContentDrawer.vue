@@ -20,12 +20,12 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
     <el-alert
       type="warning"
       :closable="false"
-      title="私有内容仅在后端本次授权、数据范围与有效同意校验成功后展示；关闭后应清除。"
+      title="私有内容仅在本次授权、数据范围与有效同意校验通过后展示；关闭后自动清除。"
       class="content-compliance-tip"
     />
     <div v-loading="loading" class="content-body" aria-live="polite">
       <el-alert v-if="error" type="error" :closable="false" :title="`内容读取失败：${error}`" data-testid="wecom-content-error" />
-      <el-empty v-else-if="!loading && content === null" description="尚未读取授权内容；元数据不包含聊天全文" />
+      <el-empty v-else-if="!loading && content === null" description="尚未读取授权内容；消息列表不包含聊天全文" />
       <pre v-else-if="!loading" class="content-text" data-testid="wecom-content-text">{{ content }}</pre>
     </div>
     <template #footer><el-button @click="emit('update:modelValue', false)">关闭并清除</el-button></template>

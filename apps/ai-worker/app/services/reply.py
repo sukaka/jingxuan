@@ -112,9 +112,9 @@ class MockReplyGenerator:
                 and any(term in latest_customer for term in ("改期", "改时间", "换时间", "重新预约"))
             ):
                 reply = f"{reply}看到您提到想调整时间，请告诉我方便的时间段，我先为您人工核实。"
-            reason = f"基于当前场景、CRM只读事实及最近{context_count}条已授权聊天上下文生成，需员工审核"
+            reason = f"已结合当前场景、客户业务记录及最近{context_count}条已授权聊天记录生成，需员工审核"
         else:
-            reason = "基于当前场景与CRM只读事实生成，需员工审核"
+            reason = "已结合当前场景与客户业务记录生成，需员工审核"
         suggestion = ReplySuggestion(
             scene=request.scene, reply=reply, reason=reason,
             confidence=0.78 if used else 0.62, used_fact_codes=used,
@@ -149,7 +149,7 @@ class OpenAICompatibleReplyGenerator:
                 self.base_url,
                 allow_http=settings.ai_allow_http,
                 allowed_hosts=settings.ai_allowed_hosts,
-                label="AI baseUrl",
+                label="AI 接口地址",
                 resolver=self.resolver,
                 resolve_dns=self.transport is None or self.resolver is not None,
             )

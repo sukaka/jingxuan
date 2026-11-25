@@ -264,8 +264,10 @@ public class ComplaintWorkflowService {
         accessService.requireCaseVisible(user, before);
         requireVersion(before.version(), version, "客诉单已变化，请刷新后重试");
         if (!expectedStatuses.contains(before.status())) {
+            String allowedLabels = expectedStatuses.stream().map(ComplaintWorkflowService::caseStatusLabel)
+                    .collect(java.util.stream.Collectors.joining("、"));
             throw new BusinessException(ErrorCode.CONFLICT,
-                    "当前状态不允许" + action + "，仅 " + String.join("/", expectedStatuses) + " 可执行");
+                    "当前状态不允许" + caseActionLabel(action) + "，仅" + allowedLabels + "状态可执行");
         }
         Long assignee = "ASSIGN".equals(action) ? Long.valueOf(user.userId()) : before.assigneeUserId();
         String resolution = "RESOLVE".equals(action) ? reason : before.resolutionMasked();
@@ -369,5 +371,32 @@ public class ComplaintWorkflowService {
         } catch (Exception ex) {
             throw new IllegalStateException("幂等请求序列化失败", ex);
         }
+    }
+
+    private static String caseStatusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case "OPEN" -> "待分配";
+            case "ASSIGNED" -> "处理中";
+            case "RESOLVED" -> "已解决";
+            case "CLOSED" -> "已关闭";
+            case "DISMISSED" -> "已忽略";
+            default -> "其他";
+        };
+    }
+
+    private static String caseActionLabel(String action) {
+        if (action == null) {
+            return "当前操作";
+        }
+        return switch (action) {
+            case "ASSIGN" -> "分配处理";
+            case "RESOLVE" -> "标记已解决";
+            case "CLOSE" -> "关闭客诉单";
+            case "DISMISS" -> "忽略客诉单";
+            default -> "当前操作";
+        };
     }
 }

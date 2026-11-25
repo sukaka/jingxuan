@@ -88,8 +88,47 @@ function kindLabel(material: Material): string {
   return '已审素材'
 }
 
+const SCAN_STATUS_LABELS: Record<string, string> = {
+  CLEAN: '安全扫描已通过',
+  PENDING: '安全扫描中',
+  INFECTED: '存在安全风险',
+  FAILED: '安全扫描失败',
+  QUARANTINED: '已隔离',
+}
+
+const MIME_TYPE_LABELS: Record<string, string> = {
+  'application/pdf': 'PDF 文档',
+  'image/png': 'PNG 图片',
+  'image/jpeg': 'JPG 图片',
+  'image/jpg': 'JPG 图片',
+  'image/webp': 'WebP 图片',
+  'image/gif': 'GIF 图片',
+  'text/plain': '纯文本文件',
+  'text/csv': 'CSV 表格',
+  'application/msword': 'Word 文档',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word 文档',
+  'application/vnd.ms-excel': 'Excel 表格',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel 表格',
+  'application/vnd.ms-powerpoint': 'PPT 演示文稿',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPT 演示文稿',
+}
+
 function categoryLabel(code: string): string {
-  return CATEGORY_LABELS[code] ?? code
+  return CATEGORY_LABELS[code] ?? '其他分类'
+}
+
+function scanStatusLabel(status: string | null | undefined): string {
+  if (!status) return '发送前由系统自动校验'
+  return SCAN_STATUS_LABELS[status] ?? '待核验'
+}
+
+function mimeTypeLabel(mimeType: string | null | undefined): string {
+  if (!mimeType) return '—'
+  const normalized = mimeType.toLowerCase()
+  if (MIME_TYPE_LABELS[normalized]) return MIME_TYPE_LABELS[normalized]
+  if (normalized.startsWith('image/')) return '图片文件'
+  if (normalized.startsWith('text/')) return '文本文档'
+  return '文档文件'
 }
 
 function formatBytes(sizeBytes: number | undefined | null): string {
@@ -227,7 +266,7 @@ async function openPreview(material: Material): Promise<void> {
   if (!material.currentRevisionId || previewingId.value !== null) return
   const meta = fileMetaFor(material)
   if (meta && meta.scanStatus !== 'CLEAN') {
-    errorMessage.value = meta.lastError || '文件尚未通过安全扫描（CLEAN），暂不可预览'
+    errorMessage.value = meta.lastError || '文件尚未通过安全扫描，暂不可预览'
     return
   }
   previewingId.value = material.id
@@ -236,7 +275,7 @@ async function openPreview(material: Material): Promise<void> {
     const download = await getMaterialRevisionDownload(material.id, material.currentRevisionId)
     const target = new URL(download.downloadUrl, window.location.origin)
     if (target.protocol !== 'https:' && target.protocol !== 'http:') {
-      throw new Error('服务端返回了不安全的预览地址')
+      throw new Error('预览地址无效，已取消打开')
     }
     window.open(target.toString(), '_blank', 'noopener,noreferrer')
   } catch (error) {
@@ -255,7 +294,7 @@ async function sendMaterial(material: Material): Promise<void> {
     const media = await uploadWecomMaterialMedia(material.id)
     const mediaId = media?.mediaId?.trim() ?? ''
     if (!mediaId) {
-      errorMessage.value = '服务端未返回有效的企微临时素材 ID，已中止发送'
+      errorMessage.value = '未能生成有效的企微临时素材标识，已中止发送'
       return
     }
     const target = buildSendTarget()
@@ -272,7 +311,7 @@ async function sendMaterial(material: Material): Promise<void> {
         ? `企微已确认将「${material.title}」发送到当前群聊；这不代表群成员已读`
         : `企微已确认将「${material.title}」发送到当前会话；这不代表客户已读`
     } else if (result.status === 'SDK_FAILED') {
-      errorMessage.value = `企微返回素材发送失败（${result.clientResult}），请核实后重试`
+      errorMessage.value = '企微返回素材发送失败，请核实后重试'
     } else {
       feedback.value = '企微发送结果未知，请先到会话核实是否已发送，不要直接重复发送'
     }
@@ -299,7 +338,7 @@ onMounted(() => { void load() })
     <div class="material-heading">
       <div>
         <strong>合规素材库</strong>
-        <p>仅展示已审核且未下架的合规素材，点击发送前由服务端转存企微临时素材。</p>
+        <p>仅展示已审核且未下架的合规素材，发送前系统将自动转换为企微临时素材。</p>
       </div>
       <span>已审可用</span>
     </div>
@@ -375,7 +414,7 @@ onMounted(() => { void load() })
       </div>
 
       <div v-if="!isSendableEntry" class="material-note-banner">
-        当前是客户资料页，仅可查看素材信息与私有预览；请进入客户单聊或群聊后再发送素材。
+        当前是客户资料页，仅可查看素材信息与预览文件；请进入客户单聊或群聊后再发送素材。
       </div>
 
       <div v-if="loading" class="material-empty">正在读取已审核素材…</div>
@@ -415,7 +454,7 @@ onMounted(() => { void load() })
                 :data-testid="`material-detail-toggle-${item.id}`"
                 @click="selectMaterial(item)"
               >
-                {{ selectedId === item.id ? '收起详情' : '查看元数据' }}
+                {{ selectedId === item.id ? '收起详情' : '查看详情' }}
               </button>
               <button
                 v-if="isSendableEntry"
@@ -440,7 +479,7 @@ onMounted(() => { void load() })
           v-if="selectedMaterial"
           class="material-preview-card"
           data-testid="material-preview-card"
-          aria-label="素材元数据预览"
+          aria-label="素材详情预览"
         >
           <div class="preview-header">
             <strong>{{ selectedMaterial.title }}</strong>
@@ -451,9 +490,9 @@ onMounted(() => { void load() })
             <div><dt>素材编号</dt><dd>{{ selectedMaterial.materialNo }}</dd></div>
             <div><dt>业务分类</dt><dd>{{ categoryLabel(selectedMaterial.categoryCode) }}</dd></div>
             <div><dt>文件名称</dt><dd>{{ selectedMeta?.originalName || '未读取到文件信息' }}</dd></div>
-            <div><dt>文件格式</dt><dd>{{ selectedMeta?.mimeType || '—' }}</dd></div>
+            <div><dt>文件格式</dt><dd>{{ mimeTypeLabel(selectedMeta?.mimeType) }}</dd></div>
             <div><dt>文件大小</dt><dd>{{ formatBytes(selectedMeta?.sizeBytes) }}</dd></div>
-            <div><dt>安全扫描</dt><dd>{{ selectedMeta ? (selectedMeta.scanStatus === 'CLEAN' ? 'CLEAN（已通过）' : selectedMeta.scanStatus) : '由服务端发送前校验' }}</dd></div>
+            <div><dt>安全扫描</dt><dd>{{ scanStatusLabel(selectedMeta?.scanStatus) }}</dd></div>
             <div><dt>更新时间</dt><dd>{{ formatDateTime(selectedMaterial.updatedAt) }}</dd></div>
           </dl>
           <div v-if="selectedMaterial.tags.length" class="preview-tags">
@@ -468,7 +507,7 @@ onMounted(() => { void load() })
               :disabled="previewingId !== null"
               @click="openPreview(selectedMaterial)"
             >
-              {{ previewingId === selectedMaterial.id ? '获取链接…' : '私有预览文件' }}
+              {{ previewingId === selectedMaterial.id ? '获取链接…' : '预览文件' }}
             </button>
             <button
               v-if="isSendableEntry"

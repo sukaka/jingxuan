@@ -53,6 +53,10 @@ function errorText(error: unknown): string {
   return error instanceof ApiError || error instanceof Error ? error.message : '操作失败，请重试'
 }
 
+function sendStatusLabel(status: string): string {
+  return ({ SDK_SUCCESS: '发送成功', SDK_FAILED: '发送失败', SDK_UNKNOWN: '结果未知' } as Record<string, string>)[status] ?? '状态未知'
+}
+
 function requestKey(prefix: string): string {
   return `${prefix}-${typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`
 }
@@ -146,7 +150,7 @@ async function generate(): Promise<void> {
     usageKey = ''
     feedback.value = '分享链接已生成，请先打开公开页检查，再由你手动复制或发送'
   } catch (error) {
-    errorMessage.value = `${errorText(error)}；页面重试会复用本次请求编号`
+    errorMessage.value = `${errorText(error)}；可直接重试，系统会自动防止重复创建`
   } finally {
     busy.value = false
   }
@@ -196,7 +200,7 @@ async function send(): Promise<void> {
     try {
       await recordUsage(result.status, result.clientResult)
     } catch (error) {
-      errorMessage.value = `企微已返回 ${result.status}，但日志记录失败：${errorText(error)}；请先核实会话，不要直接重复发送`
+      errorMessage.value = `企业微信已返回「${sendStatusLabel(result.status)}」，但使用记录保存失败：${errorText(error)}；请先在会话中核实，勿直接重复发送`
       return
     }
     if (result.status === 'SDK_SUCCESS') {
@@ -269,8 +273,8 @@ onMounted(() => { void load() })
         <textarea id="h5-summary" v-model="summary" data-testid="h5-summary" rows="2" maxlength="500" :disabled="busy" @input="clearGenerated" />
         <label for="h5-content">公开介绍</label>
         <textarea id="h5-content" v-model="content" data-testid="h5-content" rows="5" maxlength="4000" :disabled="busy" @input="clearGenerated" />
-        <p class="content-note">请勿填写客户隐私、疗效保证或绝对化承诺。修改内容后需生成新的分享快照。</p>
-        <button class="generate-card" type="button" data-testid="h5-generate" :disabled="busy || !projectId" @click="generate">{{ busy && !current ? '正在生成…' : current ? '重新生成分享快照' : '生成分享卡片' }}</button>
+        <p class="content-note">请勿填写客户隐私、疗效保证或绝对化承诺。修改内容后需重新生成分享卡片。</p>
+        <button class="generate-card" type="button" data-testid="h5-generate" :disabled="busy || !projectId" @click="generate">{{ busy && !current ? '正在生成…' : current ? '重新生成分享卡片' : '生成分享卡片' }}</button>
       </div>
 
       <section class="card-preview" aria-label="H5 卡片预览">
@@ -278,7 +282,7 @@ onMounted(() => { void load() })
         <div><strong>{{ title || '项目介绍' }}</strong><p>{{ summary || '填写摘要后在此预览' }}</p><span>{{ projectName }}</span></div>
       </section>
       <a v-if="current?.status === 'ACTIVE'" class="public-preview" data-testid="h5-public-preview" :href="current.link" target="_blank" rel="noopener noreferrer">打开公开页预览 <span aria-hidden="true">↗</span></a>
-      <div v-if="current" class="snapshot-meta"><span :class="{ disabled: current.status === 'DISABLED' }">{{ current.status === 'ACTIVE' ? '分享快照已生成' : '公开链接已停用' }}</span><small>v{{ current.version }}</small></div>
+      <div v-if="current" class="snapshot-meta"><span :class="{ disabled: current.status === 'DISABLED' }">{{ current.status === 'ACTIVE' ? '分享卡片已生成' : '公开链接已停用' }}</span><small>版本 {{ current.version }}</small></div>
       <div v-if="current?.status === 'ACTIVE'" class="card-actions">
         <button class="copy-link" type="button" data-testid="h5-copy" :disabled="!canShare" @click="copyLink">复制链接</button>
         <button v-if="isSendableEntry" class="send-card" type="button" data-testid="h5-send" :disabled="!canShare" @click="send">{{ isGroupChat ? '发送到当前群聊' : '发送到当前会话' }}</button>

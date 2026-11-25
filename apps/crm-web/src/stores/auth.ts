@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
-import type { AuthUser, LoginRequest } from '../api/auth'
-import { fetchMe, login as loginApi, logout as logoutApi } from '../api/auth'
+import type { AuthUser, ChangePasswordRequest, LoginRequest } from '../api/auth'
+import { changePassword as changePasswordApi, fetchMe, login as loginApi, logout as logoutApi } from '../api/auth'
 import { ApiError } from '../types/api'
 import { resetReferenceNames } from '../views/references'
 
@@ -50,6 +50,12 @@ export const useAuthStore = defineStore('auth', {
         this.user = null
         resetReferenceNames()
       }
+    },
+    /** 个人账号修改密码:后端吊销全部会话并清 Cookie,仅成功后清空本地状态 */
+    async changePassword(payload: ChangePasswordRequest) {
+      await changePasswordApi(payload)
+      this.user = null
+      resetReferenceNames()
     },
     /** 刷新页面后依据 HttpOnly Cookie 恢复会话;401/网络失败均视为未登录 */
     async fetchMe() {

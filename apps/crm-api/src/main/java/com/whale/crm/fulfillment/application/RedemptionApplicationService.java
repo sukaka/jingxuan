@@ -110,7 +110,7 @@ public class RedemptionApplicationService {
                 details.put("institutionId", redemption.institutionId());
                 Instant occurredAt = redemption.postedAt() != null ? redemption.postedAt() : redemption.createdAt();
                 CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("REDEMPTION", redemption.id(),
-                        "REDEMPTION", occurredAt, "机构正式核销", "核销状态：" + redemption.status(), details,
+                        "REDEMPTION", occurredAt, "机构正式核销", "核销状态：" + redemptionStatusLabel(redemption.status()), details,
                         redemption.postedBy());
                 if (cursor == null || cursor.allows(event)) {
                     events.add(event);
@@ -119,6 +119,19 @@ public class RedemptionApplicationService {
             page++;
         } while ((long) (page - 1) * 100 < total);
         return events;
+    }
+
+    private static String redemptionStatusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case "POSTED" -> "已核销";
+            case "REVERSED" -> "已冲正";
+            case "PENDING" -> "待确认";
+            case "CANCELED", "CANCELLED" -> "已取消";
+            default -> "其他状态";
+        };
     }
 
     @Transactional(readOnly = true)

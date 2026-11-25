@@ -178,7 +178,7 @@ public class CustomerSegmentApplicationService {
         idempotencyService.recordSuccess(tenantId, BATCH_SCOPE, idempotencyKey, "CUSTOMER_SEGMENT_BATCH",
                 created.id().toString(), payload);
         auditService.record(tenantId, user.userId(), "CUSTOMER_SEGMENT_BATCH_CREATE", "CUSTOMER_SEGMENT",
-                Long.toString(segmentId), null, toBatchResponse(created), "仅保存操作批次快照，未自动执行后续操作");
+                Long.toString(segmentId), null, toBatchResponse(created), "已保存操作批次，未自动执行后续操作");
         return toBatchResponse(created);
     }
 
@@ -255,7 +255,7 @@ public class CustomerSegmentApplicationService {
         LinkedHashSet<String> values = new LinkedHashSet<>();
         for (String code : input) {
             if (code == null || code.isBlank()) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "分组代码条件不能为空");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "分组筛选条件不能为空");
             }
             values.add(code.strip());
         }

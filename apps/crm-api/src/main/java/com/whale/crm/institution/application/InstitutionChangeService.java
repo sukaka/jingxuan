@@ -197,7 +197,7 @@ public class InstitutionChangeService {
             throw new BusinessException(ErrorCode.CONFLICT, "只有冲突待复核申请且版本一致才能重新复核");
         }
         if (!institution.version().equals(request.baseVersion())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "baseVersion仍不是机构当前版本，请刷新后再复核");
+            throw new BusinessException(ErrorCode.CONFLICT, "机构信息已被更新，请刷新后再复核");
         }
         long targetVersion = currentTargetVersion(tenantId, before);
         if (repository.rebaseChange(tenantId, id, request.version(), request.baseVersion(), targetVersion,

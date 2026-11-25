@@ -58,7 +58,7 @@ function errorText(error: unknown): string {
 async function saveTags() {
   try {
     await ElMessageBox.confirm(
-      '标签为全量替换:保存后以当前选择为准,差异将写入审计。确认保存?',
+      '保存后将以当前已选标签为准，变更将记入操作日志。确认保存？',
       '保存标签',
       { type: 'warning', confirmButtonText: '保存', cancelButtonText: '取消' },
     )
@@ -90,7 +90,7 @@ async function saveTags() {
       allow-create
       default-first-option
       :disabled="readonly || !auth.hasPermission('customer:write')"
-      placeholder="输入标签编码后回车添加(标签字典化后此处切换为选项)"
+      placeholder="输入标签后按回车添加"
       class="tag-select"
     >
       <el-option v-for="code in editingTags" :key="code" :label="customerTagLabel(code)" :value="code" />
@@ -100,7 +100,7 @@ async function saveTags() {
     </div>
 
     <div class="section-head">
-      <span class="section-title">来源身份(外部标识脱敏)</span>
+      <span class="section-title">关联身份（已脱敏展示）</span>
     </div>
     <app-table :data="identities" size="small">
       <el-table-column label="身份类型" width="120">
@@ -109,14 +109,14 @@ async function saveTags() {
       <el-table-column label="来源应用" width="140">
         <template #default="{ row }">{{ mappedLabel(row.sourceApp, SOURCE_APP_LABELS, '外部应用') }}</template>
       </el-table-column>
-      <el-table-column prop="externalIdMasked" label="外部标识(脱敏)" min-width="180" />
+      <el-table-column prop="externalIdMasked" label="外部账号（脱敏）" min-width="180" />
       <el-table-column label="状态" width="110">
         <template #default="{ row }">
           <StatusPill :text="mappedLabel(row.status, IDENTITY_STATUS_LABELS, '未知状态')" :tone="row.status === 'LINKED' ? 'success' : 'warning'" />
         </template>
       </el-table-column>
       <template #empty>
-        <span>暂无来源身份;企微/有赞对接上线后由集成自动登记</span>
+        <span>暂无关联身份；接入企微或有赞后将自动关联</span>
       </template>
     </app-table>
   </div>

@@ -171,6 +171,20 @@ function revisionText(revision: MaterialRevision): string {
   return `第 ${revision.revisionNo} 版 · 文件 #${revision.fileId}`
 }
 
+const SYNC_ERROR_LABELS: Record<string, string> = {
+  WORKER_UNAVAILABLE: '知识同步服务暂不可用',
+  DIFY_UNAVAILABLE: '知识库服务暂不可用',
+  DIFY_UNAUTHORIZED: '知识库密钥校验未通过',
+  DIFY_TIMEOUT: '知识库同步超时',
+  MATERIAL_NOT_APPROVED: '素材尚未通过审核',
+  FILE_NOT_CLEAN: '素材文件未通过安全扫描',
+}
+
+function syncErrorLabel(raw: string | null | undefined): string {
+  if (!raw) return ''
+  return SYNC_ERROR_LABELS[raw] ?? raw
+}
+
 function timeText(value: string | null): string {
   return shanghaiDateTimeMinute(value) || '—'
 }
@@ -261,7 +275,7 @@ watch(selectedMaterialId, (id) => { if (id !== undefined) void selectMaterial(id
               <template v-if="row.latestJobId">
                 <span class="proto-pill" :class="knowledgeSyncTone(row.latestJobStatus)" :data-testid="`knowledge-job-status-${row.latestJobId}`">{{ jobStatusText(row.latestJobStatus!) }}</span>
                 <div class="proto-subcell">任务 #{{ row.latestJobId }} · 已尝试 {{ row.attemptCount ?? 0 }} 次</div>
-                <div v-if="row.lastErrorMasked" class="sync-error" :title="row.lastErrorMasked">{{ row.lastErrorMasked }}</div>
+                <div v-if="row.lastErrorMasked" class="sync-error" :title="syncErrorLabel(row.lastErrorMasked)">{{ syncErrorLabel(row.lastErrorMasked) }}</div>
               </template>
               <span v-else class="proto-muted">尚未发布</span>
             </template>

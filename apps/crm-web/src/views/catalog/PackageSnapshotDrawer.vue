@@ -26,13 +26,13 @@ function groupName(groupCode: string): string {
   <el-drawer
     :model-value="modelValue"
     size="min(960px, 96vw)"
-    :title="snapshot ? `${snapshot.packageName} · V${snapshot.versionNo}` : '版本快照'"
+    :title="snapshot ? `${snapshot.packageName} · 第 ${snapshot.versionNo} 版` : '版本配置详情'"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <template v-if="snapshot">
       <div class="snapshot-head">
         <div>
-          <div class="crm-muted">{{ snapshot.packageCode }} · 快照版本 {{ snapshot.version }}</div>
+          <div class="crm-muted">{{ snapshot.packageCode }} · 修订次序 {{ snapshot.version }}</div>
           <h3 v-if="snapshot.groups.length">{{ groupSummary(snapshot) }}</h3>
           <h3 v-else>{{ snapshot.selectionMode === 'CHOOSE_N' ? `可从候选子项目中选择 ${snapshot.choiceCount || '待定'} 项（不是使用次数）` : `${selectionModeLabel(snapshot.selectionMode)} / ${snapshot.choiceCount || '-'}` }}</h3>
         </div>
@@ -42,14 +42,14 @@ function groupName(groupCode: string): string {
         v-if="snapshot.rulesStatus === 'PENDING_Q01'"
         type="warning"
         :closable="false"
-        title="Q01 选择规则未确认：当前仅为模板，不能上架发放客户权益"
+        title="选品规则待确认：当前仅为草稿模板，暂不能上架发放客户权益"
         class="block-gap"
       />
       <el-alert
         v-if="snapshot.allocationStatus === 'PENDING_Q02'"
         type="info"
         :closable="false"
-        title="Q02 多项目金额分摊未配置：不会计算机构应结金额，也不按单品参考价自动分摊退款"
+        title="多项目金额分摊暂未配置：当前不会自动计算机构应结金额，也不会按单品参考价自动分摊退款"
         class="block-gap"
       />
       <el-descriptions :column="2" border class="block-gap">
@@ -58,7 +58,7 @@ function groupName(groupCode: string): string {
         <el-descriptions-item label="可发放权益">
           <StatusPill :text="snapshot.entitlementIssuable ? '配置完整' : '不可发放'" :tone="snapshot.entitlementIssuable ? 'success' : 'warning'" />
         </el-descriptions-item>
-        <el-descriptions-item label="分摊状态">{{ snapshot.allocationStatus === 'PENDING_Q02' ? 'Q02 待确认' : '已配置' }}</el-descriptions-item>
+        <el-descriptions-item label="分摊状态">{{ snapshot.allocationStatus === 'PENDING_Q02' ? '待确认' : '已配置' }}</el-descriptions-item>
         <el-descriptions-item label="选择规则" :span="2">{{ snapshot.selectionRules || '未填写补充说明' }}</el-descriptions-item>
       </el-descriptions>
 
@@ -107,7 +107,7 @@ function groupName(groupCode: string): string {
         </el-tag>
         <span v-if="snapshot.institutions.length === 0" class="crm-muted">尚未配置机构，不能上架</span>
       </div>
-      <div class="snapshot-note">已激活版本只能创建新版本，不能覆盖本快照。订单保存实际组与项目、次数和参考价，套餐售价不要求等于参考价合计。</div>
+      <div class="snapshot-note">已激活版本仅支持创建新版本，不可直接覆盖当前配置。订单会锁定实际所选分组、项目、次数和参考价，套餐售价不要求等于参考价合计。</div>
     </template>
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">关闭</el-button>

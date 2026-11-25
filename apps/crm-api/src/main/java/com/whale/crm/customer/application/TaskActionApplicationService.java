@@ -149,7 +149,7 @@ public class TaskActionApplicationService {
     }
 
     private void applyClaim(CrmTask task, CurrentUser user, Instant now) {
-        requireStatus(task, CrmTask.STATUS_OPEN, "只有OPEN任务可接手");
+        requireStatus(task, CrmTask.STATUS_OPEN, "仅待处理任务可接手");
         if (task.getAssigneeUserId() != null && !Objects.equals(task.getAssigneeUserId(), user.userId())) {
             throw new BusinessException(ErrorCode.CONFLICT, "已分配任务只能由负责人开始处理，团队池接手仅限未分配任务");
         }
@@ -184,7 +184,7 @@ public class TaskActionApplicationService {
     }
 
     private void applyReturn(CrmTask task, CurrentUser user) {
-        requireStatus(task, CrmTask.STATUS_PROCESSING, "只有PROCESSING任务可退回");
+        requireStatus(task, CrmTask.STATUS_PROCESSING, "仅处理中任务可退回");
         requireAssigneeOrSupervisor(task, user);
         task.setAssigneeUserId(null);
         task.setStatus(CrmTask.STATUS_OPEN);
@@ -193,7 +193,7 @@ public class TaskActionApplicationService {
     }
 
     private void applyComplete(CrmTask task, CurrentUser user, Instant now) {
-        requireStatus(task, CrmTask.STATUS_PROCESSING, "只有PROCESSING任务可完成");
+        requireStatus(task, CrmTask.STATUS_PROCESSING, "仅处理中任务可完成");
         requireAssigneeOrSupervisor(task, user);
         task.setStatus(CrmTask.STATUS_DONE);
         task.setCompletedAt(now);
@@ -212,8 +212,21 @@ public class TaskActionApplicationService {
 
     private void requireStatus(CrmTask task, String expected, String message) {
         if (!expected.equals(task.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, message + "（当前 " + task.getStatus() + "）");
+            throw new BusinessException(ErrorCode.CONFLICT, message + "（当前状态：" + taskStatusLabel(task.getStatus()) + "）");
         }
+    }
+
+    private static String taskStatusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case CrmTask.STATUS_OPEN -> "待处理";
+            case CrmTask.STATUS_PROCESSING -> "处理中";
+            case CrmTask.STATUS_DONE -> "已完成";
+            case CrmTask.STATUS_CANCELED -> "已取消";
+            default -> "其他状态";
+        };
     }
 
     private CrmTask lockVisible(long tenantId, CurrentUser user, long taskId) {

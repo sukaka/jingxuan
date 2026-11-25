@@ -202,7 +202,7 @@ async function performAction(action: AppointmentAction) {
     await load()
     ElMessage.success(`预约已更新为${appointmentStatusLabel(saved.appointment.status)}`)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   }
 }
 
@@ -264,10 +264,10 @@ onMounted(() => {
 <template>
   <div class="proto-page">
     <PageHeader title="预约与机构履约" description="未完成预约可修改；核销事实仍然不能随意覆盖">
-      <template #actions><el-button v-if="canWrite" @click="createVisible = true">新建预约</el-button><el-button disabled title="独立核销申请接口待后续开放">提交核销申请 · 待接口</el-button></template>
+      <template #actions><el-button v-if="canWrite" @click="createVisible = true">新建预约</el-button><el-button disabled title="独立核销申请功能暂未开放">提交核销申请（暂未开放）</el-button></template>
     </PageHeader>
     <PageCard>
-      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input-number ref="customerFilterInput" v-model="query.customerId" :min="1" :controls="false" placeholder="客户 ID" data-testid="appointment-customer-filter" /><el-input-number v-model="query.institutionId" :min="1" :controls="false" placeholder="机构 ID" data-testid="appointment-institution-filter" /><el-select v-model="query.status" placeholder="全部预约状态" clearable data-testid="appointment-status-filter" @change="changeStatus"><el-option v-for="tab in STATUS_TABS" :key="tab.value" :label="tab.label" :value="tab.value" /></el-select><el-button type="primary" @click="search">查询</el-button><el-button @click="reset">重置</el-button></div><span class="proto-note">只有机构授权操作员能形成正式「机构已确认」状态</span></div>
+      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input-number ref="customerFilterInput" v-model="query.customerId" :min="1" :controls="false" placeholder="客户编号" data-testid="appointment-customer-filter" /><el-input-number v-model="query.institutionId" :min="1" :controls="false" placeholder="机构编号" data-testid="appointment-institution-filter" /><el-select v-model="query.status" placeholder="全部预约状态" clearable data-testid="appointment-status-filter" @change="changeStatus"><el-option v-for="tab in STATUS_TABS" :key="tab.value" :label="tab.label" :value="tab.value" /></el-select><el-button type="primary" @click="search">查询</el-button><el-button @click="reset">重置</el-button></div><span class="proto-note">只有机构授权操作员能形成正式「机构已确认」状态</span></div>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
       <AppointmentPrototypeTabs :appointments="appointments" :loading="loading" @detail="openDetail" />
       <el-pagination v-model:current-page="query.page" v-model:page-size="query.size" :total="total" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="query.page=1;load()" />

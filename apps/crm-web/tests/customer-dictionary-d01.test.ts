@@ -95,7 +95,7 @@ describe('D01 字典历史值与停用边界', () => {
     await dicts.load('cities')
 
     expect(dicts.label('cities', 'BJ')).toBe('北京')
-    expect(dicts.label('cities', 'D01CITY')).toBe('D01CITY（历史/停用）')
+    expect(dicts.label('cities', 'D01CITY')).toBe('D01CITY（已停用）')
     expect(dicts.label('cities', 'D01CITY')).not.toContain('创建时城市')
     const options = dicts.optionsWithHistory('cities', 'D01CITY')
     expect(options.find((option) => option.code === 'BJ')?.disabled).toBe(false)
@@ -120,7 +120,7 @@ describe('D01 字典历史值与停用边界', () => {
     const historical = options.find((option) => option.props('value') === 'D01CITY')
     const active = options.find((option) => option.props('value') === 'BJ')
     expect(historical?.props('disabled')).toBe(true)
-    expect(historical?.props('label')).toBe('D01CITY（历史/停用）')
+    expect(historical?.props('label')).toBe('D01CITY（已停用）')
     expect(active?.props('disabled')).toBe(false)
 
     const save = wrapper.findAll('button').find((button) => button.text() === '保存')

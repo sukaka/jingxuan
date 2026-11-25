@@ -178,7 +178,8 @@ describe('CampaignsView 活动分析与维护', () => {
     expect(wrapper.findAll('.proto-stat-card .number').map((node) => node.text())).toEqual(['待确认', '4 单', '¥3000.00', '待确认'])
     expect(wrapper.text()).toContain('¥100.00')
     expect(wrapper.text()).toMatch(/2026-10-26 \d{2}:\d{2}:\d{2}/)
-    expect(wrapper.text()).toContain('渠道归因以成交时快照为准')
+    expect(wrapper.text()).toContain('渠道归因以成交时记录为准')
+    expect(wrapper.text()).not.toContain('Q13')
     expect(wrapper.text()).not.toContain('0.00%')
     expect(wrapper.find('[data-testid="campaign-channel"]').exists()).toBe(false)
 

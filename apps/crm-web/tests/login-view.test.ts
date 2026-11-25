@@ -14,6 +14,7 @@ vi.mock('../src/api/auth', () => ({
   logout: vi.fn(),
   fetchMe: vi.fn(),
   getCaptcha: vi.fn(),
+  changePassword: vi.fn(),
 }))
 
 const user: AuthUser = {
@@ -129,7 +130,7 @@ describe('LoginView 真实账号登录', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('无法连接后端服务')
+    expect(wrapper.text()).toContain('服务暂时无法连接')
     expect(router.currentRoute.value.path).toBe('/login')
   })
 

@@ -102,7 +102,7 @@ describe('EntitlementsView 权益列表、搜索与流水', () => {
     await wrapper.get('.proto-toolbar input').setValue('不存在的客户')
     await flushPromises()
     expect(wrapper.text()).not.toContain('测试项目')
-    expect(wrapper.text()).toContain('暂无权益；可信支付确认后才会发放')
+    expect(wrapper.text()).toContain('暂无权益；支付确认后自动发放')
     expect(listEntitlements).toHaveBeenCalledTimes(1)
 
     await wrapper.get('.proto-toolbar input').setValue('42')
@@ -121,7 +121,7 @@ describe('EntitlementsView 权益列表、搜索与流水', () => {
     await new Promise((resolve) => setTimeout(resolve, 40))
 
     expect(getEntitlement).toHaveBeenCalledWith(81)
-    expect(document.body.textContent).toContain('权威流水汇总可用次数')
+    expect(document.body.textContent).toContain('当前可用次数（按流水汇总）')
     expect(document.body.textContent).toContain('权益发放')
     expect(document.body.textContent).toContain('正式核销')
     expect(document.body.textContent).toContain('支付确认')

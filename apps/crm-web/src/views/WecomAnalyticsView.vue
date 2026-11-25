@@ -24,26 +24,26 @@ const quickMetrics = computed<Metric[]>(() => {
   if (!data) return []
   const sdkResults = data.sdkSuccessCount + data.sdkFailedCount + data.sdkUnknownCount
   return [
-    { label: '使用日志', value: data.usageCount, detail: '复制与 SDK 结果分别记录' },
+    { label: '使用日志', value: data.usageCount, detail: '复制与企微发送结果分别记录' },
     { label: '复制', value: data.copiedCount, detail: '不代表已发送或已读' },
-    { label: 'SDK 成功 / 失败', value: `${data.sdkSuccessCount} / ${data.sdkFailedCount}`, detail: '以实际客户端回调为准' },
+    { label: '企微发送成功 / 失败', value: `${data.sdkSuccessCount} / ${data.sdkFailedCount}`, detail: '以实际企微客户端回执为准' },
     { label: '结果未知', value: data.sdkUnknownCount, detail: '不自动改为成功' },
     { label: '编辑后使用', value: data.editedCount, detail: '以员工最终内容记录为准' },
     { label: 'AI 关联使用', value: data.aiLinkedUsageCount, detail: '仅限已采纳候选的关联日志' },
-    { label: 'SDK 成功率', value: rate(data.sdkSuccessRate), detail: sdkResults ? `${data.sdkSuccessCount} / ${sdkResults} 条 SDK 结果` : '暂无 SDK 结果分母' },
+    { label: '企微发送成功率', value: rate(data.sdkSuccessRate), detail: sdkResults ? `${data.sdkSuccessCount} / ${sdkResults} 条企微发送结果` : '暂无企微发送结果' },
   ]
 })
 const aiMetrics = computed<Metric[]>(() => {
   const data = report.value?.aiReply
   if (!data) return []
   return [
-    { label: '生成候选', value: data.generatedCount, detail: `${data.mockGeneratedCount} 条 Mock，需区分真实模型` },
+    { label: '生成候选', value: data.generatedCount, detail: `${data.mockGeneratedCount} 条模拟演示候选，需区分真实模型` },
     { label: '已采纳 / 已驳回', value: `${data.acceptedCount} / ${data.rejectedCount}`, detail: '创建批次的当前处理状态' },
     { label: '待人工处理', value: data.pendingCount, detail: '未采纳不等于已复制或发送' },
     { label: '采纳时经过编辑', value: data.editedAcceptedCount, detail: '不改变模型原始候选' },
     { label: '采纳率', value: rate(data.cohortAcceptanceRate), detail: data.generatedCount ? `${data.acceptedCount} / ${data.generatedCount} 条创建候选` : '暂无生成候选分母' },
-    { label: '候选复制 / SDK 成功', value: `${data.copiedCount} / ${data.sdkSuccessCount}`, detail: '与采纳状态分开统计' },
-    { label: 'SDK 失败 / 未知', value: `${data.sdkFailedCount} / ${data.sdkUnknownCount}`, detail: '未知结果不冒充发送成功' },
+    { label: '候选复制 / 发送成功', value: `${data.copiedCount} / ${data.sdkSuccessCount}`, detail: '与采纳状态分开统计' },
+    { label: '发送失败 / 未知', value: `${data.sdkFailedCount} / ${data.sdkUnknownCount}`, detail: '未知结果不冒充发送成功' },
   ]
 })
 const unsupportedText = computed(() => report.value?.unsupportedMetrics.map((item) => unsupportedLabels[item] || '其他未接入指标').join('、') || '')
@@ -91,7 +91,7 @@ onMounted(() => {
     <PageHeader title="企微运营分析" description="真实话术使用、AI 采纳与业务履约聚合；每个比率均显示口径和分子 / 分母">
       <template #actions><RouterLink v-if="auth.hasPermission('wecom:read')" to="/integrations/wecom" class="el-button">会话工作台</RouterLink></template>
     </PageHeader>
-    <el-alert v-if="!canRead" type="error" :closable="false" :title="auth.user?.userType === 'INSTITUTION' ? '机构账号无企微客户运营分析入口' : '缺少 report:read 权限'" />
+    <el-alert v-if="!canRead" type="error" :closable="false" :title="auth.user?.userType === 'INSTITUTION' ? '机构账号无企微客户运营分析入口' : '当前账号暂无报表查看权限'" />
     <template v-else>
       <PageCard>
         <form class="analytics-filters" @submit.prevent="load">
@@ -100,25 +100,25 @@ onMounted(() => {
           <label>员工 ID（可选）<el-input-number v-model="employeeId" :min="1" :precision="0" :controls="false" placeholder="当前范围全部员工" data-testid="analytics-employee" /></label>
           <el-button type="primary" native-type="submit" :loading="loading" data-testid="analytics-search">查询分析</el-button>
         </form>
-        <div v-if="report" class="report-context"><span>{{ report.from }} 至 {{ report.to }}</span><span>{{ scopeText }}</span><span>生成于 {{ formatDateTime(report.generatedAt) }}</span><span>口径 {{ report.metricVersion }}</span></div>
+        <div v-if="report" class="report-context"><span>{{ report.from }} 至 {{ report.to }}</span><span>{{ scopeText }}</span><span>生成于 {{ formatDateTime(report.generatedAt) }}</span><span>统计口径：标准事实口径</span></div>
       </PageCard>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" class="analytics-alert" data-testid="analytics-error" />
       <el-alert v-if="report" type="info" :closable="false" class="analytics-alert" :title="`${unsupportedText}暂无可靠回执或关联证据，不提供虚构指标。`" />
-      <el-alert v-if="report && report.aiReply.mockGeneratedCount > 0" type="warning" :closable="false" class="analytics-alert" title="结果含 Mock 候选；不能据此评估真实模型质量或生产转化效果。" />
+      <el-alert v-if="report && report.aiReply.mockGeneratedCount > 0" type="warning" :closable="false" class="analytics-alert" title="结果含模拟演示候选；不能据此评估真实模型质量或生产转化效果。" />
 
       <div v-loading="loading" class="analytics-content">
         <section v-if="report" class="metric-section" data-testid="quick-reply-analysis">
-          <div class="section-heading"><div><span class="section-index">01</span><h2>快捷话术使用与 SDK 结果</h2></div><p>复制不是发送，SDK 成功也不等于客户已读；不以使用日志推断业务效果。</p></div>
+          <div class="section-heading"><div><span class="section-index">01</span><h2>快捷话术使用与发送结果</h2></div><p>复制不等于发送，企微发送成功也不等于客户已读；不以使用日志推断业务效果。</p></div>
           <dl class="metric-grid"><div v-for="metric in quickMetrics" :key="metric.label" class="metric-item"><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd><dd class="metric-detail">{{ metric.detail }}</dd></div></dl>
         </section>
         <section v-if="report" class="metric-section" data-testid="ai-reply-analysis">
-          <div class="section-heading"><div><span class="section-index">02</span><h2>AI 候选采纳与使用</h2></div><p>采纳率 = 期内创建且当前已采纳的候选 ÷ 期内生成候选；处理、复制、SDK 结果独立计数。</p></div>
+          <div class="section-heading"><div><span class="section-index">02</span><h2>AI 候选采纳与使用</h2></div><p>采纳率 = 期内创建且当前已采纳的候选 ÷ 期内生成候选；处理、复制、企微发送结果独立计数。</p></div>
           <dl class="metric-grid"><div v-for="metric in aiMetrics" :key="metric.label" class="metric-item"><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd><dd class="metric-detail">{{ metric.detail }}</dd></div></dl>
         </section>
         <section v-if="report" class="metric-section" data-testid="conversion-analysis">
           <div class="section-heading"><div><span class="section-index">03</span><h2>真实履约与复购</h2></div><p>仅使用真实预约状态历史与支付流水，不把聊天或话术使用当成成交原因。</p></div>
           <div class="funnel-grid">
-            <article class="funnel-item"><span class="funnel-label">确认预约 → 实际到院</span><strong>{{ rate(report.conversion.appointmentArrivalRate) }}</strong><p>期内确认且已到院 {{ report.conversion.checkedInFromConfirmedCount }} 条 / 期内确认预约 {{ report.conversion.confirmedAppointmentCount }} 条</p><small>按预约 CONFIRMED 历史归属批次，到院采用实际 CHECKED_IN 事件；无分母时显示 —。</small></article>
+            <article class="funnel-item"><span class="funnel-label">确认预约 → 实际到院</span><strong>{{ rate(report.conversion.appointmentArrivalRate) }}</strong><p>期内确认且已到院 {{ report.conversion.checkedInFromConfirmedCount }} 条 / 期内确认预约 {{ report.conversion.confirmedAppointmentCount }} 条</p><small>按预约已确认历史归属批次，到院采用实际到院签到事件；无分母时显示 —。</small></article>
             <article class="funnel-item"><span class="funnel-label">期内付费客户 → 多次付费</span><strong>{{ rate(report.conversion.repeatCustomerRate) }}</strong><p>期内有至少两笔不同已支付订单 {{ report.conversion.repeatPaidCustomerCount }} 人 / 付费客户 {{ report.conversion.paidCustomerCount }} 人</p><small>期内已支付订单 {{ report.conversion.paidOrderCount }} 笔；同一订单多笔流水不重复计数，不把复购与 AI 推荐混为因果。</small></article>
           </div>
         </section>

@@ -200,7 +200,8 @@ describe('企微侧边栏素材库面板', () => {
 
     await wrapper.get('[data-testid="material-select-22"]').trigger('click')
     expect(wrapper.get('[data-testid="material-preview-card"]').text()).toContain('visit-guide.pdf')
-    expect(wrapper.get('[data-testid="material-preview-card"]').text()).toContain('application/pdf')
+    expect(wrapper.get('[data-testid="material-preview-card"]').text()).toContain('PDF 文档')
+    expect(wrapper.get('[data-testid="material-preview-card"]').text()).toContain('安全扫描已通过')
     expect(wrapper.get('[data-testid="material-preview-card"]').text()).toContain('1.50 MB')
   })
 

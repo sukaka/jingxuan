@@ -70,7 +70,7 @@ onMounted(async () => {
 
 <template>
   <div class="proto-page">
-    <PageHeader title="合同续签管理 · 1.8 版" description="按真实合同版本与到期时间管理续签；历史合同不可覆盖">
+    <PageHeader title="合同续签管理" description="按真实合同版本与到期时间管理续签；历史合同不可覆盖">
       <template #actions><RouterLink to="/institutions" class="el-button">机构中心</RouterLink></template>
     </PageHeader>
     <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" style="margin-bottom:16px" />
@@ -88,7 +88,7 @@ onMounted(async () => {
           <el-table-column prop="startDate" label="开始日期" width="110" />
           <el-table-column prop="endDate" label="到期日期" width="110" />
           <el-table-column label="状态" width="110"><template #default="{row}"><StatusPill :text="documentStatusLabel(row.status)" :tone="row.status==='ACTIVE'?'success':row.status==='REJECTED'?'danger':'dark'" /></template></el-table-column>
-          <el-table-column label="操作" width="160"><template #default><el-button disabled title="续签审批工作流待配置">续签处理 · 待配置</el-button></template></el-table-column>
+          <el-table-column label="操作" width="160"><template #default><el-button disabled title="续签审批流程暂未开放">续签处理（暂未开放）</el-button></template></el-table-column>
           <template #empty>暂无合同版本</template>
         </app-table>
       </div>

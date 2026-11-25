@@ -100,7 +100,7 @@ class DifyKnowledgeConfigServiceTest {
                 .isInstanceOf(BusinessException.class).hasMessageContaining("HTTPS");
         assertThatThrownBy(() -> service.save(admin, new DifyKnowledgeConfigRequest("disabled",
                 null, null, null, null, 30, true, false, 0L), "disabled-key"))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("disabled");
+                .isInstanceOf(BusinessException.class).hasMessageContaining("停用模式");
         verify(repository, never()).insert(anyLong(), any());
     }
 

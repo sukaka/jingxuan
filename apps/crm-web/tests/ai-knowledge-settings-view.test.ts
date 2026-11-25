@@ -107,7 +107,7 @@ describe('AiKnowledgeSettingsView 管理员 Dify 配置', () => {
     await flushPromises()
 
     expect(saveKnowledgeConfig).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('请填写 Dify 接口地址和 API Key')
+    expect(wrapper.text()).toContain('请填写 Dify 接口基础地址（Base URL）和应用密钥（API Key）')
     wrapper.unmount()
   })
 
@@ -120,7 +120,7 @@ describe('AiKnowledgeSettingsView 管理员 Dify 配置', () => {
     await flushPromises()
 
     expect(saveKnowledgeConfig).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('请填写知识数据集 ID 和知识数据集 API 密钥')
+    expect(wrapper.text()).toContain('启用同步前请填写知识数据集编号（Dataset ID）和知识数据集密钥（Dataset API Key）')
     wrapper.unmount()
   })
 })

@@ -31,12 +31,12 @@ export function ratioText(metric: PendingRatio | null | undefined): string {
 
 export function orderSourceText(source: string | null | undefined): string {
   if (!source || source === 'ALL') return '全部来源'
-  return ({ MANUAL: '手工订单', YOUZAN: '有赞订单', WEBHOOK: '有赞 webhook' } as Record<string, string>)[source] ?? source
+  return ({ MANUAL: '手工订单', YOUZAN: '有赞订单', WEBHOOK: '有赞平台通知', CRM: 'CRM' } as Record<string, string>)[source] ?? '其他来源'
 }
 
 export function receiverTypeText(receiver: string | null | undefined): string {
   if (!receiver || receiver === 'ALL') return '全部收款方'
-  return ({ PLATFORM: '平台收款', INSTITUTION: '机构收款' } as Record<string, string>)[receiver] ?? receiver
+  return ({ PLATFORM: '平台收款', INSTITUTION: '机构收款' } as Record<string, string>)[receiver] ?? '其他收款方'
 }
 
 export function factTypeText(type: string | null | undefined): string {
@@ -53,12 +53,12 @@ export function factTypeText(type: string | null | undefined): string {
 }
 
 export function attributionStatusText(status: string): string {
-  return ({ AT_SALE_SNAPSHOT: '成交时快照', USER_NOT_FOUND: '归属用户缺失', UNCONFIGURED: '未配置归因' } as Record<string, string>)[status] ?? '归因状态待确认'
+  return ({ AT_SALE_SNAPSHOT: '成交时归属', USER_NOT_FOUND: '归属用户缺失', UNCONFIGURED: '未配置归因' } as Record<string, string>)[status] ?? '归因状态待确认'
 }
 
 export function reportErrorText(error: unknown): string {
   if (error instanceof ApiError) {
-    return `${error.message}${error.requestId ? `（requestId：${error.requestId}）` : ''}`
+    return `${error.message}${error.requestId ? `（请求编号：${error.requestId}）` : ''}`
   }
   return error instanceof Error ? error.message : '报表加载失败，请稍后重试'
 }
@@ -66,7 +66,7 @@ export function reportErrorText(error: unknown): string {
 export function campaignErrorText(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 409) return `${error.message}。数据可能已被修改，请重新打开后再核对`
-    return `${error.message}${error.requestId ? `（requestId：${error.requestId}）` : ''}`
+    return `${error.message}${error.requestId ? `（请求编号：${error.requestId}）` : ''}`
   }
   return error instanceof Error ? error.message : '活动保存失败，请稍后重试'
 }
@@ -142,5 +142,5 @@ export function displayDateTime(value: string | null | undefined): string {
 export function metricVersionText(value: string | null | undefined): string {
   if (!value) return '待确认'
   const match = /^P\d+_FACT_V(\d+)$/i.exec(value)
-  return match ? `统计口径 V${match[1]}` : '自定义统计口径'
+  return match ? `第 ${match[1]} 版口径` : '自定义统计口径'
 }

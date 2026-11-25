@@ -143,11 +143,11 @@ async function save() {
       reason: reason.value.trim(),
     }, linkAttempt.key)
     linkAttempt = null
-    ElMessage.success('人工客户匹配已保存；不代表真实自然人或 Q10 授权已核实')
+    ElMessage.success('人工客户匹配已保存；不代表真实自然人身份或企微授权已核实')
     formVisible.value = false
     emit('saved')
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重新提交不会重复写入`)
   } finally {
     saving.value = false
   }
@@ -202,7 +202,7 @@ async function save() {
     </app-table>
 
     <el-dialog v-model="formVisible" title="人工匹配 CRM 客户" width="min(580px, 94vw)">
-      <el-alert type="warning" :closable="false" title="仅保存人工核对后的客户关联；不使用昵称或手机号自动决定客户 ID，也不核实真实 Q10 授权。" class="wecom-link-tip" />
+      <el-alert type="warning" :closable="false" title="仅保存人工核对后的客户关联；不使用昵称或手机号自动决定客户编号，也不替代企微官方授权核实。" class="wecom-link-tip" />
       <template v-if="selectedContact">
         <p class="dialog-contact">{{ selectedContact.externalUserid }} · 员工 #{{ selectedContact.staffUserId }} · 版本 {{ selectedContact.version }}</p>
         <el-form label-position="top" @submit.prevent>

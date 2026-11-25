@@ -110,7 +110,7 @@ class RiskCaseApplicationServiceTest {
         when(repository.findByIdForUpdate(1, 10)).thenReturn(Optional.of(riskCase("ASSIGNED", 1L, null, 1)));
         assertThatThrownBy(() -> service.close(ADMIN, 10, new CloseRiskCaseRequest(1L, "复核完成")))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("RESOLVED");
+                .hasMessageContaining("已解决");
     }
 
     @Test

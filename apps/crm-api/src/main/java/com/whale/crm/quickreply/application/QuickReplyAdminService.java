@@ -254,7 +254,7 @@ public class QuickReplyAdminService {
         return switch (type) {
             case "GLOBAL" -> {
                 if (requestedId != null) {
-                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "全局话术不需要 scopeId");
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "全局话术无需指定适用机构");
                 }
                 yield new Scope(type, null);
             }
@@ -272,7 +272,7 @@ public class QuickReplyAdminService {
             }
             case "INSTITUTION" -> {
                 if (requestedId == null) {
-                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "机构话术必须指定 scopeId");
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "机构话术必须指定适用机构");
                 }
                 institutionService.detail(user.tenantId(), user, requestedId);
                 yield new Scope(type, requestedId);
@@ -314,7 +314,7 @@ public class QuickReplyAdminService {
 
     private void requireCreateVersion(Long version) {
         if (version != null) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "创建操作不需要 version");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "新建话术无需提供版本号");
         }
     }
 

@@ -77,7 +77,7 @@ describe('结算中文展示文案', () => {
     expect(settlementStatusLabel('UNKNOWN_STATUS')).toBe('未知批次状态')
     expect(amountStatusLabel('UNKNOWN_STATUS')).toBe('未知金额状态')
     expect(settlementTypeLabel('UNKNOWN_TYPE')).toBe('未知结算方式')
-    expect(providerLabel('MOCK')).toBe('模拟验签通道')
+    expect(providerLabel('MOCK')).toBe('模拟演示通道')
     expect(providerLabel('UNKNOWN_PROVIDER')).toBe('未知支付渠道')
   })
 
@@ -113,13 +113,17 @@ describe('SettlementsView 待核实金额、权限与对账', () => {
     expect(wrapper.find('[data-testid="settlement-pay"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="settlement-verify"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('2026-10-08')
-    expect(wrapper.text()).toContain('每月 8 日 · 机构自定义 · Asia/Shanghai')
+    expect(wrapper.text()).toContain('每月 8 日 · 机构自定义 · 北京时间')
+    expect(wrapper.text()).not.toContain('Asia/Shanghai')
 
     await wrapper.get('[data-testid="settlement-detail"]').trigger('click')
     await flushPromises()
     await new Promise((resolve) => setTimeout(resolve, 40))
     expect(document.body.textContent).toContain('金额待核实：当前 0 值不代表应结金额')
-    expect(document.body.textContent).toContain('Q02/Q04 待人工核实')
+    expect(document.body.textContent).toContain('待人工核实')
+    expect(document.body.textContent).toContain('线上佣金率：18%')
+    expect(document.body.textContent).not.toContain('Q02')
+    expect(document.body.textContent).not.toContain('onlineRate')
     expect(document.body.querySelector('[data-testid="settlement-detail-pay"]')).toBeNull()
   })
 

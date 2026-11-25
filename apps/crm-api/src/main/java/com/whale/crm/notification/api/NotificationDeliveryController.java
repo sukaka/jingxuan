@@ -56,7 +56,7 @@ public class NotificationDeliveryController {
     public ApiResponse<NotificationDeliveryResponse> retry(
             @PathVariable long id, @Valid @RequestBody RetryNotificationDeliveryRequest body,
             @RequestHeader("Idempotency-Key") @Size(min = 1, max = 128)
-            @Pattern(regexp = ".*\\S.*", message = "Idempotency-Key 不能为空白") String idempotencyKey,
+            @Pattern(regexp = ".*\\S.*", message = "请求标识不能为空白") String idempotencyKey,
             HttpServletRequest request) {
         return ApiResponse.ok(service.retry(TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser(),
                 id, body, idempotencyKey), requestId(request));

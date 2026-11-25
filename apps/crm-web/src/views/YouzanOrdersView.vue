@@ -322,7 +322,7 @@ async function runSync(mode: 'sync' | 'reconcile') {
       }
     }
     await Promise.allSettled([loadOrders(), loadIssues(), loadReport()])
-    const syncLabel = targetShopId.startsWith('MOCK-') ? '模拟同步' : '同步'
+    const syncLabel = targetShopId.startsWith('MOCK-') ? '模拟演示同步' : '同步'
     const moreHint = result.hasMore ? '；仍有后续页，请继续拉取' : ''
     if (result.issues > 0) {
       ElMessage.warning(`${syncLabel}返回 ${result.issues} 条异常，不能视为全部成功；已处理 ${result.processed} 条，重复 ${result.duplicates} 条${moreHint}`)
@@ -330,7 +330,7 @@ async function runSync(mode: 'sync' | 'reconcile') {
       ElMessage.success(`${syncLabel}完成：接收 ${result.received} 条，处理 ${result.processed} 条，重复 ${result.duplicates} 条${moreHint}`)
     }
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重新提交不会重复执行`)
   } finally {
     syncing.value = false
   }
@@ -354,7 +354,7 @@ async function retryIssue(issue: YouzanSyncIssue) {
       ElMessage.warning(result.lastError || '补偿重试已返回，但仍需处理映射或支付异常')
     }
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重新提交不会重复执行`)
   } finally {
     retryingId.value = null
   }
@@ -370,19 +370,19 @@ onMounted(() => {
     <PageHeader title="有赞订单同步中心" description="线上订单自动进入 CRM：去重 → 匹配客户 → 识别套餐 → 保留活动归属 → 生成订单/权益">
       <template #actions><el-button type="info" plain @click="showPrerequisites = true">接口前置条件</el-button><el-button v-if="canManage" text data-testid="youzan-sync" @click="runSync('sync')">手动单页同步</el-button><el-button v-if="canManage" type="primary" :loading="syncing" data-testid="youzan-reconcile" @click="runSync('reconcile')">{{ reconcileHasMore ? '继续拉取订单' : '立即拉取订单' }}</el-button></template>
     </PageHeader>
-    <div v-if="isMockShop && activeRealShops.length === 0" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟</span><strong>真实接入功能已预建 · 默认禁用 · Q11 待授权联调</strong><p>模拟回调不代表真实资金到账；真实店铺须完成授权、沙箱验收后另行启用。</p></div>
-    <div v-else-if="isMockShop" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟视图</span><strong>当前查看模拟店铺（{{ normalizedShopId }}）；已存在 {{ activeRealShops.length }} 个已连接并启用的真实店铺</strong><p>模拟数据不代表真实资金到账；如需操作真实店铺，请切换为对应有赞店铺 ID（kdt_id）或在「店铺接入」中选择。</p></div>
+    <div v-if="isMockShop && activeRealShops.length === 0" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟演示</span><strong>真实接入功能已预建 · 默认禁用 · 待授权联调</strong><p>模拟演示数据不代表真实资金到账；真实店铺须完成授权与验收后另行启用。</p></div>
+    <div v-else-if="isMockShop" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟演示</span><strong>当前查看模拟演示店铺（{{ normalizedShopId }}）；已存在 {{ activeRealShops.length }} 个已连接并启用的真实店铺</strong><p>模拟演示数据不代表真实资金到账；如需操作真实店铺，请切换为对应有赞店铺编号（kdt_id）或在「店铺接入」中选择。</p></div>
     <div v-else class="youzan-real-banner" data-testid="youzan-real-banner">
       <span class="youzan-real-badge">真实店铺</span>
       <strong v-if="currentShop?.syncEnabled && currentShop?.connectionStatus === 'CONNECTED'">当前店铺「{{ currentShop.shopName }}」（{{ currentShop.shopId }}）已连接并启用真实同步</strong>
       <strong v-else>当前查看有赞店铺 {{ normalizedShopId }}{{ currentShop ? `（${currentShop.shopName} · ${shopStatusNote(currentShop)}）` : '' }}</strong>
-      <p>订单与支付状态以有赞官方接口及 CRM 支付核验为准；消息推送与重叠窗口自动幂等去重，异常请前往异常队列处理。</p>
+      <p>订单与支付状态以有赞官方接口及 CRM 支付核验为准；消息推送与重叠窗口自动去重，异常请前往异常队列处理。</p>
     </div>
-    <el-alert v-if="!canRead" type="error" title="缺少 order:read 权限（或 integration:youzan:manage 权限），无法查看有赞同步数据" :closable="false" />
+    <el-alert v-if="!canRead" type="error" title="当前账号暂无订单查看或有赞接入管理权限，无法查看有赞同步数据" :closable="false" />
     <template v-else>
       <IntegrationRuntimeSettings v-if="canManageRuntime" provider="youzan" />
       <div class="proto-stat-grid"><StatCard label="今日拉取" :value="`${report?.todayEvents ?? 0} 单`" sub="按实际接收时间" icon="bag" /><StatCard label="待匹配" :value="`${pendingMatches} 单`" sub="需要确认 CRM 客户" icon="users" /><StatCard label="同步异常" :value="`${syncErrors} 单`" sub="商品映射或支付核验异常" icon="shield" /><StatCard label="活动订单" :value="`${report?.campaignOrders ?? 0} 单`" sub="保留活动与批次归属" icon="activity" /></div>
-      <div class="proto-toolbar shop-card"><div class="proto-toolbar-left"><el-input v-model="shopId" placeholder="店铺 ID（kdt_id 或 MOCK-SHOP-001）" data-testid="youzan-shop-id" @keyup.enter="search" /><el-button @click="search">查询</el-button></div><span class="proto-note">{{ isMockShop ? '默认店铺来自后端模拟适配器；其他店铺不会伪造同步结果' : '当前按真实有赞店铺 ID（kdt_id）查询与同步；未授权店铺不会伪造同步结果' }}</span></div>
+      <div class="proto-toolbar shop-card"><div class="proto-toolbar-left"><el-input v-model="shopId" placeholder="请输入有赞店铺编号（kdt_id）" data-testid="youzan-shop-id" @keyup.enter="search" /><el-button @click="search">查询</el-button></div><span class="proto-note">{{ isMockShop ? '当前为模拟演示店铺；未授权真实店铺不会伪造同步结果' : '当前按真实有赞店铺编号（kdt_id）查询与同步；未授权店铺不会伪造同步结果' }}</span></div>
       <el-alert v-if="reportError" type="error" :title="reportError" :closable="false" />
 
       <el-card shadow="never">
@@ -456,9 +456,9 @@ onMounted(() => {
 
     <YouzanOrderDetailDrawer v-model="detailVisible" :order="selectedOrder" />
     <el-dialog v-model="showPrerequisites" title="有赞接口前置条件" width="520px">
-      <p v-if="hasActiveRealIntegration">当前已进入真实店铺接入：请确认使用有赞云无容器自用型应用凭证、服务端出口 IP 已加入有赞 IP 白名单、公网 HTTPS 消息地址可正常返回 HTTP 200 {"code":0,"msg":"success"}，并按策略执行分页与增量同步。</p>
-      <p v-else>正式接入需确认店铺类型、开放平台应用与授权、订单/退款接口、回调安全规则及分页限速。当前尚未启用已验证的真实店铺，真实 API 默认保持禁用，完成授权与连接测试后可在全局开关及店铺配置中启用。</p>
-      <p class="proto-note">有赞订单号必须唯一；重复推送不能重复发权益，退款回调也必须幂等。</p>
+      <p v-if="hasActiveRealIntegration">当前已进入真实店铺接入：请确认使用有赞云无容器自用型应用凭证、系统出口 IP 已加入有赞 IP 白名单、公网 HTTPS 消息地址可正常返回 HTTP 200 {"code":0,"msg":"success"}，并按策略执行分页与增量同步。</p>
+      <p v-else>正式接入需确认店铺类型、开放平台应用与授权、订单/退款接口、回调安全规则及分页限速。当前尚未启用已验证的真实店铺，真实接口默认保持禁用，完成授权与连接测试后可在全局开关及店铺配置中启用。</p>
+      <p class="proto-note">有赞订单号必须唯一；重复推送不会重复发放权益，退款回调也会自动防重。</p>
     </el-dialog>
   </div>
 </template>

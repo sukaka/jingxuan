@@ -70,7 +70,7 @@ public class WecomTokenService {
             int code = body.path("errcode").asInt(-1);
             String accessToken = body.path("access_token").asText("");
             if (!response.isSuccessful() || code != 0 || accessToken.isBlank()) {
-                throw new BusinessException(ErrorCode.CONFLICT, "企微访问凭证获取失败，errcode=" + code);
+                throw new BusinessException(ErrorCode.CONFLICT, "企微访问凭证获取失败（错误码：" + code + "）");
             }
             long ttlSeconds = Math.max(60L, body.path("expires_in").asLong(7200L) - 60L);
             writeCache(KEY_PREFIX + corpId, accessToken, Duration.ofSeconds(ttlSeconds));

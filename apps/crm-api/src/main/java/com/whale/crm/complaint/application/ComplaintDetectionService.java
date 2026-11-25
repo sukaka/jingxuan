@@ -173,7 +173,12 @@ public class ComplaintDetectionService {
     }
 
     private void notifyRecipient(ComplaintHit hit) {
-        String content = "客户 #" + hit.customerId() + " 的" + hit.sourceType() + " #" + hit.sourceId()
+        String sourceLabel = switch (hit.sourceType()) {
+            case "WECOM_MESSAGE" -> "企微聊天消息";
+            case "FOLLOWUP" -> "跟进记录";
+            default -> "业务记录";
+        };
+        String content = "客户 #" + hit.customerId() + " 的" + sourceLabel + " #" + hit.sourceId()
                 + " 命中关键词「" + hit.keywordSnapshot() + "」，仅待人工核查，不构成正式客诉。证据："
                 + hit.evidenceMasked();
         notificationRequestService.request(new NotificationRequest(hit.tenantId(), hit.recipientUserIdSnapshot(),

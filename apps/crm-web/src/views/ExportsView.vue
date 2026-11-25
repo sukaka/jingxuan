@@ -42,7 +42,7 @@ const datasets: DatasetDefinition[] = [
     defaults: ['customerNo', 'displayName', 'mobile', 'customerStatus', 'ownerStaffId', 'teamId', 'createdAt'],
   },
   {
-    type: 'ORDER', title: '订单售卖', description: '订单类型、活动批次与整数分金额',
+    type: 'ORDER', title: '订单售卖', description: '订单类型、活动批次与交易金额',
     fields: [
       { code: 'orderNo', label: '订单编号' }, { code: 'customerNo', label: '客户编号' },
       { code: 'customerName', label: '客户称呼' }, { code: 'soldByUserId', label: '成交管家 ID' },
@@ -137,20 +137,82 @@ function formatDateTime(value: string | null | undefined): string {
   }).format(date)
 }
 
+const SCOPE_KIND_LABELS: Record<string, string> = {
+  ALL: '全公司范围',
+  TEAM: '所属团队范围',
+  SELF: '本人负责范围',
+  OWNER: '本人负责范围',
+  INSTITUTION: '合作机构范围',
+  NONE: '无数据范围',
+}
+
+const DENIAL_CODE_LABELS: Record<string, string> = {
+  EXPORT_REQUEST_INVALID: '导出参数无效',
+  EXPORT_CREATE_FAILED: '导出任务创建失败',
+  EXPORT_FILE_UNAVAILABLE: '导出文件不可用',
+  IDEMPOTENCY_CONFLICT: '重复提交冲突',
+  EXPORT_JOB_NOT_FOUND: '导出任务不存在',
+  EXPORT_JOB_FORBIDDEN: '无权访问该导出任务',
+  EXPORT_NOT_READY: '导出文件尚未生成',
+  EXPORT_EXPIRED: '导出文件已过期',
+  EXPORT_SCOPE_INVALID: '导出数据范围无效',
+  EXPORT_SCOPE_CHANGED: '账号数据权限已变更',
+  EXPORT_REASON_INVALID: '导出理由不符合要求',
+  EXPORT_FORBIDDEN: '无导出权限',
+}
+
 function datasetLabel(type: ExportType): string {
-  return datasets.find((item) => item.type === type)?.title ?? type
+  return datasets.find((item) => item.type === type)?.title ?? '其他数据集'
+}
+
+function fieldLabel(exportType: ExportType, code: string): string {
+  const dataset = datasets.find((item) => item.type === exportType)
+  const hit = dataset?.fields.find((field) => field.code === code)
+    ?? datasets.flatMap((item) => item.fields).find((field) => field.code === code)
+  return hit?.label ?? '其他字段'
+}
+
+function denialCodeLabel(code: string | null | undefined): string {
+  if (!code) return '—'
+  return DENIAL_CODE_LABELS[code] ?? '权限校验未通过'
 }
 
 function jobStatusLabel(status: string): string {
-  return ({ PENDING: '等待执行', RUNNING: '正在生成', SUCCEEDED: '已完成', FAILED: '执行失败' } as Record<string, string>)[status] ?? status
+  return ({ PENDING: '等待执行', RUNNING: '正在生成', SUCCEEDED: '已完成', FAILED: '执行失败' } as Record<string, string>)[status] ?? '未知状态'
 }
 
 function jobStatusTone(status: string): string {
   return ({ PENDING: 'warning', RUNNING: 'info', SUCCEEDED: 'success', FAILED: 'danger' } as Record<string, string>)[status] ?? 'dark'
 }
 
+function describeScopeNode(node: Record<string, unknown>): string {
+  const rawKind = typeof node.kind === 'string'
+    ? node.kind
+    : (typeof node.type === 'string' ? node.type : '')
+  const base = SCOPE_KIND_LABELS[rawKind.toUpperCase()] ?? ''
+  const parts: string[] = []
+  if (base) parts.push(base)
+  if (Array.isArray(node.teamIds) && node.teamIds.length) {
+    parts.push(`团队 ${node.teamIds.map((id) => `#${id}`).join('、')}`)
+  }
+  if (Array.isArray(node.institutionIds) && node.institutionIds.length) {
+    parts.push(`机构 ${node.institutionIds.map((id) => `#${id}`).join('、')}`)
+  }
+  if (typeof node.userId === 'number' || typeof node.ownerStaffId === 'number') {
+    const uid = node.userId ?? node.ownerStaffId
+    parts.push(`用户 #${uid}`)
+  }
+  return parts.join(' · ')
+}
+
 function formatScope(scope: Record<string, unknown>): string {
-  try { return JSON.stringify(scope) } catch { return '范围详情无法展示' }
+  if (!scope || typeof scope !== 'object') return '按当前账号权限限定'
+  const candidate = (scope.executed && typeof scope.executed === 'object' ? scope.executed : null)
+    ?? (scope.restriction && typeof scope.restriction === 'object' ? scope.restriction : null)
+    ?? (scope.requested && typeof scope.requested === 'object' ? scope.requested : null)
+    ?? scope
+  const described = describeScopeNode(candidate as Record<string, unknown>)
+  return described || '按当前账号权限限定'
 }
 
 function schedulePoll() {
@@ -264,11 +326,11 @@ async function submitExport() {
     }, requestKey)
     if (destroyed) return
     requestVisible.value = false
-    ElMessage.success('导出任务已提交，文件将由服务端异步生成')
+    ElMessage.success('导出任务已提交，文件将在后台自动生成')
     if (canRead.value) await loadJobs(1)
     if (canAudit.value) await loadLogs(1)
   } catch (error) {
-    if (!destroyed) requestError.value = `${errorText(error, '导出任务提交失败')}；未修改表单时重试会沿用同一幂等键，也可先刷新任务列表核对`
+    if (!destroyed) requestError.value = `${errorText(error, '导出任务提交失败')}；未修改表单时重试不会重复创建任务，也可先刷新任务列表核对`
   } finally {
     submitting.value = false
   }
@@ -284,7 +346,7 @@ const downloadingId = ref<number | null>(null)
 
 function safeOpen(url: string) {
   const target = new URL(url, window.location.origin)
-  if (target.protocol !== 'https:' && target.protocol !== 'http:') throw new Error('服务端返回了不安全的下载地址')
+  if (target.protocol !== 'https:' && target.protocol !== 'http:') throw new Error('下载地址无效，已取消打开')
   window.open(target.toString(), '_blank', 'noopener,noreferrer')
 }
 
@@ -298,7 +360,7 @@ async function download(item: ExportJob) {
     safeOpen(result.downloadUrl)
     if (canAudit.value) await loadLogs(logQuery.page)
   } catch (error) {
-    if (!destroyed) jobsError.value = errorText(error, '下载地址获取失败；服务端可能已拒绝过期或未 CLEAN 文件')
+    if (!destroyed) jobsError.value = errorText(error, '下载地址获取失败；文件可能已过期或尚未通过安全扫描')
   } finally {
     downloadingId.value = null
   }
@@ -319,12 +381,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="proto-page exports-page">
-    <PageHeader title="数据导出中心" description="按角色、数据范围、字段与理由创建服务端异步任务；浏览器不拼接或导出全量数据" />
+    <PageHeader title="数据导出中心" description="按角色、数据范围、字段与理由创建异步导出任务；仅生成当前账号授权范围内的数据" />
 
     <PageCard v-if="!canRead && !canCreate">
       <div class="proto-empty export-permission-empty" data-testid="export-permission-empty">
         <strong>没有导出权限</strong>
-        <span>当前账号不能创建任务或查看导出记录。权限、字段与数据范围需由管理员授权并由后端执行。</span>
+        <span>当前账号不能创建任务或查看导出记录。权限、字段与数据范围需由管理员授权并由系统统一校验。</span>
       </div>
     </PageCard>
 
@@ -333,11 +395,11 @@ onBeforeUnmount(() => {
         <StatCard label="导出任务" :value="canRead ? `${jobsTotal} 个` : '—'" sub="当前筛选结果 · 非本月承诺指标" icon="download" />
         <StatCard label="可请求数据集" value="4 类" sub="客户 / 订单 / 核销 / 跟进" icon="file" />
         <StatCard label="进行中" :value="canRead ? `${runningOnPage} 个` : '—'" sub="当前页等待执行与正在生成" icon="clock" />
-        <StatCard label="审计记录" :value="canAudit ? `${logsTotal} 条` : '—'" sub="仅统计服务端返回的当前日志查询" icon="shield" />
+        <StatCard label="审计记录" :value="canAudit ? `${logsTotal} 条` : '—'" sub="仅统计当前权限可见的导出日志" icon="shield" />
       </div>
 
       <div class="export-overview">
-        <PageCard title="可执行导出" subtitle="先选择数据集和字段，再提交理由；实际权限与范围由服务端在创建及执行时校验">
+        <PageCard title="可执行导出" subtitle="先选择数据集和字段，再提交理由；实际权限与范围由系统在创建及执行时校验">
           <div class="export-dataset-area">
             <div class="export-dataset-grid">
               <button
@@ -359,14 +421,14 @@ onBeforeUnmount(() => {
             <div v-if="!canCreate" class="export-create-empty">当前账号没有创建导出任务权限；已有记录与审计仍按各自权限展示。</div>
             <form v-if="requestVisible && canCreate" class="export-request-form" @submit.prevent="submitExport">
               <div class="request-heading">
-                <div><strong>{{ selectedDataset.title }} · 字段与理由</strong><span>敏感字段仅提供明确的脱敏选项，服务端仍可进一步拒绝。</span></div>
+                <div><strong>{{ selectedDataset.title }} · 字段与理由</strong><span>敏感字段仅提供明确的脱敏选项，最终导出范围以系统权限校验结果为准。</span></div>
                 <el-button text :disabled="submitting" @click="requestVisible = false">收起</el-button>
               </div>
               <el-alert v-if="requestError" :title="requestError" type="error" :closable="false" class="request-error" data-testid="export-request-error" />
               <div class="field-group-label">导出字段（已选 {{ form.columns.length }} 项）</div>
               <el-checkbox-group v-model="form.columns" class="export-field-grid">
                 <el-checkbox v-for="field in selectedDataset.fields" :key="field.code" :value="field.code" :data-testid="`export-field-${field.code}`">
-                  <span>{{ field.label }}</span><small>{{ field.code }}</small>
+                  <span>{{ field.label }}</span>
                 </el-checkbox>
               </el-checkbox-group>
               <div class="export-request-meta">
@@ -380,25 +442,25 @@ onBeforeUnmount(() => {
                 </label>
               </div>
               <div class="request-submit-row">
-                <span>提交仅创建任务，不会立即下载；超时重试沿用同一幂等键，修改表单后生成新键。</span>
+                <span>提交仅创建任务，不会立即下载；网络超时重试不会重复创建任务。</span>
                 <el-button native-type="submit" type="primary" :loading="submitting" data-testid="export-submit">提交导出任务</el-button>
               </div>
             </form>
           </div>
         </PageCard>
 
-        <PageCard title="导出权限原则" subtitle="界面隐藏不等于授权，所有边界均由后端再次执行" padded>
+        <PageCard title="导出权限原则" subtitle="界面隐藏不等于授权，所有权限边界均由系统统一校验" padded>
           <ul class="permission-principles">
-            <li><strong>行范围</strong><span>服务端按当前租户、负责人、团队或机构范围生成，客户端不能传入放大范围。</span></li>
+            <li><strong>行范围</strong><span>系统按当前租户、负责人、团队或机构范围生成，不支持越权扩大范围。</span></li>
             <li><strong>列范围</strong><span>只提交必要字段；手机号默认脱敏，未授权字段即使勾选也会被拒绝。</span></li>
-            <li><strong>异步复核</strong><span>创建与执行阶段都校验权限，任务成功不代表文件永久可下载。</span></li>
-            <li><strong>私有文件</strong><span>导出文件须为 EXPORT 分类、私有且 ClamAV CLEAN，仅通过短期签名地址下载。</span></li>
-            <li><strong>只追加审计</strong><span>申请与下载结果由服务端记录，页面不提供修改或删除审计入口。</span></li>
+            <li><strong>二次复核</strong><span>创建与执行环节都会校验权限，任务成功不代表文件永久可下载。</span></li>
+            <li><strong>安全文件</strong><span>导出文件仅限内部私密存储且须通过安全扫描，仅支持通过短期有效链接下载。</span></li>
+            <li><strong>完整审计</strong><span>申请与下载结果均由系统留存审计记录，不可修改或删除。</span></li>
           </ul>
         </PageCard>
       </div>
 
-      <PageCard v-if="canRead" title="导出任务" subtitle="状态、字段、服务端范围与错误均来自任务接口">
+      <PageCard v-if="canRead" title="导出任务" subtitle="任务状态、导出字段、授权范围与异常说明均以系统记录为准">
         <div class="proto-toolbar">
           <div class="proto-toolbar-left">
             <el-select v-model="jobQuery.exportType" clearable placeholder="全部数据集" class="job-filter">
@@ -420,10 +482,10 @@ onBeforeUnmount(() => {
               <template #default="{ row }"><strong>{{ row.jobNo }}</strong><div class="proto-subcell">{{ datasetLabel(row.exportType) }} · #{{ row.id }}</div></template>
             </el-table-column>
             <el-table-column label="字段" min-width="200">
-              <template #default="{ row }"><div class="column-list"><span v-for="column in row.columns" :key="column">{{ column }}</span></div></template>
+              <template #default="{ row }"><div class="column-list"><span v-for="column in row.columns" :key="column">{{ fieldLabel(row.exportType, column) }}</span></div></template>
             </el-table-column>
-            <el-table-column label="服务端数据范围" min-width="180">
-              <template #default="{ row }"><code class="scope-text">{{ formatScope(row.scope) }}</code></template>
+            <el-table-column label="授权数据范围" min-width="180">
+              <template #default="{ row }"><span class="scope-text">{{ formatScope(row.scope) }}</span></template>
             </el-table-column>
             <el-table-column prop="reason" label="导出理由" min-width="190" show-overflow-tooltip />
             <el-table-column label="状态" width="120">
@@ -435,7 +497,7 @@ onBeforeUnmount(() => {
             </el-table-column>
             <el-table-column label="操作" width="120" fixed="right">
               <template #default="{ row }">
-                <el-button v-if="canDownload(row)" text :loading="downloadingId === row.id" :data-testid="`export-download-${row.id}`" @click="download(row)">私有下载</el-button>
+                <el-button v-if="canDownload(row)" text :loading="downloadingId === row.id" :data-testid="`export-download-${row.id}`" @click="download(row)">下载文件</el-button>
                 <span v-else class="proto-note">{{ row.status === 'SUCCEEDED' ? '不可下载或已过期' : '待任务完成' }}</span>
               </template>
             </el-table-column>
@@ -457,7 +519,7 @@ onBeforeUnmount(() => {
         <div class="proto-empty">没有导出任务查看权限；创建成功也不代表可查看他人任务或扩大数据范围。</div>
       </PageCard>
 
-      <PageCard title="角色权限基线" subtitle="依据项目权限规范展示原则，不代表当前账号已获授权；实际结果以服务端为准">
+      <PageCard title="角色权限基线" subtitle="依据公司权限规范展示基线，不代表当前账号已获授权；实际结果以系统校验为准">
         <div class="proto-table-wrap">
           <app-table :data="roleBaselines">
             <el-table-column prop="role" label="角色" width="120" />
@@ -482,8 +544,8 @@ onBeforeUnmount(() => {
             <el-table-column label="动作" width="90"><template #default="{ row }">{{ row.action === 'REQUEST' ? '申请' : '下载' }}</template></el-table-column>
             <el-table-column label="结果" width="100"><template #default="{ row }"><span class="proto-pill" :class="row.result === 'ALLOWED' ? 'success' : 'danger'">{{ row.result === 'ALLOWED' ? '已允许' : '已拒绝' }}</span></template></el-table-column>
             <el-table-column prop="reason" label="理由" min-width="200"><template #default="{ row }">{{ row.reason || '—' }}</template></el-table-column>
-            <el-table-column label="拒绝码" min-width="130"><template #default="{ row }">{{ row.denialCode || '—' }}</template></el-table-column>
-            <template #empty><span>暂无服务端导出审计记录</span></template>
+            <el-table-column label="拒绝原因" min-width="130"><template #default="{ row }">{{ denialCodeLabel(row.denialCode) }}</template></el-table-column>
+            <template #empty><span>暂无导出审计记录</span></template>
           </app-table>
         </div>
         <el-pagination
@@ -500,7 +562,7 @@ onBeforeUnmount(() => {
       <PageCard v-else>
         <div class="proto-empty export-audit-empty" data-testid="export-audit-empty">
           <strong>没有导出审计查看权限</strong>
-          <span>不会请求审计接口；任务可见性也不会自动授予日志查看权。</span>
+          <span>当前账号无权限查看导出审计日志，任务可见性不会自动授予日志查看权。</span>
         </div>
       </PageCard>
     </template>

@@ -6,7 +6,7 @@ import StatusPill from '../customer/StatusPill.vue'
 import { formatDateTime } from '../customer/shared'
 import FileDownloadButton from '../institution/FileDownloadButton.vue'
 import { amountStatusLabel, settlementAmount, settlementPeriodLabel, settlementStatusLabel, settlementStatusTone, settlementTypeLabel } from '../finance/financeUi'
-import { settlementDayLabel, settlementDaySourceLabel } from '../institution/institutionUi'
+import { rateDisplay, settlementDayLabel, settlementDaySourceLabel } from '../institution/institutionUi'
 
 const props = defineProps<{
   modelValue: boolean
@@ -20,6 +20,43 @@ const emit = defineEmits<{
   pay: []
 }>()
 const batch = computed(() => props.detail?.batch ?? null)
+
+function formatPendingReason(reason: string | null | undefined): string {
+  if (!reason) return '-'
+  const cleaned = reason.replace(/Q\d{2}(?:\/Q\d{2})*\s*/g, '').trim()
+  return cleaned || '待人工核实'
+}
+
+function formatRateSnapshot(raw: string | null | undefined): string {
+  if (!raw) return '-'
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return raw
+    const record = parsed as Record<string, unknown>
+    const parts: string[] = []
+    if (record.institutionVersion !== undefined && record.institutionVersion !== null) {
+      parts.push(`档案版本：第 ${String(record.institutionVersion)} 版`)
+    }
+    if (typeof record.settlementType === 'string' && record.settlementType) {
+      parts.push(`结算方式：${settlementTypeLabel(record.settlementType)}`)
+    }
+    if (record.onlineRate !== undefined && record.onlineRate !== null && record.onlineRate !== '') {
+      parts.push(`线上佣金率：${rateDisplay(record.onlineRate as number | string)}`)
+    }
+    if (record.offlineRate !== undefined && record.offlineRate !== null && record.offlineRate !== '') {
+      parts.push(`线下佣金率：${rateDisplay(record.offlineRate as number | string)}`)
+    }
+    if (record.platformRate !== undefined && record.platformRate !== null && record.platformRate !== '') {
+      parts.push(`平台佣金率：${rateDisplay(record.platformRate as number | string)}`)
+    }
+    if (typeof record.otherRateRule === 'string' && record.otherRateRule.trim()) {
+      parts.push(`其他佣金规则：${record.otherRateRule.trim()}`)
+    }
+    return parts.length ? parts.join(' · ') : '已记录费率配置'
+  } catch {
+    return raw
+  }
+}
 </script>
 
 <template>
@@ -39,26 +76,26 @@ const batch = computed(() => props.detail?.batch ?? null)
         <div class="finance-summary-item"><small>剩余待付</small><strong :class="{ pending: batch.amountStatus === 'PENDING_VERIFICATION' }">{{ batch.amountStatus === 'PENDING_VERIFICATION' ? '待核实' : `¥${fenToYuan(Math.max(0, batch.netPayableFen - batch.paidFen))}` }}</strong></div>
       </div>
       <el-descriptions :column="2" border class="trading-descriptions">
-        <el-descriptions-item label="实际结算日快照">{{ batch.settlementType === 'PER_REDEMPTION' ? '次卡次结不适用' : batch.settlementDate || '历史批次未记录' }}</el-descriptions-item>
+        <el-descriptions-item label="实际结算日">{{ batch.settlementType === 'PER_REDEMPTION' ? '次卡次结不适用' : batch.settlementDate || '历史批次未记录' }}</el-descriptions-item>
         <el-descriptions-item label="结算日规则 / 来源">{{ batch.settlementType === 'PER_REDEMPTION' ? '不适用' : batch.settlementDay ? `${settlementDayLabel(batch.settlementDay)} / ${settlementDaySourceLabel(batch.settlementDaySource)}` : '历史批次未记录' }}</el-descriptions-item>
         <el-descriptions-item label="线下核准规则版本">{{ batch.ruleVersion || '待核准' }}</el-descriptions-item>
         <el-descriptions-item label="核准证据">{{ batch.verificationEvidence || '待核准' }}</el-descriptions-item>
       </el-descriptions>
 
       <section class="finance-section">
-        <div class="finance-section-head"><div><h3>正式核销与规则快照</h3><p>快照仅供人工核准参考，不会自动计算应结金额。</p></div></div>
+        <div class="finance-section-head"><div><h3>正式核销与结算规则</h3><p>入批时锁定的费率规则仅供人工核准参考，不会自动计算应结金额。</p></div></div>
         <app-table :data="detail.lines" size="small">
-          <el-table-column label="核销 ID" width="100"><template #default="{ row }">#{{ row.redemptionId }}</template></el-table-column>
+          <el-table-column label="核销编号" width="100"><template #default="{ row }">#{{ row.redemptionId }}</template></el-table-column>
           <el-table-column label="金额状态" width="120"><template #default="{ row }"><StatusPill :text="amountStatusLabel(row.amountStatus)" :tone="row.amountStatus === 'VERIFIED' ? 'success' : 'warning'" /></template></el-table-column>
           <el-table-column label="核销基数" width="110" align="right"><template #default="{ row }"><span class="finance-amount" :class="{ pending: row.amountStatus === 'PENDING_VERIFICATION' }">{{ settlementAmount(row.amountStatus, row.grossFen) }}</span></template></el-table-column>
           <el-table-column label="佣金" width="110" align="right"><template #default="{ row }"><span class="finance-amount" :class="{ pending: row.amountStatus === 'PENDING_VERIFICATION' }">{{ settlementAmount(row.amountStatus, row.commissionFen) }}</span></template></el-table-column>
           <el-table-column label="应结净额" width="110" align="right"><template #default="{ row }"><span class="finance-amount" :class="{ pending: row.amountStatus === 'PENDING_VERIFICATION' }">{{ settlementAmount(row.amountStatus, row.payableFen) }}</span></template></el-table-column>
-          <el-table-column label="待核实原因 / 规则快照" min-width="240"><template #default="{ row }"><div>{{ row.pendingReason || '-' }}</div><pre class="finance-snapshot">{{ row.rateSnapshot }}</pre></template></el-table-column>
+          <el-table-column label="待核实原因 / 锁定规则" min-width="240"><template #default="{ row }"><div>{{ formatPendingReason(row.pendingReason) }}</div><div class="finance-snapshot">{{ formatRateSnapshot(row.rateSnapshot) }}</div></template></el-table-column>
         </app-table>
       </section>
 
       <section class="finance-section">
-        <div class="finance-section-head"><div><h3>付款记录（只追加）</h3><p>人工登记不冒充银行到账回调，每笔均保留真实流水与扫描通过的凭证。</p></div></div>
+        <div class="finance-section-head"><div><h3>付款记录</h3><p>此处为人工付款登记（非银行自动到账通知），每笔均保留真实流水与扫描通过的凭证。</p></div></div>
         <app-table :data="detail.payments" size="small">
           <el-table-column prop="bankTradeNo" label="银行流水" min-width="170" />
           <el-table-column label="金额" width="110" align="right"><template #default="{ row }">¥{{ fenToYuan(row.amountFen) }}</template></el-table-column>

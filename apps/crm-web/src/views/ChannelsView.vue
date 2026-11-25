@@ -189,7 +189,7 @@ async function toggleStatus(item: Channel, targetStatus: 'ACTIVE' | 'INACTIVE') 
   const isPause = targetStatus === 'INACTIVE'
   try {
     await ElMessageBox.confirm(
-      isPause ? '暂停后不可用于新的渠道归因，历史订单快照不变。确认暂停？' : '确认恢复该渠道的合作状态？',
+      isPause ? '暂停后不可用于新的渠道归因，历史订单记录保持不变。确认暂停？' : '确认恢复该渠道的合作状态？',
       isPause ? '暂停合作' : '恢复合作',
       { type: isPause ? 'warning' : 'info' },
     )
@@ -261,7 +261,7 @@ onMounted(() => {
 
 <template>
   <div class="proto-page channels-page">
-    <PageHeader title="合作渠道 / 达人" description="维护真实渠道主数据与成交时商务归因来源；历史订单保留原渠道和商务快照">
+    <PageHeader title="合作渠道 / 达人" description="维护真实渠道主数据与成交时商务归因来源；历史订单保留下单时的渠道与商务归属">
       <template #actions>
         <el-button v-if="canWrite" type="primary" data-testid="channel-create" @click="openCreate">＋ 新增渠道达人</el-button>
       </template>
@@ -270,7 +270,7 @@ onMounted(() => {
     <el-alert
       type="info"
       :closable="false"
-      title="当前缺少真实归因数据：本页不展示线索量或订单量，也不按 0 计算。业绩只认真实订单的成交快照，不能从当前客户来源或管家身份推断。"
+      title="当前缺少真实归因数据：本页不展示线索量或订单量，也不按 0 计算。业绩仅依据真实订单成交时的归属记录核算，不按当前客户来源或管家身份推断。"
       class="attribution-alert"
     />
 
@@ -293,7 +293,7 @@ onMounted(() => {
               <el-button type="primary" :loading="loading" @click="load(1)">查询</el-button>
               <el-button @click="query.keyword = ''; query.status = ''; query.channelType = ''; load(1)">重置</el-button>
             </div>
-            <span class="proto-note">平台选项来自客户渠道字典，停用项不可新选</span>
+            <span class="proto-note">推广平台选项来自系统配置，已停用项不可新选</span>
           </div>
           <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
           <div class="proto-table-wrap">
@@ -357,7 +357,7 @@ onMounted(() => {
               </el-select>
               <el-button type="primary" :loading="changeLoading" @click="loadChangeRequests(1)">刷新</el-button>
             </div>
-            <span class="proto-note">财务审批需具备 channel:approve_finance 权限，且不可审批本人提交的申请</span>
+            <span class="proto-note">财务审批需具备财务审批权限，且不可审批本人提交的申请</span>
           </div>
           <el-alert v-if="changeError" type="error" :title="changeError" :closable="false" class="attribution-alert" />
           <ChannelChangeRequestsPanel

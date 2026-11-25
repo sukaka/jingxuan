@@ -45,7 +45,7 @@ public class RefundCallbackController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             HttpServletRequest request) {
         if (!adapter.supports(provider) || !adapter.verify(rawBody, signature, timestamp)) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "退款回调提供方未知、Mock未启用或签名无效/过期");
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "退款回调来源未知、模拟通道未启用，或签名无效/已过期");
         }
         RefundCallbackRequest body;
         try {

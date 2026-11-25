@@ -1,5 +1,6 @@
 import type { ApiResponse } from '../types/api'
 import { ApiError } from '../types/api'
+import { sha256HexFallback } from '../utils/cryptoFallback'
 import { http } from './http'
 
 export type FileClassification = 'CONTRACT' | 'QUALIFICATION' | 'CHANGE_EVIDENCE' | 'PAYMENT' | 'REDEMPTION' | 'MATERIAL' | 'MERCHANT_RESOURCE'
@@ -54,8 +55,13 @@ export interface PresignedPutInput {
 }
 
 export async function sha256File(file: Blob): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
+  const buffer = await file.arrayBuffer()
+  const subtle = globalThis.crypto?.subtle
+  if (subtle && typeof subtle.digest === 'function') {
+    const digest = await subtle.digest('SHA-256', buffer)
+    return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
+  }
+  return sha256HexFallback(new Uint8Array(buffer))
 }
 
 export async function initFileUpload(body: UploadInitInput): Promise<UploadInitResponse> {

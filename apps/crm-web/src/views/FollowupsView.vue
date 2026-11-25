@@ -34,8 +34,8 @@ async function load() {
 function openCreate() { editingFollowup.value = null; dialogVisible.value = true }
 function openEdit(row: FollowupItem) { editingFollowup.value = row; dialogVisible.value = true }
 async function remove(row: FollowupItem) {
-  try { await ElMessageBox.confirm('仅软删除误录记录并保留审计，确认删除？', '删除跟进记录', { type: 'warning' }) } catch { return }
-  try { await deleteFollowup(row.id, row.version); ElMessage.success('误录记录已软删除'); await load() }
+  try { await ElMessageBox.confirm('确认删除这条误录的跟进记录？删除后系统仍会保留操作日志。', '删除跟进记录', { type: 'warning' }) } catch { return }
+  try { await deleteFollowup(row.id, row.version); ElMessage.success('误录记录已删除'); await load() }
   catch (error) { ElMessage.error(error instanceof Error ? error.message : '删除失败') }
 }
 onMounted(() => { void dicts.load('communicationChannels'); void load() })
@@ -43,7 +43,7 @@ onMounted(() => { void dicts.load('communicationChannels'); void load() })
 
 <template>
   <div class="proto-page">
-    <PageHeader title="每日跟进台账" description="每次沟通独立流水；支持修改/删除误录记录，并保留编辑日志"><template #actions><el-button v-if="auth.hasPermission('followup:write')" type="primary" @click="openCreate">＋ 新增沟通记录</el-button></template></PageHeader>
+    <PageHeader title="每日跟进台账" description="每次沟通独立记录；支持修改或删除误录记录，并全程保留操作日志"><template #actions><el-button v-if="auth.hasPermission('followup:write')" type="primary" @click="openCreate">＋ 新增沟通记录</el-button></template></PageHeader>
     <div class="proto-stat-grid three"><StatCard label="跟进记录" :value="`${total} 条`" sub="当前数据范围" icon="chat" /><StatCard label="今天沟通客户" :value="`${summary.today} 位`" sub="按真实沟通时间" icon="users" /><StatCard label="近期待跟进" :value="`${summary.upcoming} 条`" sub="已设置下次跟进" icon="calendar" /></div>
     <PageCard>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" /><div class="proto-table-wrap">
@@ -61,7 +61,7 @@ onMounted(() => { void dicts.load('communicationChannels'); void load() })
         </app-table>
       </div>
     </PageCard>
-    <footer class="proto-footer">每次沟通独立追加；软删除不物理抹除审计历史 · {{ formatDateTime(new Date().toISOString()) }}</footer>
+    <footer class="proto-footer">每次沟通独立记录；已删除的误录记录仍保留操作历史 · {{ formatDateTime(new Date().toISOString()) }}</footer>
     <FollowupFormDialog v-model="dialogVisible" :followup="editingFollowup" @saved="load" />
   </div>
 </template>

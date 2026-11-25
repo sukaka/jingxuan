@@ -1,8 +1,10 @@
 package com.whale.crm.platform.auth.api;
 
 import com.whale.crm.platform.auth.api.dto.AuthUserResponse;
-import com.whale.crm.platform.auth.api.dto.LoginRequest;
 import com.whale.crm.platform.auth.api.dto.CaptchaResponse;
+import com.whale.crm.platform.auth.api.dto.ChangePasswordRequest;
+import com.whale.crm.platform.auth.api.dto.LoginRequest;
+import com.whale.crm.platform.auth.api.dto.PasswordPolicyResponse;
 import com.whale.crm.platform.auth.application.AuthApplicationService;
 import com.whale.crm.platform.auth.application.CaptchaService;
 import com.whale.crm.platform.auth.application.AuthApplicationService.AuthResult;
@@ -83,6 +85,24 @@ public class AuthController {
     @GetMapping("/me")
     public ApiResponse<AuthUserResponse> me(HttpServletRequest request) {
         return ApiResponse.ok(authService.me(SecuritySupport.requireCurrentUser()), requestId(request));
+    }
+
+    @GetMapping("/password-policy")
+    public ApiResponse<PasswordPolicyResponse> passwordPolicy(HttpServletRequest request) {
+        SecuritySupport.requireCurrentUser();
+        return ApiResponse.ok(authService.passwordPolicy(), requestId(request));
+    }
+
+    @PostMapping("/password")
+    public ResponseEntity<ApiResponse<Void>> changePassword(@Valid @RequestBody ChangePasswordRequest body,
+                                                            HttpServletRequest request) {
+        CurrentUser currentUser = SecuritySupport.requireCurrentUser();
+        authService.changePassword(currentUser, body.currentPassword(), body.newPassword(),
+                body.confirmPassword(), clientIp(request));
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, clearedCookie(properties.tokenCookieName(), true).toString())
+                .header(HttpHeaders.SET_COOKIE, clearedCookie(properties.csrfCookieName(), false).toString())
+                .body(ApiResponse.ok(null, requestId(request)));
     }
 
     private ResponseCookie tokenCookie(String token) {

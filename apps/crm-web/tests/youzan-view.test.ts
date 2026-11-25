@@ -249,9 +249,10 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     const wrapper = mountView(['order:read'])
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="youzan-mock-banner"]').text()).toContain('模拟')
+    expect(wrapper.get('[data-testid="youzan-mock-banner"]').text()).toContain('模拟演示')
     expect(wrapper.text()).toContain('真实接入功能已预建')
-    expect(wrapper.text()).toContain('Q11 待授权联调')
+    expect(wrapper.text()).toContain('待授权联调')
+    expect(wrapper.text()).not.toContain('Q11')
     expect(wrapper.text()).toContain('3622.00')
     expect(wrapper.text()).toContain('处理完成')
     expect(wrapper.text()).not.toContain('接口未返回')
@@ -276,7 +277,7 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     expect(getOrder).not.toHaveBeenCalled()
     expect(getCustomer).not.toHaveBeenCalled()
     expect(listCustomers).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('缺少 order:read 权限')
+    expect(wrapper.text()).toContain('当前账号暂无订单查看或有赞接入管理权限')
   })
 
   it('立即拉取使用 reconcile，异常不包装成成功且不会误调 sync', async () => {
@@ -297,7 +298,7 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     await wrapper.get('[data-testid="youzan-reconcile"]').trigger('click')
     await flushPromises()
     expect(reconcileYouzanOrders).toHaveBeenCalledTimes(2)
-    expect(success).toHaveBeenCalledWith(expect.stringContaining('模拟同步完成'))
+    expect(success).toHaveBeenCalledWith(expect.stringContaining('模拟演示同步完成'))
     expect(listYouzanOrders).toHaveBeenCalledTimes(3)
     expect(getYouzanReconcileReport).toHaveBeenCalledTimes(3)
   })
@@ -620,7 +621,7 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     await wrapper.get('[data-testid="youzan-reconcile"]').trigger('click')
     await flushPromises()
     expect(success).toHaveBeenCalledWith(expect.stringContaining('同步完成：'))
-    expect(success).not.toHaveBeenCalledWith(expect.stringContaining('模拟同步完成'))
+    expect(success).not.toHaveBeenCalledWith(expect.stringContaining('模拟演示同步完成'))
   })
 
   it('编辑已有 SKU 映射和人工客户链接时禁用外部自然键输入框', async () => {
@@ -730,7 +731,7 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     await flushPromises()
 
     expect(listYouzanOrders).toHaveBeenCalled()
-    expect(wrapper.text()).not.toContain('缺少 order:read')
+    expect(wrapper.text()).not.toContain('暂无订单查看或有赞接入管理权限')
 
     const matchButton = wrapper.findAll('button').find((item) => item.text() === '匹配并同步')
     await matchButton?.trigger('click')

@@ -94,12 +94,12 @@ describe('normalizeApiError', () => {
 
     expect(apiError.status).toBe(0)
     expect(apiError.code).toBe('NETWORK_ERROR')
-    expect(apiError.message).toContain('无法连接后端服务')
+    expect(apiError.message).toContain('服务暂时无法连接')
     expect(apiError.message).not.toContain('localhost:8080')
     expect(apiError.isNetworkError).toBe(true)
   })
 
-  it('无响应的网络错误规范化为 status 0 的后端未启动提示', () => {
+  it('无响应的网络错误规范化为 status 0 的服务连接提示', () => {
     const config = makeConfig()
     const axiosError = new AxiosError('Network Error', 'ERR_NETWORK', config, {})
 
@@ -107,7 +107,7 @@ describe('normalizeApiError', () => {
 
     expect(apiError.status).toBe(0)
     expect(apiError.code).toBe('NETWORK_ERROR')
-    expect(apiError.message).toContain('后端已启动')
+    expect(apiError.message).toContain('服务暂时无法连接')
     expect(apiError.message).not.toContain('localhost:8080')
     expect(apiError.isNetworkError).toBe(true)
   })

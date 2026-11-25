@@ -273,13 +273,13 @@ async function review(reversal: RedemptionReversal, action: 'approve' | 'reject'
       if (corrections.length > 0) {
         ElMessage.success(reversalEffectLabel(saved.reversal, corrections))
       } else {
-        ElMessage.warning('审核通过，但响应未包含补偿流水，请核对后端处理结果')
+        ElMessage.warning('审核已通过，但暂未生成补偿流水，请刷新核对')
       }
     } else {
       ElMessage.success('冲正申请已驳回，未新增补偿流水')
     }
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   }
 }
 
@@ -291,7 +291,7 @@ onMounted(() => {
 <template>
   <div class="proto-page">
     <PageHeader title="核销记录" description="按真实机构、项目、次数与机构确认状态展示；正式核销记录只读，异常通过冲正处理">
-      <template #actions><el-button disabled title="独立核销申请接口待后续开放">提交核销申请 · 待接口</el-button></template>
+      <template #actions><el-button disabled title="独立核销申请功能暂未开放">提交核销申请（暂未开放）</el-button></template>
     </PageHeader>
     <RedemptionStats />
     <PageCard>
@@ -302,9 +302,9 @@ onMounted(() => {
 
       <template v-if="activeTab === 'records'">
         <div class="crm-toolbar">
-          <el-input-number v-model="redemptionQuery.institutionId" :min="1" :precision="0" :controls="false" placeholder="机构 ID" class="fulfillment-filter-id" data-testid="redemption-institution-filter" @keyup.enter="searchRedemptions" />
-          <el-input-number v-model="redemptionQuery.customerId" :min="1" :precision="0" :controls="false" placeholder="客户 ID" class="fulfillment-filter-id" @keyup.enter="searchRedemptions" />
-          <el-input-number v-model="redemptionQuery.projectId" :min="1" :precision="0" :controls="false" placeholder="项目 ID" class="fulfillment-filter-id" @keyup.enter="searchRedemptions" />
+          <el-input-number v-model="redemptionQuery.institutionId" :min="1" :precision="0" :controls="false" placeholder="机构编号" class="fulfillment-filter-id" data-testid="redemption-institution-filter" @keyup.enter="searchRedemptions" />
+          <el-input-number v-model="redemptionQuery.customerId" :min="1" :precision="0" :controls="false" placeholder="客户编号" class="fulfillment-filter-id" @keyup.enter="searchRedemptions" />
+          <el-input-number v-model="redemptionQuery.projectId" :min="1" :precision="0" :controls="false" placeholder="项目编号" class="fulfillment-filter-id" @keyup.enter="searchRedemptions" />
           <el-select v-model="redemptionQuery.status" placeholder="核销状态" clearable class="status-filter">
             <el-option label="机构正式核销" value="POSTED" />
             <el-option label="待机构确认" value="PENDING_INSTITUTION" />
@@ -313,7 +313,7 @@ onMounted(() => {
           </el-select>
           <el-button type="primary" :loading="redemptionLoading" @click="searchRedemptions">查询</el-button>
           <el-button @click="resetRedemptions">重置</el-button>
-          <span class="crm-muted">项目筛选由后端执行，逐项目明细在只读详情查看</span>
+          <span class="crm-muted">支持按项目实时筛选，点击详情可查看逐项目明细</span>
         </div>
         <el-alert v-if="redemptionError" type="error" :title="`核销加载失败：${redemptionError}`" :closable="false" class="crm-table-alert" />
         <div v-loading="redemptionLoading" class="proto-table-wrap"><RedemptionPrototypeTable :rows="redemptions" :can-reverse="canReverse" @detail="openDetail" @reverse="openReversal" @details-loaded="(map) => { redemptionDetails = map }" /></div>

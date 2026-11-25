@@ -40,6 +40,24 @@ const accepted = computed(() => current.value?.status === 'ACCEPTED' && current.
 const canUse = computed(() => accepted.value && !busy.value && (current.value?.finalContent?.trim().length ?? 0) > 0)
 const statusLabel = computed(() => ({ PROPOSED: '待人工处理', ACCEPTED: '已人工采纳', REJECTED: '已驳回' } as Record<string, string>)[current.value?.status ?? ''] ?? '')
 
+const SCENE_LABELS: Record<string, string> = {
+  FOLLOWUP: '客户跟进',
+  FOLLOW_UP: '复诊回访',
+  PACKAGE_REMAINING: '套餐剩余次数',
+  POSTOPERATIVE: '术后关怀',
+  AFTER_CARE: '术后护理',
+  APPOINTMENT: '预约提醒',
+  GENERAL: '通用回复',
+}
+
+function sceneLabel(scene: string): string {
+  return SCENE_LABELS[scene] ?? '快捷回复'
+}
+
+function sendStatusLabel(status: string): string {
+  return ({ SDK_SUCCESS: '发送成功', SDK_FAILED: '发送失败', SDK_UNKNOWN: '结果未知' } as Record<string, string>)[status] ?? '状态未知'
+}
+
 function hasChatContext(suggestion: AiReplySuggestion): boolean {
   return suggestion.chatContextIncluded === true && (suggestion.chatContextCount ?? 0) > 0
 }
@@ -124,7 +142,7 @@ async function generate(): Promise<void> {
     history.value = [generated, ...history.value.filter((item) => item.id !== generated.id)]
     generationKey = ''
   } catch (error) {
-    errorMessage.value = `${errorText(error)}；可使用页面重试，系统会复用本次请求编号`
+    errorMessage.value = `${errorText(error)}；请点击重试，系统会自动防止重复生成`
   } finally {
     busy.value = false
   }
@@ -228,7 +246,7 @@ async function send(): Promise<void> {
     try {
       await recordUsage(result.status, result.clientResult)
     } catch (error) {
-      errorMessage.value = `企微已返回 ${result.status}，但日志记录失败：${errorText(error)}；请先核实会话，不要直接重复发送`
+      errorMessage.value = `企业微信已返回「${sendStatusLabel(result.status)}」，但使用记录保存失败：${errorText(error)}；请先在会话中核实，勿直接重复发送`
       return
     }
     if (result.status === 'SDK_SUCCESS') feedback.value = '企微已确认发送；这不代表客户已读'
@@ -276,7 +294,7 @@ onMounted(() => { void load() })
       </div>
 
       <article v-if="current" class="suggestion-sheet" :data-status="current.status">
-        <div class="suggestion-meta"><span>{{ statusLabel }}</span><span v-if="current.provider === 'mock'" class="mock-label">Mock 演示候选</span><span v-else>{{ current.model }}</span></div>
+        <div class="suggestion-meta"><span>{{ statusLabel }}</span><span v-if="current.provider === 'mock'" class="mock-label">模拟演示候选</span><span v-else>{{ current.model }}</span></div>
         <div
           class="chat-context-badge"
           :class="{ included: hasChatContext(current) }"
@@ -310,7 +328,7 @@ onMounted(() => { void load() })
         <div class="history-heading"><h3>最近候选</h3><span>仅本人可见</span></div>
         <button v-for="item in history" :key="item.id" type="button" :disabled="busy" :class="{ active: current?.id === item.id }" :data-testid="`ai-history-${item.id}`" @click="selectSuggestion(item)">
           <span class="history-title">
-            <span>{{ templates.find((template) => template.id === item.templateId)?.name ?? item.scene }}</span>
+            <span>{{ templates.find((template) => template.id === item.templateId)?.name ?? sceneLabel(item.scene) }}</span>
             <em class="history-context" :class="{ included: hasChatContext(item) }">{{ historyContextLabel(item) }}</em>
           </span>
           <small>{{ ({ PROPOSED: '待处理', ACCEPTED: '已采纳', REJECTED: '已驳回' } as Record<string, string>)[item.status] }}</small>

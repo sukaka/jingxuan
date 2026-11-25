@@ -49,7 +49,7 @@ function updateVisible(value: boolean) {
 
 async function loadRedemptionOptions() {
   if (!form.institutionId) {
-    ElMessage.warning('请先填写机构 ID')
+    ElMessage.warning('请先填写机构编号')
     return
   }
   loading.value = true
@@ -93,7 +93,7 @@ async function save() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -102,10 +102,10 @@ async function save() {
 
 <template>
   <el-drawer :model-value="modelValue" title="创建机构结算批次" size="min(820px, 100vw)" @update:model-value="updateVisible">
-    <el-alert type="warning" :closable="false" title="仅选择真实正式核销。创建批次不会自动应用机构费率，金额仍需人工核准。月结按 Asia/Shanghai 归属月份并在创建时冻结实际结算日；次卡次结不使用结算日。" class="finance-action-note" />
+    <el-alert type="warning" :closable="false" title="仅选择真实正式核销。创建批次不会自动应用机构费率，金额仍需人工核准。月结按北京时间归属月份，并在创建时锁定实际结算日；次卡次结不使用结算日。" class="finance-action-note" />
     <el-form label-position="top" @submit.prevent>
       <div class="finance-form-grid">
-        <el-form-item label="机构 ID" required><el-input-number v-model="form.institutionId" :min="1" :precision="0" :controls="false" class="finance-field" data-testid="settlement-institution-id" /></el-form-item>
+        <el-form-item label="机构编号" required><el-input-number v-model="form.institutionId" :min="1" :precision="0" :controls="false" class="finance-field" data-testid="settlement-institution-id" /></el-form-item>
         <el-form-item label="结算方式" required><el-select v-model="form.settlementType" class="finance-field" data-testid="settlement-type"><el-option label="机构月结" value="MONTHLY" /><el-option label="次卡次结" value="PER_REDEMPTION" /></el-select></el-form-item>
         <el-form-item v-if="form.settlementType === 'MONTHLY'" label="结算月份" required><el-date-picker v-model="form.periodMonth" type="month" value-format="YYYY-MM" :clearable="false" class="finance-field" placeholder="选择月份" data-testid="settlement-period" /></el-form-item>
         <el-form-item v-else label="结算周期"><el-input :model-value="settlementPeriodLabel(form.settlementType, periodKey)" disabled class="finance-field" placeholder="选择一笔核销后生成" /></el-form-item>
@@ -114,11 +114,11 @@ async function save() {
     </el-form>
     <app-table ref="redemptionTable" v-loading="loading" :data="redemptions" row-key="id" size="small" @selection-change="handleSelection">
       <el-table-column type="selection" width="48" reserve-selection />
-      <el-table-column label="核销 ID" width="100"><template #default="{ row }">#{{ row.id }}</template></el-table-column>
+      <el-table-column label="核销编号" width="100"><template #default="{ row }">#{{ row.id }}</template></el-table-column>
       <el-table-column label="客户" width="110"><template #default="{ row }">客户 #{{ row.customerId }}</template></el-table-column>
       <el-table-column label="实际服务时间" min-width="170"><template #default="{ row }">{{ formatDateTime(row.serviceAt) }}</template></el-table-column>
       <el-table-column label="金额状态" min-width="150"><template #default>待核实</template></el-table-column>
-      <template #empty><el-empty description="读取后显示该机构正式核销；已入批记录由后端拒绝重复结算" /></template>
+      <template #empty><el-empty description="读取后显示该机构正式核销；已入批记录不可重复结算" /></template>
     </app-table>
     <div class="finance-allocation-total"><span>已选择 {{ selected.length }} 笔正式核销</span><strong>{{ periodKey ? `批次：${settlementPeriodLabel(form.settlementType, periodKey)}` : '请选择结算周期' }}</strong></div>
     <template #footer><div class="finance-drawer-footer"><el-button :disabled="saving" @click="updateVisible(false)">取消</el-button><el-button type="primary" :loading="saving" data-testid="settlement-create-submit" @click="save">创建待核实批次</el-button></div></template>

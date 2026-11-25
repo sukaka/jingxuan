@@ -224,7 +224,7 @@ public class CustomerApplicationService {
         if (request.attentionProjects() != null && !java.util.Objects.equals(
                 blankToNull(request.attentionProjects()), existing.getAttentionProjects())) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED,
-                    "旧关注项目文本仅作 legacy 保留，请使用 projectIds 维护，系统不会猜测映射");
+                    "历史关注项目文本仅作只读保留，请通过标准关注项目列表维护");
         }
         validateChangedCustomerDictionaryOptions(tenantId, request, existing);
         Map<String, Object> beforeSnapshot = customerSnapshot(existing);
@@ -290,7 +290,7 @@ public class CustomerApplicationService {
         LinkedHashSet<String> target = new LinkedHashSet<>();
         for (String code : tagCodes) {
             if (code == null || code.isBlank()) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签代码不能为空");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签不能为空");
             }
             target.add(code.strip());
         }

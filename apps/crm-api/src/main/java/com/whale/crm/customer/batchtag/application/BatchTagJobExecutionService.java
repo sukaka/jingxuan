@@ -234,7 +234,7 @@ public class BatchTagJobExecutionService {
             if (actor != null) {
                 notificationService.request(new NotificationRequest(running.tenantId(), running.requestedBy(),
                         "BATCH_TAG_JOB_FINISHED", "批量重打标任务已完成",
-                        "任务 " + running.jobNo() + "：" + finalStatus + "，成功 " + counts.succeededCount()
+                        "任务 " + running.jobNo() + "：" + statusLabel(finalStatus) + "，成功 " + counts.succeededCount()
                                 + "，无需变更 " + counts.noChangeCount() + "，跳过 " + counts.skippedCount()
                                 + "，失败 " + counts.failedCount(),
                         "BATCH_TAG_JOB", running.id().toString(),
@@ -259,7 +259,7 @@ public class BatchTagJobExecutionService {
             tags.forEach(tag -> dictionaryService.requireActiveOption(tenantId,
                     BatchTagJobApplicationService.TAG_DICTIONARY, tag));
         } catch (BusinessException ex) {
-            throw new ItemFailureException("TAG_DICTIONARY_INACTIVE", "标签不存在或字典已停用，恢复有效字典后可重试失败项");
+            throw new ItemFailureException("TAG_DICTIONARY_INACTIVE", "标签不存在或已停用，重新启用后可重试失败项");
         }
     }
 
@@ -322,7 +322,20 @@ public class BatchTagJobExecutionService {
             String message = business.getMessage();
             return message.length() <= 400 ? message : message.substring(0, 400);
         }
-        return "任务明细执行失败（" + error.getClass().getSimpleName() + "）";
+        return "任务明细执行失败，请稍后重试或联系管理员";
+    }
+
+    private String statusLabel(String status) {
+        if (BatchTagJob.SUCCEEDED.equals(status)) {
+            return "执行成功";
+        }
+        if (BatchTagJob.PARTIAL_FAILED.equals(status)) {
+            return "部分失败";
+        }
+        if (BatchTagJob.FAILED.equals(status)) {
+            return "执行失败";
+        }
+        return "已完成";
     }
 
     public record ExecutionIdempotency(String scope, String key, String payload, String triggerType) {

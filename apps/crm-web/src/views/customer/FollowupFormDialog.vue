@@ -68,8 +68,8 @@ watch(
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 409) return '该跟进已被他人修改,请刷新后重试'
-    if (error.status === 404) return '客户不存在或不在你的数据范围内'
+    if (error.status === 409) return '该跟进已被他人修改，请刷新后重试'
+    if (error.status === 404) return '客户不存在或不在您的可见范围内'
     return error.message
   }
   return error instanceof Error ? error.message : '未知错误'
@@ -149,7 +149,7 @@ async function submit() {
         />
       </el-form-item>
       <el-form-item label="沟通内容">
-        <el-input v-model="form.summary" type="textarea" :rows="3" placeholder="每次跟进追加新流水,不覆盖历史" />
+        <el-input v-model="form.summary" type="textarea" :rows="3" placeholder="每次跟进新增一条记录，不覆盖历史沟通记录" />
       </el-form-item>
       <el-form-item label="意向项目">
         <el-input v-model="form.intentProject" />
@@ -162,7 +162,7 @@ async function submit() {
           controls-position="right"
           class="full-width"
         />
-        <span class="crm-muted">单位:元(提交按整数分存储)</span>
+        <span class="crm-muted">单位：元</span>
       </el-form-item>
       <el-form-item label="下次跟进">
         <el-date-picker
@@ -171,7 +171,7 @@ async function submit() {
           value-format="YYYY-MM-DD[T]HH:mm:ssZ"
           class="full-width"
         />
-        <span class="crm-muted">显式时间优先；未填按策略（默认14天）生成；改期仅更新待处理任务</span>
+        <span class="crm-muted">手动填写的时间优先；未填按策略（默认 14 天）生成提醒；改期仅更新待处理任务</span>
       </el-form-item>
       <el-form-item label="卡点">
         <el-input v-model="form.blockerNote" type="textarea" :rows="2" />

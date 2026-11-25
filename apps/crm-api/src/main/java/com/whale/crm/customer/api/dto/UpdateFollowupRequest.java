@@ -17,5 +17,5 @@ public record UpdateFollowupRequest(
         @PositiveOrZero(message = "预计金额不能为负") Long estimatedAmountFen,
         Instant nextFollowupAt,
         @Size(max = 2000) String blockerNote,
-        @NotNull(message = "version 不能为空") Long version) {
+        @NotNull(message = "数据版本号不能为空") Long version) {
 }

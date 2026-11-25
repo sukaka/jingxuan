@@ -6,17 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Router } from 'vue-router'
 import App from '../src/App.vue'
-import { logout } from '../src/api/auth'
+import { changePassword, DEFAULT_PASSWORD_POLICY, getPasswordPolicy, logout } from '../src/api/auth'
 import type { AuthUser } from '../src/api/auth'
 import { listAppointments } from '../src/api/fulfillment'
 import { listTasks } from '../src/api/task'
 import { getNotificationUnreadCount } from '../src/api/notification'
 import { useAuthStore } from '../src/stores/auth'
 
-vi.mock('../src/api/auth', () => ({
+vi.mock('../src/api/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/auth')>()),
   login: vi.fn(),
   logout: vi.fn(),
   fetchMe: vi.fn(),
+  getPasswordPolicy: vi.fn(),
+  changePassword: vi.fn(),
 }))
 vi.mock('../src/api/task', () => ({ listTasks: vi.fn() }))
 vi.mock('../src/api/fulfillment', () => ({ listAppointments: vi.fn() }))
@@ -103,6 +106,8 @@ async function mountApp(user = makeUser(['ADMIN'], ALL_PERMISSIONS)) {
 
 beforeEach(() => {
   vi.mocked(logout).mockReset().mockResolvedValue(undefined)
+  vi.mocked(getPasswordPolicy).mockReset().mockResolvedValue({ ...DEFAULT_PASSWORD_POLICY })
+  vi.mocked(changePassword).mockReset().mockResolvedValue(undefined)
   vi.mocked(listTasks).mockReset().mockResolvedValue({ items: [], total: 7, page: 1, size: 1 })
   vi.mocked(listAppointments).mockReset().mockResolvedValue({ items: [], total: 0, page: 1, size: 1 })
   vi.mocked(getNotificationUnreadCount).mockReset().mockResolvedValue({ unreadCount: 4 })
@@ -241,11 +246,16 @@ describe('共享应用外壳', () => {
     expect(wrapper.find('.shell-header').exists()).toBe(false)
   })
 
-  it('确认退出后调用真实登出接口、清空会话并进入登录页', async () => {
+  it('点击右上角姓名打开菜单，确认切换身份后调用登出接口、清空会话并进入登录页', async () => {
     const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     const { wrapper, router, auth } = await mountApp()
 
     await wrapper.get('.role-switch').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="account-change-password"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="account-switch-identity"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="account-switch-identity"]').trigger('click')
     await flushPromises()
 
     expect(confirm).toHaveBeenCalledTimes(1)
@@ -254,5 +264,37 @@ describe('共享应用外壳', () => {
     expect(router.currentRoute.value.name).toBe('login')
     expect(wrapper.text()).toContain('登录页')
     expect(wrapper.find('.shell-sidebar').exists()).toBe(false)
+  })
+
+  it('点击右上角姓名选择修改密码后可完成自助改密并跳转重新登录', async () => {
+    const { wrapper, router, auth } = await mountApp()
+
+    await wrapper.get('.role-switch').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="account-change-password"]').trigger('click')
+    await flushPromises()
+
+    expect(getPasswordPolicy).toHaveBeenCalledTimes(1)
+    const currentInput = document.querySelector<HTMLInputElement>('[data-testid="current-password-input"]')!
+    const newInput = document.querySelector<HTMLInputElement>('[data-testid="new-password-input"]')!
+    const confirmInput = document.querySelector<HTMLInputElement>('[data-testid="confirm-password-input"]')!
+    currentInput.value = 'OldPass@123'
+    currentInput.dispatchEvent(new Event('input'))
+    newInput.value = 'NewStrong#2026'
+    newInput.dispatchEvent(new Event('input'))
+    confirmInput.value = 'NewStrong#2026'
+    confirmInput.dispatchEvent(new Event('input'))
+    await flushPromises()
+
+    document.querySelector<HTMLButtonElement>('[data-testid="submit-change-password"]')!.click()
+    await flushPromises()
+
+    expect(changePassword).toHaveBeenCalledWith({
+      currentPassword: 'OldPass@123',
+      newPassword: 'NewStrong#2026',
+      confirmPassword: 'NewStrong#2026',
+    })
+    expect(auth.user).toBeNull()
+    expect(router.currentRoute.value.name).toBe('login')
   })
 })

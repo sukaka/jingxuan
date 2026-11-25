@@ -118,7 +118,7 @@ public class MonthlyBatchService {
         }
         auditService.record(tenantId, user.userId(), "FOLLOWUP_BATCH_CREATE", "FOLLOWUP_BATCH",
                 Long.toString(batch.id()), null,
-                Map.of("orderMonth", batch.orderMonth(), "candidateCount", candidates.size()), "预览后创建批次快照");
+                Map.of("orderMonth", batch.orderMonth(), "candidateCount", candidates.size()), "预览后创建月度回访批次");
         idempotencyService.recordSuccess(tenantId, CREATE_SCOPE, key, "FOLLOWUP_BATCH",
                 Long.toString(batch.id()), payload);
         return detail(tenantId, user, batch.id());
@@ -203,12 +203,12 @@ public class MonthlyBatchService {
 
     private YearMonth parseMonth(String value) {
         if (value == null || value.isBlank()) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "orderMonth 格式必须为 YYYY-MM");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "订单月份格式必须为 YYYY-MM");
         }
         try {
             return YearMonth.parse(value);
         } catch (DateTimeParseException ex) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "orderMonth 格式必须为 YYYY-MM");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "订单月份格式必须为 YYYY-MM");
         }
     }
 

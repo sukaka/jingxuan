@@ -88,6 +88,29 @@ function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai', hour12: false }).format(date)
 }
 
+const INTENT_LABELS: Record<string, string> = {
+  HIGH: '高意向',
+  MEDIUM: '中意向',
+  LOW: '低意向',
+}
+
+const TAG_LABELS: Record<string, string> = {
+  VIP: '贵宾客户',
+  HIGH_INTENT: '高意向',
+  NEW_7D: '近 7 天新增',
+  REFERRAL_GOOD: '优质转介绍',
+  RISK: '风险预警',
+}
+
+function intentLabel(value: string | null | undefined): string {
+  if (!value) return '未评估'
+  return INTENT_LABELS[value] ?? '其他意向'
+}
+
+function tagLabel(code: string): string {
+  return TAG_LABELS[code] ?? code
+}
+
 function entitlementStatus(statusCode: string): string {
   return ({ ACTIVE: '生效中', AVAILABLE: '生效中', DEPLETED: '已用完', EXHAUSTED: '已用完', EXPIRED: '已到期', REFUNDED: '已退款', REVOKED: '已收回' } as Record<string, string>)[statusCode] ?? '已结束'
 }
@@ -276,7 +299,7 @@ function refreshSelectedCustomer(): void {
               />
               <dl v-if="selectedCustomerDetail" class="profile-list">
                 <div><dt>客户等级</dt><dd>{{ selectedCustomerDetail.tierCode || '未分级' }}</dd></div>
-                <div><dt>意向程度</dt><dd>{{ selectedCustomerDetail.intentLevel || '未评估' }}</dd></div>
+                <div><dt>意向程度</dt><dd>{{ intentLabel(selectedCustomerDetail.intentLevel) }}</dd></div>
                 <div><dt>归属管家</dt><dd>{{ selectedCustomerDetail.ownerName || '待分配' }}</dd></div>
                 <div><dt>首次下单</dt><dd>{{ formatDate(selectedCustomerDetail.firstOrderAt) }}</dd></div>
                 <div><dt>最近跟进</dt><dd>{{ formatDate(selectedCustomerDetail.lastFollowupAt) }}</dd></div>
@@ -284,7 +307,7 @@ function refreshSelectedCustomer(): void {
               <div v-if="selectedCustomerDetail" class="profile-tags">
                 <span>客户标签</span>
                 <div v-if="selectedCustomerDetail.tagCodes.length">
-                  <span v-for="tag in selectedCustomerDetail.tagCodes" :key="tag">{{ tag }}</span>
+                  <span v-for="tag in selectedCustomerDetail.tagCodes" :key="tag">{{ tagLabel(tag) }}</span>
                 </div>
                 <p v-else>暂未设置标签</p>
               </div>

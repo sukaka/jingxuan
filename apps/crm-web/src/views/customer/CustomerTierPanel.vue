@@ -117,7 +117,7 @@ async function saveAdjustment() {
     if (disposed || sequence !== loadSequence || props.customerId !== targetCustomerId) return
     view.value = updated
     adjustVisible.value = false
-    ElMessage.success('等级已调整并追加历史')
+    ElMessage.success('等级已调整并记录变更历史')
     await load()
     if (!disposed && props.customerId === targetCustomerId) emit('changed')
   } catch (error) {
@@ -177,7 +177,7 @@ function formatDateTime(value: string): string {
         v-if="view.pendingReview"
         type="warning"
         :closable="false"
-        :title="`降级复核 #${view.pendingReview.id}：${view.pendingReview.fromTierCode} → ${view.pendingReview.toTierCode}，批准前当前等级不变`"
+        :title="`降级复核 #${view.pendingReview.id}：${view.pendingReview.fromTierCode} 级 → ${view.pendingReview.toTierCode} 级，批准前当前等级不变`"
         data-testid="tier-pending-review"
       />
 
@@ -196,25 +196,25 @@ function formatDateTime(value: string): string {
         </p>
         <p class="window-note">实际消费金额＝有效订单实付金额－成功退款金额，负数按 0 计算；降级须人工复核。</p>
       </template>
-      <el-empty v-else description="尚无消费快照" :image-size="56" />
+      <el-empty v-else description="暂无近 12 个月消费统计记录" :image-size="56" />
 
       <h4>等级生效历史</h4>
       <ul v-if="history.length" class="tier-history">
         <li v-for="item in history" :key="item.id">
-          <span>{{ item.fromTierCode ?? '未分级' }} → {{ item.toTierCode }}</span>
-          <span>{{ historyTypeLabels[item.changeType] }}</span>
-          <small>{{ item.effectiveAt }}<template v-if="item.reason"> · {{ item.reason }}</template></small>
+          <span>{{ item.fromTierCode ? `${item.fromTierCode} 级` : '未分级' }} → {{ item.toTierCode }} 级</span>
+          <span>{{ historyTypeLabels[item.changeType] ?? '等级变更' }}</span>
+          <small>{{ formatDateTime(item.effectiveAt) }}<template v-if="item.reason"> · {{ item.reason }}</template></small>
         </li>
       </ul>
       <p v-else class="window-note">暂无等级变更历史</p>
     </template>
 
     <el-dialog v-model="adjustVisible" title="人工调整等级" width="min(520px, 92vw)">
-      <el-alert type="warning" :closable="false" title="调整会追加历史并使待复核单失效；锁定后自动升级和降级均不执行" />
+      <el-alert type="warning" :closable="false" title="调整后将记录变更历史并使待复核单失效；开启锁定后将不再自动升级或降级" />
       <el-form label-width="96px" class="adjust-form">
         <el-form-item label="目标等级" required>
           <el-select v-model="adjustForm.tierCode" data-testid="tier-adjust-code">
-            <el-option v-for="code in ['S', 'A', 'B', 'C', 'D']" :key="code" :label="code" :value="code" />
+            <el-option v-for="code in ['S', 'A', 'B', 'C', 'D']" :key="code" :label="`${code} 级`" :value="code" />
           </el-select>
         </el-form-item>
         <el-form-item label="调整理由" required>

@@ -19,6 +19,6 @@ public record UpdateInstitutionProfileRequest(
         @Size(max = 4000) String introduction) {
     @JsonAnySetter
     void rejectUnknownField(String field, Object value) {
-        throw new BusinessException(ErrorCode.VALIDATION_FAILED, "敏感字段不允许通过普通PATCH修改: " + field);
+        throw new BusinessException(ErrorCode.VALIDATION_FAILED, "敏感信息不支持直接修改，请提交变更审批");
     }
 }

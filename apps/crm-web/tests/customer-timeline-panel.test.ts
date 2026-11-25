@@ -38,6 +38,10 @@ describe('CustomerTimelinePanel', () => {
 
     expect(getCustomerTimeline).toHaveBeenCalledWith(42, { size: 20 })
     expect(wrapper.text()).toContain('<img src=x onerror=alert(1)>仅文本摘要')
+    expect(wrapper.text()).toContain('沟通方式：电话')
+    expect(wrapper.text()).toContain('状态：已处理')
+    expect(wrapper.text()).not.toContain('channelCode')
+    expect(wrapper.text()).not.toContain('RESOLVED')
     expect(wrapper.find('img').exists()).toBe(false)
     expect(wrapper.find('[data-testid="timeline-item"]').exists()).toBe(true)
 

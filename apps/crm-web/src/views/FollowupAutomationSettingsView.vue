@@ -90,13 +90,13 @@ onMounted(() => { void load() })
 
 <template>
   <div class="proto-page">
-    <PageHeader title="跟进自动化策略" description="按客户意向配置新跟进节奏；显式下次时间始终优先，不回填历史任务" />
+    <PageHeader title="跟进自动化策略" description="按客户意向配置默认跟进周期；手动填写的下次跟进时间始终优先，不影响已有历史任务" />
     <PageCard title="跟进间隔" subtitle="默认 14 天，可按意向级别覆盖为 1–365 天">
       <div v-loading="loading" class="policy-form">
         <el-alert
           v-if="!canManage"
           type="info"
-          title="当前账号仅具备跟进策略只读权限，修改配置需具备 followup:policy:manage 权限。"
+          title="当前账号仅可查看跟进策略；如需修改配置，请联系管理员开通对应权限。"
           :closable="false"
           data-testid="followup-readonly-alert"
         />
@@ -124,7 +124,7 @@ onMounted(() => { void load() })
           </div>
           <div v-else class="proto-empty">暂无意向覆盖，全部使用默认间隔</div>
           <div class="policy-actions">
-            <span>当前版本 {{ version }}</span>
+            <span>当前版本：第 {{ version }} 版</span>
             <el-button v-if="canManage" type="primary" :loading="saving" data-testid="save-policy" @click="save">保存策略</el-button>
           </div>
         </el-form>

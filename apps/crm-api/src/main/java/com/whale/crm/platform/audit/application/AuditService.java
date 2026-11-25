@@ -31,6 +31,8 @@ public class AuditService {
     public static final String ACTION_LOGIN = "LOGIN";
     public static final String ACTION_LOGIN_FAILED = "LOGIN_FAILED";
     public static final String ACTION_LOGOUT = "LOGOUT";
+    public static final String ACTION_PASSWORD_CHANGE = "PASSWORD_CHANGE";
+    public static final String ACTION_PASSWORD_CHANGE_FAILED = "PASSWORD_CHANGE_FAILED";
     public static final String ACTION_USER_CREATE = "USER_CREATE";
     public static final String ACTION_USER_UPDATE = "USER_UPDATE";
     public static final String ACTION_USER_DISABLE = "USER_DISABLE";

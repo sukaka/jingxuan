@@ -53,7 +53,7 @@ async function submit() {
       version: actionForm.review.version,
       reason: actionForm.reason.trim(),
     }, crypto.randomUUID())
-    ElMessage.success(actionForm.action === 'approve' ? '降级已批准并追加历史' : '已驳回，客户等级保持不变')
+    ElMessage.success(actionForm.action === 'approve' ? '降级已批准，客户等级已更新并记录变更历史' : '已驳回，客户等级保持不变')
     dialogVisible.value = false
     await load()
   } catch (error) {
@@ -64,14 +64,14 @@ async function submit() {
 }
 
 function statusLabel(value: string): string {
-  return { PENDING_REVIEW: '待复核', APPROVED: '已批准', REJECTED: '已驳回', STALE: '已失效' }[value] ?? value
+  return { PENDING_REVIEW: '待复核', APPROVED: '已批准', REJECTED: '已驳回', STALE: '已失效' }[value] ?? '未知状态'
 }
 </script>
 
 <template>
   <div class="tier-reviews">
     <header class="page-heading">
-      <div><h1>客户降级复核</h1><p>自动降级只生成待复核单；规则、指标快照或客户版本变化后旧单不可审批。</p></div>
+      <div><h1>客户降级复核</h1><p>自动触发的降级会生成待复核单，需人工审批后生效；若分级规则、统计数据或客户资料已变更，旧复核单将自动失效。</p></div>
       <el-select v-model="status" data-testid="tier-review-status" @change="page = 1; load()">
         <el-option label="待复核" value="PENDING_REVIEW" />
         <el-option label="已批准" value="APPROVED" />
@@ -84,10 +84,10 @@ function statusLabel(value: string): string {
     <el-table v-loading="loading" :data="items">
       <el-table-column prop="id" label="复核单" width="90" />
       <el-table-column prop="customerId" label="客户 ID" width="100" />
-      <el-table-column label="拟变更" width="110"><template #default="{ row }">{{ row.fromTierCode }} → {{ row.toTierCode }}</template></el-table-column>
+      <el-table-column label="拟变更" width="120"><template #default="{ row }">{{ row.fromTierCode }} 级 → {{ row.toTierCode }} 级</template></el-table-column>
       <el-table-column prop="ruleId" label="规则版本" width="100" />
-      <el-table-column prop="snapshotId" label="指标快照" width="110" />
-      <el-table-column prop="baseCustomerVersion" label="客户版本" width="100" />
+      <el-table-column prop="snapshotId" label="统计记录" width="110" />
+      <el-table-column prop="baseCustomerVersion" label="资料版本" width="100" />
       <el-table-column label="状态" width="100"><template #default="{ row }">{{ statusLabel(row.status) }}</template></el-table-column>
       <el-table-column prop="reviewReason" label="复核理由" min-width="150" />
       <el-table-column v-if="auth.hasPermission('customer:write')" label="操作" width="170" fixed="right">
@@ -115,14 +115,14 @@ function statusLabel(value: string): string {
         v-if="actionForm.review"
         type="warning"
         :closable="false"
-        :title="`复核单 #${actionForm.review.id}，版本 ${actionForm.review.version}；批准只改变当前等级并追加历史，驳回不改等级`"
+        :title="`复核单 #${actionForm.review.id}（第 ${actionForm.review.version} 版）；批准后将更新客户当前等级并记录变更历史，驳回则保持原等级不变`"
       />
       <el-input
         v-model="actionForm.reason"
         type="textarea"
         :rows="4"
         maxlength="1000"
-        placeholder="必填复核理由"
+        placeholder="请填写复核理由（必填）"
         data-testid="tier-review-reason"
         class="review-reason"
       />

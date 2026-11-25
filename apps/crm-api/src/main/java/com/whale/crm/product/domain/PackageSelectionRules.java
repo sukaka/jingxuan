@@ -62,8 +62,8 @@ public final class PackageSelectionRules {
                                                List<PackageOptionSelection> selections) {
         if ("USE_N".equals(selectionMode)) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
-                    "Q01 选择规则未确认，USE_N 暂不支持发放权益",
-                    List.of(new ApiResponse.ErrorDetail("Q01", "USE_N 共享次数池规则待运营确认")));
+                    "任选次数套餐规则尚未确认，暂不支持发放权益",
+                    List.of(new ApiResponse.ErrorDetail("Q01", "任选次数共享池规则待运营确认")));
         }
         if ("FIXED".equals(selectionMode)) {
             if (selections != null && !selections.isEmpty()) {
@@ -78,7 +78,7 @@ public final class PackageSelectionRules {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "未知选择模式");
         }
         if (groups.isEmpty()) {
-            throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "旧版 CHOOSE_N 未配置结构化选项组，不能发放权益");
+            throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "自选项目套餐未配置选项组，暂不支持发放权益");
         }
         validateConfiguration(groups, projects);
         List<PackageSelectionGroup> orderedGroups = groups.stream().sorted(GROUP_ORDER).toList();
@@ -95,7 +95,7 @@ public final class PackageSelectionRules {
         Map<String, Long> selectedProjectByGroup = new HashMap<>();
         for (PackageOptionSelection selection : requested) {
             if (selection == null || selection.groupCode() == null || selection.projectId() == null) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "选择快照必须包含选项组和子项目");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "套餐自选内容必须包含选项组和子项目");
             }
             PackageSelectionGroup group = groupByCode.get(selection.groupCode());
             if (group == null) {

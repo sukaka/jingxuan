@@ -511,7 +511,7 @@ class MaterialApplicationServiceTest {
         when(repository.findScopedRevision(eq(TENANT), eq(10L), eq(11L), any()))
                 .thenReturn(Optional.of(revision(11, 1, "DRAFT", 7)));
         assertThatThrownBy(() -> service.getApprovedRevisionForKnowledge(TENANT, publisher, 10L, 11L))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("APPROVED");
+                .isInstanceOf(BusinessException.class).hasMessageContaining("审核通过");
     }
 
     @Test

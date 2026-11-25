@@ -15,8 +15,8 @@ describe('有赞映射状态展示边界', () => {
     expect(mappingStatusTone('ERROR')).toBe('danger')
   })
 
-  it('未确认状态保留原始代码，不擅自显示成功', () => {
-    expect(mappingStatusLabel('UNKNOWN_STATUS')).toBe('UNKNOWN_STATUS')
+  it('未确认状态展示自然中文兜底，不擅自显示成功', () => {
+    expect(mappingStatusLabel('UNKNOWN_STATUS')).toBe('未知状态')
     expect(mappingStatusTone('UNKNOWN_STATUS')).toBe('info')
   })
 })

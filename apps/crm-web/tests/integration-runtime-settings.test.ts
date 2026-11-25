@@ -43,7 +43,7 @@ describe('IntegrationRuntimeSettings 全局集成开关', () => {
     const wrapper = mountPanel('youzan')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('环境变量默认值')
+    expect(wrapper.text()).toContain('系统默认配置')
     await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.get('[data-testid="integration-runtime-save"]').trigger('click')
     await flushPromises()
@@ -67,7 +67,8 @@ describe('IntegrationRuntimeSettings 全局集成开关', () => {
 
     expect(wrapper.find('[data-testid="wecom-official-enabled"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="wecom-archive-real-enabled"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Q10')
+    expect(wrapper.text()).toContain('企微企业标识（CorpID）')
+    expect(wrapper.text()).not.toContain('Q10')
     expect(wrapper.text()).toContain('开启不代表已采集真实聊天')
     expect(wrapper.find('[data-testid="youzan-real-enabled"]').exists()).toBe(false)
     wrapper.unmount()

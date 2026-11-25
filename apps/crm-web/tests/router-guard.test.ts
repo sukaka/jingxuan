@@ -16,6 +16,7 @@ vi.mock('../src/api/auth', () => ({
   login: vi.fn(),
   logout: vi.fn(),
   fetchMe: vi.fn(),
+  changePassword: vi.fn(),
 }))
 
 const managerUser: AuthUser = {

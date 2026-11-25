@@ -149,7 +149,7 @@ async function submit() {
       type="info"
       :closable="false"
       class="finance-alert"
-      title="财务与收款资料变更须经具有财务审批权限（channel:approve_finance）的他人复核生效，提交人不可自审。"
+      title="财务与收款资料变更须经具有财务审批权限的他人复核生效，提交人不可自审。"
     />
     <el-alert v-if="errorMessage" type="error" :closable="false" :title="errorMessage" class="finance-alert" data-testid="channel-finance-error" />
     <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent>

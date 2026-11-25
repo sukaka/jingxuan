@@ -80,7 +80,7 @@ async function save() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -98,7 +98,7 @@ async function save() {
       <el-alert
         type="warning"
         :closable="false"
-        title="仅在实际到账并人工核验凭证后提交。本操作不是有赞或支付网关回调，也不代替支付渠道验签。"
+        title="仅在实际到账并人工核验凭证后提交。本操作为人工确认收款，不等同于有赞或第三方支付平台的自动到账通知。"
         class="payment-warning"
       />
       <el-descriptions :column="2" border class="payment-summary">
@@ -107,7 +107,7 @@ async function save() {
         <el-descriptions-item label="收款方">{{ order.receiverType === 'PLATFORM' ? '平台收款' : '机构收款' }}</el-descriptions-item>
         <el-descriptions-item label="本次确认金额">¥ {{ payableYuan }}</el-descriptions-item>
       </el-descriptions>
-      <p class="crm-muted payment-hint">当前阶段仅支持按订单应付金额全额确认，不支持部分支付。</p>
+      <p class="crm-muted payment-hint">当前仅支持按订单应付金额全额确认，暂不支持部分支付。</p>
 
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="支付渠道" required>
@@ -121,14 +121,14 @@ async function save() {
         </el-form-item>
         <el-form-item label="实际支付时间" required>
           <el-date-picker v-model="form.paidAt" type="datetime" :clearable="false" class="full-width" data-testid="payment-paid-at" />
-          <div class="crm-muted field-help">提交时会保留支付时间的时区信息，不伪造渠道回执时间。</div>
+          <div class="crm-muted field-help">请按实际到账时间填写，系统将准确保留时区与支付时间。</div>
         </el-form-item>
         <el-form-item label="支付凭证引用" required>
           <el-input v-model="form.evidenceRef" maxlength="192" show-word-limit placeholder="填写可审计的凭证或人工核验记录编号" data-testid="payment-evidence" />
         </el-form-item>
-        <el-form-item label="已上传凭证文件 ID（可选）">
-          <el-input-number v-model="form.voucherFileId" :min="1" :precision="0" :controls="false" class="full-width" placeholder="仅填写系统中已存在的文件 ID" />
-          <div class="crm-muted field-help">本阶段不提供模拟上传；凭证引用始终必填。</div>
+        <el-form-item label="已上传凭证文件编号（可选）">
+          <el-input-number v-model="form.voucherFileId" :min="1" :precision="0" :controls="false" class="full-width" placeholder="填写系统中已上传的凭证文件编号" />
+          <div class="crm-muted field-help">上方支付凭证引用始终必填；如已上传凭证文件，可补充对应文件编号。</div>
         </el-form-item>
         <el-checkbox v-model="form.verified" class="verification-checkbox" data-testid="payment-verified">
           我已核对实际到账、交易号、金额与凭证，确认信息一致

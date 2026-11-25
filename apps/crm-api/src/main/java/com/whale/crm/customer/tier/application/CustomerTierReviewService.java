@@ -153,14 +153,14 @@ public class CustomerTierReviewService {
             throw conflict("客户版本或等级已变化，旧复核单已失效");
         }
         CustomerTierRule active = repository.findActiveRule(review.tenantId())
-                .orElseThrow(() -> conflict("当前没有 ACTIVE 分级规则，旧复核单已失效"));
+                .orElseThrow(() -> conflict("当前没有已启用的分级规则，旧复核单已失效"));
         if (active.id() != review.ruleId()) {
             throw conflict("分级规则版本已变化，旧复核单已失效");
         }
         CustomerTierMetricSnapshot latest = repository.findLatestSnapshot(review.tenantId(), review.customerId())
-                .orElseThrow(() -> conflict("指标快照不存在，旧复核单已失效"));
+                .orElseThrow(() -> conflict("指标评估记录不存在，旧复核单已失效"));
         if (!Objects.equals(latest.id(), review.snapshotId())) {
-            throw conflict("指标快照版本已变化，旧复核单已失效");
+            throw conflict("指标评估记录已更新，旧复核单已失效");
         }
     }
 
@@ -171,7 +171,7 @@ public class CustomerTierReviewService {
 
     private void requireKey(String key) {
         if (key == null || key.isBlank() || key.strip().length() > 128) {
-            throw validation("Idempotency-Key 不能为空且最长 128 字符");
+            throw validation("请求标识不能为空且最长 128 字符");
         }
     }
 

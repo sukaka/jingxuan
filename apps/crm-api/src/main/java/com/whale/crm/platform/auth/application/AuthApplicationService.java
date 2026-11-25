@@ -3,6 +3,7 @@ package com.whale.crm.platform.auth.application;
 import com.github.f4b6a3.ulid.UlidCreator;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.auth.api.dto.AuthUserResponse;
+import com.whale.crm.platform.auth.api.dto.PasswordPolicyResponse;
 import com.whale.crm.platform.auth.domain.LoginSession;
 import com.whale.crm.platform.auth.domain.LoginSessionRepository;
 import com.whale.crm.platform.context.TenantContext;
@@ -49,6 +50,7 @@ public class AuthApplicationService {
     private final PasswordEncoder passwordEncoder;
     private final CaptchaService captchaService;
     private final LoginAttemptService loginAttemptService;
+    private final PasswordPolicyService passwordPolicyService;
 
     public AuthApplicationService(UserRepository userRepository,
                                   CurrentUserService currentUserService,
@@ -58,7 +60,8 @@ public class AuthApplicationService {
                                   AuditService auditService,
                                   PasswordEncoder passwordEncoder,
                                   CaptchaService captchaService,
-                                  LoginAttemptService loginAttemptService) {
+                                  LoginAttemptService loginAttemptService,
+                                  PasswordPolicyService passwordPolicyService) {
         this.userRepository = userRepository;
         this.currentUserService = currentUserService;
         this.institutionAccess = institutionAccess;
@@ -68,6 +71,7 @@ public class AuthApplicationService {
         this.passwordEncoder = passwordEncoder;
         this.captchaService = captchaService;
         this.loginAttemptService = loginAttemptService;
+        this.passwordPolicyService = passwordPolicyService;
     }
 
     @Transactional
@@ -244,6 +248,75 @@ public class AuthApplicationService {
     @Transactional(readOnly = true)
     public AuthUserResponse me(CurrentUser currentUser) {
         return toResponse(currentUser);
+    }
+
+    public PasswordPolicyResponse passwordPolicy() {
+        return passwordPolicyService.currentPolicy();
+    }
+
+    /**
+     * 个人账号自助修改密码：
+     * 1. 限流保护防原密码暴力探测；
+     * 2. 校验新密码复杂度与两次输入一致；
+     * 3. 校验原密码（失败记独立审计与限流计数）；
+     * 4. 校验新密码不可与原密码相同；
+     * 5. 乐观锁更新密码哈希、吊销该用户全部登录会话并写脱敏审计。
+     */
+    @Transactional
+    public void changePassword(CurrentUser currentUser, String currentPassword, String newPassword,
+                               String confirmPassword, String clientIp) {
+        String attemptScope = tenantAttemptScope(currentUser.tenantId());
+        loginAttemptService.checkPasswordChangeAllowed(attemptScope, currentUser.userId(), clientIp);
+        passwordPolicyService.validateNewPassword(newPassword, confirmPassword, currentUser.username());
+
+        SysUser user = userRepository.findById(currentUser.tenantId(), currentUser.userId())
+                .filter(SysUser::isActive)
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "未认证或凭证已失效"));
+
+        String existingHash = user.getPasswordHash();
+        boolean hasLocalPassword = existingHash != null && !existingHash.isBlank();
+        boolean matches = passwordEncoder.matches(currentPassword, hasLocalPassword ? existingHash : DUMMY_HASH);
+        if (!hasLocalPassword || !matches) {
+            try {
+                loginAttemptService.recordPasswordChangeFailure(attemptScope, currentUser.userId(), clientIp);
+            } finally {
+                auditService.recordIndependent(
+                        currentUser.tenantId(),
+                        currentUser.userId(),
+                        AuditService.ACTION_PASSWORD_CHANGE_FAILED,
+                        "USER",
+                        Long.toString(currentUser.userId()),
+                        null,
+                        Map.of("username", currentUser.username()),
+                        hasLocalPassword ? "原密码校验失败" : "账号未设置本地密码");
+            }
+            String message = hasLocalPassword ? "原密码不正确" : "当前账号未设置本地密码，请联系管理员重置";
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, message,
+                    List.of(new ApiResponse.ErrorDetail("currentPassword", message)));
+        }
+
+        passwordPolicyService.validateNotSameAsCurrent(currentPassword, newPassword, existingHash, passwordEncoder);
+
+        String encodedNewPassword = passwordEncoder.encode(newPassword);
+        int updated = userRepository.updatePasswordHash(
+                currentUser.tenantId(), user.getId(), user.getVersion(), encodedNewPassword);
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "账号状态已变更，请刷新后重试");
+        }
+
+        int revokedSessions = loginSessionRepository.revokeAllByUserId(
+                currentUser.tenantId(), user.getId(), Instant.now());
+        loginAttemptService.recordPasswordChangeSuccess(attemptScope, currentUser.userId());
+
+        auditService.record(
+                currentUser.tenantId(),
+                user.getId(),
+                AuditService.ACTION_PASSWORD_CHANGE,
+                "USER",
+                Long.toString(user.getId()),
+                null,
+                Map.of("username", user.getUsername(), "passwordChanged", true, "revokedSessions", revokedSessions),
+                "用户主动修改登录密码");
     }
 
     public AuthUserResponse toResponse(CurrentUser currentUser) {

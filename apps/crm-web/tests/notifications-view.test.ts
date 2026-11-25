@@ -86,7 +86,7 @@ describe('NotificationsView 通知中心', () => {
     expect(listNotifications).toHaveBeenNthCalledWith(1, { page: 1, size: 20 })
     expect(wrapper.text()).toContain('今日跟进提醒')
     expect(wrapper.text()).toContain('客户陈*有待跟进事项')
-    expect(wrapper.text()).toContain('FOLLOWUP #8')
+    expect(wrapper.text()).toContain('客户跟进 #8')
     expect(wrapper.text()).toContain('企微应用')
     expect(wrapper.text()).toContain('企微返回 errcode=***')
 

@@ -68,7 +68,7 @@ async function submit() {
     } else if (error instanceof ApiError && error.isUnauthorized) {
       errorMessage.value = error.message || '用户名或密码错误'
     } else if (error instanceof ApiError && error.isNetworkError) {
-      errorMessage.value = '无法连接后端服务，请确认后端已启动后重试'
+      errorMessage.value = '服务暂时无法连接，请检查网络或稍后重试'
     } else {
       errorMessage.value = error instanceof Error ? error.message : '登录失败，请稍后重试'
     }
@@ -105,7 +105,7 @@ async function submit() {
             <div><span><ShellIcon name="shield" :size="18" /></span><p><strong>权限与审计</strong><small>按角色与数据范围访问真实业务数据</small></p></div>
           </div>
         </div>
-        <p class="login-brand-foot">客户唯一身份不由手机号或昵称替代，业务操作以服务端权限与审计为准。</p>
+        <p class="login-brand-foot">客户唯一身份不由手机号或昵称替代，所有业务操作均按角色权限校验并留存审计记录。</p>
       </section>
 
       <section class="login-form-wrap">

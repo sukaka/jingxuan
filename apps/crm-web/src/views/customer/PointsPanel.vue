@@ -24,7 +24,7 @@ const REASON_OPTIONS = [
 const REASON_LABELS: Record<string, string> = {
   ...Object.fromEntries(REASON_OPTIONS.map((option) => [option.code, option.label])),
   WELCOME: '新客赠送',
-  BIRTHDAY_GIFT: '生日赠送（历史流水）',
+  BIRTHDAY_GIFT: '生日赠送（历史记录）',
 }
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   MANUAL_ADJUST: '人工调整',
@@ -40,7 +40,7 @@ function sourceTypeLabel(value: string): string {
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 404) return '客户不存在或不在你的数据范围内'
+    if (error.status === 404) return '客户不存在或不在您的可见范围内'
     if (error.status === 409 && error.message.includes('余额不足')) {
       return '积分余额不足，调整后不得为负；请修改扣减分值'
     }
@@ -93,7 +93,7 @@ function submissionKey(request: { delta: number; reasonCode: string; reason: str
 async function submitAdjust() {
   if (adjustSubmitting.value) return
   if (adjustForm.delta === undefined || adjustForm.delta === 0 || !Number.isInteger(adjustForm.delta)) {
-    ElMessage.warning('请填写非零整数调整分值(扣减填负数)')
+    ElMessage.warning('请填写非零整数调整分值（扣减请填负数）')
     return
   }
   if (!adjustForm.reasonCode) {
@@ -101,7 +101,7 @@ async function submitAdjust() {
     return
   }
   if (!adjustForm.reason.trim()) {
-    ElMessage.warning('请填写调整原因(将写入审计)')
+    ElMessage.warning('请填写调整原因（将记入操作日志）')
     return
   }
   const request = {
@@ -112,7 +112,7 @@ async function submitAdjust() {
   adjustSubmitting.value = true
   try {
     points.value = await adjustCustomerPoints(props.customerId, request, submissionKey(request))
-    ElMessage.success('积分流水已追加,余额已同步刷新')
+    ElMessage.success('积分记录已新增，余额已同步刷新')
     adjustDialogVisible.value = false
     emit('changed')
   } catch (error) {
@@ -131,7 +131,7 @@ onMounted(load)
       v-if="errorMessage"
       type="error"
       :closable="false"
-      :title="`加载失败:${errorMessage}`"
+      :title="`加载失败：${errorMessage}`"
       class="crm-table-alert"
     />
     <template v-else>
@@ -160,7 +160,7 @@ onMounted(load)
       <el-alert
         type="info"
         :closable="false"
-        title="积分不会因生日或消费自动赠送；只有授权人工调整才追加流水，错误调整需另追冲正。"
+        title="积分不会因生日或消费自动赠送；仅支持授权人员手工调整，如有错误请另行发起冲正。"
         class="points-rule"
       />
 
@@ -193,7 +193,7 @@ onMounted(load)
       <el-alert
         type="warning"
         :closable="false"
-        title="只追加积分流水并写审计；相同内容重试沿用幂等键，不会按生日或消费自动赠送"
+        title="每次调整都会新增独立积分记录并留痕；积分不会按生日或消费自动赠送"
         class="crm-table-alert"
       />
       <el-form label-width="90px">
@@ -206,7 +206,7 @@ onMounted(load)
             class="full-width"
             data-testid="points-delta"
           />
-          <span class="crm-muted">增加填正整数，扣减填负整数；后端拒绝负余额</span>
+          <span class="crm-muted">增加填正整数，扣减填负整数，调整后余额不能为负</span>
         </el-form-item>
         <el-form-item label="调整类型" required>
           <el-select
@@ -232,7 +232,7 @@ onMounted(load)
             :disabled="adjustSubmitting"
             type="textarea"
             :rows="2"
-            placeholder="写入审计快照，必填"
+            placeholder="请填写调整原因（必填，将记入操作日志）"
             data-testid="points-reason"
           />
         </el-form-item>

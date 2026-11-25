@@ -56,7 +56,7 @@ final class ReportQueryFactory {
     static String performanceRole(String value) {
         String role = value == null || value.isBlank() ? "MANAGER" : value.trim().toUpperCase(Locale.ROOT);
         if (!Set.of("MANAGER", "BUSINESS").contains(role)) {
-            throw invalid("业绩角色只支持 MANAGER 或 BUSINESS");
+            throw invalid("业绩统计角色仅支持管家或商务运营");
         }
         return role;
     }

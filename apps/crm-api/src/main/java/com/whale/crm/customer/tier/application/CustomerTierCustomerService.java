@@ -106,7 +106,7 @@ public class CustomerTierCustomerService {
         if (replay.isPresent()) {
             long snapshotId = Long.parseLong(replay.orElseThrow().getResourceId());
             return repository.findSnapshot(tenantId, snapshotId).map(configMapper::toResponse)
-                    .orElseThrow(() -> notFound("原重算快照不存在"));
+                    .orElseThrow(() -> notFound("原重算评估记录不存在"));
         }
         String recalculationKey = "manual:" + customerId + ":" + idempotencyKey.strip();
         Optional<CustomerTierEvaluationResponse> snapshotReplay = repository
@@ -148,7 +148,7 @@ public class CustomerTierCustomerService {
         boolean knownTier = configMapper.levels(active).stream()
                 .anyMatch(level -> level.tierCode().equals(request.tierCode()));
         if (!knownTier) {
-            throw validation("目标等级不属于当前 ACTIVE 规则");
+            throw validation("目标等级不属于当前已启用的分级规则");
         }
         Instant now = Instant.now();
         if (repository.updateTier(tenantId, customerId, request.version(), request.tierCode(),
@@ -189,7 +189,7 @@ public class CustomerTierCustomerService {
 
     private void requireKey(String key) {
         if (key == null || key.isBlank() || key.strip().length() > 128) {
-            throw validation("Idempotency-Key 不能为空且最长 128 字符");
+            throw validation("请求标识不能为空且最长 128 字符");
         }
     }
 

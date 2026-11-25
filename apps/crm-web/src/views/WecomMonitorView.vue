@@ -124,7 +124,7 @@ onMounted(async () => {
 <template>
   <div class="proto-page">
     <PageHeader title="企业微信会话监管" description="按真实合规归档查看最后沟通与回复时长；AI 风险标签仅作辅助，不作为处罚依据"><template #actions><RouterLink to="/customers/ownership-logs" class="el-button">客户归属日志</RouterLink></template></PageHeader>
-    <el-alert v-if="!canRead" type="error" :title="auth.user?.userType === 'INSTITUTION' ? '机构用户无企业微信监管访问权限' : '缺少 wecom:read 权限'" :closable="false" data-testid="wecom-monitor-permission-error" />
+    <el-alert v-if="!canRead" type="error" :title="auth.user?.userType === 'INSTITUTION' ? '机构用户无企业微信监管访问权限' : '当前账号暂无企业微信监管查看权限'" :closable="false" data-testid="wecom-monitor-permission-error" />
     <template v-else>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" style="margin-bottom:14px" data-testid="wecom-monitor-error" />
       <el-alert v-if="monitorError" type="warning" :title="`采集状态暂不可用：${monitorError}`" :closable="false" style="margin-bottom:14px" data-testid="wecom-monitor-status-error" />

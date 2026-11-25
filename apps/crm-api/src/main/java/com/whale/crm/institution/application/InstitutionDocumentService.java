@@ -169,7 +169,7 @@ public class InstitutionDocumentService {
                 throw new BusinessException(ErrorCode.CONFLICT, "上一合同版本不属于该机构");
             }
             if (!"ACTIVE".equals(previous.status())) {
-                throw new BusinessException(ErrorCode.CONFLICT, "只有当前ACTIVE合同可创建下一版本");
+                throw new BusinessException(ErrorCode.CONFLICT, "仅生效中的合同可创建下一版本");
             }
             previousId = previous.id();
             contractNo = previous.contractNo();

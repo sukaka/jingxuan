@@ -31,8 +31,8 @@ const successMessage = ref('')
 
 const providerLabel = computed(() => ({
   disabled: '已关闭',
-  mock: '模拟模式',
-  openai_compatible: 'OpenAI 兼容',
+  mock: '模拟演示模式',
+  openai_compatible: 'OpenAI 兼容接口',
 }[form.provider]))
 const statusLabel = computed(() => ({
   CONNECTED: '连接正常',
@@ -87,7 +87,7 @@ function providerChanged(provider: AiProvider) {
 
 function validate(): boolean {
   if (form.provider === 'openai_compatible' && (!form.baseUrl.trim() || !form.model.trim() || (!apiKeyConfigured.value && !form.apiKey))) {
-    formError.value = '请填写接口地址、模型和 API Key'
+    formError.value = '请填写接口地址（Base URL）、模型名称（Model）和接口密钥（API Key）'
     return false
   }
   formError.value = ''
@@ -145,7 +145,7 @@ onMounted(load)
       <span class="proto-pill success">动态生效</span>
       <div>
         <strong>配置与执行分开管理</strong>
-        <p>Worker 地址与内部令牌仍由部署环境管理。财务写回始终禁用，AI 结果仍需人工确认。</p>
+        <p>后台执行节点地址与内部凭证由部署环境统一管理。财务写回始终禁用，AI 结果仍需人工确认。</p>
       </div>
     </div>
 
@@ -153,32 +153,32 @@ onMounted(load)
     <el-alert v-if="successMessage" class="ai-message" type="success" :title="successMessage" :closable="false" />
 
     <div v-loading="loading" class="ai-config-layout">
-      <PageCard title="服务配置" subtitle="API Key 由服务端加密保存，绝不回显或写入审计日志">
+      <PageCard title="服务配置" subtitle="接口密钥由系统加密保存，绝不回显或写入审计日志">
         <form class="proto-card-body ai-config-form" @submit.prevent="submit(false)">
           <el-form label-position="top">
             <el-form-item label="服务方式">
               <el-radio-group v-model="form.provider" class="ai-provider-options" @change="providerChanged">
                 <el-radio-button value="disabled" data-testid="ai-provider-disabled">关闭</el-radio-button>
-                <el-radio-button value="mock" data-testid="ai-provider-mock">模拟</el-radio-button>
-                <el-radio-button value="openai_compatible" data-testid="ai-provider-openai">OpenAI 兼容</el-radio-button>
+                <el-radio-button value="mock" data-testid="ai-provider-mock">模拟演示</el-radio-button>
+                <el-radio-button value="openai_compatible" data-testid="ai-provider-openai">OpenAI 兼容接口</el-radio-button>
               </el-radio-group>
-              <div class="proto-note">关闭后不发起大模型请求；模拟模式仅用于流程验证，不代表真实模型已联通。</div>
+              <div class="proto-note">关闭后不发起大模型请求；模拟演示模式仅用于流程验证，不代表真实模型已联通。</div>
             </el-form-item>
 
             <template v-if="form.provider === 'openai_compatible'">
-              <el-form-item label="接口地址" required>
+              <el-form-item label="接口地址（Base URL）" required>
                 <el-input v-model="form.baseUrl" data-testid="ai-base-url" placeholder="https://example.com/v1" maxlength="1024" autocomplete="off" />
-                <div class="proto-note">填写 OpenAI 兼容服务的基础地址，由服务端发起连接。</div>
+                <div class="proto-note">填写 OpenAI 兼容服务的基础地址，由系统统一发起连接。</div>
               </el-form-item>
-              <el-form-item label="API Key" :required="!apiKeyConfigured">
-                <el-input v-model="form.apiKey" data-testid="ai-api-key" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="输入新的 API Key" />
-                <div class="proto-note ai-key-state">{{ apiKeyConfigured ? '已配置，留空保持不变' : '尚未配置，请填写 API Key' }}；填写新值将替换原 Key。</div>
+              <el-form-item label="接口密钥（API Key）" :required="!apiKeyConfigured">
+                <el-input v-model="form.apiKey" data-testid="ai-api-key" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="请输入新的接口密钥" />
+                <div class="proto-note ai-key-state">{{ apiKeyConfigured ? '已配置，留空保持不变' : '尚未配置，请填写接口密钥' }}；填写新值将替换原密钥。</div>
               </el-form-item>
             </template>
 
             <div v-if="form.provider !== 'disabled'" class="proto-form-grid">
-              <el-form-item label="模型" :required="form.provider === 'openai_compatible'">
-                <el-input v-model="form.model" data-testid="ai-model" placeholder="例如 gpt-4o-mini" maxlength="128" />
+              <el-form-item label="模型名称（Model）" :required="form.provider === 'openai_compatible'">
+                <el-input v-model="form.model" data-testid="ai-model" placeholder="例如：gpt-4o-mini" maxlength="128" />
               </el-form-item>
               <el-form-item label="超时时间（秒）" required>
                 <el-input-number v-model="form.timeoutSeconds" data-testid="ai-timeout" :min="1" :max="300" :step="1" step-strictly controls-position="right" />
@@ -201,7 +201,7 @@ onMounted(load)
         </form>
       </PageCard>
 
-      <PageCard title="运行状态" subtitle="状态来自服务端最近一次连接测试">
+      <PageCard title="运行状态" subtitle="状态来自最近一次连接测试结果">
         <div class="proto-card-body ai-status-body">
           <div class="ai-status-heading">
             <span class="proto-pill" :class="statusClass">{{ statusLabel }}</span>
@@ -209,7 +209,7 @@ onMounted(load)
           </div>
           <dl class="ai-status-list">
             <div><dt>任务执行</dt><dd>{{ form.enabled && form.provider !== 'disabled' ? '已允许' : '已暂停' }}</dd></div>
-            <div><dt>API Key</dt><dd>{{ apiKeyConfigured ? '已配置' : '未配置' }}</dd></div>
+            <div><dt>接口密钥（API Key）</dt><dd>{{ apiKeyConfigured ? '已配置' : '未配置' }}</dd></div>
             <div><dt>最近连接</dt><dd>{{ formatDateTime(lastConnectedAt) }}</dd></div>
             <div><dt>配置版本</dt><dd>{{ version }}</dd></div>
           </dl>

@@ -137,4 +137,34 @@ class LoginAttemptServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(ex -> ((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.RATE_LIMITED);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void passwordChangeAttemptsAreIsolatedFromLoginAttemptsAndClearOnSuccess() {
+        Map<String, Long> store = new HashMap<>();
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.get(anyString())).thenAnswer(inv -> {
+            Long val = store.get(inv.getArgument(0, String.class));
+            return val == null ? null : Long.toString(val);
+        });
+        when(redis.execute(any(RedisScript.class), anyList(), anyString())).thenAnswer(inv -> {
+            String key = inv.<java.util.List<String>>getArgument(1).getFirst();
+            return store.merge(key, 1L, Long::sum);
+        });
+        when(redis.delete(anyString())).thenAnswer(inv -> store.remove(inv.getArgument(0, String.class)) != null);
+
+        service.recordPasswordChangeFailure("tenant:1", 42L, "198.51.100.70");
+        service.recordPasswordChangeFailure("tenant:1", 42L, "198.51.100.71");
+        assertThatThrownBy(() -> service.recordPasswordChangeFailure("tenant:1", 42L, "198.51.100.72"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.RATE_LIMITED);
+
+        // Password change lock must not block normal login bucket
+        assertThatCode(() -> service.checkAllowed("tenant:1", "alice", "198.51.100.70"))
+                .doesNotThrowAnyException();
+
+        service.recordPasswordChangeSuccess("tenant:1", 42L);
+        assertThatCode(() -> service.checkPasswordChangeAllowed("tenant:1", 42L, "198.51.100.73"))
+                .doesNotThrowAnyException();
+    }
 }

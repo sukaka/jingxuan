@@ -42,7 +42,7 @@ watch(entitlement, (value) => {
         class="ledger-alert"
       />
       <div class="trading-balance-card">
-        <small>权威流水汇总可用次数</small>
+        <small>当前可用次数（按流水汇总）</small>
         <strong>{{ detail.availableBalance }}</strong>
         <span> 次</span>
       </div>
@@ -51,8 +51,8 @@ watch(entitlement, (value) => {
         <el-descriptions-item label="客户">{{ customerLabel(entitlement.customerId) }}</el-descriptions-item>
         <el-descriptions-item label="来源订单行">#{{ entitlement.orderItemId }}</el-descriptions-item>
         <el-descriptions-item label="发放次数">{{ entitlement.grantedCount }}</el-descriptions-item>
-        <el-descriptions-item label="同事务余额快照">{{ entitlement.availableCount }}</el-descriptions-item>
-        <el-descriptions-item label="销售版本">V{{ entitlement.versionNo }}</el-descriptions-item>
+        <el-descriptions-item label="当前记录余额">{{ entitlement.availableCount }}</el-descriptions-item>
+        <el-descriptions-item label="销售版本">第 {{ entitlement.versionNo }} 版</el-descriptions-item>
         <el-descriptions-item label="生效日期">{{ entitlement.validFrom || '-' }}</el-descriptions-item>
         <el-descriptions-item label="到期日期">{{ entitlement.validTo || '-' }}</el-descriptions-item>
         <el-descriptions-item label="状态">
@@ -60,7 +60,7 @@ watch(entitlement, (value) => {
         </el-descriptions-item>
       </el-descriptions>
 
-      <h4 class="trading-section-title">权益流水（不可覆盖历史）</h4>
+      <h4 class="trading-section-title">权益流水（历史记录不可修改）</h4>
       <app-table :data="detail.ledger" size="small">
         <el-table-column label="记账时间" width="158">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
@@ -79,7 +79,7 @@ watch(entitlement, (value) => {
             <span class="crm-muted">{{ row.sourceRef }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="幂等键" min-width="190">
+        <el-table-column label="流水编号" min-width="190">
           <template #default="{ row }"><span class="trading-ledger-key">{{ row.idempotencyKey }}</span></template>
         </el-table-column>
         <el-table-column label="操作人 / 原因" min-width="135">
@@ -88,7 +88,7 @@ watch(entitlement, (value) => {
             <span class="crm-muted">{{ row.reason || '-' }}</span>
           </template>
         </el-table-column>
-        <template #empty><el-empty description="暂无流水记录，请核对后端数据" /></template>
+        <template #empty><el-empty description="暂无流水记录" /></template>
       </app-table>
     </template>
     <template #footer>

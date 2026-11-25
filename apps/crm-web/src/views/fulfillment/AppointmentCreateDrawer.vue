@@ -47,6 +47,7 @@ const optionsError = ref('')
 const saving = ref(false)
 const idempotencyKey = ref('')
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+const timeZoneLabel = timeZone === 'Asia/Shanghai' ? '北京时间' : '本地时间'
 let customerSequence = 0
 let institutionSequence = 0
 let optionsSequence = 0
@@ -214,7 +215,7 @@ async function save() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -271,7 +272,7 @@ async function save() {
           </div>
           <div v-else-if="institutionHasMore" class="fulfillment-option-feedback">机构结果较多，请继续缩小关键词。</div>
         </el-form-item>
-        <el-form-item :label="`计划到院时间（${timeZone}）`" required>
+        <el-form-item :label="`计划到院时间（${timeZoneLabel}）`" required>
           <el-date-picker v-model="form.scheduledAt" type="datetime" :clearable="false" class="full-width" data-testid="appointment-scheduled-at" />
         </el-form-item>
         <el-form-item label="预约备注（可选）">

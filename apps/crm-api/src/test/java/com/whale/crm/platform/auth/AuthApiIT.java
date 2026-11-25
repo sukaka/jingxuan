@@ -602,4 +602,208 @@ class AuthApiIT extends AbstractMysqlIT {
             SecurityContextHolder.clearContext();
         }
     }
+
+    @Test
+    void passwordPolicy_requiresAuthAndReturnsActiveComplexityRules() throws Exception {
+        mockMvc.perform(get("/api/v1/auth/password-policy"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+
+        AuthCookies manager = login("manager1");
+        mockMvc.perform(get("/api/v1/auth/password-policy").cookie(manager.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.minLength").value(8))
+                .andExpect(jsonPath("$.data.maxLength").value(64))
+                .andExpect(jsonPath("$.data.requireUppercase").value(true))
+                .andExpect(jsonPath("$.data.requireLowercase").value(true))
+                .andExpect(jsonPath("$.data.requireDigit").value(true))
+                .andExpect(jsonPath("$.data.requireSpecial").value(true))
+                .andExpect(jsonPath("$.data.forbidWhitespace").value(true))
+                .andExpect(jsonPath("$.data.forbidUsername").value(true))
+                .andExpect(jsonPath("$.data.forbidSameAsCurrent").value(true));
+    }
+
+    @Test
+    void changeOwnPassword_enforcesSecurityComplexityAndRevokesAllSessions() throws Exception {
+        AuthCookies admin = login("admin");
+        String username = "it_self_pw_user";
+        String initialPass = "InitPass@123";
+        String nextPass = "NextStrong#456";
+
+        mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", username,
+                                "displayName", "自助改密测试",
+                                "password", initialPass,
+                                "userType", "INSTITUTION"))))
+                .andExpect(status().isCreated());
+
+        AuthCookies sessionA = mockLogin(username, initialPass);
+        AuthCookies sessionB = mockLogin(username, initialPass);
+
+        // 1. Unauthenticated without CSRF -> 403 CSRF_TOKEN_INVALID; with CSRF but no session -> 401 UNAUTHORIZED
+        mockMvc.perform(post("/api/v1/auth/password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", initialPass,
+                                "newPassword", nextPass,
+                                "confirmPassword", nextPass))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CSRF_TOKEN_INVALID"));
+
+        mockMvc.perform(post("/api/v1/auth/password")
+                        .cookie(new Cookie("CRM_CSRF", "anon-csrf"))
+                        .header("X-CSRF-Token", "anon-csrf")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", initialPass,
+                                "newPassword", nextPass,
+                                "confirmPassword", nextPass))))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+
+        // 2. Missing CSRF -> 403 CSRF_TOKEN_INVALID
+        mockMvc.perform(post("/api/v1/auth/password")
+                        .cookie(sessionA.cookies())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", initialPass,
+                                "newPassword", nextPass,
+                                "confirmPassword", nextPass))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CSRF_TOKEN_INVALID"));
+
+        // 3. Weak complexity -> 400 VALIDATION_FAILED
+        mockMvc.perform(sessionA.withAuth(post("/api/v1/auth/password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", initialPass,
+                                "newPassword", "weakpass123",
+                                "confirmPassword", "weakpass123"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details[0].field").value("newPassword"));
+
+        // 4. Confirm mismatch -> 400 VALIDATION_FAILED
+        mockMvc.perform(sessionA.withAuth(post("/api/v1/auth/password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", initialPass,
+                                "newPassword", nextPass,
+                                "confirmPassword", "OtherStrong#789"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details[0].field").value("confirmPassword"));
+
+        // 5. Wrong current password -> 400 VALIDATION_FAILED (session stays alive)
+        mockMvc.perform(sessionA.withAuth(post("/api/v1/auth/password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", "WrongOld@123",
+                                "newPassword", nextPass,
+                                "confirmPassword", nextPass))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details[0].field").value("currentPassword"));
+
+        mockMvc.perform(get("/api/v1/auth/me").cookie(sessionA.cookies()))
+                .andExpect(status().isOk());
+
+        // 6. Same as current password -> 400 VALIDATION_FAILED
+        mockMvc.perform(sessionA.withAuth(post("/api/v1/auth/password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", initialPass,
+                                "newPassword", initialPass,
+                                "confirmPassword", initialPass))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details[0].field").value("newPassword"));
+
+        // 7. Valid change -> 200 OK, cookies cleared, ALL sessions revoked, audit written without password
+        mockMvc.perform(sessionA.withAuth(post("/api/v1/auth/password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "currentPassword", initialPass,
+                                "newPassword", nextPass,
+                                "confirmPassword", nextPass))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("OK"))
+                .andExpect(cookie().maxAge("CRM_TOKEN", 0))
+                .andExpect(cookie().maxAge("CRM_CSRF", 0));
+
+        mockMvc.perform(get("/api/v1/auth/me").cookie(sessionA.cookies()))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/auth/me").cookie(sessionB.cookies()))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginPayload(username, initialPass)))
+                .andExpect(status().isUnauthorized());
+        mockLogin(username, nextPass);
+
+        String auditAfter = jdbcTemplate.queryForObject(
+                "SELECT after_json FROM crm_audit_log WHERE action_code='PASSWORD_CHANGE' ORDER BY id DESC LIMIT 1",
+                String.class);
+        org.assertj.core.api.Assertions.assertThat(auditAfter)
+                .contains(username)
+                .doesNotContain(initialPass)
+                .doesNotContain(nextPass)
+                .doesNotContain("$2a$");
+    }
+
+    @Test
+    void changeOwnPassword_repeatedWrongCurrentPasswordIsRateLimited() throws Exception {
+        AuthCookies admin = login("admin");
+        String username = "it_pw_rl_user";
+        String initialPass = "InitPass@123";
+        mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", username,
+                                "displayName", "改密限流测试",
+                                "password", initialPass,
+                                "userType", "EMPLOYEE"))))
+                .andExpect(status().isCreated());
+
+        AuthCookies userSession = mockLogin(username, initialPass);
+        String testIp = "192.0.2.88";
+        String payload = objectMapper.writeValueAsString(Map.of(
+                "currentPassword", "WrongOld@999",
+                "newPassword", "ValidNew#2026",
+                "confirmPassword", "ValidNew#2026"));
+
+        long userId = jdbcTemplate.queryForObject(
+                "SELECT id FROM sys_user WHERE tenant_id=1 AND username=?", Long.class, username);
+        try {
+            for (int attempt = 1; attempt <= 4; attempt++) {
+                mockMvc.perform(userSession.withAuth(post("/api/v1/auth/password"))
+                                .with(req -> {
+                                    req.setRemoteAddr(testIp);
+                                    return req;
+                                })
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(payload))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+            }
+            mockMvc.perform(userSession.withAuth(post("/api/v1/auth/password"))
+                            .with(req -> {
+                                req.setRemoteAddr(testIp);
+                                return req;
+                            })
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(payload))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(header().string("Retry-After", "900"))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+
+            // Normal login remains unaffected by password-change lockout
+            mockLogin(username, initialPass);
+        } finally {
+            loginAttemptService.recordPasswordChangeSuccess("tenant:1", userId);
+        }
+    }
 }

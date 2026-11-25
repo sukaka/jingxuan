@@ -201,7 +201,7 @@ public class InstitutionProfileService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "机构不存在"));
         support.requireChange(tenantId, profile, user);
         if (!"PENDING".equals(profile.status()) || !profile.version().equals(request.baseVersion())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "只有版本一致的PENDING机构可申请激活");
+            throw new BusinessException(ErrorCode.CONFLICT, "仅待激活状态的机构可申请激活，请刷新后重试");
         }
         requireComplete(profile);
         support.requireClean(tenantId, profile.id(), request.evidenceFileId(), FileClassification.CHANGE_EVIDENCE);
@@ -218,7 +218,7 @@ public class InstitutionProfileService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "机构不存在"));
         support.requireChange(tenantId, profile, user);
         if (!profile.version().equals(request.baseVersion())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "baseVersion与机构当前版本不一致");
+            throw new BusinessException(ErrorCode.CONFLICT, "机构信息已被更新，请刷新后重试");
         }
         String normalized = InstitutionFieldPolicy.normalize(request.fieldCode(), request.newValue());
         Object before = InstitutionFieldPolicy.currentValue(profile, request.fieldCode(), support);

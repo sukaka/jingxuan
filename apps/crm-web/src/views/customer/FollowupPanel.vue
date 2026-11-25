@@ -30,7 +30,7 @@ const errorMessage = ref('')
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 404) return '客户不存在或不在你的数据范围内'
+    if (error.status === 404) return '客户不存在或不在您的可见范围内'
     return error.message
   }
   return error instanceof Error ? error.message : '未知错误'
@@ -130,7 +130,7 @@ defineExpose({ reload: () => load() })
       v-if="errorMessage"
       type="error"
       :closable="false"
-      :title="`加载失败:${errorMessage}`"
+      :title="`加载失败：${errorMessage}`"
       class="crm-table-alert"
     />
 
@@ -150,7 +150,7 @@ defineExpose({ reload: () => load() })
       <el-table-column label="意向项目" width="120">
         <template #default="{ row }">{{ row.intentProject ?? '-' }}</template>
       </el-table-column>
-      <el-table-column label="预计金额(元)" width="110" align="right">
+      <el-table-column label="预计金额（元）" width="120" align="right">
         <template #default="{ row }">{{ fenToYuan(row.estimatedAmountFen) }}</template>
       </el-table-column>
       <el-table-column label="下次跟进" width="160">
@@ -169,7 +169,7 @@ defineExpose({ reload: () => load() })
         </template>
       </el-table-column>
       <template #empty>
-        <span>暂无跟进记录{{ auth.hasPermission('followup:write') ? ',点击「登记跟进」记录今天与客户的沟通' : '' }}</span>
+        <span>暂无跟进记录{{ auth.hasPermission('followup:write') ? '，点击「登记跟进」记录今天与客户的沟通' : '' }}</span>
       </template>
     </app-table>
 

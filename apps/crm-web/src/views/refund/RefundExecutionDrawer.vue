@@ -77,7 +77,7 @@ async function saveExecution() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -106,11 +106,11 @@ async function saveSuccess() {
       evidenceRef: form.evidenceRef.trim(),
       voucherFileId: form.voucherFileId,
     }, idempotencyKey)
-    ElMessage.success('真实退款成功已确认，订单退款额与权益回收已按后端事务处理')
+    ElMessage.success('退款成功已确认，订单退款金额与权益回收已同步更新')
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -120,11 +120,11 @@ async function saveSuccess() {
 <template>
   <el-drawer :model-value="modelValue" :title="mode === 'execute' ? '登记退款执行' : '人工复核退款成功'" size="min(680px, 100vw)" class="crm-ui" @update:model-value="updateVisible">
     <template v-if="refund">
-      <el-alert :type="mode === 'execute' ? 'info' : 'warning'" :closable="false" :title="mode === 'execute' ? '本步骤只登记执行，不代表资金已退回，也不会回收权益。' : '仅在真实退款结果、金额和凭证均已人工核对后确认；此操作不是供应商回调。'" class="finance-action-note" />
+      <el-alert :type="mode === 'execute' ? 'info' : 'warning'" :closable="false" :title="mode === 'execute' ? '本步骤只登记执行，不代表资金已退回，也不会回收权益。' : '仅在真实退款结果、金额和凭证均已人工核对后确认；此操作为人工确认，非渠道自动回执。'" class="finance-action-note" />
       <div class="finance-order-facts"><strong>{{ refund.refundNo }}</strong><span>批准金额 ¥{{ fenToYuan(refund.approvedFen) }} · 当前成功金额 ¥{{ fenToYuan(refund.succeededFen) }}</span></div>
       <el-form label-position="top" @submit.prevent>
         <template v-if="mode === 'execute'">
-          <el-form-item label="退款通道" required><el-select v-model="form.provider" class="finance-field" data-testid="refund-provider"><el-option label="银行转账" value="BANK_TRANSFER" /><el-option label="线下退款" value="OFFLINE" /><el-option label="模拟验签通道（仅本地测试）" value="MOCK" /></el-select></el-form-item>
+          <el-form-item label="退款通道" required><el-select v-model="form.provider" class="finance-field" data-testid="refund-provider"><el-option label="银行转账" value="BANK_TRANSFER" /><el-option label="线下退款" value="OFFLINE" /><el-option label="模拟演示通道（仅测试环境）" value="MOCK" /></el-select></el-form-item>
           <el-form-item label="退款流水号" required><el-input v-model="form.externalRefundNo" maxlength="128" placeholder="银行转账、线下或模拟退款编号" data-testid="refund-external-no" /></el-form-item>
           <el-form-item label="执行金额（分）" required><el-input-number v-model="form.amountFen" :min="1" :max="refund.approvedFen" :precision="0" :controls="false" class="finance-field" disabled /><div class="finance-field-help">折合 ¥{{ fenToYuan(form.amountFen) }}，必须与批准金额一致。</div></el-form-item>
           <el-form-item label="执行凭证编号（可选）"><el-input v-model="form.evidenceRef" maxlength="192" placeholder="执行登记或人工核验编号" /></el-form-item>
@@ -134,7 +134,7 @@ async function saveSuccess() {
             <el-select v-model="form.externalRefundNo" class="finance-field" data-testid="refund-success-execution" @change="selectExecution">
               <el-option v-for="payment in pendingPayments" :key="payment.id" :label="`${providerLabel(payment.provider)} · ${payment.externalRefundNo} · ¥${fenToYuan(payment.amountFen)}`" :value="payment.externalRefundNo" />
             </el-select>
-            <div v-if="pendingPayments.length === 0" class="finance-field-help">没有可人工确认的执行记录；模拟退款必须通过验签回调确认。</div>
+            <div v-if="pendingPayments.length === 0" class="finance-field-help">没有可人工确认的执行记录；模拟演示通道需通过渠道回执确认。</div>
           </el-form-item>
           <el-form-item label="成功金额（分）" required><el-input-number v-model="form.amountFen" :min="1" :precision="0" :controls="false" class="finance-field" disabled /><div class="finance-field-help">以执行记录金额为准，折合 ¥{{ fenToYuan(form.amountFen) }}。</div></el-form-item>
           <el-form-item label="实际成功时间（本地时间）" required><el-date-picker v-model="form.succeededAt" type="datetime" :clearable="false" class="finance-field" data-testid="refund-succeeded-at" /></el-form-item>

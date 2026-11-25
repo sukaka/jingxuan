@@ -103,17 +103,17 @@ onMounted(() => { void load(1) })
     <PageHeader title="会员权益" description="按订单和子项目独立计算剩余次数；选 N 项不等于 N 次，每次核销必须经机构确认"><template #actions><RouterLink to="/orders?create=1" class="el-button el-button--primary">＋ 新增权益订单</RouterLink></template></PageHeader>
     <div class="proto-stat-grid"><StatCard label="全部剩余次数" :value="`${totalAvailable} 次`" sub="当前页权益余额" icon="heart" /><StatCard label="有可用权益的客户" :value="`${customerCount} 位`" sub="当前页按客户去重" icon="users" /><StatCard label="临近到期（30天）" :value="`${expiringCount} 项`" sub="未过期且可用权益" icon="calendar" /><StatCard label="已正式核销" :value="`${redeemedCount} 次`" sub="仅统计正式核销流水" icon="check" /></div>
     <PageCard>
-      <div class="proto-toolbar"><el-input v-model="keyword" placeholder="搜索客户、项目、订单" clearable style="width:250px" /><el-select v-model="status" placeholder="权益状态" clearable style="width:130px" data-testid="entitlement-status"><el-option label="可用" value="AVAILABLE" /></el-select><el-date-picker v-model="validTo" type="date" value-format="YYYY-MM-DD" placeholder="到期日截至" style="width:160px" data-testid="entitlement-valid-to" /><el-checkbox v-model="availableOnly" data-testid="entitlement-available-only">余额 &gt; 0</el-checkbox><el-button data-testid="apply-entitlement-filters" @click="load(1)">查询</el-button><span class="proto-note">筛选与分页在后端执行</span></div><el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" /><div class="proto-table-wrap">
+      <div class="proto-toolbar"><el-input v-model="keyword" placeholder="搜索客户、项目、订单" clearable style="width:250px" /><el-select v-model="status" placeholder="权益状态" clearable style="width:130px" data-testid="entitlement-status"><el-option label="可用" value="AVAILABLE" /></el-select><el-date-picker v-model="validTo" type="date" value-format="YYYY-MM-DD" placeholder="到期日截至" style="width:160px" data-testid="entitlement-valid-to" /><el-checkbox v-model="availableOnly" data-testid="entitlement-available-only">余额 &gt; 0</el-checkbox><el-button data-testid="apply-entitlement-filters" @click="load(1)">查询</el-button><span class="proto-note">支持按状态、到期日与剩余次数实时筛选</span></div><el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" /><div class="proto-table-wrap">
         <app-table v-loading="loading" :data="filtered">
           <el-table-column label="客户 / 订单" min-width="125"><template #default="{row}">{{ customerLabel(row.customerId) }}<div class="proto-subcell">订单行 #{{ row.orderItemId }}</div></template></el-table-column>
-          <el-table-column label="购买卡项" min-width="160"><template #default="{row}">{{ row.projectName || `项目 #${row.projectId}` }}<div class="proto-subcell">V{{ row.versionNo }}</div></template></el-table-column>
+          <el-table-column label="购买卡项" min-width="160"><template #default="{row}">{{ row.projectName || `项目 #${row.projectId}` }}<div class="proto-subcell">第 {{ row.versionNo }} 版</div></template></el-table-column>
           <el-table-column prop="grantedCount" label="购买次数" width="90" align="right" />
           <el-table-column label="已核销" width="85" align="right"><template #default="{row}">{{ redeemed(row.id) }}</template></el-table-column>
           <el-table-column label="已退次数" width="85" align="right"><template #default="{row}">{{ returned(row.id) }}</template></el-table-column>
           <el-table-column label="剩余可用" width="100" align="right"><template #default="{row}"><strong class="available">{{ row.availableCount }}</strong></template></el-table-column>
           <el-table-column label="有效期" min-width="150"><template #default="{row}">{{ row.validFrom || '—' }}<div class="proto-subcell">至 {{ row.validTo || '未设到期日' }}</div></template></el-table-column>
           <el-table-column label="进度" min-width="145"><template #default="{row}"><el-progress :percentage="progress(row)" :stroke-width="8" /><el-button text @click="openDetail(row)">流水详情</el-button></template></el-table-column>
-          <template #empty>暂无权益；可信支付确认后才会发放</template>
+          <template #empty>暂无权益；支付确认后自动发放</template>
         </app-table>
       </div>
       <el-pagination
@@ -128,7 +128,7 @@ onMounted(() => { void load(1) })
         @size-change="load(1)"
       />
     </PageCard>
-    <div class="proto-banner entitlement-note"><div><strong>套餐模型设计提示</strong><p>“选 N 项”是组合规则，不等于 N 次服务。具体项目、次数、机构和有效期均以订单快照为准。</p></div><span class="proto-pill info">只读权威账本</span></div>
+    <div class="proto-banner entitlement-note"><div><strong>套餐权益说明</strong><p>“选 N 项”是自选项目数量，不等于服务次数。具体项目、次数、适用机构及有效期均以下单时锁定的规则为准。</p></div><span class="proto-pill info">权益台账</span></div>
     <EntitlementDetailDrawer v-model="detailVisible" :detail="selected" />
   </div>
 </template>

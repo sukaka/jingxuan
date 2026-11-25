@@ -48,8 +48,32 @@ public class DictionaryApplicationService {
     public DictionaryOptionResponse requireActiveOption(long tenantId, String dictCode, String optionCode) {
         DictionaryItem item = dictionaryRepository.findActiveOption(tenantId, dictCode, optionCode)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT,
-                        "字典 " + dictCode + " 的选项 " + optionCode + " 不存在或已停用，不能用于新业务"));
+                        "「" + dictionaryDisplayName(tenantId, dictCode) + "」中的所选配置项不存在或已停用，不能用于新业务"));
         return new DictionaryOptionResponse(item.getOptionCode(), item.getOptionLabel(), item.getSortNo());
+    }
+
+    private String dictionaryDisplayName(long tenantId, String dictCode) {
+        return dictionaryRepository.findTypeByCode(tenantId, dictCode)
+                .map(com.whale.crm.platform.dictionary.domain.DictionaryType::getDictName)
+                .filter(name -> name != null && !name.isBlank())
+                .orElseGet(() -> switch (dictCode) {
+                    case "customerTags" -> "客户标签";
+                    case "cities" -> "城市";
+                    case "customerSources" -> "客户来源";
+                    case "customerChannels" -> "客户渠道";
+                    case "customerStatuses" -> "客户状态";
+                    case "customerTiers" -> "客户等级";
+                    case "orderTypes" -> "订单类型";
+                    case "communicationChannels" -> "沟通方式";
+                    case "taskTypes" -> "任务类型";
+                    case "refundReasons" -> "退款原因";
+                    case "materialTypes" -> "素材类型";
+                    case "institutionBusinessTypes" -> "机构业务类型";
+                    case "institutionOwnerships" -> "机构性质";
+                    case "merchantGrades" -> "商户等级";
+                    case "settlementTypes" -> "机构结算方式";
+                    default -> "数据字典";
+                });
     }
 
     @Transactional(readOnly = true)

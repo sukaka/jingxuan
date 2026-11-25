@@ -51,26 +51,26 @@ onMounted(load)
     <div class="integration-runtime-settings__head">
       <div>
         <h3>真实接入全局开关</h3>
-        <p>仅控制当前企业，保存后立即生效，无需重启。供应商授权、凭证及 Q10/Q11 验收仍需独立完成。</p>
+        <p>仅控制当前企业，保存后立即生效，无需重启。平台授权、凭证配置及对接验收仍需独立完成。</p>
       </div>
       <el-button type="primary" :loading="saving" :disabled="!!loadError" data-testid="integration-runtime-save" @click="save">保存开关</el-button>
     </div>
     <el-alert v-if="loadError" type="error" :closable="false" :title="loadError" />
     <template v-else>
-      <div class="integration-runtime-settings__source">配置来源：{{ source === 'DATABASE' ? '页面配置' : '环境变量默认值（保存后由页面配置接管）' }}</div>
+      <div class="integration-runtime-settings__source">配置来源：{{ source === 'DATABASE' ? '页面配置' : '系统默认配置（保存后以页面配置为准）' }}</div>
       <el-form label-position="top" @submit.prevent>
-        <el-form-item v-if="props.provider === 'youzan'" label="有赞真实订单同步（FEATURE_REAL_YOUZAN）">
+        <el-form-item v-if="props.provider === 'youzan'" label="有赞真实订单同步">
           <el-switch v-model="form.youzanRealEnabled" active-text="允许真实接入" inactive-text="禁用" data-testid="youzan-real-enabled" />
           <div class="integration-runtime-settings__note">还需逐一启用店铺同步、完成授权和连接测试；开启本身不会拉取订单或确认支付。</div>
         </el-form-item>
         <template v-else>
-          <el-form-item label="企微官方客户联系 API（WECOM_OFFICIAL_ENABLED）">
-            <el-switch v-model="form.wecomOfficialEnabled" active-text="允许官方 API" inactive-text="使用模拟/禁用" data-testid="wecom-official-enabled" />
-            <div class="integration-runtime-settings__note">还需在服务端配置真实 CorpID、Secret 和回调参数，并维护启用的成员映射。</div>
+          <el-form-item label="企业微信官方客户联系接口">
+            <el-switch v-model="form.wecomOfficialEnabled" active-text="启用官方接口" inactive-text="模拟演示 / 关闭" data-testid="wecom-official-enabled" />
+            <div class="integration-runtime-settings__note">还需在系统配置真实的企微企业标识（CorpID）、应用密钥（Secret）和回调参数，并维护启用的成员映射。</div>
           </el-form-item>
-          <el-form-item label="企微真实会话归档（FEATURE_REAL_WECOM）">
-            <el-switch v-model="form.wecomArchiveRealEnabled" active-text="允许真实归档" inactive-text="使用模拟/禁用" data-testid="wecom-archive-real-enabled" />
-            <div class="integration-runtime-settings__note">Q10 与官方 Finance SDK 尚未验收完成；开启不代表已采集真实聊天，未授权时仍拒绝归档。</div>
+          <el-form-item label="企业微信真实会话归档">
+            <el-switch v-model="form.wecomArchiveRealEnabled" active-text="启用真实归档" inactive-text="模拟演示 / 关闭" data-testid="wecom-archive-real-enabled" />
+            <div class="integration-runtime-settings__note">企业微信官方会话存档能力尚未完成对接验收；开启不代表已采集真实聊天，未获授权时系统仍会拒绝归档。</div>
           </el-form-item>
         </template>
       </el-form>

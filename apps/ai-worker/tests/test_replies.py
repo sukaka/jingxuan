@@ -154,7 +154,7 @@ def test_mock_reply_acknowledges_consented_recent_messages_without_trusting_inje
     resp = client.post("/api/v1/replies/generate", json=body, headers=HEADERS)
     assert resp.status_code == 200
     suggestion = resp.json()["suggestion"]
-    assert "最近1条已授权聊天上下文" in suggestion["reason"]
+    assert "最近1条已授权聊天记录" in suggestion["reason"]
     assert "调整时间" in suggestion["reply"]
     assert "99" not in suggestion["reply"]
     assert "已退款" not in suggestion["reply"]

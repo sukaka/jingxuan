@@ -34,8 +34,8 @@ const successMessage = ref('')
 
 const providerLabel = computed(() => ({
   disabled: '已关闭',
-  mock: '模拟模式',
-  dify: 'Dify Chatflow',
+  mock: '模拟演示模式',
+  dify: 'Dify 知识对话（Chatflow）',
 }[form.provider]))
 const statusLabel = computed(() => ({
   CONNECTED: '连接正常',
@@ -96,12 +96,12 @@ function providerChanged(provider: KnowledgeProvider) {
 
 function validate(): boolean {
   if (form.provider === 'dify' && (!form.baseUrl.trim() || (!apiKeyConfigured.value && !form.apiKey))) {
-    formError.value = '请填写 Dify 接口地址和 API Key'
+    formError.value = '请填写 Dify 接口基础地址（Base URL）和应用密钥（API Key）'
     return false
   }
   if (form.provider === 'dify' && form.syncEnabled
       && (!form.datasetId.trim() || (!datasetApiKeyConfigured.value && !form.datasetApiKey))) {
-    formError.value = '启用同步前请填写知识数据集 ID 和知识数据集 API 密钥'
+    formError.value = '启用同步前请填写知识数据集编号（Dataset ID）和知识数据集密钥（Dataset API Key）'
     return false
   }
   formError.value = ''
@@ -155,13 +155,13 @@ onMounted(load)
 
 <template>
   <div class="proto-page knowledge-settings-page">
-    <PageHeader title="知识库配置" description="独立配置 Dify Chatflow，不改变现有会话证据抽取服务。" />
+    <PageHeader title="知识库配置" description="独立配置 Dify 知识库服务，不影响现有会话证据抽取能力。" />
 
     <div class="knowledge-notice">
       <span class="proto-pill warning">默认安全关闭</span>
       <div>
         <strong>先验证连接，再开放知识能力</strong>
-        <p>资料同步按阶段开放，公开问答仍未开放。真实 Dify 还受部署开关与 Q19 合规确认限制，模拟模式不代表真实联通。</p>
+        <p>资料同步逐步开放，公开问答暂未开放。启用真实 Dify 需满足系统部署开关与合规确认条件，模拟演示模式不代表真实联通。</p>
       </div>
     </div>
 
@@ -169,34 +169,34 @@ onMounted(load)
     <el-alert v-if="successMessage" class="knowledge-message" type="success" :title="successMessage" :closable="false" />
 
     <div v-loading="loading" class="knowledge-layout">
-      <PageCard title="Dify 服务" subtitle="Chatflow App Key 由服务端加密保存，不在响应或审计中回显">
+      <PageCard title="Dify 知识库服务" subtitle="应用密钥由系统加密保存，不在界面或审计日志中明文回显">
         <form class="proto-card-body knowledge-form" @submit.prevent="submit(false)">
           <el-form label-position="top">
             <el-form-item label="服务方式">
               <el-radio-group v-model="form.provider" class="knowledge-provider-options" @change="providerChanged">
                 <el-radio-button value="disabled" data-testid="dify-provider-disabled">关闭</el-radio-button>
-                <el-radio-button value="mock" data-testid="dify-provider-mock">模拟</el-radio-button>
+                <el-radio-button value="mock" data-testid="dify-provider-mock">模拟演示</el-radio-button>
                 <el-radio-button value="dify" data-testid="dify-provider-real">Dify</el-radio-button>
               </el-radio-group>
               <div class="proto-note">连接测试只发送固定合成问题，不读取客户、聊天或素材内容。</div>
             </el-form-item>
 
             <template v-if="form.provider === 'dify'">
-              <el-form-item label="API 基础地址" required>
+              <el-form-item label="接口基础地址（Base URL）" required>
                 <el-input v-model="form.baseUrl" data-testid="dify-base-url" placeholder="https://dify.example.com/v1" maxlength="1024" autocomplete="off" />
-                <div class="proto-note">填写包含 /v1 的 Dify API 地址，由服务端决定是否允许真实请求。</div>
+                <div class="proto-note">填写包含 /v1 的 Dify 接口地址，是否发起真实请求以系统部署配置为准。</div>
               </el-form-item>
-              <el-form-item label="Chatflow App API Key" :required="!apiKeyConfigured">
-                <el-input v-model="form.apiKey" data-testid="dify-api-key" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="输入新的 App API Key" />
-                <div class="proto-note knowledge-key-state">{{ apiKeyConfigured ? '已配置，留空保持不变' : '尚未配置，请填写 API Key' }}；填写新值将替换原 Key。</div>
+              <el-form-item label="应用密钥（API Key）" :required="!apiKeyConfigured">
+                <el-input v-model="form.apiKey" data-testid="dify-api-key" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="请输入新的应用密钥" />
+                <div class="proto-note knowledge-key-state">{{ apiKeyConfigured ? '已配置，留空保持不变' : '尚未配置，请填写应用密钥' }}；填写新值将替换原密钥。</div>
               </el-form-item>
-              <el-form-item label="知识数据集 ID" :required="form.syncEnabled">
-                <el-input v-model="form.datasetId" data-testid="dify-dataset-id" placeholder="输入当前租户的知识数据集 ID" maxlength="128" autocomplete="off" />
-                <div class="proto-note">知识数据集与 Chatflow 分开授权，资料同步只使用知识数据集 API 密钥。</div>
+              <el-form-item label="知识数据集编号（Dataset ID）" :required="form.syncEnabled">
+                <el-input v-model="form.datasetId" data-testid="dify-dataset-id" placeholder="输入当前企业的知识数据集编号" maxlength="128" autocomplete="off" />
+                <div class="proto-note">知识数据集与对话应用分开授权，资料同步仅使用知识数据集密钥。</div>
               </el-form-item>
-              <el-form-item label="知识数据集 API 密钥" :required="form.syncEnabled && !datasetApiKeyConfigured">
-                <el-input v-model="form.datasetApiKey" data-testid="dify-dataset-api-key" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="输入新的知识数据集 API 密钥" />
-                <div class="proto-note knowledge-key-state">{{ datasetApiKeyConfigured ? '已配置，留空保持不变' : '尚未配置，请填写知识数据集 API 密钥' }}；不会用于 Chatflow。</div>
+              <el-form-item label="知识数据集密钥（Dataset API Key）" :required="form.syncEnabled && !datasetApiKeyConfigured">
+                <el-input v-model="form.datasetApiKey" data-testid="dify-dataset-api-key" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="请输入新的知识数据集密钥" />
+                <div class="proto-note knowledge-key-state">{{ datasetApiKeyConfigured ? '已配置，留空保持不变' : '尚未配置，请填写知识数据集密钥' }}；不会用于对话应用。</div>
               </el-form-item>
             </template>
 
@@ -214,7 +214,7 @@ onMounted(load)
             <el-form-item label="资料同步开关">
               <div class="knowledge-enabled-control">
                 <el-switch v-model="form.syncEnabled" data-testid="dify-sync-enabled" :disabled="form.provider === 'disabled'" active-text="允许发布" inactive-text="停止发布" />
-                <span>只允许已审核素材进入同步队列；真实 Dify 仍受部署开关和 Q19/Q20 限制。</span>
+                <span>只允许已审核素材进入同步队列；真实 Dify 同步仍受系统部署开关与合规条件限制。</span>
               </div>
             </el-form-item>
 
@@ -236,8 +236,8 @@ onMounted(load)
           </div>
           <dl class="knowledge-status-list">
             <div><dt>知识问答</dt><dd>{{ form.enabled && form.provider !== 'disabled' ? '已允许' : '已暂停' }}</dd></div>
-            <div><dt>App API Key</dt><dd>{{ apiKeyConfigured ? '已配置' : '未配置' }}</dd></div>
-            <div><dt>知识数据集 API 密钥</dt><dd>{{ datasetApiKeyConfigured ? '已配置' : '未配置' }}</dd></div>
+            <div><dt>应用密钥（API Key）</dt><dd>{{ apiKeyConfigured ? '已配置' : '未配置' }}</dd></div>
+            <div><dt>知识数据集密钥</dt><dd>{{ datasetApiKeyConfigured ? '已配置' : '未配置' }}</dd></div>
             <div><dt>资料同步</dt><dd>{{ form.syncEnabled && form.provider !== 'disabled' ? '允许发布' : '停止发布' }}</dd></div>
             <div><dt>最近连接</dt><dd>{{ formatDateTime(lastConnectedAt) }}</dd></div>
             <div><dt>配置版本</dt><dd>{{ version }}</dd></div>

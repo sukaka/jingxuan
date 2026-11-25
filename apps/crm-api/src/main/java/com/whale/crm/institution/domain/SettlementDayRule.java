@@ -46,7 +46,7 @@ public final class SettlementDayRule {
     }
 
     private static BusinessException invalid() {
-        return new BusinessException(ErrorCode.VALIDATION_FAILED, "结算日必须为1至28或LAST_DAY");
+        return new BusinessException(ErrorCode.VALIDATION_FAILED, "结算日必须为每月1至28日或月末最后一天");
     }
 
     public record MonthlySnapshot(String rule, String source, LocalDate settlementDate) {

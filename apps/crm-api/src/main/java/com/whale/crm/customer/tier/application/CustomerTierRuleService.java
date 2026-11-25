@@ -155,13 +155,13 @@ public class CustomerTierRuleService {
         CustomerTierRule target = repository.findRuleForUpdate(tenantId, ruleId)
                 .orElseThrow(() -> notFound("分级规则不存在"));
         if (target.version() != version || !CustomerTierRule.DRAFT.equals(target.status())) {
-            throw conflict("仅指定版本的 DRAFT 规则可激活");
+            throw conflict("仅指定版本的草稿规则可激活");
         }
         configMapper.metrics(target);
         Instant now = Instant.now();
         if (previousActive != null) {
             if (repository.retireRule(tenantId, previousActive.id(), previousActive.version(), now) != 1) {
-                throw conflict("当前 ACTIVE 规则已变化，请刷新后重试");
+                throw conflict("当前已启用规则已变化，请刷新后重试");
             }
         }
         try {
@@ -169,7 +169,7 @@ public class CustomerTierRuleService {
                 throw conflict("规则激活冲突，请刷新后重试");
             }
         } catch (DuplicateKeyException ex) {
-            throw conflict("每租户只能有一个 ACTIVE 规则版本");
+            throw conflict("仅允许同时启用一个分级规则版本");
         }
         repository.markAllPendingStale(tenantId, "分级规则版本已变化", now);
         CustomerTierRule after = requireRule(tenantId, ruleId);
@@ -193,7 +193,7 @@ public class CustomerTierRuleService {
         CustomerTierRule target = repository.findRuleForUpdate(tenantId, ruleId)
                 .orElseThrow(() -> notFound("分级规则不存在"));
         if (target.version() != version || !CustomerTierRule.ACTIVE.equals(target.status())) {
-            throw conflict("仅指定版本的 ACTIVE 规则可退役");
+            throw conflict("仅指定版本的已启用规则可停用");
         }
         Instant now = Instant.now();
         if (repository.retireRule(tenantId, ruleId, version, now) != 1) {
@@ -302,7 +302,7 @@ public class CustomerTierRuleService {
 
     private void requireKey(String key) {
         if (key == null || key.isBlank() || key.strip().length() > 128) {
-            throw validation("Idempotency-Key 不能为空且最长 128 字符");
+            throw validation("请求标识不能为空且最长 128 字符");
         }
     }
 

@@ -39,14 +39,14 @@ const inputKey = ref(0)
 const busy = computed(() => ['HASHING', 'INIT', 'PUT', 'COMPLETE', 'SCANNING'].includes(stage.value))
 const accept = computed(() => props.classification === 'MATERIAL' ? '.pdf,.txt,.md,.markdown,image/jpeg,image/png' : '.pdf,image/jpeg,image/png')
 const stageText = computed(() => {
-  if (stage.value === 'HASHING') return '正在计算文件 SHA-256'
-  if (stage.value === 'INIT') return '正在申请真实上传地址'
-  if (stage.value === 'PUT') return '正在上传私有对象'
+  if (stage.value === 'HASHING') return '正在校验文件完整性'
+  if (stage.value === 'INIT') return '正在准备上传'
+  if (stage.value === 'PUT') return '正在上传文件'
   if (stage.value === 'COMPLETE') return '正在校验文件标识、内容与大小'
   if (stage.value === 'SCANNING') return '正在查询安全扫描结果'
   if (stage.value === 'CLEAN') return '文件已通过安全扫描，可引用'
-  if (stage.value === 'ERROR') return '上传或扫描未完成，请按阶段重试'
-  return props.classification === 'MATERIAL' ? '选择 PDF、图片、TXT 或 Markdown 后执行真实上传与安全扫描' : '选择 PDF 或图片后执行真实上传与安全扫描'
+  if (stage.value === 'ERROR') return '上传或安全扫描未完成，请点击重试'
+  return props.classification === 'MATERIAL' ? '支持 PDF、图片、TXT 或 Markdown，上传后自动进行安全扫描' : '支持 PDF 或图片，上传后自动进行安全扫描'
 })
 
 function hasControlCharacter(value: string): boolean {
@@ -226,13 +226,13 @@ watch(
         <div class="crm-muted">{{ stageText }}<span v-if="init"> · 文件 #{{ init.fileId }}</span></div>
       </div>
       <el-button v-if="stage !== 'CLEAN'" type="primary" plain :loading="busy" data-testid="file-upload-submit" @click="stage === 'ERROR' ? retry() : upload()">
-        {{ stage === 'ERROR' ? '按阶段重试' : '开始上传' }}
+        {{ stage === 'ERROR' ? '重新上传' : '开始上传' }}
       </el-button>
       <el-button v-else disabled>扫描通过</el-button>
     </div>
     <div v-if="errorMessage" class="institution-file-error" data-testid="file-upload-error">{{ errorMessage }}</div>
     <div v-if="stage === 'CLEAN' && metadata" class="institution-file-success" data-testid="file-upload-clean">
-      {{ metadata.originalName }} · 扫描通过 · 文件 ID {{ metadata.id }}
+      {{ metadata.originalName }} · 扫描通过 · 文件编号 {{ metadata.id }}
     </div>
     <div v-if="selectedFile || init" class="file-reset">
       <el-button text size="small" :disabled="busy" @click="clearSelection">清除并重新选择</el-button>

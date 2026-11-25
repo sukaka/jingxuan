@@ -103,6 +103,6 @@ public class FollowupNotificationScheduler {
             String message = business.getMessage();
             return message.length() <= 400 ? message : message.substring(0, 400);
         }
-        return "到期通知请求失败（" + error.getClass().getSimpleName() + "）";
+        return "到期通知发送失败，请稍后重试";
     }
 }

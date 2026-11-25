@@ -123,7 +123,7 @@ public class AppointmentApplicationService {
             if (appointmentId != null) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "非机构账号不能使用机构预约选项模式");
             }
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "管家查询预约选项必须提供customerId");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "查询可预约项目时必须先选择客户");
         }
         return toOptionsResponse(tenantId, user, customerId,
                 tradingOperations.appointmentOptions(tenantId, user, customerId), null);
@@ -131,7 +131,7 @@ public class AppointmentApplicationService {
 
     private AppointmentOptionsResponse institutionOptions(long tenantId, CurrentUser user, Long appointmentId) {
         if (appointmentId == null) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "机构查询核销选项必须提供appointmentId");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "机构查询核销项目时必须指定预约记录");
         }
         Appointment appointment = repository.findAppointment(tenantId, appointmentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "预约不存在或不可见"));

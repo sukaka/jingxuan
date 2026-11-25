@@ -164,7 +164,7 @@ const facts = ref<ReportFact[]>([])
 const factRow = ref<CampaignAnalyticsRow | null>(null)
 const factLoadingId = ref<number | null>(null)
 const factError = ref('')
-const factTitle = computed(() => `${factRow.value?.campaignName ?? '活动'} · ${factRow.value?.campaignBatchName ?? '批次'} · 原始事实`)
+const factTitle = computed(() => `${factRow.value?.campaignName ?? '活动'} · ${factRow.value?.campaignBatchName ?? '批次'} · 业务明细`)
 
 async function openFacts(row: CampaignAnalyticsRow) {
   if (row.campaignId === null || row.campaignBatchId === null) return
@@ -198,7 +198,7 @@ function campaignStatusTone(status: string): string {
   return ({ DRAFT: 'warning', ACTIVE: 'success', INACTIVE: 'dark', ARCHIVED: 'dark' } as Record<string, string>)[status] ?? 'dark'
 }
 function touchStatusText(status: string): string {
-  return status === 'SOURCE_NOT_AVAILABLE' ? '触达来源未接入' : status === 'PENDING_DEFINITION' ? 'Q13 口径待确认' : '按当前来源口径'
+  return status === 'SOURCE_NOT_AVAILABLE' ? '触达来源暂未接入' : status === 'PENDING_DEFINITION' ? '统计口径待确认' : '按当前统计口径'
 }
 
 onMounted(() => {
@@ -209,7 +209,7 @@ onMounted(() => {
 
 <template>
   <div class="proto-page report-page">
-    <PageHeader title="活动 / 大促分析" description="普通销售、快闪和大促按活动与批次独立统计；活动维护与经营分析共用真实主数据，不拆分线下台账">
+    <PageHeader title="活动 / 大促分析" description="普通销售、快闪和大促按活动与批次独立统计；活动管理与经营分析共用系统业务数据，无需另建线下台账">
       <template #actions>
         <router-link v-if="auth.hasPermission('order:read')" to="/orders"><el-button>查看订单</el-button></router-link>
         <el-button v-if="canReadReport" :loading="reportLoading" @click="loadAnalytics">刷新分析</el-button>
@@ -220,16 +220,16 @@ onMounted(() => {
     <template v-if="activeTab === 'analytics'">
       <div v-if="report" class="proto-stat-grid">
         <StatCard label="活动触达" :value="countText(report.totals.touchCustomerCount, '人')" :sub="touchStatusText(report.totals.touchStatus)" icon="users" />
-        <StatCard label="活动成交" :value="countText(report.totals.paidOrderCount, '单')" sub="触达成交率待 Q13 确认，不在前端补算" icon="bag" />
+        <StatCard label="活动成交" :value="countText(report.totals.paidOrderCount, '单')" sub="触达成交率统计口径待确认" icon="bag" />
         <StatCard label="活动成交额" :value="moneyText(report.totals.paidFen)" :sub="`成功退款 ${moneyText(report.totals.refundFen)}`" icon="wallet" />
-        <StatCard label="预约完成率" value="待确认" :sub="`${countText(report.totals.checkedInAppointmentCount)} / ${countText(report.totals.confirmedAppointmentCount)} · 汇总比率字段待确认`" icon="calendar" />
+        <StatCard label="预约完成率" value="待确认" :sub="`${countText(report.totals.checkedInAppointmentCount)} / ${countText(report.totals.confirmedAppointmentCount)} · 汇总比率待确认`" icon="calendar" />
       </div>
       <div v-else-if="reportLoading" class="proto-stat-grid" aria-hidden="true"><el-skeleton v-for="index in 4" :key="index" animated :rows="2" class="proto-stat-card" /></div>
     </template>
 
     <div class="proto-callout report-definition">
-      <div><strong>活动指标与归因均需要可追溯事实</strong><p>Q13 比率待确认；渠道归因以成交时快照为准，不在活动表单中编辑或推断商务归属。</p></div>
-      <span class="proto-pill warning">仅真实事实</span>
+      <div><strong>活动指标与归因均基于可追溯业务数据</strong><p>部分转化率统计口径待确认；渠道归因以成交时记录为准，不支持在活动表单中手动修改。</p></div>
+      <span class="proto-pill warning">基于实际数据</span>
     </div>
 
     <PageCard>
@@ -242,7 +242,7 @@ onMounted(() => {
             <el-select v-model="filters.campaignId" class="campaign-filter" placeholder="全部活动" clearable filterable @change="analyticsQuery.page = 1; loadAnalytics()"><el-option v-for="item in campaigns" :key="item.id" :label="`${item.campaignName}（${item.campaignCode}）`" :value="item.id" /></el-select>
             <el-select v-model="filters.sourceSystem" class="report-source" aria-label="订单来源" @change="analyticsQuery.page = 1; loadAnalytics()"><el-option label="全部来源" value="ALL" /><el-option label="手工订单" value="MANUAL" /><el-option label="有赞订单" value="YOUZAN" /></el-select>
             <el-select v-model="filters.receiverType" class="report-source" aria-label="收款方" @change="analyticsQuery.page = 1; loadAnalytics()"><el-option label="全部收款方" value="ALL" /><el-option label="平台收款" value="PLATFORM" /><el-option label="机构收款" value="INSTITUTION" /></el-select>
-            <el-select v-model="filters.drillDownType" class="report-source" aria-label="查看明细事实类型"><el-option label="支付流水" value="PAYMENT" /><el-option label="成功退款" value="REFUND" /><el-option label="正式核销" value="REDEMPTION" /><el-option label="预约确认" value="APPOINTMENT_CONFIRMED" /><el-option label="到院事实" value="CHECKED_IN" /></el-select>
+            <el-select v-model="filters.drillDownType" class="report-source" aria-label="查看明细类型"><el-option label="支付流水" value="PAYMENT" /><el-option label="成功退款" value="REFUND" /><el-option label="正式核销" value="REDEMPTION" /><el-option label="预约确认" value="APPOINTMENT_CONFIRMED" /><el-option label="到院记录" value="CHECKED_IN" /></el-select>
             <el-button type="primary" :loading="reportLoading" @click="analyticsQuery.page = 1; loadAnalytics()">查询</el-button><el-button @click="resetAnalytics">重置</el-button>
           </div>
         </div>
@@ -265,8 +265,8 @@ onMounted(() => {
               <el-table-column label="核销次数" width="95" align="right"><template #default="{ row }">{{ countText(row.redeemedCount) }}</template></el-table-column>
               <el-table-column label="成交额" width="120" align="right"><template #default="{ row }"><span class="report-cell-money">{{ moneyText(row.paidFen) }}</span></template></el-table-column>
               <el-table-column label="退款" width="115" align="right"><template #default="{ row }"><span class="report-cell-refund">{{ moneyText(row.refundFen) }}</span></template></el-table-column>
-              <el-table-column label="净支付事实" width="125" align="right"><template #default="{ row }">{{ moneyText(row.netPaidFen) }}</template></el-table-column>
-              <el-table-column label="事实" width="90" fixed="right"><template #default="{ row }"><el-button text :disabled="row.campaignId === null || row.campaignBatchId === null" :loading="factLoadingId === row.campaignBatchId" data-testid="campaign-report-drilldown" @click="openFacts(row)">查看明细</el-button></template></el-table-column>
+              <el-table-column label="净支付金额" width="125" align="right"><template #default="{ row }">{{ moneyText(row.netPaidFen) }}</template></el-table-column>
+              <el-table-column label="明细" width="90" fixed="right"><template #default="{ row }"><el-button text :disabled="row.campaignId === null || row.campaignBatchId === null" :loading="factLoadingId === row.campaignBatchId" data-testid="campaign-report-drilldown" @click="openFacts(row)">查看明细</el-button></template></el-table-column>
               <template #empty><el-empty description="当前筛选范围没有活动批次表现数据" /></template>
             </app-table>
           </div>
@@ -305,8 +305,8 @@ onMounted(() => {
     </PageCard>
 
     <CampaignFormDrawer v-model="formVisible" :detail="editingDetail" @saved="refreshAfterChange" @changed="refreshAfterChange" />
-    <ReportEvidenceDrawer v-model="factsVisible" :title="factTitle" :facts="facts" description="按活动与批次重新请求当前报表端点；不提供成交归因或历史事实编辑。" />
-    <footer class="proto-footer">鲸选美学 CRM · 活动与批次独立追溯，历史成交快照只读</footer>
+    <ReportEvidenceDrawer v-model="factsVisible" :title="factTitle" :facts="facts" description="按所选活动与批次加载最新业务明细；历史成交与归因记录仅供查看，不可编辑。" />
+    <footer class="proto-footer">鲸选美学 CRM · 活动与批次独立追溯，历史成交记录仅供查看</footer>
   </div>
 </template>
 

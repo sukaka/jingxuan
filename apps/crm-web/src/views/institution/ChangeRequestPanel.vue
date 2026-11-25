@@ -40,7 +40,7 @@ function canReview(request: InstitutionChangeRequest, step: 'MARKET' | 'FINANCE'
     <el-table-column label="类型 / 字段" min-width="160">
       <template #default="{ row }">{{ changeTypeLabel(row.changeType) }}<div class="trading-cell-sub">{{ fieldLabel(row.fieldCode) }}</div></template>
     </el-table-column>
-    <el-table-column label="原掩码值 → 申请掩码值" min-width="220">
+    <el-table-column label="原值 → 申请值（已脱敏）" min-width="220">
       <template #default="{ row }">
         <div class="crm-muted">{{ changeValueLabel(row.fieldCode, row.beforeMasked) }}</div>
         <strong class="after-value">→ {{ changeValueLabel(row.fieldCode, row.afterMasked) }}</strong>

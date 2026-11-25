@@ -150,7 +150,7 @@ public class UserApplicationService {
         assertActorCanManageTargetUser(tenantId, actorUserId, userId, beforeRoles, "修改");
         validateAssignableRoles(tenantId, actorUserId, roleIds);
         if (userId == actorUserId && beforeRoles.contains("ADMIN") && !containsAdminRole(tenantId, roleIds)) {
-            throw new BusinessException(ErrorCode.CONFLICT, "不能移除当前登录管理员自身的 ADMIN 角色");
+            throw new BusinessException(ErrorCode.CONFLICT, "不能移除当前登录管理员自身的系统管理员角色");
         }
 
         roleRepository.replaceUserRoles(tenantId, userId, roleIds);
@@ -200,7 +200,7 @@ public class UserApplicationService {
             return;
         }
         if (targetRoles.contains("ADMIN")) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "仅 ADMIN 角色可" + actionVerb + " ADMIN 账号");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅系统管理员可" + actionVerb + "系统管理员账号");
         }
         Set<String> actorPermissions = Set.copyOf(roleRepository.findActivePermissionCodes(tenantId, actorUserId));
         List<String> targetPermissions = roleRepository.findActivePermissionCodes(tenantId, targetUserId);
@@ -220,7 +220,7 @@ public class UserApplicationService {
         for (Long roleId : roleIds) {
             SysRole targetRole = rolesById.get(roleId);
             if (targetRole == null || "ADMIN".equals(targetRole.getRoleCode())) {
-                throw new BusinessException(ErrorCode.FORBIDDEN, "仅 ADMIN 角色可分配 ADMIN 角色");
+                throw new BusinessException(ErrorCode.FORBIDDEN, "仅系统管理员可分配系统管理员角色");
             }
             List<String> rolePermissions = roleRepository.findPermissionCodesByRoleId(tenantId, roleId);
             if (!actorPermissions.containsAll(rolePermissions)) {

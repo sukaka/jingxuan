@@ -128,7 +128,7 @@ async function save() {
 <template>
   <el-drawer :model-value="modelValue" :title="mode === 'contract' ? (previousContract ? '创建合同下一版本' : '新建合同') : '新建机构资质'" size="min(780px, 96vw)" @update:model-value="emit('update:modelValue', $event)">
     <el-alert type="info" :closable="false" title="文件必须先真实上传并扫描通过；保存仅生成待审核记录，不等于合同激活或资质审核通过。" class="form-tip" />
-    <div v-if="mode === 'contract' && previousContract" class="institution-sensitive">原合同 {{ previousContract.contractNo }} · 第 {{ previousContract.versionNo }} 版保留为历史，新记录由后端生成下一版本号。</div>
+    <div v-if="mode === 'contract' && previousContract" class="institution-sensitive">原合同 {{ previousContract.contractNo }} · 第 {{ previousContract.versionNo }} 版将保留为历史记录，保存后系统会自动生成新版本号。</div>
     <el-form label-position="top" @submit.prevent>
       <template v-if="mode === 'contract'">
         <div class="institution-profile-grid">

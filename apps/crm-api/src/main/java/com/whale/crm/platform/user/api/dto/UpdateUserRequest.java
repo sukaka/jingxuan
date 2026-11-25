@@ -14,11 +14,11 @@ public record UpdateUserRequest(
         @NotBlank(message = "显示名不能为空") @Size(max = 64, message = "显示名最长 64 字符")
         String displayName,
 
-        @Positive(message = "teamId 无效") Long teamId,
+        @Positive(message = "所选团队无效") Long teamId,
 
         @Size(min = 8, max = 64, message = "密码长度须为 8-64 位")
         @Pattern(regexp = "(?s).*\\S.*", message = "密码不能为空白字符")
         String password,
 
-        @NotNull(message = "version 必填") @Min(value = 0, message = "version 无效") Long version) {
+        @NotNull(message = "数据版本号必填") @Min(value = 0, message = "数据版本号无效") Long version) {
 }

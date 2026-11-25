@@ -195,7 +195,7 @@ class AiJobApplicationServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.confirm(manager, 1L,
                         new ConfirmAiJobRequest(0L, null, null, null, null, "reason"), "null-decision"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("CONFIRM");
+                .hasMessageContaining("确认或驳回");
     }
 
     private AiJob job(String status, long version) {

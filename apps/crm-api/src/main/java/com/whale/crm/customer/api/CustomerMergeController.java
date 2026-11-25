@@ -49,7 +49,7 @@ public class CustomerMergeController {
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false)
-            @Pattern(regexp = "SUGGESTED|REVIEWING|CONFIRMED|REJECTED", message = "status 无效") String status,
+            @Pattern(regexp = "SUGGESTED|REVIEWING|CONFIRMED|REJECTED", message = "合并单状态无效") String status,
             HttpServletRequest request) {
         return ApiResponse.ok(mergeService.list(TenantContext.currentTenantId(),
                 SecuritySupport.requireCurrentUser(), status, page, size), requestId(request));

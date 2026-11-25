@@ -30,21 +30,21 @@ export const useSystemStore = defineStore('system', {
         const health = await getHealth()
         if (health.status === 'UP') {
           this.healthStatus = 'up'
-          this.healthMessage = '后端服务运行正常'
+          this.healthMessage = '系统服务运行正常'
         } else {
           this.healthStatus = 'down'
-          this.healthMessage = `后端健康状态异常:${health.status}`
+          this.healthMessage = '系统服务状态异常，请稍后重试'
         }
       } catch (error) {
         if (error instanceof ApiError && error.isUnauthorized) {
           this.healthStatus = 'unauthorized'
-          this.healthMessage = '已连接·未认证(请重新登录)'
+          this.healthMessage = '登录状态已失效，请重新登录'
         } else if (error instanceof ApiError && error.isNetworkError) {
           this.healthStatus = 'unreachable'
-          this.healthMessage = '无法连接后端服务，请确认后端已启动或稍后重试'
+          this.healthMessage = '服务暂时无法连接，请检查网络或稍后重试'
         } else {
           this.healthStatus = 'down'
-          this.healthMessage = error instanceof Error ? error.message : '健康检查失败'
+          this.healthMessage = error instanceof Error ? error.message : '系统连接检查失败'
         }
       } finally {
         this.lastCheckedAt = new Date().toLocaleString()

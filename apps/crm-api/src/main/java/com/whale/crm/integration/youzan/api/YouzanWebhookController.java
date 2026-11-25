@@ -44,7 +44,7 @@ public class YouzanWebhookController extends YouzanBaseController {
         YouzanVerification verification = adapterRouter.webhookAdapter(tenantId).verifyWebhook(rawBody,
                 new YouzanSignature(signature, timestamp));
         if (!verification.valid()) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "有赞Mock签名无效、过期或真实接入未启用");
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "有赞模拟回调签名无效、已过期，或尚未启用真实接入");
         }
         try {
             YouzanOrderEvent event = objectMapper.readValue(rawBody, YouzanOrderEvent.class);

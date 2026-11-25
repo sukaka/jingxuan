@@ -113,6 +113,10 @@ describe('ComplaintsView 客诉核查与闭环', () => {
 
     expect(wrapper.text()).toContain('待核查')
     expect(wrapper.text()).toContain('不是正式客诉')
+    expect(wrapper.text()).toContain('跟进记录')
+    expect(wrapper.text()).toContain('本组主管')
+    expect(wrapper.text()).not.toContain('FOLLOWUP')
+    expect(wrapper.text()).not.toContain('TEAM_LEADER')
     expect(wrapper.text()).toContain('138****8000')
     await wrapper.get('[data-testid="confirm-hit-11"]').trigger('click')
     await wrapper.get('[data-testid="action-reason"]').setValue('人工电话核实')

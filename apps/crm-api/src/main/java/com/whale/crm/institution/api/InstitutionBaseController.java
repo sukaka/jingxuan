@@ -12,7 +12,7 @@ public abstract class InstitutionBaseController {
     @ExceptionHandler(MissingRequestHeaderException.class)
     public ResponseEntity<ApiResponse<Void>> missingHeader(HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiResponse.error(ErrorCode.VALIDATION_FAILED.name(),
-                "写请求必须提供Idempotency-Key", null, requestId(request)));
+                "请求缺少防重提交标识", null, requestId(request)));
     }
 
     protected String requestId(HttpServletRequest request) {

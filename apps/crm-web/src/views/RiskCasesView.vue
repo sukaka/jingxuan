@@ -47,7 +47,7 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 function statusLabel(status: string): string {
-  return ({ OPEN: '待处理', ASSIGNED: '处理中', RESOLVED: '已处理', CLOSED: '已关闭' } as Record<string, string>)[status] ?? status
+  return ({ OPEN: '待处理', ASSIGNED: '处理中', RESOLVED: '已处理', CLOSED: '已关闭' } as Record<string, string>)[status] ?? '未知状态'
 }
 
 function statusTone(status: string): string {
@@ -55,7 +55,7 @@ function statusTone(status: string): string {
 }
 
 function severityLabel(severity: string): string {
-  return ({ HIGH: '高风险', MEDIUM: '中风险', LOW: '低风险' } as Record<string, string>)[severity] ?? severity
+  return ({ HIGH: '高风险', MEDIUM: '中风险', LOW: '低风险' } as Record<string, string>)[severity] ?? '未知级别'
 }
 
 function severityTone(severity: string): string {
@@ -129,7 +129,7 @@ function customerSecondary(item: RiskCase): string {
 }
 
 function historyActionLabel(action: string): string {
-  return ({ OPEN: '风险登记', CREATE: '风险登记', CLAIM: '认领处理', RESOLVE: '处理完成', CLOSE: '关闭风险' } as Record<string, string>)[action] ?? action
+  return ({ OPEN: '风险登记', CREATE: '风险登记', CLAIM: '认领处理', RESOLVE: '处理完成', CLOSE: '关闭风险' } as Record<string, string>)[action] ?? '状态变更'
 }
 
 async function load(page = query.page) {
@@ -197,9 +197,9 @@ let actionKey = ''
 
 const actionTitle = computed(() => ({ CLAIM: '认领风险', RESOLVE: '填写处理结论', CLOSE: '关闭风险' } as const)[actionType.value ?? 'CLAIM'])
 const actionHint = computed(() => {
-  if (actionType.value === 'CLAIM') return '认领后状态只能由服务端转为处理中；请说明认领与核对依据。'
-  if (actionType.value === 'RESOLVE') return '处理结论会写入风险事实与追加历史，不会覆盖原证据。'
-  return '关闭前请复核处理结论；关闭后仍保留完整台账与历史。'
+  if (actionType.value === 'CLAIM') return '认领后该风险单将转为“处理中”，请填写认领及核查说明。'
+  if (actionType.value === 'RESOLVE') return '处理结论将记入风险档案与处理历史，原问题记录保持不变。'
+  return '关闭前请复核处理结论，关闭后仍可随时查看完整处理历史。'
 })
 
 watch(actionReason, () => { if (!actionSubmitting.value) actionKey = crypto.randomUUID() })
@@ -261,10 +261,10 @@ async function submitAction() {
     }
     if (destroyed) return
     actionType.value = null
-    ElMessage.success('服务端已受理，正在重新读取台账与追加历史')
+    ElMessage.success('操作已提交，正在刷新风控台账与处理历史')
     await Promise.all([load(query.page), loadDetail(target.id)])
   } catch (error) {
-    if (!destroyed) actionError.value = errorText(error, '操作失败，请核对版本后重试')
+    if (!destroyed) actionError.value = errorText(error, '操作失败，请刷新页面后重试')
   } finally {
     actionSubmitting.value = false
   }
@@ -280,7 +280,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="proto-page risks-page">
-    <PageHeader title="异常订单 / 风控台账" description="集中承接同步、订单、映射、退款、权益与核销异常；认领、处理和关闭必须留理由并保留追加历史">
+    <PageHeader title="异常订单 / 风控台账" description="集中处理同步、订单、商品匹配、退款、权益与核销异常；认领、处理和关闭均需填写原因并全程留痕">
       <template #actions>
         <el-button v-if="canWrite" type="primary" :loading="syncing" data-testid="risk-sync-button" @click="handleSync">同步风控异常</el-button>
         <RouterLink v-if="canOpenYouzanSync" to="/integrations/youzan" class="el-button" data-testid="risk-youzan-sync">有赞同步</RouterLink>
@@ -290,13 +290,13 @@ onBeforeUnmount(() => {
     <PageCard v-if="!canRead">
       <div class="proto-empty risk-permission-empty" data-testid="risk-permission-empty">
         <strong>没有风控台账查看权限</strong>
-        <span>页面不会请求风险证据或历史；请联系管理员按职责授权。</span>
+        <span>当前账号无法查看风控记录，请联系管理员开通相应权限。</span>
       </div>
     </PageCard>
 
     <template v-else>
       <div class="proto-stat-grid">
-        <StatCard label="异常总数" :value="`${total} 条`" sub="当前筛选结果 · 服务端总数" icon="shield" />
+        <StatCard label="异常总数" :value="`${total} 条`" sub="当前筛选结果合计" icon="shield" />
         <StatCard label="未关闭高风险" :value="`${highOnPage} 条`" sub="当前页 · 优先核对处理" icon="warning" />
         <StatCard label="待处理" :value="`${openOnPage} 条`" sub="当前页 · 尚未认领" icon="clock" />
         <StatCard label="已关闭" :value="`${closedOnPage} 条`" sub="当前页 · 历史仍然保留" icon="check" />
@@ -316,7 +316,7 @@ onBeforeUnmount(() => {
             <el-button type="primary" :loading="loading" @click="load(1)">查询</el-button>
             <el-button @click="resetQuery">重置</el-button>
           </div>
-          <span class="proto-note">风险不能删除或本地改状态</span>
+          <span class="proto-note">风险记录不可删除，状态随处理流程自动更新</span>
         </div>
         <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" class="risk-alert">
           <el-button text @click="load()">重试</el-button>
@@ -409,13 +409,13 @@ onBeforeUnmount(() => {
               data-testid="risk-action-reason"
             />
             <div class="action-footer">
-              <span>提交版本 {{ detail.riskCase.version }} · 失败不会变更当前页面状态</span>
+              <span>记录版本 {{ detail.riskCase.version }} · 提交失败不会改变当前状态</span>
               <el-button type="primary" :loading="actionSubmitting" data-testid="risk-action-submit" @click="submitAction">提交{{ actionTitle }}</el-button>
             </div>
           </section>
 
           <section class="risk-history">
-            <div class="history-heading"><h3>追加历史</h3><span>{{ detail.history.length }} 条服务端记录</span></div>
+            <div class="history-heading"><h3>处理历史</h3><span>共 {{ detail.history.length }} 条记录</span></div>
             <ol>
               <li v-for="entry in detail.history" :key="entry.id" class="risk-history-entry">
                 <span class="history-dot" />
@@ -426,7 +426,7 @@ onBeforeUnmount(() => {
                 </div>
               </li>
             </ol>
-            <div v-if="!detail.history.length" class="proto-empty">服务端尚未返回历史记录</div>
+            <div v-if="!detail.history.length" class="proto-empty">暂无处理历史记录</div>
           </section>
         </template>
       </div>

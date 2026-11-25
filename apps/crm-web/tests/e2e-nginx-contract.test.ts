@@ -474,13 +474,15 @@ describe('前后端 API 契约对齐与拦截器端到端校验', () => {
     await legacyWrapper.setProps({ modelValue: true })
     await flushPromises()
 
-    expect(legacyWrapper.get('[data-testid="version-use-n-warning"]').text()).toContain('Q01')
+    const warningText = legacyWrapper.get('[data-testid="version-use-n-warning"]').text()
+    expect(warningText).toContain('选品规则待确认')
+    expect(warningText).not.toContain('Q01')
     const saveButton = legacyWrapper.findAll('button').find((btn) => btn.text().includes('保存草稿'))
     expect(saveButton).toBeDefined()
     await saveButton!.trigger('click')
     await flushPromises()
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('USE_N'))
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('“固定次数”模式规则待确认'))
     expect(captured).toHaveLength(0)
   })
 

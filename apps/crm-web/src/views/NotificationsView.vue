@@ -42,9 +42,27 @@ const deliveryStatusLabels: Record<string, string> = {
   SKIPPED: '已跳过',
 }
 
-function typeLabel(value: string) { return typeLabels[value] ?? value }
-function channelLabel(value: string) { return channelLabels[value] ?? value }
-function deliveryStatusLabel(value: string) { return deliveryStatusLabels[value] ?? value }
+const sourceTypeLabels: Record<string, string> = {
+  FOLLOWUP: '客户跟进',
+  COMPLAINT: '客诉单',
+  TASK: '回访任务',
+  APPOINTMENT: '预约单',
+  REDEMPTION: '核销单',
+  ORDER: '订单',
+  REFUND: '退款单',
+  CUSTOMER: '客户档案',
+  SETTLEMENT: '机构结算',
+  INSTITUTION: '合作机构',
+  CONTRACT: '机构合同',
+  TIER_REVIEW: '等级复核',
+  BATCH_TAG_JOB: '批量标签任务',
+  EXPORT_JOB: '数据导出',
+}
+
+function typeLabel(value: string) { return typeLabels[value] ?? '系统通知' }
+function channelLabel(value: string) { return channelLabels[value] ?? '其他渠道' }
+function deliveryStatusLabel(value: string) { return deliveryStatusLabels[value] ?? '未知状态' }
+function sourceTypeLabel(value: string) { return sourceTypeLabels[value] ?? '业务记录' }
 function formatDateTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
@@ -179,7 +197,7 @@ onMounted(() => { void load() })
             </div>
             <h2>{{ item.title }}</h2>
             <p class="notification-content">{{ item.contentMasked || '暂无通知摘要' }}</p>
-            <p class="notification-source">来源 {{ item.sourceType }} #{{ item.sourceId }}</p>
+            <p class="notification-source">来源 {{ sourceTypeLabel(item.sourceType) }} #{{ item.sourceId }}</p>
 
             <details v-if="item.deliveries.length" class="delivery-details">
               <summary>投递记录 · {{ item.deliveries.length }}</summary>

@@ -63,7 +63,7 @@ public class TaskController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) Long assigneeId,
             @RequestParam(required = false)
-            @Pattern(regexp = "OPEN|PROCESSING|DONE|CANCELED", message = "status 仅支持 OPEN/PROCESSING/DONE/CANCELED") String status,
+            @Pattern(regexp = "OPEN|PROCESSING|DONE|CANCELED", message = "任务状态无效") String status,
             HttpServletRequest request) {
         return ApiResponse.ok(taskService.search(TenantContext.currentTenantId(),
                 SecuritySupport.requireCurrentUser(), assigneeId, status, page, size), requestId(request));

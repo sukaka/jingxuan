@@ -55,7 +55,7 @@ let controlPayload = ''
 
 const senderDescription = computed(() => {
   if (!status.value) return '状态读取中'
-  if (status.value.senderMode === 'MOCK') return '模拟模式：不会发送给客户'
+  if (status.value.senderMode === 'MOCK') return '模拟演示模式：不会发送给客户'
   if (status.value.senderMode === 'OFFICIAL') {
     return status.value.realOfficialEnabled
       ? '官方外部联系人通道已启用；接口接受不代表客户已读'
@@ -265,13 +265,48 @@ async function refreshStatus(): Promise<void> {
   }
 }
 
+function controlModeLabel(value: string): string {
+  return ({
+    ACTIVE: '正常托管',
+    PAUSED: '已暂停',
+    HUMAN_TAKEOVER: '人工接管',
+  } as Record<string, string>)[value] ?? '未知模式'
+}
+
+function sendProviderLabel(value: string | null | undefined): string {
+  if (!value) return '—'
+  return ({
+    MOCK: '模拟演示',
+    OFFICIAL: '企微官方通道',
+    DISABLED: '已禁用',
+  } as Record<string, string>)[value] ?? '其他通道'
+}
+
+function maskedReasonLabel(value: string | null | undefined): string {
+  if (!value) return '—'
+  const known: Record<string, string> = {
+    WECOM_RESPONSE_UNKNOWN: '企微发送结果未明，需人工核实',
+    WECOM_SEND_FAILED: '企微发送失败',
+    EMERGENCY_STOPPED: '已触发紧急停用',
+    CUSTOMER_PAUSED: '该客户已暂停托管',
+    HUMAN_TAKEOVER: '已切换人工接管',
+    OUT_OF_TIME_WINDOW: '不在允许发送时段',
+    RATE_LIMITED: '已触发发送频控限制',
+    DAILY_LIMIT_REACHED: '已达到每日回复上限',
+    BLOCKED_TERM: '命中禁发词限制',
+    SCOPE_DISABLED: '团队或管家开关未开启',
+    DISABLED: '托管发送通道已禁用',
+  }
+  return known[value] ?? value
+}
+
 function runStatusLabel(value: string): string {
   return ({
     QUEUED: '等待生成', DEFERRED: '等待允许时段', GENERATING: 'AI 生成中', READY_TO_SEND: '等待发送',
-    SENDING: '发送中', SENT: '官方接口已接受（不代表已读）', MOCKED: '模拟完成，未发送给客户',
+    SENDING: '发送中', SENT: '官方接口已接受（不代表已读）', MOCKED: '模拟演示完成，未发送给客户',
     DISABLED: '发送通道禁用，未发送', SKIPPED: '已阻断', FAILED: '失败',
     RETRY_GENERATE: '等待重试生成', RETRY_SEND: '等待明确失败重试', UNKNOWN: '结果未知，禁止自动重发',
-  } as Record<string, string>)[value] ?? value
+  } as Record<string, string>)[value] ?? '未知状态'
 }
 
 function intentLabel(value: string | null): string {
@@ -291,7 +326,7 @@ onMounted(() => { void load() })
     <div v-if="errorMessage" class="delegation-alert error" role="alert">{{ errorMessage }}</div>
     <div v-if="successMessage" class="delegation-alert success" role="status">{{ successMessage }}</div>
 
-    <PageCard title="运行状态" subtitle="状态来自服务端；Mock 或连接配置均不代表客户已经收到或已读">
+    <PageCard title="运行状态" subtitle="状态以系统实际运行为准；模拟演示或连接配置均不代表客户已经收到或已读">
       <div v-if="status" class="status-grid">
         <div><span>发送通道</span><strong data-testid="sender-mode">{{ senderDescription }}</strong></div>
         <div><span>托管总开关</span><strong>{{ status.enabled && !status.emergencyStopped ? '已允许（仍受下级门禁约束）' : '已停止' }}</strong></div>
@@ -336,7 +371,7 @@ onMounted(() => { void load() })
           <button type="button" class="danger" data-testid="emergency-stop" :disabled="saving" @click="toggleEmergency">{{ policy.emergencyStopped ? '解除紧急停用' : '紧急停用全部托管' }}</button>
           <span>配置版本 {{ policy.version }}</span>
         </div>
-        <p v-else class="delegation-note">当前账号可查看运行状态，但没有 ai:config 配置权限。</p>
+        <p v-else class="delegation-note">当前账号可查看运行状态，但暂无 AI 聊天托管配置权限。</p>
       </form>
     </PageCard>
 
@@ -345,7 +380,7 @@ onMounted(() => { void load() })
         <label>客户 ID<input v-model.number="controlCustomerId" data-testid="control-customer-id" type="number" min="1" :disabled="!canWrite"></label>
         <label>当前版本<input v-model.number="controlVersion" data-testid="control-version" type="number" min="0" :disabled="!canWrite"></label>
         <button type="button" :disabled="!canWrite || saving" @click="loadControl">读取当前状态</button>
-        <span>当前模式：{{ controlMode }}</span>
+        <span>当前模式：{{ controlModeLabel(controlMode) }}</span>
         <label class="control-reason">操作理由<input v-model="controlReason" data-testid="control-reason" maxlength="1000" :disabled="!canWrite"></label>
         <div class="action-row">
           <button type="button" data-testid="pause-customer" :disabled="!canWrite || saving" @click="setControl('PAUSED')">暂停客户</button>
@@ -359,7 +394,7 @@ onMounted(() => { void load() })
       <div class="log-filter">
         <input v-model.number="runCustomerId" type="number" min="1" placeholder="客户 ID" aria-label="日志客户 ID">
         <select v-model="runStatus" aria-label="日志状态">
-          <option value="">全部状态</option><option value="SENT">官方已接受</option><option value="MOCKED">模拟</option>
+          <option value="">全部状态</option><option value="SENT">官方已接受</option><option value="MOCKED">模拟演示</option>
           <option value="UNKNOWN">未知</option><option value="SKIPPED">已阻断</option><option value="FAILED">失败</option>
         </select>
         <button type="button" @click="page = 1; refreshRuns()">查询</button>
@@ -373,8 +408,8 @@ onMounted(() => { void load() })
               <td>{{ run.customerId ?? '未匹配' }} / {{ run.staffUserId }}</td>
               <td>{{ intentLabel(run.intent) }}</td>
               <td><span class="run-status" :class="run.status.toLowerCase()">{{ runStatusLabel(run.status) }}</span></td>
-              <td>{{ run.reasonMasked ?? '—' }}</td>
-              <td>{{ run.sendProvider ?? '—' }}<small v-if="run.providerMessageId">引用 {{ run.providerMessageId }}</small></td>
+              <td>{{ maskedReasonLabel(run.reasonMasked) }}</td>
+              <td>{{ sendProviderLabel(run.sendProvider) }}<small v-if="run.providerMessageId">引用 {{ run.providerMessageId }}</small></td>
               <td>生成 {{ run.generationAttempts }} / 发送 {{ run.sendAttempts }}</td>
               <td>{{ formatTime(run.updatedAt) }}</td>
             </tr>

@@ -132,7 +132,7 @@ class SettlementApplicationServiceTest {
 
         assertThatThrownBy(() -> service.create(1, FINANCE,
                 new CreateSettlementBatchRequest(1L, "MONTHLY", "2026-10", List.of(91L)), "create-2"))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("POSTED");
+                .isInstanceOf(BusinessException.class).hasMessageContaining("正式核销");
         verify(repository, never()).insertBatch(eq(1L), any());
     }
 

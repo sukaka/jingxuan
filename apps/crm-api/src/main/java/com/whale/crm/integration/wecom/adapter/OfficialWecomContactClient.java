@@ -133,7 +133,7 @@ public class OfficialWecomContactClient implements WecomContactClient {
             }
             if (!response.isSuccessful() || code != 0) {
                 ErrorCode error = code == 45009 ? ErrorCode.RATE_LIMITED : ErrorCode.CONFLICT;
-                throw new BusinessException(error, "企微客户接口调用失败，errcode=" + code);
+                throw new BusinessException(error, "企微客户接口调用失败（错误码：" + code + "）");
             }
             return body;
         } catch (BusinessException ex) {

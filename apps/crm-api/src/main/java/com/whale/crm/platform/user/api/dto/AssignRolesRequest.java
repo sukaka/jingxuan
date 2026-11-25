@@ -9,7 +9,7 @@ import java.util.List;
  * 覆盖式分配角色。空列表表示摘除全部角色（权限对下一请求立即失效）。
  */
 public record AssignRolesRequest(
-        @NotNull(message = "roleIds 必填") List<@Positive(message = "roleId 无效") Long> roleIds) {
+        @NotNull(message = "请选择角色") List<@Positive(message = "所选角色无效") Long> roleIds) {
     public AssignRolesRequest {
         roleIds = roleIds == null ? null : List.copyOf(roleIds);
     }

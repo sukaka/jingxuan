@@ -293,7 +293,7 @@ async function review(request: InstitutionChangeRequest, step: 'MARKET' | 'FINAN
     await loadProfiles()
     ElMessage.success(`审核已返回：${changeStatusLabel(saved.status)} / ${workflowStepLabel(saved.currentStep)}`)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   }
 }
 
@@ -381,7 +381,7 @@ onMounted(() => {
 
       <template v-else>
         <div class="crm-toolbar">
-          <el-input-number v-model="changeQuery.institutionId" :min="1" :precision="0" :controls="false" placeholder="机构 ID" class="fulfillment-filter-id" @keyup.enter="changeQuery.page = 1; loadChanges()" />
+          <el-input-number v-model="changeQuery.institutionId" :min="1" :precision="0" :controls="false" placeholder="机构编号" class="fulfillment-filter-id" @keyup.enter="changeQuery.page = 1; loadChanges()" />
           <el-select v-model="changeQuery.status" placeholder="全部审核状态" clearable class="institution-filter-select">
             <el-option label="待审核" value="PENDING_REVIEW" />
             <el-option label="已生效" value="APPROVED" />

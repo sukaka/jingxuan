@@ -60,7 +60,7 @@ async function save() {
 }
 
 function statusText(status: string) {
-  return ({ NEVER: '尚未执行', SUCCESS: '执行成功', PARTIAL: '部分成功', ERROR: '执行失败' } as Record<string, string>)[status] ?? status
+  return ({ NEVER: '尚未执行', SUCCESS: '执行成功', PARTIAL: '部分成功', ERROR: '执行失败' } as Record<string, string>)[status] ?? '未知状态'
 }
 
 watch(() => props.corpId, () => { reset(); void load() }, { immediate: true })
@@ -83,7 +83,7 @@ watch(() => props.corpId, () => { reset(); void load() }, { immediate: true })
         <el-form-item label="执行间隔（秒）"><el-input-number v-model="form.intervalSeconds" :min="60" :max="86400" :disabled="!canWrite" class="wecom-full-width" /></el-form-item>
         <el-form-item label="下次执行时间" :required="form.enabled"><el-date-picker v-model="form.nextRunAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" :disabled="!canWrite" class="wecom-full-width" data-testid="wecom-next-run-at" placeholder="选择下一次自动同步时间" /></el-form-item>
       </div>
-      <el-alert type="info" :closable="false" title="客户资料定时任务执行对账；会话归档从最近成功游标继续，不跳过未成功区间。" />
+      <el-alert type="info" :closable="false" title="客户资料定时任务执行对账；会话归档从上次成功位置继续，不跳过未成功区间。" />
     </el-form>
     <div class="wecom-policy-status">
       <span>最近状态：{{ statusText(form.lastStatus) }}</span>

@@ -12,7 +12,7 @@ import java.time.Instant;
 public record CreateTaskRequest(
         Long customerId,
         @NotBlank(message = "任务类型不能为空") @Size(max = 48) String taskType,
-        @Pattern(regexp = "LOW|MEDIUM|HIGH", message = "priority 仅支持 LOW/MEDIUM/HIGH") String priority,
+        @Pattern(regexp = "LOW|MEDIUM|HIGH", message = "任务优先级仅支持低、中、高") String priority,
         @NotBlank(message = "任务标题不能为空") @Size(max = 255) String title,
         @Size(max = 2000) String description,
         Instant dueAt) {

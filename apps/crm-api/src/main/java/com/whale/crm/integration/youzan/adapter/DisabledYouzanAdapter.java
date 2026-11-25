@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class DisabledYouzanAdapter implements YouzanAdapter {
     private static final String DEFAULT_NAME = "REAL_YOUZAN_DISABLED";
-    private static final String DEFAULT_REASON = "真实有赞接入未获Q11授权，当前FEATURE_REAL_YOUZAN已禁用";
+    private static final String DEFAULT_REASON = "真实有赞店铺接入尚未启用，请联系管理员在系统配置中开启";
     private static final DisabledYouzanAdapter SHOP_NOT_READY = new DisabledYouzanAdapter(
             "YOUZAN_SHOP_SYNC_DISABLED",
             "YOUZAN_SHOP_SYNC_DISABLED",

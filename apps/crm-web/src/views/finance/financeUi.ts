@@ -70,7 +70,7 @@ export function settlementPeriodLabel(type: string, periodKey: string): string {
 export function providerLabel(provider: string): string {
   if (provider === 'BANK_TRANSFER') return '银行转账'
   if (provider === 'OFFLINE') return '线下退款'
-  if (provider === 'MOCK') return '模拟验签通道'
+  if (provider === 'MOCK') return '模拟演示通道'
   return '未知支付渠道'
 }
 

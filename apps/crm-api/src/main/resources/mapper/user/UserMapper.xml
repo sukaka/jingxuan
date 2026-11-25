@@ -178,6 +178,13 @@
     WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version}
   </update>
 
+  <update id="updatePasswordHash">
+    UPDATE sys_user
+    SET password_hash = #{passwordHash},
+        version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND status = 'ACTIVE'
+  </update>
+
   <update id="updateStatus">
     UPDATE sys_user
     SET status = #{status}, version = version + 1

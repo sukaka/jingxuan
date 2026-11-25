@@ -85,8 +85,8 @@ let idempotencyKey = ''
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 409) return '该客户已被他人修改,请关闭后重新打开编辑'
-    if (error.status === 404) return '客户不存在或不在你的数据范围内'
+    if (error.status === 409) return '该客户已被他人修改，请关闭后重新打开编辑'
+    if (error.status === 404) return '客户不存在或不在您的可见范围内'
     return error.message
   }
   return error instanceof Error ? error.message : '未知错误'
@@ -174,7 +174,7 @@ async function submit() {
   }
   if (props.mode === 'create' && isAdmin && formOwnerId.value === undefined) {
     ElMessage.warning(
-      ownerOptionsError.value ? '管家选项加载失败,请关闭重试后再建档' : '管理员建档必须选择所属管家',
+      ownerOptionsError.value ? '管家选项加载失败，请关闭重试后再建档' : '管理员建档必须选择所属管家',
     )
     return
   }
@@ -184,7 +184,7 @@ async function submit() {
       const payload = buildPayload()
       if (formOwnerId.value !== undefined) payload.ownerStaffId = formOwnerId.value
       const created = await createCustomer(payload, idempotencyKey)
-      ElMessage.success(`客户已建档,编号 ${created.customerNo}`)
+      ElMessage.success(`客户已建档，编号 ${created.customerNo}`)
     } else if (props.customerId !== null) {
       const payload = buildPayload()
       delete payload.firstAddedAt
@@ -213,7 +213,7 @@ async function submit() {
         v-if="mode === 'create'"
         type="info"
         :closable="false"
-        title="昵称与称呼至少其一,手机号可空;客户编号由系统建档后生成,与手机号/昵称无关"
+        title="称呼与昵称至少填写一项，手机号可不填；客户编号由系统建档后自动生成，不依赖手机号或昵称"
         class="form-tip"
       />
       <el-form label-width="96px">
@@ -223,20 +223,20 @@ async function submit() {
               v-model="formOwnerId"
               filterable
               :disabled="ownerOptionsError !== ''"
-              :placeholder="isAdmin ? '管理员建档必须选择所属管家' : '默认为本人,可调整'"
+              :placeholder="isAdmin ? '管理员建档必须选择所属管家' : '默认为本人，可按需调整'"
               class="owner-select"
             >
               <el-option
                 v-for="option in ownerOptions"
                 :key="option.id"
-                :label="option.teamName ? `${option.displayName}(${option.teamName})` : option.displayName"
+                :label="option.teamName ? `${option.displayName}（${option.teamName}）` : option.displayName"
                 :value="option.id"
               />
             </el-select>
-            <span v-if="ownerOptionsError" class="owner-error">管家选项加载失败:{{ ownerOptionsError }}</span>
+            <span v-if="ownerOptionsError" class="owner-error">管家选项加载失败：{{ ownerOptionsError }}</span>
           </el-form-item>
           <el-form-item label="客户称呼">
-            <el-input v-model="form.displayName" placeholder="真实姓名/称呼,可空" />
+            <el-input v-model="form.displayName" placeholder="真实姓名或称呼（选填）" />
           </el-form-item>
           <el-form-item label="客户昵称">
             <el-input v-model="form.nickname" placeholder="与真实姓名区分" />
@@ -244,7 +244,7 @@ async function submit() {
           <el-form-item label="手机号">
             <el-input
               v-model="form.mobile"
-              :placeholder="mode === 'edit' ? '留空则不修改;页面只展示脱敏' : '可空;入库密文,页面只展示脱敏'"
+              :placeholder="mode === 'edit' ? '留空则不修改，页面仅脱敏展示' : '选填；系统加密保存，页面仅脱敏展示'"
             />
           </el-form-item>
           <el-form-item label="备注名">
@@ -322,13 +322,13 @@ async function submit() {
               v-model="form.firstAddedAt"
               type="datetime"
               value-format="YYYY-MM-DD[T]HH:mm:ssZ"
-              placeholder="历史客户补录,可空"
+              placeholder="历史客户补录（选填）"
             />
           </el-form-item>
           <el-form-item label="关注项目" class="form-grid-full">
             <el-select
               v-model="form.projectIds" multiple filterable clearable
-              data-testid="attention-project-select" placeholder="选择正规产品子项目"
+              data-testid="attention-project-select" placeholder="请选择关注项目"
             >
               <el-option
                 v-for="project in projectOptions" :key="project.id"
@@ -337,9 +337,9 @@ async function submit() {
                 :disabled="project.status !== 'ACTIVE' && !form.projectIds.includes(project.id)"
               />
             </el-select>
-            <div v-if="projectOptionsError" class="owner-error">项目选项加载失败:{{ projectOptionsError }}</div>
+            <div v-if="projectOptionsError" class="owner-error">项目选项加载失败：{{ projectOptionsError }}</div>
             <div v-if="legacyAttentionProjects" class="legacy-attention">
-              旧文本（legacy，不自动匹配）：{{ legacyAttentionProjects }}
+              历史备注项目（仅供参考，不自动关联）：{{ legacyAttentionProjects }}
             </div>
           </el-form-item>
           <el-form-item label="卡点情况" class="form-grid-full">
@@ -348,8 +348,8 @@ async function submit() {
           <el-form-item label="备注" class="form-grid-full">
             <el-input v-model="form.remark" type="textarea" :rows="2" />
           </el-form-item>
-          <el-form-item v-if="mode === 'edit'" label="版本号">
-            <span class="crm-muted">{{ version }}(乐观锁,冲突将提示重开)</span>
+          <el-form-item v-if="mode === 'edit'" label="资料版本">
+            <span class="crm-muted">第 {{ version }} 版（若他人同时修改，保存时将提示刷新）</span>
           </el-form-item>
         </div>
       </el-form>

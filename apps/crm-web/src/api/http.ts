@@ -63,14 +63,14 @@ export function normalizeApiError(error: unknown): ApiError {
         return new ApiError({
           status: 0,
           code: 'NETWORK_ERROR',
-          message: '无法连接后端服务，请确认后端已启动或稍后重试',
+          message: '服务暂时无法连接，请检查网络或稍后重试',
         })
       }
       const code = body.code ?? (status === 401 ? 'UNAUTHORIZED' : `HTTP_${status}`)
       const message =
         status === 401
-          ? (body.message ?? '未认证或会话已失效,请重新登录')
-          : (body.message ?? `请求失败(HTTP ${status})`)
+          ? (body.message ?? '登录状态已失效，请重新登录')
+          : (body.message ?? `请求失败（状态码 ${status}）`)
       return new ApiError({
         status,
         code,
@@ -83,7 +83,7 @@ export function normalizeApiError(error: unknown): ApiError {
       return new ApiError({
         status: 0,
         code: 'NETWORK_ERROR',
-        message: '无法连接后端服务，请确认后端已启动或稍后重试',
+        message: '服务暂时无法连接，请检查网络或稍后重试',
       })
     }
   }

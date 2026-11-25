@@ -87,7 +87,7 @@ describe('企微 AI 回复面板', () => {
     expect(wrapper.find('[data-testid="ai-copy"]').exists()).toBe(false)
     await createCandidate(wrapper)
 
-    expect(wrapper.get('[data-testid="ai-reply-panel"]').text()).toContain('Mock 演示候选')
+    expect(wrapper.get('[data-testid="ai-reply-panel"]').text()).toContain('模拟演示候选')
     expect(wrapper.get('[data-testid="ai-chat-context-badge"]').text()).toBe('仅基于 CRM 档案事实')
     expect(wrapper.find('[data-testid="ai-copy"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="ai-send"]').exists()).toBe(false)

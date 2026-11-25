@@ -169,7 +169,8 @@ describe('OperationsView 真实运营报表', () => {
     await flushPromises()
     expect(loadingWrapper.text()).toContain('暂无管家转化数据')
     expect(loadingWrapper.text()).toContain('暂无机构履约数据')
-    expect(loadingWrapper.text()).toContain('当前筛选没有对应事实记录')
+    expect(loadingWrapper.text()).toContain('当前筛选条件下暂无对应明细记录')
+    expect(loadingWrapper.text()).not.toContain('Q13')
     expect(loadingWrapper.findAll('.proto-stat-card .number').map((node) => node.text())).toEqual(['0 人', '0 单', '0 / 0', '0 人'])
     loadingWrapper.unmount()
 

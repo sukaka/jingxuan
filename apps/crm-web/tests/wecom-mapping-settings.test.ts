@@ -61,7 +61,7 @@ describe('企微通知映射设置', () => {
     const wrapper = mountComponent()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('开发模拟数据')
-    expect(wrapper.text()).toContain('不是员工姓名')
+    expect(wrapper.text()).toContain('模拟演示数据')
+    expect(wrapper.text()).toContain('不是真实员工姓名')
   })
 })

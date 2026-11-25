@@ -62,8 +62,8 @@ watch(() => props.shopId, () => {
 
 <template>
   <section v-loading="loading">
-    <div class="youzan-section-head"><div><h3>同步策略</h3><p>首次按创建时间分段导入；日常按更新时间增量补漏，重叠数据依靠订单与支付幂等去重。</p></div></div>
-    <el-alert v-if="shopId.startsWith('MOCK-')" type="info" :closable="false" title="模拟店铺使用固定演示数据，不需要真实同步策略。" />
+    <div class="youzan-section-head"><div><h3>同步策略</h3><p>首次按创建时间分段导入；日常按更新时间增量补漏，重叠数据由系统自动去重。</p></div></div>
+    <el-alert v-if="shopId.startsWith('MOCK-')" type="info" :closable="false" title="模拟演示店铺使用固定演示数据，不需要真实同步策略。" />
     <el-alert v-else-if="loadError" type="warning" :closable="false" :title="loadError" />
     <el-form v-else label-position="top" class="policy-form" @submit.prevent>
       <div class="youzan-form-grid">

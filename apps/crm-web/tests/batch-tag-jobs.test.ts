@@ -166,7 +166,10 @@ describe('BatchTagJobsView', () => {
     expect(previewBatchTagJob).toHaveBeenCalledWith(expect.objectContaining({
       operation: 'ADD', tagCodes: ['VIP'], source: expect.objectContaining({ type: 'FILTER' }),
     }), expect.any(String))
-    expect(wrapper.text()).toContain('固定预览成员 2 人')
+    expect(wrapper.text()).toContain('已锁定目标客户 2 人')
+    expect(wrapper.text()).not.toContain('V33')
+    expect(wrapper.text()).not.toContain('批量 ADD')
+    expect(wrapper.text()).not.toContain('customerTags')
 
     await wrapper.get('[data-testid="create-tag-job"]').trigger('click')
     await flushPromises()
@@ -174,15 +177,18 @@ describe('BatchTagJobsView', () => {
     await wrapper.get('[data-testid="execute-tag-job"]').trigger('click')
     await flushPromises()
     expect(executeBatchTagJob).toHaveBeenCalledWith(34, 0, expect.any(String))
-    expect(wrapper.text()).toContain('PARTIAL_FAILED')
-    expect(wrapper.text()).toContain('TAG_DICTIONARY_INACTIVE')
+    expect(wrapper.text()).toContain('部分失败')
+    expect(wrapper.text()).not.toContain('PARTIAL_FAILED')
+    expect(wrapper.text()).toContain('标签已停用或不存在')
+    expect(wrapper.text()).not.toContain('TAG_DICTIONARY_INACTIVE')
     expect(wrapper.text()).toContain('恢复有效字典后可重试失败项')
     expect(wrapper.text()).toContain('2 / 2（100%）')
 
     await wrapper.get('[data-testid="retry-tag-job"]').trigger('click')
     await flushPromises()
     expect(retryBatchTagJob).toHaveBeenCalledWith(34, 2, expect.any(String))
-    expect(wrapper.text()).toContain('SUCCEEDED')
+    expect(wrapper.text()).toContain('已完成')
+    expect(wrapper.text()).not.toContain('SUCCEEDED')
   })
 
   it('从已完成 REMOVE 任务创建独立反向任务而不改原任务', async () => {
@@ -204,7 +210,8 @@ describe('BatchTagJobsView', () => {
     await wrapper.get('[data-testid="rollback-tag-job"]').trigger('click')
     await flushPromises()
     expect(rollbackBatchTagJob).toHaveBeenCalledWith(34, 2, expect.any(String))
-    expect(wrapper.text()).toContain('独立回滚')
-    expect(wrapper.text()).toContain('rollbackOfJobId')
+    expect(wrapper.text()).toContain('撤销任务')
+    expect(wrapper.text()).toContain('原任务 #34')
+    expect(wrapper.text()).not.toContain('rollbackOfJobId')
   })
 })

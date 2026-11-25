@@ -120,7 +120,7 @@ async function save() {
     formVisible.value = false
     emit('saved')
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重新提交不会重复保存`)
   } finally {
     saving.value = false
   }
@@ -142,8 +142,8 @@ async function save() {
     <app-table v-loading="loading" :data="links" size="small">
       <el-table-column prop="externalCustomerId" label="外部客户标识" min-width="170" />
       <el-table-column label="CRM 客户" width="115"><template #default="{ row }">{{ crmCustomerLabel(row.customerId) }}</template></el-table-column>
-      <el-table-column label="链接方式" width="100"><template #default="{ row }">{{ row.linkType === 'STRONG' ? '强确认' : row.linkType === 'MANUAL' ? '人工确认' : row.linkType }}</template></el-table-column>
-      <el-table-column label="证据等级" width="95"><template #default="{ row }">{{ ({ HIGH: '高', MEDIUM: '中', LOW: '低' } as Record<string, string>)[row.confidence] || row.confidence }}</template></el-table-column>
+      <el-table-column label="链接方式" width="100"><template #default="{ row }">{{ row.linkType === 'STRONG' ? '强确认' : row.linkType === 'MANUAL' ? '人工确认' : '其他方式' }}</template></el-table-column>
+      <el-table-column label="证据等级" width="95"><template #default="{ row }">{{ ({ HIGH: '高', MEDIUM: '中', LOW: '低' } as Record<string, string>)[row.confidence] || '未知' }}</template></el-table-column>
       <el-table-column prop="reason" label="人工理由" min-width="190" show-overflow-tooltip />
       <el-table-column v-if="canWrite" label="操作" width="100" fixed="right"><template #default="{ row }"><el-button text size="small" data-testid="customer-link-edit" @click="openEdit(row)">编辑</el-button></template></el-table-column>
       <template #empty><el-empty description="暂无人工客户链接；未确认客户不会生成订单或权益" /></template>
@@ -161,7 +161,7 @@ async function save() {
           <div v-else-if="hasMore" class="youzan-warning-text">结果较多，请继续输入客户编号或名称缩小范围。</div>
         </el-form-item>
         <el-form-item label="人工匹配理由与证据" required><el-input v-model="reason" type="textarea" :rows="3" maxlength="1000" data-testid="customer-link-reason" placeholder="说明人工核对了哪些订单、外部身份与 CRM 档案依据" /></el-form-item>
-        <div v-if="editingId" class="youzan-retry-note">乐观锁版本：{{ version }}</div>
+        <div v-if="editingId" class="youzan-retry-note">当前数据版本：{{ version }}</div>
       </el-form>
       <template #footer>
         <el-button :disabled="saving" @click="formVisible = false">取消</el-button>

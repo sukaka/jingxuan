@@ -27,6 +27,19 @@ class TestDevSecOpsContracts(unittest.TestCase):
         self.assertIn('-Server', text)
         self.assertIn('Strict-Transport-Security "max-age=31536000"', text)
 
+        sameorigin = (REPO_ROOT / 'infra/production/Caddyfile.sameorigin').read_text(encoding='utf-8')
+        self.assertIn('auto_https off', sameorigin)
+        self.assertIn('redir {$PUBLIC_URL}{uri} 308', sameorigin)
+        self.assertIn('tls /etc/caddy/certs/server.crt /etc/caddy/certs/server.key', sameorigin)
+        self.assertIn('Strict-Transport-Security "max-age=31536000"', sameorigin)
+        self.assertIn('max_size 15MB', sameorigin)
+        self.assertIn('@minio path /minio*', sameorigin)
+        self.assertIn('respond @minio 403', sameorigin)
+        self.assertIn('header_up -Cookie', sameorigin)
+        self.assertIn('X-Content-Type-Options "nosniff"', sameorigin)
+        self.assertIn('Content-Security-Policy "sandbox"', sameorigin)
+        self.assertIn('-Server', sameorigin)
+
     def test_crm_api_and_clamav_proxy_dockerfiles(self) -> None:
         api_df = (REPO_ROOT / 'apps/crm-api/Dockerfile').read_text(encoding='utf-8')
         self.assertIn('ENV SPRING_PROFILES_ACTIVE=prod', api_df)

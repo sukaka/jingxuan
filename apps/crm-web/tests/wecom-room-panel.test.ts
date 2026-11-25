@@ -53,12 +53,12 @@ describe('WecomRoomPanel', () => {
       memberUserids: ['staff-2', 'wm-synthetic'], sourceEvidenceRef: 'synthetic://room-evidence',
       version: 0, reason: '核对群成员变更',
     }, expect.any(String))
-    expect(wrapper.text()).toContain('重试沿用同一幂等键')
+    expect(wrapper.text()).toContain('重新提交不会重复保存')
     const firstKey = vi.mocked(saveWecomRoom).mock.calls[0]?.[2]
     await wrapper.get('[data-testid="wecom-room-form"]').trigger('submit')
     await flushPromises()
     expect(vi.mocked(saveWecomRoom).mock.calls[1]?.[2]).toBe(firstKey)
-    expect(wrapper.text()).not.toContain('重试沿用同一幂等键')
+    expect(wrapper.text()).not.toContain('重新提交不会重复保存')
   })
 
   it('只读员工不能新增或修改配置', async () => {

@@ -9,7 +9,7 @@ import java.util.List;
  * 全量替换客户标签；审计 before/after。
  */
 public record UpdateCustomerTagsRequest(
-        @NotNull(message = "tagCodes 不能为空")
+        @NotNull(message = "请选择客户标签")
         @Size(max = 50, message = "标签数量超限")
         List<@Size(max = 64) String> tagCodes) {
     public UpdateCustomerTagsRequest {

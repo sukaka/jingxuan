@@ -163,14 +163,14 @@ onMounted(() => { void load() })
 
 <template>
   <div class="proto-page report-page">
-    <PageHeader title="业绩分析" description="管家与商务分岗位汇总，使用成交时归属快照、真实支付和成功退款；团队目标与日趋势直接读取服务端事实">
+    <PageHeader title="业绩分析" description="按管家与商务岗位汇总业绩，依据下单时锁定的归属记录、已确认支付和成功退款统计；团队目标与日趋势均来自实际业务记录">
       <template #actions>
         <el-popover placement="bottom-end" trigger="click" width="430">
           <template #reference><el-button>指标口径说明</el-button></template>
           <div class="metric-definition">
             <strong>业绩预览不直接作为工资或提成结算依据</strong>
-            <p>支付金额、成功退款和净支付事实按成交时归属快照汇总；日趋势保留服务端实际发生日。</p>
-            <p>团队目标未配置时显示待配置，完成率未确认时不补算；Q13 转化指标仍需运营与财务确认。</p>
+            <p>支付金额、成功退款和净支付按成交时锁定的归属记录汇总；日趋势按实际发生日期统计。</p>
+            <p>团队目标未配置时显示待配置，完成率未确认时不补算；转化率指标口径待运营与财务确认后开放。</p>
           </div>
         </el-popover>
         <el-button :loading="loading" @click="load">刷新报表</el-button>
@@ -178,7 +178,7 @@ onMounted(() => { void load() })
     </PageHeader>
 
     <div class="proto-banner report-definition">
-      <div><strong>业绩预览不直接作为工资或提成结算依据</strong><p>团队目标、完成率和日金额均保留服务端状态；缺失目标不按 0 处理，缺失日金额不补柱形。</p></div>
+      <div><strong>业绩预览不直接作为工资或提成结算依据</strong><p>团队目标、完成率和日金额均按实际业务状态展示；缺失目标不按 0 处理，缺失日金额不补柱形。</p></div>
       <span class="proto-pill warning">{{ report?.usageStatus === 'NOT_PAYROLL' ? '非工资核算依据' : '预览口径' }}</span>
     </div>
 
@@ -257,7 +257,7 @@ onMounted(() => { void load() })
       </PageCard>
       <PageCard title="绩效核算规则" subtitle="只读预览，不修改归属、退款、目标或工资结果" padded>
         <div class="report-rules">
-          <p><strong>归属</strong>使用成交时管家/商务快照，未配置归因单独标记，不回填当前客户归属。</p>
+          <p><strong>归属</strong>使用成交时锁定的管家/商务归属，未配置归因单独标记，不回填当前客户归属。</p>
           <p><strong>目标</strong>团队目标与完成率只读取真实汇总字段和状态，不使用分页行或空目标推算。</p>
           <p><strong>日趋势</strong>只展示每日明细返回的日期与金额；日、周、月快捷筛选通过重新查询获得数据。</p>
         </div>
@@ -268,7 +268,7 @@ onMounted(() => { void load() })
       <div class="proto-table-wrap"><app-table :data="receiverRows" row-key="label"><el-table-column prop="label" label="收款方" min-width="115" /><el-table-column prop="paid" label="支付" min-width="115" align="right" /><el-table-column prop="refund" label="退款" min-width="115" align="right" /><el-table-column prop="net" label="净支付事实" min-width="125" align="right" /></app-table></div>
     </PageCard>
 
-    <ReportEvidenceDrawer v-model="factsVisible" :title="factTitle" :facts="facts" description="按所选员工重新请求当前报表端点；仅展示服务端授权范围内返回的真实事实。" />
+    <ReportEvidenceDrawer v-model="factsVisible" :title="factTitle" :facts="facts" description="仅展示当前账号权限范围内该员工的实际业务明细。" />
     <footer class="proto-footer">鲸选美学 CRM · 业绩预览须经财务规则审核后方可用于后续核算</footer>
   </div>
 </template>

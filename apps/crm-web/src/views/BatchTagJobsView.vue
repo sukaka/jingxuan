@@ -6,6 +6,7 @@ import { listProjects } from '../api/catalog'
 import type { CustomerSegment, CustomerSegmentBatch, CustomerSegmentFilters } from '../api/customerSegment'
 import { listCustomerSegments } from '../api/customerSegment'
 import type {
+  BatchTagItemStatus,
   BatchTagJobDetail,
   BatchTagJobStatus,
   BatchTagOperation,
@@ -27,7 +28,7 @@ import {
 import PageCard from '../components/prototype/PageCard.vue'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import { useAuthStore } from '../stores/auth'
-import { useDictionaries } from './customer/shared'
+import { customerTagLabel, useDictionaries } from './customer/shared'
 
 const auth = useAuthStore()
 const dicts = useDictionaries()
@@ -48,6 +49,124 @@ const itemPage = ref(1)
 const operationKeys = new Map<string, string>()
 const tiers = ['S', 'A', 'B', 'C', 'D']
 const statuses: BatchTagJobStatus[] = ['PENDING', 'RUNNING', 'SUCCEEDED', 'PARTIAL_FAILED', 'FAILED']
+
+const OPERATION_LABELS: Record<BatchTagOperation, string> = {
+  ADD: '批量添加标签',
+  REMOVE: '批量移除标签',
+}
+const SOURCE_TYPE_LABELS: Record<BatchTagSourceType, string> = {
+  FILTER: '筛选条件',
+  SEGMENT: '动态分组',
+  OPERATION_BATCH: '操作批次',
+  ROLLBACK: '撤销任务',
+}
+const JOB_STATUS_LABELS: Record<BatchTagJobStatus, string> = {
+  PENDING: '待执行',
+  RUNNING: '执行中',
+  SUCCEEDED: '已完成',
+  PARTIAL_FAILED: '部分失败',
+  FAILED: '执行失败',
+}
+const ITEM_STATUS_LABELS: Record<BatchTagItemStatus, string> = {
+  PENDING: '待处理',
+  SUCCEEDED: '已更新',
+  NO_CHANGE: '无需变更',
+  SKIPPED: '已跳过',
+  FAILED: '失败',
+}
+const FAILURE_CODE_LABELS: Record<string, string> = {
+  TAG_DICTIONARY_INACTIVE: '标签已停用或不存在',
+  PERMISSION_REVOKED: '无权操作该客户',
+  CUSTOMER_NOT_FOUND: '客户不存在或不可见',
+  MERGE_CONFLICT: '客户已合并归档',
+  OWNERSHIP_OUT_OF_SCOPE: '客户归属已变更',
+  ITEM_EXECUTION_FAILED: '标签更新失败',
+}
+const SCOPE_TYPE_LABELS: Record<string, string> = {
+  ALL: '全部客户',
+  TEAM: '所属团队客户',
+  SELF: '本人名下客户',
+  NONE: '无可见客户',
+}
+
+function operationLabel(op: string): string {
+  return OPERATION_LABELS[op as BatchTagOperation] ?? '批量打标'
+}
+
+function sourceTypeLabel(type: string): string {
+  return SOURCE_TYPE_LABELS[type as BatchTagSourceType] ?? '其他来源'
+}
+
+function jobStatusLabel(status: string): string {
+  return JOB_STATUS_LABELS[status as BatchTagJobStatus] ?? '未知状态'
+}
+
+function itemStatusLabel(status: string): string {
+  return ITEM_STATUS_LABELS[status as BatchTagItemStatus] ?? '未知状态'
+}
+
+function failureCodeLabel(code: string): string {
+  return FAILURE_CODE_LABELS[code] ?? '执行异常'
+}
+
+function tagDisplayLabel(code: string): string {
+  const hit = dicts.options('customerTags').find((item) => item.code === code)
+  if (hit) return hit.label
+  const fallback = customerTagLabel(code)
+  return fallback !== '其他标签' ? fallback : `${code}（已停用）`
+}
+
+function formatTagList(codes: string[] | null | undefined): string {
+  if (!codes?.length) return '-'
+  return codes.map(tagDisplayLabel).join('、')
+}
+
+function scopeSummary(scope: Record<string, unknown> | null | undefined): string {
+  if (!scope) return '—'
+  const scopeType = typeof scope.type === 'string' ? (SCOPE_TYPE_LABELS[scope.type] ?? '指定范围') : '指定范围'
+  const teamIds = Array.isArray(scope.teamIds) && scope.teamIds.length ? `（团队 #${scope.teamIds.join('、#')}）` : ''
+  return `${scopeType}${teamIds}`
+}
+
+function sourceSummaryItems(job: BatchTagJobDetail['job']): { label: string; value: string }[] {
+  const source = job.sourceSnapshot ?? {}
+  const items: { label: string; value: string }[] = [
+    { label: '来源方式', value: sourceTypeLabel(job.sourceType) },
+    { label: '权限范围', value: scopeSummary(job.scopeSnapshot) },
+  ]
+  if (typeof source.name === 'string' && source.name) {
+    items.push({ label: '动态分组', value: source.name })
+  }
+  if (typeof source.batchNo === 'string' && source.batchNo) {
+    items.push({ label: '操作批次号', value: source.batchNo })
+  }
+  if (typeof source.originalJobNo === 'string' && source.originalJobNo) {
+    items.push({ label: '原任务编号', value: source.originalJobNo })
+  }
+  if (typeof source.originalOperation === 'string' && source.originalOperation) {
+    items.push({ label: '原操作类型', value: operationLabel(source.originalOperation) })
+  }
+  const rawFilters = source.filters as Partial<CustomerSegmentFilters> | undefined
+  if (rawFilters && typeof rawFilters === 'object') {
+    const parts: string[] = []
+    if (rawFilters.cityCodes?.length) {
+      parts.push(`城市：${rawFilters.cityCodes.map((code) => dicts.label('cities', code)).join('、')}`)
+    }
+    if (rawFilters.tierCodes?.length) {
+      parts.push(`等级：${rawFilters.tierCodes.map((code) => `${code} 级`).join('、')}`)
+    }
+    const projectText = (ids?: number[]) => (
+      ids?.length ? ids.map((id) => projects.value.find((p) => p.id === id)?.projectName ?? `#${id}`).join('、') : ''
+    )
+    if (rawFilters.attentionProjectIds?.length) parts.push(`关注项目：${projectText(rawFilters.attentionProjectIds)}`)
+    if (rawFilters.purchasedProjectIds?.length) parts.push(`已购项目：${projectText(rawFilters.purchasedProjectIds)}`)
+    if (rawFilters.redeemedProjectIds?.length) {
+      parts.push(`净核销项目：${projectText(rawFilters.redeemedProjectIds)}（至少 ${rawFilters.redeemedMinCount ?? 1} 次）`)
+    }
+    items.push({ label: '筛选条件', value: parts.length ? parts.join('；') : '不限条件（当前可见范围全部客户）' })
+  }
+  return items
+}
 
 const form = reactive<{
   operation: BatchTagOperation
@@ -100,11 +219,11 @@ watch(form, invalidatePreview, { deep: true })
 
 function sourceInput(): BatchTagSourceInput {
   if (form.sourceType === 'SEGMENT') {
-    if (!form.segmentId) throw new Error('请选择 V33 动态分组')
+    if (!form.segmentId) throw new Error('请选择动态分组')
     return { type: 'SEGMENT', id: form.segmentId }
   }
   if (form.sourceType === 'OPERATION_BATCH') {
-    if (!form.operationBatchId) throw new Error('请填写或创建 V33 操作批次')
+    if (!form.operationBatchId) throw new Error('请填写或生成操作批次')
     return { type: 'OPERATION_BATCH', id: form.operationBatchId }
   }
   return { type: 'FILTER', filters: { ...form.filters } }
@@ -140,7 +259,7 @@ async function createJob() {
   try {
     detail.value = await createBatchTagJob(current.previewId, operationKey('create', current.previewId))
     itemPage.value = 1
-    ElMessage.success('任务已按固定预览快照创建，尚未执行')
+    ElMessage.success('任务已按预览结果创建，确认后可执行')
     await loadJobs()
   } catch (error) {
     errorMessage.value = errorText(error)
@@ -158,7 +277,7 @@ async function createSnapshot() {
     operationBatch.value = await createBatchTagOperationBatch(segment.id, segment.version,
       operationKey('source-snapshot', `${segment.id}:${segment.version}`))
     form.operationBatchId = operationBatch.value.id
-    ElMessage.success(`V33 操作批次已固定 ${operationBatch.value.memberCount} 人，可继续预览`)
+    ElMessage.success(`操作批次已生成，共锁定 ${operationBatch.value.memberCount} 位客户，可继续预览`)
   } catch (error) {
     errorMessage.value = errorText(error)
   } finally {
@@ -223,7 +342,7 @@ async function rollbackCurrent() {
     detail.value = await rollbackBatchTagJob(job.id, job.version,
       operationKey('rollback', `${job.id}:${job.version}`))
     itemPage.value = 1
-    ElMessage.success('已创建独立反向任务；原任务和历史结果未修改，请预览明细后显式执行')
+    ElMessage.success('已创建撤销任务；原任务与历史记录保持不变，核对明细后可手动执行')
     await loadJobs()
   } catch (error) {
     errorMessage.value = errorText(error)
@@ -243,7 +362,7 @@ onMounted(() => {
   if (Number.isSafeInteger(jobId) && jobId > 0) void openDetail(jobId)
   void listCustomerSegments({ page: 1, size: 100 }).then((result) => {
     segments.value = result.items
-  }).catch((error) => { errorMessage.value = `V33 分组加载失败：${errorText(error)}` })
+  }).catch((error) => { errorMessage.value = `动态分组加载失败：${errorText(error)}` })
   void listProjects({ page: 1, size: 100 }).then((result) => {
     projects.value = result.items
   }).catch((error) => { errorMessage.value = `项目选项加载失败：${errorText(error)}` })
@@ -254,42 +373,42 @@ onMounted(() => {
   <div class="proto-page batch-tag-page">
     <PageHeader
       title="批量重打标"
-      description="服务端预览固定成员快照；只执行增量 ADD/REMOVE，不调用全量标签替换，执行时重验权限与当前归属"
+      description="预览并锁定目标客户范围后执行批量添加或移除标签，不会覆盖客户其他已有标签，执行前自动校验权限与归属关系"
     />
     <el-alert v-if="!canManage" title="当前账号没有批量重打标权限；机构账号不可操作" type="warning" :closable="false" />
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" role="alert" />
 
-    <PageCard title="1. 预览并固定成员" subtitle="ADD 仅允许有效 customerTags 字典；REMOVE 可处理历史/停用代码，其他未知历史标签始终保留">
+    <PageCard title="1. 预览并锁定目标客户" subtitle="添加标签仅支持当前启用的客户标签；移除标签可清理历史或已停用标签，未涉及的其他标签将自动保留">
       <el-form v-if="canManage" label-width="110px" class="tag-job-form">
         <div class="form-grid">
           <el-form-item label="操作" required>
             <el-radio-group v-model="form.operation" data-testid="operation-select">
-              <el-radio-button value="ADD">批量 ADD</el-radio-button>
-              <el-radio-button value="REMOVE">批量 REMOVE</el-radio-button>
+              <el-radio-button value="ADD">批量添加标签</el-radio-button>
+              <el-radio-button value="REMOVE">批量移除标签</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-form-item label="标签" required>
+          <el-form-item label="客户标签" required>
             <el-select
               v-model="form.tagCodes" multiple filterable :allow-create="form.operation === 'REMOVE'"
               default-first-option data-testid="tag-select"
-              :placeholder="form.operation === 'ADD' ? '选择有效标签字典' : '选择或输入需要移除的历史标签代码'"
+              :placeholder="form.operation === 'ADD' ? '请选择要添加的客户标签' : '请选择或输入要移除的客户标签'"
             >
               <el-option
                 v-for="item in dicts.options('customerTags')" :key="item.code"
-                :label="`${item.label}（${item.code}）`" :value="item.code"
+                :label="item.label" :value="item.code"
               />
             </el-select>
           </el-form-item>
-          <el-form-item label="成员来源" required>
+          <el-form-item label="客户来源" required>
             <el-radio-group v-model="form.sourceType" data-testid="source-type-select">
               <el-radio-button value="FILTER">筛选条件</el-radio-button>
-              <el-radio-button value="SEGMENT">V33 动态分组</el-radio-button>
-              <el-radio-button value="OPERATION_BATCH">V33 操作批次</el-radio-button>
+              <el-radio-button value="SEGMENT">动态分组</el-radio-button>
+              <el-radio-button value="OPERATION_BATCH">操作批次</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-form-item v-if="form.sourceType !== 'FILTER'" label="V33 分组" required>
-            <el-select v-model="form.segmentId" filterable placeholder="选择动态分组" data-testid="segment-select">
-              <el-option v-for="item in segments" :key="item.id" :label="`${item.name}（v${item.version}）`" :value="item.id" />
+          <el-form-item v-if="form.sourceType !== 'FILTER'" label="动态分组" required>
+            <el-select v-model="form.segmentId" filterable placeholder="请选择动态分组" data-testid="segment-select">
+              <el-option v-for="item in segments" :key="item.id" :label="`${item.name}（第 ${item.version} 版）`" :value="item.id" />
             </el-select>
           </el-form-item>
         </div>
@@ -327,22 +446,22 @@ onMounted(() => {
 
         <div v-if="form.sourceType === 'OPERATION_BATCH'" class="snapshot-row">
           <el-button :disabled="!selectedSegment" :loading="pendingAction === 'snapshot'" @click="createSnapshot">
-            固定当前分组成员为 V33 操作批次
+            从所选分组生成操作批次
           </el-button>
-          <el-input-number v-model="form.operationBatchId" :min="1" :controls="false" placeholder="操作批次 ID" />
-          <span v-if="operationBatch">{{ operationBatch.batchNo }} · {{ operationBatch.memberCount }} 人不可变快照</span>
+          <el-input-number v-model="form.operationBatchId" :min="1" :controls="false" placeholder="请输入操作批次 ID" />
+          <span v-if="operationBatch">{{ operationBatch.batchNo }} · 已锁定 {{ operationBatch.memberCount }} 位客户</span>
         </div>
         <div class="action-row">
           <el-button type="primary" :loading="pendingAction === 'preview'" data-testid="preview-tag-job" @click="runPreview">
-            服务端预览
+            预览目标客户
           </el-button>
           <el-button
             :disabled="!preview || preview.total === 0" :loading="pendingAction === 'create'"
             data-testid="create-tag-job" @click="createJob"
           >
-            按预览创建任务
+            确认并创建任务
           </el-button>
-          <span v-if="preview" data-testid="preview-summary">固定预览成员 {{ preview.total }} 人 · {{ preview.previewId }}</span>
+          <span v-if="preview" data-testid="preview-summary">已锁定目标客户 {{ preview.total }} 人 · 预览单号 {{ preview.previewId }}</span>
         </div>
       </el-form>
       <el-table v-if="preview" :data="preview.items" size="small" max-height="300">
@@ -353,20 +472,24 @@ onMounted(() => {
       </el-table>
     </PageCard>
 
-    <PageCard title="2. 任务列表" subtitle="请求人、范围、标签、来源和创建幂等键均保存在不可变快照中">
+    <PageCard title="2. 任务列表" subtitle="任务创建后将保留提交人、客户范围、标签与来源记录，执行前不会修改客户标签">
       <div class="list-toolbar">
         <el-select v-model="statusFilter" clearable placeholder="全部状态" @change="page = 1; loadJobs()">
-          <el-option v-for="status in statuses" :key="status" :label="status" :value="status" />
+          <el-option v-for="status in statuses" :key="status" :label="jobStatusLabel(status)" :value="status" />
         </el-select>
         <el-button :loading="pendingAction === 'list'" @click="loadJobs">刷新</el-button>
       </div>
       <el-table v-loading="pendingAction === 'list'" :data="jobs">
         <el-table-column prop="jobNo" label="任务编号" min-width="190" />
-        <el-table-column label="操作 / 标签" min-width="180">
-          <template #default="{ row }">{{ row.operation }} · {{ row.tagCodes.join('、') }}</template>
+        <el-table-column label="操作 / 标签" min-width="200">
+          <template #default="{ row }">{{ operationLabel(row.operation) }} · {{ formatTagList(row.tagCodes) }}</template>
         </el-table-column>
-        <el-table-column prop="sourceType" label="来源" width="140" />
-        <el-table-column prop="status" label="状态" width="140" />
+        <el-table-column label="来源" width="140">
+          <template #default="{ row }">{{ sourceTypeLabel(row.sourceType) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">{{ jobStatusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column label="进度" min-width="180">
           <template #default="{ row }">
             成功 {{ row.succeededCount }} / 无需变更 {{ row.noChangeCount }} / 跳过 {{ row.skippedCount }} / 失败 {{ row.failedCount }}，共 {{ row.totalCount }}
@@ -383,16 +506,16 @@ onMounted(() => {
       />
     </PageCard>
 
-    <PageCard v-if="detail" title="3. 执行进度与逐项结果" :subtitle="`${detail.job.jobNo} · version ${detail.job.version}`">
+    <PageCard v-if="detail" title="3. 执行进度与逐项结果" :subtitle="`${detail.job.jobNo} · 第 ${detail.job.version} 版`">
       <div class="detail-summary">
-        <el-tag>{{ detail.job.operation }}</el-tag>
+        <el-tag>{{ operationLabel(detail.job.operation) }}</el-tag>
         <el-tag :type="detail.job.status === 'SUCCEEDED' ? 'success' : detail.job.status === 'PENDING' ? 'info' : 'warning'">
-          {{ detail.job.status }}
+          {{ jobStatusLabel(detail.job.status) }}
         </el-tag>
-        <span>标签 {{ detail.job.tagCodes.join('、') }}</span>
-        <span>请求人 #{{ detail.job.requestedBy }}</span>
-        <span>来源 {{ detail.job.sourceType }}<template v-if="detail.job.sourceId"> #{{ detail.job.sourceId }}</template></span>
-        <span v-if="detail.job.rollbackOfJobId">独立回滚 · rollbackOfJobId={{ detail.job.rollbackOfJobId }}</span>
+        <span>标签：{{ formatTagList(detail.job.tagCodes) }}</span>
+        <span>提交人 #{{ detail.job.requestedBy }}</span>
+        <span>来源：{{ sourceTypeLabel(detail.job.sourceType) }}<template v-if="detail.job.sourceId"> #{{ detail.job.sourceId }}</template></span>
+        <span v-if="detail.job.rollbackOfJobId">撤销任务 · 原任务 #{{ detail.job.rollbackOfJobId }}</span>
       </div>
       <el-progress :percentage="progressPercent" :status="detail.job.failedCount ? 'exception' : undefined" />
       <div class="count-line">
@@ -417,38 +540,43 @@ onMounted(() => {
           v-if="['SUCCEEDED', 'PARTIAL_FAILED'].includes(detail.job.status) && canManage"
           :loading="pendingAction === 'rollback'" data-testid="rollback-tag-job" @click="rollbackCurrent"
         >
-          创建独立回滚
+          创建撤销任务
         </el-button>
       </div>
       <el-table :data="detail.items.items" max-height="480">
         <el-table-column prop="customerNo" label="客户编号" min-width="135" />
         <el-table-column label="客户" min-width="120"><template #default="{ row }">{{ row.customerName ?? '未命名客户' }}</template></el-table-column>
-        <el-table-column label="处理标签" min-width="130"><template #default="{ row }">{{ row.tagCodes.join('、') }}</template></el-table-column>
-        <el-table-column prop="status" label="结果" width="110" />
+        <el-table-column label="处理标签" min-width="130"><template #default="{ row }">{{ formatTagList(row.tagCodes) }}</template></el-table-column>
+        <el-table-column label="结果" width="110"><template #default="{ row }">{{ itemStatusLabel(row.status) }}</template></el-table-column>
         <el-table-column label="失败/跳过原因" min-width="260">
           <template #default="{ row }">
-            <span v-if="row.failureCode" class="failure-code">{{ row.failureCode }}</span>
+            <span v-if="row.failureCode" class="failure-code">{{ failureCodeLabel(row.failureCode) }}</span>
             <div v-if="row.reason" class="proto-subcell">{{ row.reason }}</div>
           </template>
         </el-table-column>
         <el-table-column label="实际变更" min-width="150">
-          <template #default="{ row }">{{ row.changedTagCodes?.join('、') || '-' }}</template>
+          <template #default="{ row }">{{ formatTagList(row.changedTagCodes) }}</template>
         </el-table-column>
         <el-table-column label="前后完整标签" min-width="240">
           <template #default="{ row }">
-            <div>{{ row.beforeTagCodes?.join('、') || '-' }}</div>
-            <div class="proto-subcell">→ {{ row.afterTagCodes?.join('、') || '-' }}</div>
+            <div>{{ formatTagList(row.beforeTagCodes) }}</div>
+            <div class="proto-subcell">→ {{ formatTagList(row.afterTagCodes) }}</div>
           </template>
         </el-table-column>
-        <el-table-column prop="attemptCount" label="尝试" width="70" />
+        <el-table-column prop="attemptCount" label="尝试次数" width="90" />
       </el-table>
       <el-pagination
         v-if="detail.items.total > 100" :current-page="itemPage" :page-size="100" :total="detail.items.total"
         layout="total, prev, pager, next" @current-change="changeItemPage"
       />
       <details class="snapshot-details">
-        <summary>查看请求、范围与来源快照</summary>
-        <pre>{{ JSON.stringify({ source: detail.job.sourceSnapshot, scope: detail.job.scopeSnapshot }, null, 2) }}</pre>
+        <summary>查看任务来源与客户范围详情</summary>
+        <dl class="snapshot-summary-list">
+          <div v-for="entry in sourceSummaryItems(detail.job)" :key="entry.label">
+            <dt>{{ entry.label }}</dt>
+            <dd>{{ entry.value }}</dd>
+          </div>
+        </dl>
       </details>
     </PageCard>
   </div>
@@ -469,7 +597,10 @@ onMounted(() => {
 .failure-code { color: #b42318; font-weight: 600; }
 .proto-subcell { margin-top: 4px; }
 .snapshot-details { margin-top: 16px; }
-.snapshot-details pre { overflow: auto; max-height: 260px; padding: 12px; background: #f8fafc; }
+.snapshot-summary-list { display: grid; gap: 8px; margin: 12px 0 0; padding: 12px 14px; border-radius: 8px; background: #f8fafc; font-size: 13px; }
+.snapshot-summary-list > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; }
+.snapshot-summary-list dt { color: #667085; }
+.snapshot-summary-list dd { margin: 0; color: #1d2939; overflow-wrap: anywhere; }
 .el-pagination { margin-top: 14px; }
 .action-row .el-button { margin-left: 0; }
 @media (max-width: 1000px) { .filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

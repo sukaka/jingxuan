@@ -239,6 +239,12 @@ async function copy(): Promise<void> {
   }
 }
 
+function sendStatusLabel(status: 'SDK_SUCCESS' | 'SDK_FAILED' | 'SDK_UNKNOWN'): string {
+  if (status === 'SDK_SUCCESS') return '发送成功'
+  if (status === 'SDK_FAILED') return '发送失败'
+  return '发送结果未知'
+}
+
 async function send(): Promise<void> {
   if (!canSendCurrentChat.value || !preview.value || actionBusy.value) return
   actionBusy.value = true
@@ -255,7 +261,7 @@ async function send(): Promise<void> {
       try {
         await recordUsage(result.status, result.clientResult)
       } catch (error) {
-        errorMessage.value = `企微已返回 ${result.status}，但使用日志记录失败：${errorText(error)}；请先核实会话，不要直接重复发送`
+        errorMessage.value = `企微已返回「${sendStatusLabel(result.status)}」，但使用日志记录失败：${errorText(error)}；请先核实会话，不要直接重复发送`
         return
       }
     }
@@ -413,7 +419,7 @@ onMounted(() => { void load() })
           <span v-for="code in preview.missingVariables" :key="code">{{ missingLabel(code) }}</span>
         </div>
         <p class="preview-note">
-          {{ hasCustomerId ? '订单、次数、日期和机构信息来自 CRM 服务端，不由页面输入决定。' : '当前为通用静态话术预览，未注入客户私有信息；发送前请人工确认群聊对象。' }}
+          {{ hasCustomerId ? '订单、次数、日期和机构信息由系统自动读取填充，无需手动输入。' : '当前为通用静态话术预览，未注入客户私有信息；发送前请人工确认群聊对象。' }}
         </p>
         <div class="quick-reply-actions">
           <button class="copy-button" type="button" data-testid="quick-reply-copy" :disabled="!canUse" @click="copy">{{ actionBusy ? '处理中…' : '复制话术' }}</button>

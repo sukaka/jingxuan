@@ -61,7 +61,7 @@ public class YouzanConnectionService {
         String clientId = trimToNull(request.clientId());
         String clientSecret = trimToNull(request.clientSecret());
         if (shopId == null || shopName == null || clientId == null) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "店铺ID、店铺名称和clientId不能为空");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "店铺 ID、店铺名称和应用 Client ID 不能为空");
         }
         YouzanShopConfigRequest normalized = new YouzanShopConfigRequest(shopId, shopName, clientId, clientSecret,
                 request.syncEnabled(), request.version());
@@ -75,7 +75,7 @@ public class YouzanConnectionService {
             YouzanShopConfig result = transactions.execute(status -> {
                 YouzanShopConfig existing = repository.findShopConfigForUpdate(user.tenantId(), shopId).orElse(null);
                 if (existing == null && clientSecret == null) {
-                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "新店铺必须配置clientSecret");
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "新店铺必须配置应用密钥（Client Secret）");
                 }
                 String secretCipher = clientSecret == null
                         ? existing.clientSecretCipher() : cipher.encrypt(clientSecret);

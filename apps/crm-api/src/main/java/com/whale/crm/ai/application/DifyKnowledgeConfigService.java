@@ -145,7 +145,7 @@ public class DifyKnowledgeConfigService {
         DifyKnowledgeConfig current = repository.find(user.tenantId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "请先保存 Dify 知识配置"));
         if ("disabled".equals(current.provider())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "disabled 知识服务无需连接测试");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "未启用知识服务时无需连接测试");
         }
         String status = "CONNECTED";
         String error = null;
@@ -214,10 +214,10 @@ public class DifyKnowledgeConfigService {
 
     private void validate(DifyKnowledgeConfigRequest request) {
         if (request.enabled() && "disabled".equals(request.provider())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "disabled 知识服务不能同时启用");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "知识服务处于停用模式，不能开启启用开关");
         }
         if (Boolean.TRUE.equals(request.syncEnabled()) && "disabled".equals(request.provider())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "disabled 知识服务不能同步资料");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "知识服务处于停用模式，不能开启资料同步");
         }
         String baseUrl = normalize(request.baseUrl());
         if (baseUrl != null) {
@@ -228,7 +228,7 @@ public class DifyKnowledgeConfigService {
     private void requireComplete(DifyKnowledgeConfigRequest request, String keyCipher, String datasetKeyCipher,
                                  boolean syncEnabled) {
         if ("dify".equals(request.provider()) && (normalize(request.baseUrl()) == null || keyCipher == null)) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "dify 必须完整配置 baseUrl 和 API Key");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "使用 Dify 知识服务时，必须完整配置接口地址和 API Key");
         }
         if ("dify".equals(request.provider()) && syncEnabled
                 && (normalize(request.datasetId()) == null || datasetKeyCipher == null)) {
@@ -237,7 +237,7 @@ public class DifyKnowledgeConfigService {
     }
 
     private void validateBaseUrl(String value) {
-        urlValidator.validate(value, "Dify baseUrl");
+        urlValidator.validate(value, "Dify 接口地址");
     }
 
     private DifyKnowledgeConfigResponse view(DifyKnowledgeConfig config) {

@@ -156,7 +156,7 @@ describe('WecomGroupChatPanel 企微群聊助手', () => {
     await flushPromises()
 
     expect(getCustomer).toHaveBeenCalledWith(1010)
-    expect(wrapper.get('[data-testid="group-member-profile-panel"]').text()).toContain('HIGH')
+    expect(wrapper.get('[data-testid="group-member-profile-panel"]').text()).toContain('高意向')
 
     await wrapper.get('[data-testid="group-member-packages-tab"]').trigger('click')
     expect(wrapper.get('[data-testid="group-member-packages-panel"]').text()).toContain('水光焕肤护理')
@@ -302,7 +302,7 @@ describe('WecomGroupChatPanel 企微群聊助手', () => {
     await wrapper.get('[data-testid="group-member-1010"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-testid="quick-actions-stub"]').attributes('data-customer-id')).toBe('1010')
-    expect(wrapper.get('[data-testid="group-member-profile-panel"]').text()).toContain('HIGH')
+    expect(wrapper.get('[data-testid="group-member-profile-panel"]').text()).toContain('高意向')
 
     // Step 2: Switch to TOOLS and pick Member B
     await wrapper.get('[data-testid="group-tools-tab"]').trigger('click')
@@ -313,8 +313,8 @@ describe('WecomGroupChatPanel 企微群聊助手', () => {
     await wrapper.get('[data-testid="group-members-tab"]').trigger('click')
     expect(getCustomer).toHaveBeenCalledWith(2020)
     expect(wrapper.get('[data-testid="quick-actions-stub"]').attributes('data-customer-id')).toBe('2020')
-    expect(wrapper.get('[data-testid="group-member-profile-panel"]').text()).toContain('LOW')
-    expect(wrapper.get('[data-testid="group-member-profile-panel"]').text()).not.toContain('HIGH')
+    expect(wrapper.get('[data-testid="group-member-profile-panel"]').text()).toContain('低意向')
+    expect(wrapper.get('[data-testid="group-member-profile-panel"]').text()).not.toContain('高意向')
 
     await wrapper.get('[data-testid="group-member-packages-tab"]').trigger('click')
     expect(wrapper.get('[data-testid="group-member-packages-panel"]').text()).toContain('热玛吉紧致方案')

@@ -95,12 +95,12 @@ const moneyRows = computed(() => {
   if (!metrics) return []
   return [
     { label: '支付金额', value: moneyText(metrics.paidFen), note: '全部收款方' },
-    { label: '平台支付', value: moneyText(metrics.platformPaidFen), note: '平台收款事实' },
-    { label: '机构支付', value: moneyText(metrics.institutionPaidFen), note: '机构代收事实，不混作平台实收' },
+    { label: '平台支付', value: moneyText(metrics.platformPaidFen), note: '平台收款记录' },
+    { label: '机构支付', value: moneyText(metrics.institutionPaidFen), note: '机构代收记录，不计入平台实收' },
     { label: '成功退款', value: moneyText(metrics.refundFen), note: '全部收款方' },
     { label: '平台退款', value: moneyText(metrics.platformRefundFen), note: '平台成功退款' },
     { label: '机构退款', value: moneyText(metrics.institutionRefundFen), note: '机构成功退款' },
-    { label: '净支付事实', value: moneyText(metrics.netPaidFen), note: '支付减退款；不等于已批准的净业绩' },
+    { label: '净支付金额', value: moneyText(metrics.netPaidFen), note: '实付减退款，不等同于已核准的净业绩' },
     { label: '平台净支付', value: moneyText(metrics.platformNetPaidFen), note: '平台支付与退款差额' },
     { label: '机构净支付', value: moneyText(metrics.institutionNetPaidFen), note: '机构支付与退款差额' },
   ]
@@ -138,8 +138,8 @@ onMounted(() => { void load() })
     <div v-else-if="loading" class="proto-stat-grid" aria-hidden="true"><el-skeleton v-for="index in 4" :key="index" animated :rows="2" class="proto-stat-card" /></div>
 
     <div class="proto-callout report-definition">
-      <div><strong>Q13 指标口径待运营与财务确认</strong><p>管家与机构分组使用真实响应行；空比率只显示待确认，待对账金额未核实时显示待核实而不是 0 元。</p></div>
-      <span class="proto-pill warning">事实先行</span>
+      <div><strong>部分转化率统计口径待确认</strong><p>管家与机构明细均按系统业务数据统计；未定口径的转化率显示为“待确认”，待对账金额未核实前显示为“待核实”。</p></div>
+      <span class="proto-pill warning">数据可追溯</span>
     </div>
 
     <PageCard>
@@ -153,11 +153,11 @@ onMounted(() => { void load() })
           <el-input-number v-model="filters.customerId" :min="1" :precision="0" :controls="false" placeholder="客户 ID" class="report-id-filter" />
           <el-button type="primary" :loading="loading" @click="load">查询</el-button><el-button @click="reset">重置</el-button>
         </div>
-        <span class="proto-note">ID 仅用于筛选，后端仍强制租户与数据范围</span>
+        <span class="proto-note">编号仅用于精准筛选，系统将自动按当前账号权限范围展示数据</span>
       </div>
     </PageCard>
 
-    <div v-if="loading" class="report-loading" role="status">正在加载报表，请稍候；加载期间不保留上一口径的数据。</div>
+    <div v-if="loading" class="report-loading" role="status">正在加载报表，请稍候…</div>
     <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" class="report-error"><el-button text type="primary" data-testid="operations-retry" @click="load">重试</el-button></el-alert>
 
     <template v-if="report">
@@ -180,9 +180,9 @@ onMounted(() => { void load() })
           </div>
         </PageCard>
 
-        <PageCard title="漏斗口径" subtitle="所有指标均可追溯业务流水；不用进度条暗示未确认比率">
+        <PageCard title="转化漏斗" subtitle="各项数据均可追溯对应业务记录">
           <div class="report-funnel">
-            <div v-for="item in funnelRows" :key="item.label" class="report-funnel-row"><span>{{ item.label }}</span><span>服务端真实计数</span><strong>{{ countText(item.value) }}</strong></div>
+            <div v-for="item in funnelRows" :key="item.label" class="report-funnel-row"><span>{{ item.label }}</span><span>业务统计</span><strong>{{ countText(item.value) }}</strong></div>
             <div class="proto-subcell">服务完成数与已核销客户数分别统计，互不替代。</div>
           </div>
         </PageCard>
@@ -203,21 +203,21 @@ onMounted(() => { void load() })
         </div>
       </PageCard>
 
-      <PageCard title="收款与退款事实" subtitle="金额以接口整数分格式化；净支付不等于未经批准的净业绩">
+      <PageCard title="收款与退款汇总" subtitle="金额均按元展示；净支付金额不等同于已核准的净业绩">
         <div class="proto-table-wrap"><app-table :data="moneyRows" row-key="label"><el-table-column prop="label" label="金额口径" min-width="140" /><el-table-column prop="value" label="金额" width="130" align="right"><template #default="{ row }"><span class="report-cell-money">{{ row.value }}</span></template></el-table-column><el-table-column prop="note" label="说明" min-width="220" /></app-table></div>
       </PageCard>
 
-      <PageCard title="原始业务事实" :subtitle="`服务端按 ${factTypeText(report.drillDownType)} 返回，最多 ${report.drillDownLimit} 条`">
-        <template #actions><el-select v-model="filters.drillDownType" class="report-fact-type" aria-label="明细事实类型" @change="load"><el-option label="支付流水" value="PAYMENT" /><el-option label="成功退款" value="REFUND" /><el-option label="正式核销" value="REDEMPTION" /><el-option label="客户跟进" value="FOLLOWUP" /><el-option label="预约确认" value="APPOINTMENT_CONFIRMED" /><el-option label="到院事实" value="CHECKED_IN" /><el-option label="服务完成" value="SERVICE_DONE" /></el-select></template>
+      <PageCard title="业务明细" :subtitle="`按 ${factTypeText(report.drillDownType)} 查询，最多展示 ${report.drillDownLimit} 条`">
+        <template #actions><el-select v-model="filters.drillDownType" class="report-fact-type" aria-label="明细类型" @change="load"><el-option label="支付流水" value="PAYMENT" /><el-option label="成功退款" value="REFUND" /><el-option label="正式核销" value="REDEMPTION" /><el-option label="客户跟进" value="FOLLOWUP" /><el-option label="预约确认" value="APPOINTMENT_CONFIRMED" /><el-option label="到院记录" value="CHECKED_IN" /><el-option label="服务完成" value="SERVICE_DONE" /></el-select></template>
         <div class="proto-table-wrap" data-testid="operations-facts">
           <app-table :data="report.drillDown">
-            <el-table-column label="事实 / 来源" min-width="145"><template #default="{ row }"><strong>{{ factTypeText(row.factType) }}</strong><div class="proto-subcell">来源 #{{ row.sourceId ?? '待确认' }}</div></template></el-table-column>
+            <el-table-column label="类型 / 来源" min-width="145"><template #default="{ row }"><strong>{{ factTypeText(row.factType) }}</strong><div class="proto-subcell">来源 #{{ row.sourceId ?? '待确认' }}</div></template></el-table-column>
             <el-table-column label="订单 / 客户" min-width="140"><template #default="{ row }">订单 #{{ row.orderId ?? '—' }}<div class="proto-subcell">客户 #{{ row.customerId ?? '—' }}</div></template></el-table-column>
             <el-table-column label="金额" width="120" align="right"><template #default="{ row }">{{ moneyText(row.amountFen, '不适用') }}</template></el-table-column>
             <el-table-column label="数量" width="85" align="right"><template #default="{ row }">{{ row.quantity === null ? '—' : countText(row.quantity) }}</template></el-table-column>
             <el-table-column label="事件时间" min-width="190"><template #default="{ row }">{{ displayDateTime(row.eventAt) }}</template></el-table-column>
             <el-table-column label="来源 / 收款方" min-width="175"><template #default="{ row }">{{ orderSourceText(row.sourceSystem) }}<div class="proto-subcell">{{ receiverTypeText(row.receiverType) }}</div></template></el-table-column>
-            <template #empty><el-empty description="当前筛选没有对应事实记录" /></template>
+            <template #empty><el-empty description="当前筛选条件下暂无对应明细记录" /></template>
           </app-table>
         </div>
       </PageCard>

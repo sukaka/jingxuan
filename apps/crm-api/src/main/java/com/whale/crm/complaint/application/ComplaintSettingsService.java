@@ -189,9 +189,9 @@ public class ComplaintSettingsService {
         userRepository.findById(tenantId, recipientId)
                 .filter(SysUser::isActive)
                 .filter(user -> "EMPLOYEE".equals(user.getUserType()))
-                .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_FAILED, "兜底接收人不是有效员工"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_FAILED, "默认接收人不是有效员工"));
         if (!roleRepository.findActivePermissionCodes(tenantId, recipientId).contains("complaint:read")) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "兜底接收人缺少客诉查看权限");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "默认接收人缺少客诉查看权限");
         }
     }
 

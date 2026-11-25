@@ -52,9 +52,9 @@ public class UserController {
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) @Size(max = 64) String keyword,
-            @RequestParam(required = false) @Pattern(regexp = "ACTIVE|DISABLED", message = "status 仅支持 ACTIVE/DISABLED")
+            @RequestParam(required = false) @Pattern(regexp = "ACTIVE|DISABLED", message = "账号状态仅支持启用或停用")
             String status,
-            @RequestParam(required = false) @Pattern(regexp = "EMPLOYEE|INSTITUTION", message = "userType 仅支持 EMPLOYEE/INSTITUTION")
+            @RequestParam(required = false) @Pattern(regexp = "EMPLOYEE|INSTITUTION", message = "用户类型仅支持内部员工或机构账号")
             String userType,
             @RequestParam(required = false) @Min(1) Long teamId,
             @RequestParam(required = false) @Size(max = 64) String roleCode,

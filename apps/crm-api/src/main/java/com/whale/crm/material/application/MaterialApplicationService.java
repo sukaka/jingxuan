@@ -190,7 +190,7 @@ public class MaterialApplicationService {
     public MaterialResponse review(long tenantId, CurrentUser user, long materialId, long revisionId,
                                    ReviewMaterialRevisionRequest request) {
         if (!Set.of("APPROVED", "REJECTED").contains(request.decision())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "审核决定只能是APPROVED或REJECTED");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "审核结果仅支持通过或驳回");
         }
         String reviewNote = normalized(request.reviewNote());
         if ("REJECTED".equals(request.decision()) && reviewNote == null) {
@@ -283,7 +283,7 @@ public class MaterialApplicationService {
         MaterialRevision revision = repository.findScopedRevision(tenantId, materialId, revisionId, scope)
                 .orElseThrow(this::notFound);
         if (!"APPROVED".equals(revision.status())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "只有 APPROVED 素材修订可以发布到知识库");
+            throw new BusinessException(ErrorCode.CONFLICT, "仅审核通过的素材版本可发布到知识库");
         }
         return revision;
     }

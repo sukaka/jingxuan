@@ -70,7 +70,7 @@ class KnowledgeManagementServiceTest {
         when(repository.findSyncJobById(1L, 501L)).thenReturn(Optional.of(job("SUCCEEDED")));
 
         assertThatThrownBy(() -> service.retry(admin, 501L, "retry-success"))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("FAILED");
+                .isInstanceOf(BusinessException.class).hasMessageContaining("失败或待重试");
         verify(repository, never()).retryJob(anyLong(), anyLong(), anyLong());
     }
 

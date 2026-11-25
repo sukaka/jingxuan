@@ -21,7 +21,7 @@ public class FileScopeService {
 
     public void requireUpload(CurrentUser user, FileClassification classification, Long institutionId) {
         if (classification == FileClassification.EXPORT) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "导出文件只能由服务端导出任务生成");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "导出文件仅支持由系统导出任务自动生成");
         }
         requireAnyPermission(user, uploadPermission(classification));
         requireInstitutionScope(user, classification, institutionId, false);

@@ -49,9 +49,9 @@ watch(redemption, (value) => {
         <el-descriptions-item label="机构确认人">{{ redemption.postedBy === null ? '-' : `用户 #${redemption.postedBy}` }}</el-descriptions-item>
         <el-descriptions-item label="凭证文件">{{ redemption.voucherFileId === null ? '-' : `文件 #${redemption.voucherFileId}` }}</el-descriptions-item>
         <el-descriptions-item label="结算状态">{{ redemptionSettlementStatusLabel(redemption.settlementStatus) }}</el-descriptions-item>
-        <el-descriptions-item label="事实版本">{{ redemption.version }}</el-descriptions-item>
+        <el-descriptions-item label="记录版本">{{ redemption.version }}</el-descriptions-item>
         <el-descriptions-item label="凭证引用" :span="2"><span class="fulfillment-evidence">{{ redemption.evidenceRef }}</span></el-descriptions-item>
-        <el-descriptions-item label="幂等键" :span="2"><span class="fulfillment-evidence">{{ redemption.idempotencyKey }}</span></el-descriptions-item>
+        <el-descriptions-item label="核销流水号" :span="2"><span class="fulfillment-evidence">{{ redemption.idempotencyKey }}</span></el-descriptions-item>
       </el-descriptions>
 
       <h4 class="trading-section-title">逐项目核销行</h4>

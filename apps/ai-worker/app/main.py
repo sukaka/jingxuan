@@ -36,7 +36,7 @@ def create_app() -> FastAPI:
         return error_response(
             status_code=500,
             code="INTERNAL_ERROR",
-            message="Internal server error",
+            message="AI 服务内部异常，请稍后重试",
             request_id=get_request_id(request),
         )
 

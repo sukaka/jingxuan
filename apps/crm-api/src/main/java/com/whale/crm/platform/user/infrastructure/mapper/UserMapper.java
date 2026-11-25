@@ -47,6 +47,9 @@ public interface UserMapper {
                       @Param("displayName") String displayName, @Param("teamId") Long teamId,
                       @Param("passwordHash") String passwordHash);
 
+    int updatePasswordHash(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
+                           @Param("passwordHash") String passwordHash);
+
     int updateStatus(@Param("tenantId") long tenantId, @Param("id") long id, @Param("status") String status);
 
     int touchLastLogin(@Param("id") long id, @Param("at") Instant at);

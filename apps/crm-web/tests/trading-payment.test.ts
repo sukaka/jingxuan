@@ -115,8 +115,8 @@ describe('PaymentConfirmDrawer 人工可信支付确认', () => {
       externalTradeNo: 'BANK-TEST-001',
       amountFen: 19900,
     }), 'payment-idem-fixed')
-    expect(document.body.textContent).toContain('不是有赞或支付网关回调')
-    expect(document.body.textContent).toContain('提交时会保留支付时间的时区信息')
+    expect(document.body.textContent).toContain('不等同于有赞或第三方支付平台的自动到账通知')
+    expect(document.body.textContent).toContain('系统将准确保留时区与支付时间')
     expect(document.body.textContent).not.toContain('ISO 8601')
   })
 })

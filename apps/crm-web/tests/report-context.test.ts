@@ -19,18 +19,19 @@ describe('报表时间与统计口径展示', () => {
   })
 
   it('内部指标版本转换为中文统计口径', () => {
-    expect(metricVersionText('P2_FACT_V1')).toBe('统计口径 V1')
-    expect(metricVersionText('P2_FACT_V12')).toBe('统计口径 V12')
+    expect(metricVersionText('P2_FACT_V1')).toBe('第 1 版口径')
+    expect(metricVersionText('P2_FACT_V12')).toBe('第 12 版口径')
     expect(metricVersionText('OTHER')).toBe('自定义统计口径')
   })
 
   it('上下文不展示时区、UTC 边界或内部版本编码', () => {
     const wrapper = mount(ReportContextBar, { props: { context } })
-    expect(wrapper.text()).toContain('统计口径 V1')
+    expect(wrapper.text()).toContain('第 1 版口径')
     expect(wrapper.text()).toContain('数据更新至')
     expect(wrapper.text()).not.toContain('UTC')
     expect(wrapper.text()).not.toContain('Asia/Shanghai')
     expect(wrapper.text()).not.toContain('P2_FACT_V1')
+    expect(wrapper.text()).not.toContain('V1')
     expect(wrapper.text()).not.toContain('fromUtc')
     expect(wrapper.text()).toMatch(/数据更新至\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/)
   })

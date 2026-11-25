@@ -122,7 +122,7 @@ describe('DictionariesView 分类与筛选', () => {
 
     expect(wrapper.get('[data-testid="dictionary-type-1"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.get('[data-testid="dictionary-type-1"]').text()).toContain('2 启用 / 3 总数')
-    expect(wrapper.get('[data-testid="dictionary-type-1"]').text()).toContain('customer_status')
+    expect(wrapper.get('[data-testid="dictionary-type-1"]').text()).not.toContain('customer_status')
     expect(wrapper.get('.dictionary-items-panel').text()).toContain('维护「客户状态」')
     expect(visibleItemIds(wrapper)).toEqual(['dictionary-item-101', 'dictionary-item-102', 'dictionary-item-103'])
 
@@ -190,7 +190,7 @@ describe('DictionariesView 操作与权限', () => {
     await wrapper.get('[data-testid="dictionary-item-101"] [data-testid="dictionary-more"]').trigger('click')
     await flushPromises()
     expect(document.body.textContent).toContain('删除不可用')
-    expect(document.body.textContent).toContain('已引用配置仅可停用，不可物理删除')
+    expect(document.body.textContent).toContain('已引用配置仅可停用，不可直接删除')
 
     wrapper.findAllComponents(ElDropdown)[0].vm.$emit('command', 'disable')
     await flushPromises()

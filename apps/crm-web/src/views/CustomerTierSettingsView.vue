@@ -69,7 +69,7 @@ const missingConsumptionThresholds = computed(() => (
 ))
 
 function statusLabel(status: RuleStatus): string {
-  return statusLabels[status]
+  return statusLabels[status] ?? '未知状态'
 }
 
 function statusClass(status: RuleStatus): string {
@@ -161,7 +161,7 @@ function cloneAsDraft() {
 
 function buildRequest(): CustomerTierRuleRequest {
   if (!form.ruleCode.trim() || !form.ruleName.trim() || !form.timezone.trim()) {
-    throw new Error('请填写规则代码、规则名称和统计时区')
+    throw new Error('请填写规则编码、规则名称和统计时区')
   }
   if (form.levels.length !== 5) {
     throw new Error('请配置 S、A、B、C、D 五个等级')
@@ -374,11 +374,11 @@ async function runSample() {
               <header class="section-heading">
                 <div>
                   <h3 id="basic-info-title">基本信息</h3>
-                  <p>规则代码用于区分配置，统计时区用于确定滚动近 12 个月的统计窗口。</p>
+                  <p>规则编码用于区分配置，统计时区用于确定滚动近 12 个月的统计窗口。</p>
                 </div>
               </header>
               <div class="base-grid">
-                <el-form-item label="规则代码" required>
+                <el-form-item label="规则编码" required>
                   <el-input
                     v-model="form.ruleCode"
                     :disabled="editingId !== null"

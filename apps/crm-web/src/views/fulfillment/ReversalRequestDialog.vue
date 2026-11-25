@@ -52,7 +52,7 @@ async function save() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -62,7 +62,7 @@ async function save() {
 <template>
   <el-dialog :model-value="modelValue" title="申请核销冲正" width="min(560px, 94vw)" @update:model-value="emit('update:modelValue', $event)">
     <el-alert type="warning" :closable="false" title="这里只创建冲正申请，不直接更正原核销或增加权益。审核通过后应新增独立补偿流水。" class="reversal-tip" />
-    <div v-if="redemption" class="fulfillment-readonly">原核销 #{{ redemption.id }} · {{ customerLabel(redemption.customerId) }} · {{ institutionLabel(redemption.institutionId) }} · 事实版本 {{ redemption.version }}</div>
+    <div v-if="redemption" class="fulfillment-readonly">原核销 #{{ redemption.id }} · {{ customerLabel(redemption.customerId) }} · {{ institutionLabel(redemption.institutionId) }} · 记录版本 {{ redemption.version }}</div>
     <el-form label-position="top" @submit.prevent>
       <el-form-item label="冲正原因" required>
         <el-input v-model="reason" type="textarea" :rows="4" maxlength="1000" show-word-limit placeholder="说明需要复核的真实履约异常与依据" data-testid="reversal-reason" />

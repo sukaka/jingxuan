@@ -90,7 +90,7 @@ public class WecomH5CardService {
         repository.insert(input);
         WecomH5Card created = repository.findByShareKey(shareKey).orElseThrow();
         auditService.record(user.tenantId(), user.userId(), "WECOM_H5_CARD_CREATE", "WECOM_H5_CARD",
-                created.id().toString(), null, snapshot(created), "员工生成项目公开介绍分享快照");
+                created.id().toString(), null, snapshot(created), "员工生成项目公开介绍分享卡片");
         idempotencyService.recordSuccess(user.tenantId(), CREATE_SCOPE, key, "WECOM_H5_CARD",
                 created.id().toString(), payload);
         return view(created);

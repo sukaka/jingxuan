@@ -11,10 +11,10 @@ import java.time.Instant;
  */
 public record UpdateTaskRequest(
         @Size(max = 48) String taskType,
-        @Pattern(regexp = "LOW|MEDIUM|HIGH|URGENT", message = "priority 仅支持 LOW/MEDIUM/HIGH/URGENT") String priority,
-        @Pattern(regexp = "OPEN|PROCESSING|DONE|CANCELED", message = "status 仅支持 OPEN/PROCESSING/DONE/CANCELED") String status,
+        @Pattern(regexp = "LOW|MEDIUM|HIGH|URGENT", message = "任务优先级仅支持低、中、高、紧急") String priority,
+        @Pattern(regexp = "OPEN|PROCESSING|DONE|CANCELED", message = "任务状态无效") String status,
         @Size(max = 255) String title,
         @Size(max = 2000) String description,
         Instant dueAt,
-        @NotNull(message = "version 不能为空") Long version) {
+        @NotNull(message = "数据版本号不能为空") Long version) {
 }

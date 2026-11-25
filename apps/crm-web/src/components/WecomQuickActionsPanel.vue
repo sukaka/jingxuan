@@ -338,7 +338,7 @@ async function submitFollowup(): Promise<void> {
     taskTitle.value = ''
     feedback.value = shouldCreateTask
       ? '跟进记录与回访提醒任务已保存'
-      : '跟进记录已追加保存（不覆盖历史流水）'
+      : '跟进记录已保存，历史记录将完整保留'
     emit('updated')
   } catch (error) {
     errorMessage.value = errorText(error)
@@ -440,7 +440,7 @@ async function submitQuickAppointment(): Promise<void> {
     feedback.value = '预约申请已创建（待合作机构确认接诊），未扣减权益次数'
     emit('updated')
   } catch (error) {
-    errorMessage.value = `${errorText(error)}；重试将沿用同一幂等键`
+    errorMessage.value = `${errorText(error)}；重新提交不会重复创建预约`
   } finally {
     busy.value = false
   }
@@ -603,7 +603,7 @@ async function createAndBindCustomer(): Promise<void> {
           rows="3"
           maxlength="1000"
           :disabled="busy"
-          placeholder="记录客户关注项目、顾虑或下一步计划（追加流水，不覆盖历史）"
+          placeholder="记录客户关注项目、顾虑或下一步计划（保存后不会覆盖历史记录）"
         />
 
         <label for="qa-next-at">下次跟进时间 <small>选填</small></label>
@@ -799,7 +799,7 @@ async function createAndBindCustomer(): Promise<void> {
     data-testid="unlinked-customer-actions"
   >
     <div v-if="!canWriteCustomer" class="qa-empty">
-      当前账号无客户写入权限（`customer:write`），请由有权限的管家或管理员完成人工匹配。
+      当前账号无客户写入权限，请由有权限的管家或管理员完成人工匹配。
     </div>
     <template v-else>
       <div class="qa-mode-switch" role="tablist" aria-label="客户关联方式">
@@ -829,7 +829,7 @@ async function createAndBindCustomer(): Promise<void> {
       <!-- Search & link existing CRM customer -->
       <div v-if="unlinkedMode === 'SEARCH'" class="qa-card">
         <p class="qa-note">仅可搜索并关联当前数据权限范围内的 CRM 客户；关联操作将写入审计日志。</p>
-        <div v-if="!canReadCustomer" class="qa-empty">当前账号无客户查询权限（`customer:read`），请切换「新建客户并关联」。</div>
+        <div v-if="!canReadCustomer" class="qa-empty">当前账号无客户查询权限，请切换「新建客户并关联」。</div>
         <template v-else>
           <div class="qa-inline-input">
             <input
@@ -883,7 +883,7 @@ async function createAndBindCustomer(): Promise<void> {
 
       <!-- Create new CRM customer & link -->
       <form v-else class="qa-card" data-testid="unlinked-create-form" @submit.prevent="createAndBindCustomer">
-        <p class="qa-note">将为该企微联系人新建 CRM 客户主档并建立映射，不把 external_userid 作为主键。</p>
+        <p class="qa-note">将为该企微联系人新建 CRM 客户主档并建立关联，以系统唯一客户编号作为标识。</p>
         <label for="qa-new-name">客户称呼</label>
         <input
           id="qa-new-name"

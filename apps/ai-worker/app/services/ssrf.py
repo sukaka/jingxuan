@@ -109,7 +109,7 @@ def validate_outbound_base_url(
     *,
     allow_http: bool,
     allowed_hosts: str | set[str] | list[str] | tuple[str, ...] | None = "",
-    label: str = "baseUrl",
+    label: str = "接口地址",
     resolver: Resolver | None = None,
     resolve_dns: bool = True,
 ) -> ValidatedEndpoint:

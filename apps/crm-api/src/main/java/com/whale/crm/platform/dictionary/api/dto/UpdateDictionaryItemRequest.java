@@ -16,5 +16,5 @@ public record UpdateDictionaryItemRequest(
         @NotNull(message = "排序号必填") @Min(value = 0, message = "排序号无效") @Max(value = 999999, message = "排序号无效")
         Integer sortNo,
 
-        @NotNull(message = "version 必填") @Min(value = 0, message = "version 无效") Long version) {
+        @NotNull(message = "数据版本号必填") @Min(value = 0, message = "数据版本号无效") Long version) {
 }

@@ -20,7 +20,7 @@ const ISSUE_LABELS: Record<string, string> = {
 }
 
 export function mappingStatusLabel(status: string): string {
-  return PROCESS_LABELS[status] ?? status
+  return PROCESS_LABELS[status] ?? '未知状态'
 }
 
 export function mappingStatusTone(status: string): YouzanTone {
@@ -32,15 +32,15 @@ export function mappingStatusTone(status: string): YouzanTone {
 
 export function verificationMethodLabel(method: string | null | undefined): string {
   if (!method) return '尚未确认'
-  return method === 'PROVIDER_CALLBACK' ? '供应商支付回调' : method === 'MANUAL_REVIEW' ? '人工凭证复核' : method
+  return method === 'PROVIDER_CALLBACK' ? '供应商支付回调' : method === 'MANUAL_REVIEW' ? '人工凭证复核' : '其他核验方式'
 }
 
 export function issueTypeLabel(issueType: string): string {
-  return PROCESS_LABELS[issueType] ?? issueType
+  return PROCESS_LABELS[issueType] ?? '其他同步异常'
 }
 
 export function issueStatusLabel(status: string): string {
-  return ISSUE_LABELS[status] ?? status
+  return ISSUE_LABELS[status] ?? '未知状态'
 }
 
 export function issueStatusTone(status: string): YouzanTone {

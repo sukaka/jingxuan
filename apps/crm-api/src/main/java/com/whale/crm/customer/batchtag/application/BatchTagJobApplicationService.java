@@ -157,7 +157,7 @@ public class BatchTagJobApplicationService {
         idempotencyService.recordSuccess(tenantId, CREATE_SCOPE, key, JOB_RESOURCE,
                 created.id().toString(), payload);
         auditService.record(tenantId, user.userId(), "BATCH_TAG_JOB_CREATE", JOB_RESOURCE,
-                created.id().toString(), null, jobSnapshot(created), "使用服务端预览固定成员快照");
+                created.id().toString(), null, jobSnapshot(created), "按预览范围锁定目标客户并创建批量重打标任务");
         return detail(tenantId, user, created.id(), 1, 100);
     }
 
@@ -304,7 +304,7 @@ public class BatchTagJobApplicationService {
             return new ResolvedSource(type, segment.id(), filters, snapshot);
         }
         CustomerSegmentBatch batch = segmentRepository.findBatchById(tenantId, request.source().id())
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "V33操作批次不存在"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "操作批次不存在"));
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("batchId", batch.id());
         snapshot.put("batchNo", batch.batchNo());
@@ -403,7 +403,7 @@ public class BatchTagJobApplicationService {
         LinkedHashSet<String> tags = new LinkedHashSet<>();
         for (String value : input) {
             if (value == null || value.isBlank()) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签代码不能为空");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签不能为空");
             }
             tags.add(value.strip());
         }
@@ -438,7 +438,7 @@ public class BatchTagJobApplicationService {
         LinkedHashSet<String> values = new LinkedHashSet<>();
         for (String code : input) {
             if (code == null || code.isBlank()) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "筛选代码不能为空");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "筛选条件不能为空");
             }
             values.add(code.strip());
         }

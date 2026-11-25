@@ -71,6 +71,11 @@ public interface UserRepository {
      */
     int updateProfile(long tenantId, long id, long version, String displayName, Long teamId, String passwordHash);
 
+    /**
+     * 个人账号修改密码：显式校验 tenant_id、id、version 与 ACTIVE 状态。
+     */
+    int updatePasswordHash(long tenantId, long id, long version, String passwordHash);
+
     int updateStatus(long tenantId, long id, String status);
 
     void touchLastLogin(long id, java.time.Instant at);

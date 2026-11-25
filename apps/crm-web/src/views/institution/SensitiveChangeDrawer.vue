@@ -128,14 +128,14 @@ async function save() {
 
 <template>
   <el-drawer :model-value="modelValue" title="申请敏感资料变更" size="min(760px, 96vw)" @update:model-value="emit('update:modelValue', $event)">
-    <el-alert type="warning" :closable="false" title="本表单只创建变更申请，不直接编辑正式机构档案；审批值仅以后端脱敏结果展示。" class="form-tip" />
+    <el-alert type="warning" :closable="false" title="本表单仅创建变更申请，不直接修改正式机构档案；审批信息按脱敏规则展示。" class="form-tip" />
     <el-form label-position="top" @submit.prevent>
       <el-form-item label="变更字段" required>
         <el-select v-model="form.fieldCode" filterable class="full-width" data-testid="sensitive-field">
           <el-option v-for="item in SENSITIVE_FIELDS" :key="item.code" :label="item.label" :value="item.code" />
         </el-select>
       </el-form-item>
-      <div v-if="meta" class="institution-sensitive">当前掩码值：{{ currentMasked() }} · 审核路径：{{ reviewPath }}</div>
+      <div v-if="meta" class="institution-sensitive">当前值（已脱敏）：{{ currentMasked() }} · 审核路径：{{ reviewPath }}</div>
       <el-form-item v-if="meta" :label="`申请新值（${meta.label}）`" required>
         <el-select v-if="meta.kind === 'businessType'" v-model="form.newText" class="full-width"><el-option v-for="item in options('institutionBusinessTypes')" :key="item.code" :label="item.label" :value="item.code" /></el-select>
         <el-select v-else-if="meta.kind === 'ownership'" v-model="form.newText" class="full-width"><el-option v-for="item in options('institutionOwnerships')" :key="item.code" :label="item.label" :value="item.code" /></el-select>

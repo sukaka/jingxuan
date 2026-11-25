@@ -70,7 +70,7 @@ function displayStatus(material: Material): string {
 }
 
 function statusLabel(status: string): string {
-  return ({ DRAFT: '草稿', PENDING: '待审核', APPROVED: '已审核', REJECTED: '已驳回', OFFLINE: '已下架' } as Record<string, string>)[status] ?? status
+  return ({ DRAFT: '草稿', PENDING: '待审核', APPROVED: '已审核', REJECTED: '已驳回', OFFLINE: '已下架' } as Record<string, string>)[status] ?? '未知状态'
 }
 
 function statusTone(status: string): string {
@@ -78,12 +78,12 @@ function statusTone(status: string): string {
 }
 
 function categoryLabel(code: string): string {
-  return dicts.options('materialTypes').find((item) => item.code === code)?.label ?? code
+  return dicts.options('materialTypes').find((item) => item.code === code)?.label ?? '其他类型'
 }
 
 function cityLabel(code: string | null): string {
   if (!code) return '全国'
-  return dicts.options('cities').find((item) => item.code === code)?.label ?? code
+  return dicts.options('cities').find((item) => item.code === code)?.label ?? dicts.label('cities', code)
 }
 
 async function load(page = query.page) {
@@ -190,7 +190,7 @@ async function submitForReview(item: MaterialRevision) {
   if (!submitKeys.has(item.id)) submitKeys.set(item.id, crypto.randomUUID())
   try {
     await submitMaterialRevision(item.materialId, item.id, item.version, submitKeys.get(item.id)!)
-    ElMessage.success('版本已送审，正在重新读取服务端状态')
+    ElMessage.success('版本已送审，正在刷新审核状态')
     await refreshAfterAction(item.materialId)
   } catch (error) {
     detailError.value = errorText(error, '送审失败，请重试')
@@ -239,7 +239,7 @@ async function submitReview() {
       reviewNote: reviewForm.note.trim() || undefined,
     }, reviewKey)
     reviewTargetId.value = null
-    ElMessage.success('审核请求已受理，正在重新读取版本历史')
+    ElMessage.success('审核结果已提交，正在刷新版本历史')
     await refreshAfterAction(target.materialId)
   } catch (error) {
     detailError.value = errorText(error, '审核失败，请重试')
@@ -256,7 +256,7 @@ async function offline(item: Material) {
   let reason = ''
   try {
     const result = await ElMessageBox.prompt(
-      '下架后普通管家不能预览或使用；已审核修订和版本历史不会删除。请填写下架原因。',
+      '下架后管家将无法预览或使用该素材；已审核版本与历史记录仍会保留。请填写下架原因。',
       `下架素材：${item.title}`,
       {
         type: 'warning',
@@ -279,7 +279,7 @@ async function offline(item: Material) {
   try {
     await offlineMaterial(item.id, { version: item.version, reason }, offlineKeys.get(signature)!)
     if (destroyed) return
-    ElMessage.success('素材已下架，普通管家不可再预览或使用；历史版本已保留')
+    ElMessage.success('素材已下架，管家不可再预览或使用；历史版本已保留')
     await load()
   } catch (error) {
     if (!destroyed) errorMessage.value = errorText(error, '下架失败，请刷新后重试')
@@ -297,7 +297,7 @@ function canPreview(item: MaterialRevision, material: Material | null | undefine
 
 function safeOpen(url: string) {
   const target = new URL(url, window.location.origin)
-  if (target.protocol !== 'https:' && target.protocol !== 'http:') throw new Error('服务端返回了不安全的预览地址')
+  if (target.protocol !== 'https:' && target.protocol !== 'http:') throw new Error('预览地址无效，无法打开')
   window.open(target.toString(), '_blank', 'noopener,noreferrer')
 }
 
@@ -309,7 +309,7 @@ async function previewRevision(item: MaterialRevision, material: Material | null
     const metadata = await getFileMetadata(item.fileId)
     if (destroyed) return
     if (metadata.scanStatus !== 'CLEAN') {
-      throw new Error(metadata.lastError || '文件尚未取得 ClamAV CLEAN，不能预览或下载')
+      throw new Error(metadata.lastError || '文件尚未通过安全检测，暂不能预览或下载')
     }
     const download = await getMaterialRevisionDownload(item.materialId, item.id)
     if (destroyed) return
@@ -390,7 +390,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="proto-page materials-page">
-    <PageHeader title="素材库" description="案例、好评、机构、医生、仪器与产品资料按版本集中管理；只有已审核且文件 CLEAN 的版本才能对客使用">
+    <PageHeader title="素材库" description="案例、好评、机构、医生、仪器与产品资料按版本集中管理；仅已审核且通过安全检测的版本可供对客使用">
       <template #actions>
         <el-button v-if="canRead && canWrite" type="primary" data-testid="material-create" @click="openCreate">＋ 新增素材</el-button>
       </template>
@@ -399,7 +399,7 @@ onBeforeUnmount(() => {
     <PageCard v-if="!canRead">
       <div class="proto-empty permission-empty" data-testid="material-permission-empty">
         <strong>没有素材查看权限</strong>
-        <span>页面不会请求素材或文件。请联系管理员按职责授权，数据范围仍由后端校验。</span>
+        <span>当前账号无法查看素材或附件，请联系管理员开通相应权限。</span>
       </div>
     </PageCard>
 
@@ -410,7 +410,7 @@ onBeforeUnmount(() => {
           <el-button type="primary" :loading="loading" @click="load(1)">查询</el-button>
           <el-button @click="resetQuery">重置</el-button>
         </div>
-        <span class="proto-note">只有已审核且文件 CLEAN 的版本可供管家预览</span>
+        <span class="proto-note">仅已审核且通过安全检测的版本可供管家预览</span>
       </div>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" class="material-alert">
         <el-button text @click="load()">重试</el-button>
@@ -476,14 +476,14 @@ onBeforeUnmount(() => {
               <span>文件 ID #{{ item.fileId }}</span>
               <span>上传人 #{{ item.createdBy }}</span>
               <span>{{ formatDateTime(item.createdAt) }}</span>
-              <span>乐观锁版本 {{ item.version }}</span>
+              <span>记录版本 {{ item.version }}</span>
             </div>
             <p class="revision-note">变更说明：{{ item.changeNote || '—' }}</p>
             <p v-if="item.reviewNote" class="revision-note">审核意见：{{ item.reviewNote }}</p>
             <p v-if="item.status !== 'APPROVED'" class="revision-warning">未审核版本不可作为对客素材{{ item.status === 'PENDING' && canReview ? '；审核人可在授权后调取审核预览' : '' }}。</p>
             <div class="revision-actions">
               <el-button v-if="canPreview(item)" size="small" :loading="previewingId === item.id" :data-testid="`revision-preview-${item.id}`" @click="previewRevision(item)">
-                {{ item.status === 'APPROVED' ? (isOffline(detail.material) ? '历史私有预览' : '私有预览') : item.status === 'PENDING' ? '审核预览' : '版本预览' }}
+                {{ item.status === 'APPROVED' ? (isOffline(detail.material) ? '查看历史版本' : '在线预览') : item.status === 'PENDING' ? '审核预览' : '版本预览' }}
               </el-button>
               <el-button v-if="canWrite && !isOffline(detail.material) && item.status === 'DRAFT'" size="small" :loading="submittingRevisionId === item.id" :data-testid="`revision-submit-${item.id}`" @click="submitForReview(item)">送审</el-button>
               <template v-if="canReview && !isOffline(detail.material) && item.status === 'PENDING'">

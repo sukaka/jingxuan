@@ -58,6 +58,17 @@ app:
       csrf-header-name: X-CSRF-Token
       # 开发环境（http://localhost）可关闭 Secure；生产必须 true
       cookie-secure: ${COOKIE_SECURE:false}
+      # 个人账号修改密码复杂度策略（前端从 /api/v1/auth/password-policy 实时读取）
+      password-policy:
+        min-length: ${PASSWORD_MIN_LENGTH:8}
+        max-length: ${PASSWORD_MAX_LENGTH:64}
+        require-uppercase: ${PASSWORD_REQUIRE_UPPERCASE:true}
+        require-lowercase: ${PASSWORD_REQUIRE_LOWERCASE:true}
+        require-digit: ${PASSWORD_REQUIRE_DIGIT:true}
+        require-special: ${PASSWORD_REQUIRE_SPECIAL:true}
+        forbid-whitespace: ${PASSWORD_FORBID_WHITESPACE:true}
+        forbid-username: ${PASSWORD_FORBID_USERNAME:true}
+        forbid-same-as-current: ${PASSWORD_FORBID_SAME_AS_CURRENT:true}
     crypto:
       # 敏感列 AES-GCM 密钥与盲索引 pepper，禁止在基础配置提供默认明文值
       aes-key-base64: ${APP_AES_KEY_BASE64}

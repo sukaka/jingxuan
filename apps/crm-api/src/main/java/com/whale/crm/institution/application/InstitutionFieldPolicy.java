@@ -86,7 +86,7 @@ public final class InstitutionFieldPolicy {
         }
         if (Set.of("chargesFee", "guaranteeRoi").contains(fieldCode)) {
             if (!value.isBoolean()) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "布尔字段必须为true或false");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "开关字段仅支持“是”或“否”");
             }
             return Boolean.toString(value.booleanValue());
         }
@@ -99,7 +99,7 @@ public final class InstitutionFieldPolicy {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "字段不能为空");
         }
         if ("settlementType".equals(fieldCode) && !Set.of("MONTHLY", "PER_REDEMPTION").contains(text)) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "结算类型必须为MONTHLY或PER_REDEMPTION");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "结算方式仅支持月结或次卡次结");
         }
         if ("settlementDay".equals(fieldCode)) {
             return SettlementDayRule.normalize(text);

@@ -2,9 +2,11 @@
 import { ref, watch } from 'vue'
 import type { CustomerTimelineItem, CustomerTimelineType } from '../../api/customerTimeline'
 import { getCustomerTimeline } from '../../api/customerTimeline'
-import { formatDateTime } from './shared'
+import { fenToYuan, formatDateTime, useDictionaries } from './shared'
 
 const props = defineProps<{ customerId: number }>()
+const dicts = useDictionaries()
+void dicts.load('communicationChannels')
 const items = ref<CustomerTimelineItem[]>([])
 const nextCursor = ref<string | null>(null)
 const loading = ref(false)
@@ -15,6 +17,118 @@ const typeLabels: Record<CustomerTimelineType, string> = {
   FOLLOWUP: '跟进', INTENT: '意向', BLOCKER: '卡点', NEXT_FOLLOWUP: '下一步', TASK: '任务',
   OWNERSHIP: '归属', ORDER: '订单', APPOINTMENT: '预约', REDEMPTION: '核销', REFUND: '退款',
   TIER: '等级', COMPLAINT: '客诉',
+}
+
+const CHANNEL_FALLBACKS: Record<string, string> = {
+  WECOM: '企业微信',
+  PHONE: '电话',
+  VISIT: '到院面谈',
+  WECHAT: '微信',
+  SMS: '短信',
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  OPEN: '待处理',
+  PROCESSING: '处理中',
+  ASSIGNED: '处理中',
+  DONE: '已完成',
+  RESOLVED: '已处理',
+  CLOSED: '已关闭',
+  DISMISSED: '已驳回',
+  CANCELED: '已取消',
+  CANCELLED: '已取消',
+  DRAFT: '草稿',
+  PENDING: '待处理',
+  PENDING_PAYMENT: '待支付',
+  PAID: '已支付',
+  PARTIAL_PAID: '部分支付',
+  REFUNDED: '已退款',
+  PARTIAL_REFUNDED: '部分退款',
+  CONFIRMED: '已确认',
+  CHECKED_IN: '已到院',
+  SERVICE_DONE: '已完成服务',
+  COMPLETED: '已完成',
+  NO_SHOW: '未到院',
+  PENDING_INSTITUTION: '待机构确认',
+  POSTED: '机构已确认',
+  REJECTED: '已退回',
+  REVERSED: '已冲正',
+  APPROVED: '已批准',
+  SUCCEEDED: '已成功',
+  FAILED: '已失败',
+}
+
+const TIER_CHANGE_LABELS: Record<string, string> = {
+  AUTO_UPGRADE: '自动升级',
+  DOWNGRADE_APPROVED: '降级复核通过',
+  MANUAL_ADJUST: '人工调整',
+}
+
+function formatDetailEntry(key: string, value: unknown, details: Record<string, unknown>): string | null {
+  if (value === null || value === undefined || value === '') return null
+  if (key === 'oldOwnerId' && details.oldOwnerName) return null
+  if (key === 'newOwnerId' && details.newOwnerName) return null
+  switch (key) {
+    case 'channelCode': {
+      const code = String(value)
+      const hit = dicts.options('communicationChannels').find((item) => item.code === code)
+      return `沟通方式：${hit?.label ?? CHANNEL_FALLBACKS[code] ?? '其他方式'}`
+    }
+    case 'estimatedAmountFen':
+      return `预计金额：¥${fenToYuan(Number(value))}`
+    case 'followupId':
+      return `跟进记录 #${String(value)}`
+    case 'nextFollowupAt':
+      return `计划时间：${formatDateTime(String(value))}`
+    case 'status': {
+      const code = String(value)
+      return `状态：${STATUS_LABELS[code] ?? '未知状态'}`
+    }
+    case 'assigneeUserId':
+      return `处理人：用户 #${String(value)}`
+    case 'dueAt':
+      return `截止时间：${formatDateTime(String(value))}`
+    case 'oldOwnerName':
+      return `原管家：${String(value)}`
+    case 'oldOwnerId':
+      return `原管家：#${String(value)}`
+    case 'newOwnerName':
+      return `新管家：${String(value)}`
+    case 'newOwnerId':
+      return `新管家：#${String(value)}`
+    case 'payableFen':
+      return `应付金额：¥${fenToYuan(Number(value))}`
+    case 'paidFen':
+      return `实付金额：¥${fenToYuan(Number(value))}`
+    case 'refundedFen':
+      return `已退金额：¥${fenToYuan(Number(value))}`
+    case 'requestedFen':
+      return `申请退款：¥${fenToYuan(Number(value))}`
+    case 'approvedFen':
+      return `批准退款：¥${fenToYuan(Number(value))}`
+    case 'succeededFen':
+      return `实际退款：¥${fenToYuan(Number(value))}`
+    case 'scheduledAt':
+      return `预约时间：${formatDateTime(String(value))}`
+    case 'serviceAt':
+      return `服务时间：${formatDateTime(String(value))}`
+    case 'appointmentId':
+      return `预约单 #${String(value)}`
+    case 'institutionId':
+      return `机构 #${String(value)}`
+    case 'orderId':
+      return `订单 #${String(value)}`
+    case 'fromTierCode':
+      return `原等级：${String(value)} 级`
+    case 'toTierCode':
+      return `新等级：${String(value)} 级`
+    case 'changeType':
+      return `变更方式：${TIER_CHANGE_LABELS[String(value)] ?? '等级变更'}`
+    case 'complaintCaseNo':
+      return `客诉单号：${String(value)}`
+    default:
+      return /[\u4e00-\u9fa5]/.test(key) ? `${key}：${String(value)}` : null
+  }
 }
 
 async function load(append = false) {
@@ -42,8 +156,10 @@ async function load(append = false) {
 }
 
 function detailText(item: CustomerTimelineItem): string {
-  const entries = Object.entries(item.details).filter(([, value]) => value !== null && value !== undefined)
-  return entries.map(([key, value]) => `${key}: ${String(value)}`).join(' · ')
+  return Object.entries(item.details)
+    .map(([key, value]) => formatDetailEntry(key, value, item.details))
+    .filter((entry): entry is string => Boolean(entry))
+    .join(' · ')
 }
 
 watch(() => props.customerId, () => {
@@ -67,7 +183,7 @@ watch(() => props.customerId, () => {
         <div class="timeline-marker" />
         <div class="timeline-content">
           <div class="timeline-heading">
-            <el-tag size="small" effect="plain">{{ typeLabels[item.type] ?? item.type }}</el-tag>
+            <el-tag size="small" effect="plain">{{ typeLabels[item.type] ?? '业务动态' }}</el-tag>
             <strong>{{ item.title }}</strong>
             <time>{{ formatDateTime(item.occurredAt) }}</time>
           </div>

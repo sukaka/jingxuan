@@ -66,14 +66,14 @@ async function test(shop: YouzanShopConfig) {
 }
 
 function statusText(status: string) {
-  return ({ CONNECTED: '连接通过', FAILED: '连接失败', UNVERIFIED: '待验证' } as Record<string, string>)[status] ?? status
+  return ({ CONNECTED: '连接通过', FAILED: '连接失败', UNVERIFIED: '待验证' } as Record<string, string>)[status] ?? '未知状态'
 }
 </script>
 
 <template>
   <section>
     <div class="youzan-section-head">
-      <div><h3>店铺接入</h3><p>凭证仅加密保存在服务端。保存配置不等于授权成功，需通过连接测试后再启用同步。</p></div>
+      <div><h3>店铺接入</h3><p>凭证仅加密保存在系统中。保存配置不等于授权成功，需通过连接测试后再启用同步。</p></div>
       <el-button v-if="canWrite" size="small" data-testid="youzan-shop-create" @click="openCreate">接入店铺</el-button>
     </div>
     <el-alert type="info" :closable="false" title="当前为真实接入功能预建。未完成实际店铺授权和沙箱验收前，请勿视为生产已联通。" class="dialog-tip" />
@@ -92,16 +92,16 @@ function statusText(status: string) {
     <el-dialog v-model="formVisible" :title="editingId ? '编辑有赞店铺' : '接入有赞店铺'" width="min(620px, 94vw)">
       <el-form label-position="top" @submit.prevent>
         <div class="youzan-form-grid">
-          <el-form-item label="有赞店铺 ID（kdt_id / grant_id）" required><el-input v-model="form.shopId" :disabled="editingId !== null" maxlength="64" placeholder="填写有赞云授权店铺 kdt_id / grant_id" data-testid="youzan-shop-kdt" /></el-form-item>
+          <el-form-item label="有赞店铺编号（kdt_id / grant_id）" required><el-input v-model="form.shopId" :disabled="editingId !== null" maxlength="64" placeholder="填写有赞云授权店铺编号（kdt_id / grant_id）" data-testid="youzan-shop-kdt" /></el-form-item>
           <el-form-item label="店铺名称" required><el-input v-model="form.shopName" maxlength="128" placeholder="填写便于识别的店铺名称" /></el-form-item>
         </div>
-        <el-form-item label="应用 ID（client_id）" required><el-input v-model="form.clientId" maxlength="128" autocomplete="off" placeholder="有赞云无容器自用型应用 client_id" /></el-form-item>
+        <el-form-item label="应用标识（client_id）" required><el-input v-model="form.clientId" maxlength="128" autocomplete="off" placeholder="填写有赞云无容器自用型应用标识（client_id）" /></el-form-item>
         <el-form-item :label="editingId ? '应用密钥（client_secret，留空保持不变）' : '应用密钥（client_secret）'" :required="!editingId">
-          <el-input v-model="form.clientSecret" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="有赞云无容器自用型应用 client_secret" data-testid="youzan-shop-secret" />
-          <div class="proto-note">使用有赞云无容器自用型应用凭证。修改 client_id 或 client_secret 会清空已缓存 Token 并将连接状态重置为待验证（UNVERIFIED）；仅修改店铺名称或同步开关会保留已验证连接与 Token。</div>
+          <el-input v-model="form.clientSecret" type="password" show-password maxlength="512" autocomplete="new-password" placeholder="填写有赞云无容器自用型应用密钥（client_secret）" data-testid="youzan-shop-secret" />
+          <div class="proto-note">使用有赞云无容器自用型应用凭证。修改应用标识或应用密钥会清空已缓存访问凭证，并将连接状态重置为「待验证」；仅修改店铺名称或同步开关会保留已验证连接与访问凭证。</div>
         </el-form-item>
-        <el-form-item label="真实同步开关"><el-switch v-model="form.syncEnabled" active-text="允许同步" inactive-text="仅保存配置" /><div class="proto-note">开启真实同步还需在本页打开企业全局开关或服务端配置 FEATURE_REAL_YOUZAN=true，并通过连接测试。</div></el-form-item>
-        <el-form-item label="官方消息推送地址"><el-input :model-value="webhookPath" readonly data-testid="youzan-shop-webhook-path"><template #prepend>CRM</template></el-input><div class="proto-note">在有赞云控制台配置公网 HTTPS 域名地址并订阅已授权交易消息；保存店铺凭证并开启全局开关后即可通过有赞云测试推送验证（返回 HTTP 200 {"code":0,"msg":"success"}），且服务端出口 IP 需加入有赞 IP 白名单。</div></el-form-item>
+        <el-form-item label="真实同步开关"><el-switch v-model="form.syncEnabled" active-text="允许同步" inactive-text="仅保存配置" /><div class="proto-note">开启真实同步还需在本页打开全局真实通道开关并完成连接测试。</div></el-form-item>
+        <el-form-item label="官方消息推送地址"><el-input :model-value="webhookPath" readonly data-testid="youzan-shop-webhook-path"><template #prepend>CRM</template></el-input><div class="proto-note">在有赞云控制台配置公网 HTTPS 域名地址并订阅已授权交易消息；保存店铺凭证并开启全局开关后即可通过有赞云测试推送验证（返回 HTTP 200 {"code":0,"msg":"success"}），且系统出口 IP 需加入有赞 IP 白名单。</div></el-form-item>
       </el-form>
       <template #footer><el-button :disabled="saving" @click="formVisible = false">取消</el-button><el-button type="primary" :loading="saving" data-testid="youzan-shop-save" @click="save">保存配置</el-button></template>
     </el-dialog>

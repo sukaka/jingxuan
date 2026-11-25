@@ -22,12 +22,12 @@ const REFUND_REASON_LABELS: Record<string, string> = {
 const PROVIDER_LABELS: Record<string, string> = {
   BANK_TRANSFER: '银行转账',
   OFFLINE: '线下退款',
-  MOCK: '模拟验签通道',
+  MOCK: '模拟演示通道',
 }
 
 const VERIFICATION_METHOD_LABELS: Record<string, string> = {
   MANUAL_REVIEW: '人工凭证复核',
-  PROVIDER_CALLBACK: '供应商验签回调',
+  PROVIDER_CALLBACK: '渠道自动回执',
 }
 
 function label(value: string | null | undefined, labels: Record<string, string>, fallback: string): string {

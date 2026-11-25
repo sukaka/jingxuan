@@ -438,7 +438,7 @@ public class CampaignApplicationService {
         }
         requireMutable(channel.status(), "渠道");
         if (!channel.version().equals(request.baseVersion())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "baseVersion与渠道当前版本不一致，请刷新后重试");
+            throw new BusinessException(ErrorCode.CONFLICT, "渠道信息已被更新，请刷新后重试");
         }
         if (newSettlement != null) {
             validateChannelSettlement(channel.channelType(), newSettlement);

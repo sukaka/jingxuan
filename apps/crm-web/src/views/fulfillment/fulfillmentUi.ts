@@ -75,7 +75,7 @@ export function reversalEffectLabel(
     const count = applied.reduce((total, entry) => total + entry.deltaCount, 0)
     return `补偿已生效 · ${applied.length} 笔 / +${count} 次`
   }
-  if (reversal.status === 'APPROVED') return '审核通过，未返回补偿流水，需核对'
+  if (reversal.status === 'APPROVED') return '审核已通过，暂未生成补偿流水，请刷新核对'
   if (reversal.status === 'REJECTED') return '申请已驳回，未改余额'
   return '仅为冲正申请，未改余额'
 }

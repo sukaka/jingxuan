@@ -229,7 +229,7 @@ async function activateVersion(item: PackageVersion) {
 
 async function archiveVersion(item: PackageVersion) {
   try {
-    await ElMessageBox.confirm('归档后关联 SKU 将下架，历史快照仍保留。确认归档？', '归档套餐版本', { type: 'warning' })
+    await ElMessageBox.confirm('归档后关联 SKU 将下架，已成交订单的历史规则仍保留。确认归档？', '归档套餐版本', { type: 'warning' })
     await archivePackageVersion(item.id, item.version)
     await loadVersions()
     ElMessage.success('版本已归档')
@@ -255,7 +255,7 @@ onMounted(() => {
       <template #actions><el-button v-if="canWrite" @click="openProjectDialog()">＋ 新增子项目</el-button><el-button v-if="canWrite" type="primary" @click="openVersionCreate()">＋ 新增套餐规格</el-button></template>
     </PageHeader>
     <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
-    <PageCard title="组合套餐 / 销售规格" subtitle="直接展示 SKU 独立售价；套餐价不要求等于单品参考价之和，分组规则在版本快照中维护">
+    <PageCard title="组合套餐 / 销售规格" subtitle="直接展示 SKU 独立售价；套餐价不要求等于单品参考价之和，分组规则在版本配置中维护">
       <template #actions><el-button v-if="canWrite" @click="openPackageDialog()">新增套餐</el-button></template>
       <div class="proto-card-body">
         <app-table v-loading="loading" :data="packages" @row-click="(row: ProductPackage) => selectPackage(row.id)">
@@ -264,7 +264,7 @@ onMounted(() => {
             <template #default="{row}">
               <div v-for="sku in packageSpecs(row.id)" :key="sku.id" class="package-spec">
                 <div class="package-spec-line"><strong>{{ sku.specName }}</strong><span class="package-price">¥{{ fenToYuan(sku.salePriceFen) }}</span></div>
-                <div class="proto-subcell">{{ sku.selectionMode === 'CHOOSE_N' ? '从候选子项目中选择，不等于使用次数；按版本分组规则校验' : sku.selectionMode === 'USE_N' ? 'Q01 待确认（USE_N 不可发放权益）' : skuStatusLabel(sku.status) }}</div>
+                <div class="proto-subcell">{{ sku.selectionMode === 'CHOOSE_N' ? '从候选子项目中选择，不等于使用次数；按版本分组规则校验' : sku.selectionMode === 'USE_N' ? '固定次数规则待确认（暂不可发放权益）' : skuStatusLabel(sku.status) }}</div>
               </div>
               <span v-if="salesSpecsLoaded && packageSpecs(row.id).length === 0" class="proto-subcell">暂未配置销售规格</span>
               <span v-else-if="!salesSpecsLoaded" class="proto-subcell">销售规格加载失败</span>

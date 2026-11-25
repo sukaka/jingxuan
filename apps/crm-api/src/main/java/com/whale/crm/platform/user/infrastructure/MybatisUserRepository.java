@@ -98,6 +98,11 @@ public class MybatisUserRepository implements UserRepository {
     }
 
     @Override
+    public int updatePasswordHash(long tenantId, long id, long version, String passwordHash) {
+        return userMapper.updatePasswordHash(tenantId, id, version, passwordHash);
+    }
+
+    @Override
     public int updateStatus(long tenantId, long id, String status) {
         return userMapper.updateStatus(tenantId, id, status);
     }

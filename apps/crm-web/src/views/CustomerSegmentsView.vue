@@ -138,7 +138,7 @@ async function createBatch(segment: CustomerSegment) {
     const batch = await createSegmentOperationBatch(segment.id, {
       operationType: 'FOLLOWUP', version: segment.version,
     }, crypto.randomUUID())
-    ElMessage.success(`操作批次 ${batch.batchNo} 已保存 ${batch.memberCount} 人快照，未自动执行后续操作`)
+    ElMessage.success(`操作批次 ${batch.batchNo} 已生成，共锁定 ${batch.memberCount} 位客户，尚未执行后续操作`)
   } catch (error) {
     ElMessage.error(errorText(error))
   }
@@ -146,7 +146,7 @@ async function createBatch(segment: CustomerSegment) {
 
 async function removeSegment(segment: CustomerSegment) {
   try {
-    await ElMessageBox.confirm(`确认删除动态分组“${segment.name}”？已有操作批次快照保留。`, '删除分组')
+    await ElMessageBox.confirm(`确认删除动态分组“${segment.name}”？已生成的操作批次名单仍会保留。`, '删除分组')
     await deleteCustomerSegment(segment.id, segment.version)
     if (selectedId.value === segment.id) selectedId.value = null
     await loadSegments()
@@ -160,11 +160,22 @@ function projectNames(ids: number[]): string {
   return ids.map((id) => projects.value.find((item) => item.id === id)?.projectName ?? `#${id}`).join('、')
 }
 
+function tierLabel(code: string | null | undefined): string {
+  if (!code) return '—'
+  const hit = dicts.options('customerTiers').find((item) => item.code === code)
+  return hit ? hit.label : `${code} 级`
+}
+
+function cityLabel(code: string | null | undefined): string {
+  if (!code) return '—'
+  return dicts.label('cities', code)
+}
+
 function filterSummary(segment: CustomerSegment): string {
   const value = segment.filters
   const cities = value.cityCodes.length
     ? value.cityCodes.map((code) => dicts.label('cities', code)).join('、') : '不限城市'
-  const tier = value.tierCodes.length ? value.tierCodes.join('、') : '不限等级'
+  const tier = value.tierCodes.length ? value.tierCodes.map((code) => tierLabel(code)).join('、') : '不限等级'
   return `${cities} / ${tier} / 关注 ${projectNames(value.attentionProjectIds)} / 已购 ${projectNames(value.purchasedProjectIds)} / 净核销 ${projectNames(value.redeemedProjectIds)} ≥ ${value.redeemedMinCount}`
 }
 
@@ -182,7 +193,7 @@ onMounted(() => {
     <header class="segments-heading">
       <div>
         <h1>客户动态分组</h1>
-        <p>条件实时计算并与当前客户数据范围求交；普通预览不保存成员快照。</p>
+        <p>按筛选条件实时匹配当前可见范围内的客户；预览名单不会生成固定批次。</p>
       </div>
       <el-button v-if="canManage" data-testid="segment-new" @click="resetForm">新建分组</el-button>
     </header>
@@ -222,7 +233,7 @@ onMounted(() => {
           </el-form-item>
         </div>
         <el-alert
-          title="不同条件组取 AND，同组项目取 OR；已购依据 GRANT，净核销扣减已批准 CORRECTION_IN。"
+          title="不同筛选条件需同时满足，同一条件内选择多个项目时满足任意一项即可；已购按有效购入记录计算，净核销已扣除冲正核销次数。"
           type="info" :closable="false"
         />
         <div class="editor-actions">
@@ -266,15 +277,19 @@ onMounted(() => {
 
     <el-card shadow="never">
       <template #header>
-        {{ selectedId ? `分组 #${selectedId} 实时成员` : '当前条件实时预览' }}（{{ memberTotal }} 人，不落快照）
+        {{ selectedId ? `分组 #${selectedId} 实时成员` : '当前条件实时预览' }}（共 {{ memberTotal }} 人，仅实时查看）
       </template>
       <el-table v-loading="memberLoading" :data="members">
         <el-table-column prop="customerNo" label="客户编号" min-width="130" />
         <el-table-column label="客户" min-width="140">
           <template #default="{ row }">{{ row.displayName ?? row.nickname ?? '未命名客户' }}</template>
         </el-table-column>
-        <el-table-column prop="cityCode" label="城市" width="90" />
-        <el-table-column prop="tierCode" label="等级" width="80" />
+        <el-table-column label="城市" width="110">
+          <template #default="{ row }">{{ cityLabel(row.cityCode) }}</template>
+        </el-table-column>
+        <el-table-column label="等级" width="95">
+          <template #default="{ row }">{{ tierLabel(row.tierCode) }}</template>
+        </el-table-column>
         <el-table-column prop="ownerName" label="所属管家" min-width="110" />
       </el-table>
     </el-card>

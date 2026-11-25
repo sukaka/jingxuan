@@ -168,7 +168,7 @@ public class SettlementApplicationService {
         }
         for (SettlementRedemption redemption : redemptions) {
             if (!"POSTED".equals(redemption.status())) {
-                throw new BusinessException(ErrorCode.CONFLICT, "只有真实 POSTED 核销才能进入结算批次");
+                throw new BusinessException(ErrorCode.CONFLICT, "仅已确认的正式核销记录才能进入结算批次");
             }
             if (!request.institutionId().equals(redemption.institutionId())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "不能将其他机构核销纳入本机构批次");
@@ -176,10 +176,10 @@ public class SettlementApplicationService {
             if ("MONTHLY".equals(request.settlementType())) {
                 YearMonth serviceMonth = YearMonth.from(redemption.serviceAt().atZone(SettlementDayRule.ZONE_ID));
                 if (!request.periodKey().equals(serviceMonth.toString())) {
-                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "月结核销服务月份与批次期间不一致（Asia/Shanghai）");
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "月结核销的服务月份与结算期间不一致（按北京时间统计）");
                 }
             } else if (!request.periodKey().equals("REDEMPTION:" + redemption.id())) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "次结期间必须对应唯一核销 REDEMPTION:{id}");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "次结批次的结算期间必须对应唯一核销记录");
             }
         }
         if (!repository.findActiveReversalRedemptionIds(tenantId, redemptionIds).isEmpty()) {
@@ -199,7 +199,7 @@ public class SettlementApplicationService {
         }
         SettlementBatchDetail after = detail(tenantId, created);
         auditService.record(tenantId, user.userId(), "SETTLEMENT_BATCH_CREATE", "SETTLEMENT_BATCH",
-                created.id().toString(), null, after, "真实POSTED核销入批，金额待人工核准");
+                created.id().toString(), null, after, "已确认核销入批，结算金额待人工核准");
         idempotencyService.recordSuccess(tenantId, CREATE_SCOPE, key, "SETTLEMENT_BATCH",
                 created.id().toString(), payload);
         return after;
@@ -228,7 +228,7 @@ public class SettlementApplicationService {
         }
         if (request.grossFen() < 0 || request.commissionFen() < 0 || request.netPayableFen() < 0
                 || net != request.netPayableFen()) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "人工核准金额必须非负且满足 gross-commission=net 等式");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "人工核准金额必须非负，且需满足“应付总额 - 平台佣金 = 实付净额”等式");
         }
         List<Long> lineRedemptionIds = repository.findLines(tenantId, batchId).stream()
                 .map(SettlementLine::redemptionId)
@@ -381,11 +381,11 @@ public class SettlementApplicationService {
             try {
                 YearMonth.parse(periodKey);
             } catch (RuntimeException ex) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "月结期间必须为YYYY-MM");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "月结期间格式必须为 YYYY-MM");
             }
         } else if ("PER_REDEMPTION".equals(type)) {
             if (!periodKey.matches("REDEMPTION:[1-9][0-9]*")) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "次结期间必须为REDEMPTION:{id}");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "次结期间格式无效，请重新选择对应核销记录");
             }
         } else {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "不支持的结算方式");
@@ -394,7 +394,7 @@ public class SettlementApplicationService {
 
     private String requireKey(String key) {
         if (key == null || key.isBlank()) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写请求必须提供Idempotency-Key");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请求缺少防重提交标识");
         }
         return key.strip();
     }

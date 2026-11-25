@@ -9,6 +9,7 @@ import { listTasks } from '../../api/task'
 import { listAppointments } from '../../api/fulfillment'
 import ShellHeader from './ShellHeader.vue'
 import ShellSidebar from './ShellSidebar.vue'
+import ChangePasswordDialog from './ChangePasswordDialog.vue'
 import NotificationBell from '../NotificationBell.vue'
 
 const route = useRoute()
@@ -16,6 +17,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const header = ref<InstanceType<typeof ShellHeader> | null>(null)
 const navigationOpen = ref(false)
+const changePasswordOpen = ref(false)
 const badgeValues = ref<Record<string, number>>({})
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: '运营管理员', OWNER: '经营负责人', MANAGER: '管家', MANAGER_LEAD: '管家主管', BUSINESS: '商务运营', FINANCE: '财务',
@@ -63,8 +65,17 @@ async function handleLogout() {
     })
   } catch { return }
   try { await auth.logout() } catch (error) {
-    ElMessage.warning(error instanceof ApiError && error.isNetworkError ? '后端暂不可达，已在本地退出' : '退出登录时发生错误，已在本地退出')
+    ElMessage.warning(error instanceof ApiError && error.isNetworkError ? '系统暂时无法连接，已在本地退出登录' : '退出登录时发生错误，已在本地退出')
   }
+  navigationOpen.value = false
+  await router.push({ name: 'login' })
+}
+function openChangePassword() {
+  navigationOpen.value = false
+  changePasswordOpen.value = true
+}
+async function handlePasswordChanged() {
+  ElMessage.success('密码修改成功，请使用新密码重新登录')
   navigationOpen.value = false
   await router.push({ name: 'login' })
 }
@@ -92,16 +103,23 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleDocumentKeyd
       :entries="menuItems" :active-path="route.path" :open="navigationOpen" :display-name="displayName"
       :role-label="roleLabel" :scope-label="scopeLabel" :badge-values="badgeValues"
       @close="closeNavigation" @navigate="navigationOpen && closeNavigation()" @switch-user="handleLogout"
+      @change-password="openChangePassword"
     />
     <div class="app-workspace">
       <ShellHeader
-        ref="header" :section="pageSection" :title="pageTitle" :display-name="displayName" :role-label="roleLabel"
+        ref="header" :section="pageSection" :title="pageTitle" :display-name="displayName" :username="auth.user?.username" :role-label="roleLabel"
         :navigation-open="navigationOpen" :is-admin="isAdmin" :can-export="isAdmin && auth.hasPermission('export:read')" @toggle-navigation="toggleNavigation"
-        @logout="handleLogout" @search="globalSearch" @refresh="router.go(0)" @export="router.push({ name: 'exports' })"
+        @change-password="openChangePassword" @logout="handleLogout" @search="globalSearch" @refresh="router.go(0)" @export="router.push({ name: 'exports' })"
       >
         <template #actions><NotificationBell /></template>
       </ShellHeader>
       <main id="main-content" class="app-content" tabindex="-1"><slot /></main>
+      <ChangePasswordDialog
+        v-model="changePasswordOpen"
+        :username="auth.user?.username"
+        :display-name="displayName"
+        @success="handlePasswordChanged"
+      />
     </div>
   </div>
 </template>

@@ -117,7 +117,8 @@ const settlementOptions = computed(() => {
     ? [{ code: 'MONTHLY', label: '电汇月结' }]
     : [{ code: 'MONTHLY', label: '电汇月结' }, { code: 'TWICE_MONTHLY', label: '电汇每月两次' }]
   if (form.settlementMethod && !options.some((option) => option.code === form.settlementMethod)) {
-    return [...options, { code: form.settlementMethod, label: `${form.settlementMethod}（历史/不适用）` }]
+    const legacyLabel = ({ MONTHLY: '电汇月结', TWICE_MONTHLY: '电汇每月两次' } as Record<string, string>)[form.settlementMethod] ?? '历史结算方式'
+    return [...options, { code: form.settlementMethod, label: `${legacyLabel}（历史/不适用）` }]
   }
   return options
 })

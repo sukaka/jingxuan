@@ -156,7 +156,7 @@ onMounted(() => { if (allowed.value) void load() })
         <article v-for="row in rows" :key="row.id" class="script-row" :class="{ disabled: row.status !== 'ACTIVE' }" :data-testid="`script-${row.id}`">
           <div class="script-row-heading">
             <div class="script-title-field"><label :for="`script-title-${row.id}`">场景标题</label><input :id="`script-title-${row.id}`" v-model="drafts[row.id].title" :data-testid="`script-title-${row.id}`" maxlength="64" :disabled="row.status !== 'ACTIVE'"></div>
-            <div class="script-meta"><span class="script-status" :class="{ disabled: row.status !== 'ACTIVE' }"><i aria-hidden="true" />{{ row.status === 'ACTIVE' ? '启用中' : '已停用' }}</span><small>配置版本 v{{ row.version }}</small></div>
+            <div class="script-meta"><span class="script-status" :class="{ disabled: row.status !== 'ACTIVE' }"><i aria-hidden="true" />{{ row.status === 'ACTIVE' ? '启用中' : '已停用' }}</span><small>版本 {{ row.version }}</small></div>
           </div>
           <div class="field"><label :for="`script-content-${row.id}`">话术内容 <span v-if="row.status === 'ACTIVE'">{{ drafts[row.id].script.length }} / 2000</span></label><textarea :id="`script-content-${row.id}`" v-model="drafts[row.id].script" rows="3" maxlength="2000" :readonly="row.status !== 'ACTIVE'" /></div>
           <div v-if="row.status === 'ACTIVE'" class="script-row-footer">

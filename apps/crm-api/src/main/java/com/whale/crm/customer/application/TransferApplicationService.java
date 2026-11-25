@@ -112,7 +112,7 @@ public class TransferApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
         }
         if (!transfer.isPending()) {
-            throw new BusinessException(ErrorCode.CONFLICT, "转交单已处理（当前状态 " + transfer.getStatus() + "）");
+            throw new BusinessException(ErrorCode.CONFLICT, "转交单已处理（当前状态：" + transferStatusLabel(transfer.getStatus()) + "）");
         }
         requireTransferScope(user, transfer.getFromTeamId(), transfer.getToTeamId());
 
@@ -178,7 +178,7 @@ public class TransferApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
         }
         if (!transfer.isPending()) {
-            throw new BusinessException(ErrorCode.CONFLICT, "转交单已处理（当前状态 " + transfer.getStatus() + "）");
+            throw new BusinessException(ErrorCode.CONFLICT, "转交单已处理（当前状态：" + transferStatusLabel(transfer.getStatus()) + "）");
         }
         Customer customer = customerRepository.findById(tenantId, transfer.getCustomerId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "转交单不存在"));
@@ -211,8 +211,21 @@ public class TransferApplicationService {
         boolean inTeam = actorTeam != null && Objects.equals(actorTeam, fromTeamId)
                 && Objects.equals(actorTeam, toTeamId);
         if (!inTeam) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "跨团队转交仅 ADMIN 可办理");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "跨团队转交仅系统管理员可办理");
         }
+    }
+
+    private static String transferStatusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case "PENDING" -> "待审批";
+            case "APPROVED" -> "已通过";
+            case "REJECTED" -> "已驳回";
+            case "CANCELED", "CANCELLED" -> "已取消";
+            default -> "已结束";
+        };
     }
 
     private Map<String, Object> transferSnapshot(CustomerTransfer transfer) {

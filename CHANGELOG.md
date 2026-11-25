@@ -2,6 +2,46 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [UI-COPY-CLEANUP-2.0.3] 全站 UI 中文文案与内部术语全面清理及离线增量更新包（2.0.3） — 2026-11-25
+- **全站 UI 中文文案与内部术语全面清理**：
+  - 全面清理前端页面、弹窗、表单校验与状态提示、后端校验/业务错误文案（含新增 `ValidationMessages.properties`）及 `apps/ai-worker` 回复/提取/知识库提示文案（共涉及前后端与 AI Worker 278 个文件），统一将内部枚举编码、研发术语与生硬英文状态替换为面向业务人员的规范中文表达，保持既有权限边界、状态机、API 契约与数据结构不变（无新增数据库表或 Flyway SQL 迁移）。
+- **离线增量更新包构建与一键升级/回滚能力（2.0.3）**：
+  - 新增 `scripts/build-incremental-patch.sh`（默认 `CRM_PATCH_VERSION=2.0.3`、`CRM_TARGET_PLATFORM=linux/amd64`，支持 `--skip-tests`）：一次构建 JAR、前端 `dist` 与 4 个应用层 `linux/amd64` 镜像（`whale-crm/crm-api:2.0.3`、`whale-crm/web:2.0.3`、`whale-crm/ai-worker:2.0.3`、`whale-crm/clamav-proxy:2.0.3`），显式使用 `docker save --platform` 导出唯一 `images/application.tar.gz` 并解析 `manifest.json` 严格校验全部为 `linux/amd64` 且不含 MySQL/Redis/Kafka/MinIO/ClamAV/Caddy 等 6 个第三方中间件镜像；一次同时产出 openEuler 增量包（`release/whale-crm-patch-2.0.3-openeuler-linux-amd64.tar.gz` + `.sha256`）与 Windows 增量包（`release/whale-crm-patch-2.0.3-windows-amd64.zip` + `.sha256`），均附 `PATCH_README.md` 与 `manifest.txt`（`INSTALL_MODE=incremental-patch`）。
+  - 新增 openEuler/Linux 一键增量升级脚本 `infra/production/apply-patch.sh` 与 Windows 一键增量升级脚本 `infra/production/windows/apply-patch.bat` / `apply-patch.ps1`：支持传入现有安装目录（或自动探测含 `.env` 与 `compose.yml` 的目录）、架构与 Docker Compose v2 预检、升级前默认自动备份 MySQL（`mysqldump | gzip` + `gzip -t`）与 `.env`（支持 `BACKUP_ENCRYPTION_PASSPHRASE` 加密）、写入 `runtime/last-release-version`、载入应用镜像、**仅原地更新 `.env` 中 `RELEASE_VERSION`**（不覆盖任何密钥、端口、HTTPS 证书或 URL 配置）、仅滚动更新 4 个应用容器（`up -d --no-deps --wait`，不重启 6 个中间件容器）、HTTPS `/login` 探活（含本地 `ca.crt` 与 `127.0.0.1` 回环兜底）及 `--rollback` / `-Rollback`（含 `--to-version` / `-ToVersion`）一键回滚。
+  - 同步收口 `scripts/build-windows-installer.sh`、`scripts/build-windows-installer.ps1` 与 `infra/production/tests/test_windows_installer.py`，使全量 Windows 安装包与增量更新包脚本及产物互不干扰；新增 `infra/production/tests/test_incremental_patch.py` 覆盖构建契约、Linux 沙盒升级/自动探测/加密备份/独立 `docker-compose` v2/回滚与缺镜像阻断、Windows PowerShell/BAT 静态安全与编码契约及增量产物校验。
+- **验证证据**：
+  - 后端静态质量检查：`./mvnw -B -pl apps/crm-api spotless:check checkstyle:check spotbugs:check` 通过（Spotless 1276 文件洁净、Checkstyle 0 违规、SpotBugs 0 缺陷 0 警告）；后端全量单元测试 593/593 通过。
+  - 前端与 AI Worker：`apps/crm-web` 全量 155/155 测试文件 725 项用例、typecheck、lint 与 build 全部通过；`apps/ai-worker` `pytest` 122 项用例全部通过。
+  - 基础设施与增量脚本测试：`python3 -m unittest discover -s infra/production/tests -p 'test_*.py' -v` 共 51 项用例（覆盖 `test_devsecops_contracts.py`、`test_incremental_patch.py`、`test_m2_scripts.py`、`test_windows_installer.py`；构建增量包前 50 passed / 1 skipped，0 失败）。注：全量后端 `*IT` 集成测试与浏览器 E2E 本次未重跑。
+
+## [AUTH-SELF-PASSWORD] 个人账号右上角菜单与自助修改密码（复杂度策略 + 双重确认 + 会话吊销） — 2026-11-25
+- **后端密码复杂度策略与自助改密接口**：
+  - 新增 `PasswordPolicyProperties`（`app.security.auth.password-policy.*`，支持通过环境变量配置最小/最大长度、大小写、数字、特殊字符、禁止空白、禁止包含用户名、禁止与原密码相同；默认 8–64 位且包含大写、小写、数字、特殊字符，不含空白/控制字符，不包含当前用户名且不可与原密码相同）与 `PasswordPolicyService`；`SecurityConfig` 注册该配置类并在 `application.yml` 提供显式配置项。
+  - `AuthController` / `AuthApplicationService` 新增 `GET /api/v1/auth/password-policy` 与 `POST /api/v1/auth/password`（任意已登录账号可改自身密码；强制双提交 CSRF；严格校验原密码、新密码复杂度与两次新密码一致；原密码校验失败返回 `400 VALIDATION_FAILED` 且独立审计 `PASSWORD_CHANGE_FAILED` 与隔离限流 `429 RATE_LIMITED` + `Retry-After: 900`，不误退当前会话；校验通过后经 `UserMapper.updatePasswordHash` 按 `tenant_id/id/version/ACTIVE` 乐观锁更新 BCrypt 哈希，吊销该用户全部登录会话、清理 `CRM_TOKEN`/`CRM_CSRF` Cookie 并写入脱敏审计 `PASSWORD_CHANGE`；`ChangePasswordRequest.toString()` 脱敏）。无新增数据库表或 Flyway 迁移。
+- **前端右上角账号菜单与修改密码弹窗**：
+  - `ShellHeader.vue` 将右上角用户名入口升级为可访问下拉菜单（支持点击展开、外部点击与 Escape 关闭），聚合「修改密码」与「切换身份」；`ShellSidebar.vue` 底部同步补充「修改密码」快捷入口。
+  - 新增 `src/utils/passwordPolicy.ts` 与 `src/components/shell/ChangePasswordDialog.vue`，接入 `AppShell.vue`、`src/api/auth.ts` 与 `src/stores/auth.ts`：打开弹窗时从 `/api/v1/auth/password-policy` 拉取当前策略，实时展示密码强度条与逐项复杂度勾选状态，要求输入原密码与两次一致的新密码；修改成功后清理本地会话并引导跳转登录页重新登录。
+- **契约与验证证据**：
+  - OpenAPI：`contracts/openapi/openapi.v1.yaml` 新增 `/auth/password-policy`、`/auth/password` 及 `PasswordPolicy`/`PasswordPolicyEnvelope`/`ChangePasswordRequest`（校验通过：290 paths / 543 schemas / 169 唯一 `operationId` / 0 断链 `$ref`）。
+  - 后端：全量单元测试 593/593 通过（含新增 `PasswordPolicyServiceTest` 6、`AuthApplicationServiceTest` 12、`LoginAttemptServiceTest` 7）；真实 MySQL 8.4 Testcontainers + 本机 Redis 集成测试 `AuthApiIT`（20/20）、`CsrfProtectionIT`（5/5）、`UserAdminApiIT`（14/14）共 39/39 通过；Checkstyle 0 违规、SpotBugs 0 缺陷、Spotless 1276 文件洁净。注：非认证/用户模块 `*IT` 与浏览器 E2E 未重跑。
+  - 前端：`npm --prefix apps/crm-web run typecheck`、`lint`（0 警告）、`build`（exit 0）全部通过；认证/顶栏/改密相关 8 个测试集（`password-policy`、`change-password-dialog`、`shell-header`、`app-shell`、`auth-store`、`router-guard`、`notifications-routing`、`csrf`）104/104 全部通过。注：工作区存在与本任务无关的并发文案改动导致其他 26 个无关前端测试集失败，本次未修改无关模块。
+
+## [P3-DEPLOY-2.0.2-OPENEULER] 欧拉系统（x86_64）40000+ 高位端口默认 HTTPS 一键离线安装包 — 2026-11-25
+- **默认强制 HTTPS + 40000+ 高位端口共存隔离**：
+  - `infra/production/compose.yml`、`.env.example` 与 `install.sh` 将默认宿主机端口调整为 **HTTPS `48443`**（主入口，强制 `COOKIE_SECURE=true` + `Strict-Transport-Security`）与 **HTTP `48080`**（仅返回 `308 Permanent Redirect` 跳转 HTTPS 并隐藏 `Server` 头，不提供明文 HTTP 业务服务）；其余 MySQL/Redis/Kafka/MinIO/ClamAV/crm-api/ai-worker/web 全部运行在独立 Docker 内部网络，零宿主机端口暴露，避免与服务器既有系统冲突。
+  - 新增 `infra/production/Caddyfile.sameorigin`：高位端口/IP HTTPS 模式下同源承载业务与文件预签名上传下载（`/{$FILES_BUCKET}/*` 转发 `minio:9000` 并通过 `header_up -Cookie` 剥离会话 Cookie、限制 `max_size 15MB`、注入 `nosniff` 与 `Content-Security-Policy: sandbox`；`/minio*` 通过前置 `handle` 块严格返回 `403`；`/health` 返回 `200 ok`），消除浏览器的多端口自签证书二次阻断与跨源 CSP 问题。
+  - `install.sh` 新增 `--ip`、`--auto-ip`、`--tls-cert` / `--tls-key`、`--open-firewall`、`--skip-port-check` 参数及交互式一键引导：默认生成本机 10 年 Root CA（`runtime/certs/ca.crt`）与 825 天带 SAN（服务器 IP / `127.0.0.1` / `localhost`）的 HTTPS 证书（私钥仅本机生成，不进入安装包），也支持直接挂载自有商业/企业 SSL 证书；安装前自动校验 `x86_64` 架构与端口占用，适配 openEuler SELinux（`:ro,z` + `chcon`）、`firewalld`、`net.ipv4.ip_forward` 提示及不含 `--env-from-file` 的旧版 Docker Compose v2（通过标准输入传递管理员初始化凭据，零命令行明文密钥）。
+  - 针对高负载多系统共存服务器，调优 `compose.yml` 中 `kafka`、`clamav`、`ai-worker` 与 `crm-api` 的健康检查启动宽限与超时参数（保持总内存限额 `7872m`、`cap_drop: ["ALL"]` 与网络隔离契约不变）。
+- **纯 `linux/amd64` 打包架构修复与前端兜底**：
+  - `scripts/build-installer.sh` 在 `docker save` 时显式附加 `--platform "$PLATFORM"` 并在导出后逐个解析 `images/*.tar.gz` 内的 `manifest.json` 校验镜像架构与目标平台一致，修复 Apple Silicon 宿主机 containerd 多架构索引存储下可能误导出非 `linux/amd64` 镜像的问题，并在成包后清理暂存目录。
+  - `apps/crm-web` 新增 `src/utils/cryptoFallback.ts`（在 `main.ts` 与 `src/api/file.ts` 接入），为缺失 WebCrypto 安全上下文的环境补充 RFC 4122 v4 `crypto.randomUUID` 与纯 TypeScript FIPS 180-4 SHA-256 兜底并补齐 NIST 向量单测。
+- **交付产物与验证证据**：
+  - 交付：`release/whale-crm-2.0.2-openeuler-linux-amd64.tar.gz`（953 MB）及 `release/whale-crm-2.0.2-openeuler-linux-amd64.tar.gz.sha256`（归档白名单校验零 `.env`/私钥/凭据，全部 10 个镜像已验证为 `linux/amd64`）。
+  - 前端：`npm --prefix apps/crm-web run typecheck`、`lint`（0 警告）、`test`（153 个测试文件 / 713 项测试全部通过）、`build`（exit 0）。
+  - 基础设施与脚本：`bash -n`、`docker compose config --quiet`、`python3 -m unittest infra/production/tests/test_devsecops_contracts.py infra/production/tests/test_m2_scripts.py -v`（24/24 OK）；`ai-worker` `pytest`（122 passed）；后端 `ProductionProfileTest`（3/3 passed）。
+  - 隔离端到端实测（对最终 `release/whale-crm-2.0.2-openeuler-linux-amd64.tar.gz` 全新解压执行 `--ip 127.0.0.1 --https-port 48443 --http-port 48080`）：SHA-256 与归档白名单通过；10 个 `linux/amd64` 容器全部 `healthy`；管理员初始化与 `initial-admin.txt`（600）通过；`http://127.0.0.1:48080/login` 返回 `308 -> https://127.0.0.1:48443/login`；`https://127.0.0.1:48443/health` 返回 `200 ok`、`/login` 返回 `200` + `HSTS max-age=31536000` 且无 `Server` 头、`/minio/health/live` 返回 `403`；`docker ps` 确认仅 Caddy 暴露 `48080`/`48443`；`runtime_smoke.py --url https://127.0.0.1:48443 --cacert runtime/certs/ca.crt --files` 全链路通过（验证码登录、Secure Cookie 会话、客户/知识查询、前端路由、同源 HTTPS 预签名上传、ClamAV 扫描 CLEAN、素材修订预签名下载与内容一致性校验）；`./install.sh backup` 生成 MySQL/MinIO/`.env` 备份并通过 `gzip -t`；`./install.sh stop` 停止容器并保留数据卷。
+  - 未重跑/受限说明：本次未修改后端业务 Java/SQL，未重跑全量后端 `mvn verify`（Testcontainers）；本机为 7.65 GiB Apple Silicon Docker Desktop 跨架构 QEMU 模拟全部 10 个 `linux/amd64` 容器，停服后的二次 `./install.sh start` 阶段因模拟环境 CPU/内存争用触发 ClamAV 健康检查超时（741s），真实兆芯 x86_64 欧拉服务器原生运行、公网商业证书与外部真实供应商联调仍须在目标机现场复验。
+
 ## [YOUZAN-PREFLIGHT-FIX] 有赞真店联调前置问题与工作台可用性修复 — 2026-11-24
 - **已关闭订单状态机与历史未付异常收敛**：`YouzanOrderMapper` 显式区分 `TRADE_CLOSED`/`TRADE_CLOSED_BY_USER` 为 `ORDER_CLOSED`（不再归入 `ORDER_PENDING`）；`YouzanEventService` 对未建内部订单的 `ORDER_CLOSED` 干净标记 `PROCESSED` 并记录 `YOUZAN_ORDER_CLOSED_IGNORED` 审计（不建草稿单、不生脏异常），当且仅当关闭事件无外部支付时间（`paidAt == null`）时通过 `YouzanMapper.selectOpenUnpaidIssuesByExternalOrderForUpdate`（`FOR UPDATE OF i`）自动收敛同店铺同外部单号下历史 `ORDER_PENDING`/`WAIT_PAY` 事件滞留的 `OPEN` 异常（`MAPPING_FAILED`/`CUSTOMER_UNRESOLVED`/`RETRY`）为 `RESOLVED` 并保留原 `last_error` 与审计 `resolvedHistoricalIssueIds`（严格保护 `ORDER_PAID` 历史异常与 `PAYMENT_MISMATCH` 不被误关）；对已建未支付单（`DRAFT`/`PENDING_PAYMENT`）按 `X(crm_customer) → X(crm_order)` 锁序自动取消为 `CANCELED`；对已支付历史订单严格禁止覆盖并记入 `PAYMENT_MISMATCH` 异常队列提醒人工核实退款。
 - **官方 Webhook 控制台验证与退款事件保护**：`YouzanOfficialMessageParser` 仅在 `test=true` 时允许缺失 `kdt_id`；`YouzanConfigRepository`/`YouzanConfigMapper` 新增 `selectShopConfigsByClientId`；`YouzanOfficialMessageService` 对 `test=true` 控制台验证消息允许店铺尚未开启 `syncEnabled` 或测试报文带占位/缺失 `kdt_id` 时按 `clientId` 候选完成租户全局开关与 MD5 严格验签后无副作用返回 200 ACK，正式消息仍强制要求 `syncEnabled=true`；对 `eventType` 含 `refund` 的有赞退款推送直接记录告警日志并返回 200 ACK，避免触发无效 30 秒查单。

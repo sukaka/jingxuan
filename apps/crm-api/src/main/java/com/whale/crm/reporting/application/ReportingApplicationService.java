@@ -399,7 +399,7 @@ public class ReportingApplicationService {
         return List.of(
                 new SkuQualityReportResponse.QualityRule("MISSING_SKU_CODE", "SKU 编码为空或仅包含空白字符"),
                 new SkuQualityReportResponse.QualityRule("MISSING_STANDARD_NAME", "套餐标准名或 SKU 规格名为空"),
-                new SkuQualityReportResponse.QualityRule("MISSING_ACTIVE_INSTITUTION", "未配置 ACTIVE 状态的适用机构"),
+                new SkuQualityReportResponse.QualityRule("MISSING_ACTIVE_INSTITUTION", "未配置启用中的适用机构"),
                 new SkuQualityReportResponse.QualityRule("LOW_FREQUENCY",
                         "统计期限内实际已支付订单行销量小于等于 " + threshold + "；仅提示人工复核，不自动停售或下架"));
     }

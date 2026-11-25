@@ -52,7 +52,7 @@ async function save() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -62,7 +62,7 @@ async function save() {
 <template>
   <el-drawer :model-value="modelValue" title="人工核准结算金额" size="min(620px, 100vw)" @update:model-value="updateVisible">
     <template v-if="batch">
-      <el-alert type="warning" :closable="false" title="只有已线下核准的规则版本、金额与证据才能解除待核实状态；不要按页面费率快照自动推算。" class="finance-action-note" />
+      <el-alert type="warning" :closable="false" title="只有已线下核准的规则版本、金额与证据才能解除待核实状态；不要按页面参考费率自动推算。" class="finance-action-note" />
       <div class="finance-order-facts"><strong>批次 #{{ batch.id }} · 机构 #{{ batch.institutionId }}</strong><span>{{ settlementPeriodLabel(batch.settlementType, batch.periodKey) }} · 当前金额待核实</span></div>
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="线下核准规则版本" required><el-input v-model="form.ruleVersion" maxlength="96" placeholder="填写真实核准的规则版本" data-testid="settlement-rule-version" /></el-form-item>

@@ -66,7 +66,7 @@ const activeTab = ref('profile')
           <el-alert type="info" :closable="false" title="当前账号没有财务敏感字段查看权限，佣金与银行税务等敏感信息不展示。" class="finance-tip" />
         </template>
         <template v-else>
-          <h4 class="trading-section-title">结算与财务敏感信息（掩码）</h4>
+          <h4 class="trading-section-title">结算与财务敏感信息（已脱敏）</h4>
           <el-descriptions :column="3" border class="trading-descriptions">
             <el-descriptions-item label="结算方式">{{ settlementTypeLabel(profile.settlementType) }}</el-descriptions-item>
             <el-descriptions-item label="线上佣金">{{ rateDisplay(profile.onlineRate) }}</el-descriptions-item>
@@ -138,7 +138,7 @@ const activeTab = ref('profile')
         </div>
         <app-table :data="qualifications" size="small">
           <el-table-column label="资质 / 类型" min-width="170"><template #default="{ row }">{{ row.title }}<div class="trading-cell-sub">{{ qualificationTypeLabel(row.qualificationType) }}</div></template></el-table-column>
-          <el-table-column label="证照号（掩码）" width="140"><template #default="{ row }"><span class="institution-masked">{{ row.licenseNoMasked || '-' }}</span></template></el-table-column>
+          <el-table-column label="证照号（已脱敏）" width="140"><template #default="{ row }"><span class="institution-masked">{{ row.licenseNoMasked || '-' }}</span></template></el-table-column>
           <el-table-column label="有效期" min-width="160"><template #default="{ row }">{{ row.validFrom || '-' }} 至 {{ row.validTo || '未设到期日' }}</template></el-table-column>
           <el-table-column label="状态" width="100"><template #default="{ row }">{{ documentStatusLabel(row.status) }}</template></el-table-column>
           <el-table-column label="文件" width="95"><template #default="{ row }"><FileDownloadButton :file-id="row.fileId" /></template></el-table-column>

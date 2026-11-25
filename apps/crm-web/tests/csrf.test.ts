@@ -81,6 +81,20 @@ describe('CSRF 头注入', () => {
     expect(captured.headers?.get(CSRF_HEADER_NAME)).toBeFalsy()
   })
 
+  it('修改密码接口 /auth/password 必须携带 X-CSRF-Token（不豁免）', async () => {
+    document.cookie = `${CSRF_COOKIE_NAME}=csrf-token-pw123`
+    const { captured, adapter } = captureHeaders()
+    http.defaults.adapter = adapter
+
+    await http.post('/auth/password', {
+      currentPassword: 'Old@12345',
+      newPassword: 'NewStrong#2026',
+      confirmPassword: 'NewStrong#2026',
+    })
+
+    expect(captured.headers?.get(CSRF_HEADER_NAME)).toBe('csrf-token-pw123')
+  })
+
   it('没有 CRM_CSRF Cookie 时不注入(后端将返回 403 CSRF_TOKEN_INVALID)', async () => {
     const { captured, adapter } = captureHeaders()
     http.defaults.adapter = adapter

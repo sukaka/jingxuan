@@ -209,7 +209,7 @@ function requiredText(group: PackageSelectionGroup): string {
 }
 
 function lineSelectionError(line: OrderLineState): string {
-  if (isUseN(line)) return '该 SKU 为 USE_N 模式（Q01 待确认），不可创建订单发放权益'
+  if (isUseN(line)) return '该 SKU 的固定次数选品规则待确认，暂不支持下单发放权益'
   if (!isChooseN(line)) return ''
   if (line.snapshotLoading) return '正在加载套餐选择规则'
   if (line.snapshotError) return `套餐选择规则加载失败：${line.snapshotError}`
@@ -236,7 +236,7 @@ function searchSkus(keyword: string) {
 }
 
 function skuLabel(sku: Sku) {
-  const suffix = sku.selectionMode === 'USE_N' ? '（Q01待确认·不可下单）' : ''
+  const suffix = sku.selectionMode === 'USE_N' ? '（规则待确认·暂不可下单）' : ''
   return `${sku.packageName ?? sku.skuCode}｜${sku.specName}｜${(sku.salePriceFen / 100).toFixed(2)}元${suffix}`
 }
 
@@ -255,7 +255,7 @@ async function save() {
     return
   }
   if ((form.campaignId === undefined) !== (form.campaignBatchId === undefined)) {
-    ElMessage.warning('活动 ID 与批次 ID 需同时填写，或同时留空')
+    ElMessage.warning('活动编号与批次编号需同时填写，或同时留空')
     return
   }
   const payableFen = yuanToFen(form.payableYuan)
@@ -352,10 +352,10 @@ async function save() {
             @input="markPayableEdited"
           />
         </el-form-item>
-        <el-form-item label="活动 ID / 批次 ID（可选，需成对）">
+        <el-form-item label="活动编号 / 批次编号（可选，需成对）">
           <div class="campaign-inputs">
-            <el-input-number v-model="form.campaignId" :min="1" :precision="0" :controls="false" placeholder="活动 ID" class="campaign-input" />
-            <el-input-number v-model="form.campaignBatchId" :min="1" :precision="0" :controls="false" placeholder="批次 ID" class="campaign-input" />
+            <el-input-number v-model="form.campaignId" :min="1" :precision="0" :controls="false" placeholder="活动编号" class="campaign-input" />
+            <el-input-number v-model="form.campaignBatchId" :min="1" :precision="0" :controls="false" placeholder="批次编号" class="campaign-input" />
           </div>
         </el-form-item>
         <el-form-item label="权益到期日（可选）">
@@ -364,7 +364,7 @@ async function save() {
       </div>
 
       <div class="section-head">
-        <strong>订单行（成交时快照）</strong>
+        <strong>订单明细（下单时锁定规则）</strong>
         <el-button size="small" @click="addItem">添加 SKU</el-button>
       </div>
       <div v-for="(item, index) in form.items" :key="index" class="order-line-block">

@@ -172,7 +172,7 @@ onMounted(() => { void load() })
       <template v-if="activeTab === 'batches'">
         <div class="proto-toolbar">
           <div class="proto-toolbar-left">
-            <el-input-number v-model="query.institutionId" :min="1" :precision="0" :controls="false" placeholder="机构 ID" class="finance-filter" style="width:170px" @keyup.enter="search" />
+            <el-input-number v-model="query.institutionId" :min="1" :precision="0" :controls="false" placeholder="机构编号" class="finance-filter" style="width:170px" @keyup.enter="search" />
             <el-select v-model="query.status" placeholder="全部批次状态" clearable class="finance-filter" style="width:170px"><el-option label="待核准" value="DRAFT" /><el-option label="已核准 · 待付款" value="CONFIRMED" /><el-option label="部分付款" value="PARTIALLY_PAID" /><el-option label="已完成付款" value="PAID" /></el-select>
             <el-button type="primary" :loading="loading" @click="search">查询</el-button><el-button @click="reset">重置</el-button>
           </div>
@@ -183,7 +183,7 @@ onMounted(() => { void load() })
           <app-table :data="batches" row-key="id">
             <el-table-column label="批次 / 机构" min-width="160"><template #default="{ row }"><strong>批次 #{{ row.id }}</strong><div class="trading-cell-sub">机构 #{{ row.institutionId }} · {{ settlementTypeLabel(row.settlementType) }}</div></template></el-table-column>
             <el-table-column label="结算周期" min-width="150"><template #default="{ row }">{{ settlementPeriodLabel(row.settlementType, row.periodKey) }}</template></el-table-column>
-            <el-table-column label="实际结算日快照" min-width="180"><template #default="{ row }"><span v-if="row.settlementType === 'PER_REDEMPTION'">次卡次结不适用</span><span v-else-if="!row.settlementDate">历史批次未记录</span><template v-else>{{ row.settlementDate }}<div class="trading-cell-sub">{{ settlementDayLabel(row.settlementDay) }} · {{ settlementDaySourceLabel(row.settlementDaySource) }} · Asia/Shanghai</div></template></template></el-table-column>
+            <el-table-column label="实际结算日" min-width="180"><template #default="{ row }"><span v-if="row.settlementType === 'PER_REDEMPTION'">次卡次结不适用</span><span v-else-if="!row.settlementDate">历史批次未记录</span><template v-else>{{ row.settlementDate }}<div class="trading-cell-sub">{{ settlementDayLabel(row.settlementDay) }} · {{ settlementDaySourceLabel(row.settlementDaySource) }} · 北京时间</div></template></template></el-table-column>
             <el-table-column label="核销基数" width="110" align="right"><template #default="{ row }"><span class="finance-amount" :class="{ pending: row.amountStatus === 'PENDING_VERIFICATION' }">{{ settlementAmount(row.amountStatus, row.grossFen) }}</span></template></el-table-column>
             <el-table-column label="应结净额" width="110" align="right"><template #default="{ row }"><span class="finance-amount" :class="{ pending: row.amountStatus === 'PENDING_VERIFICATION' }">{{ settlementAmount(row.amountStatus, row.netPayableFen) }}</span></template></el-table-column>
             <el-table-column label="已付款" width="105" align="right"><template #default="{ row }">¥{{ fenToYuan(row.paidFen) }}</template></el-table-column>
@@ -207,7 +207,7 @@ onMounted(() => { void load() })
         <el-pagination v-model:current-page="query.page" v-model:page-size="query.size" :total="total" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="query.page=1;load()" />
       </template>
       <template v-else>
-        <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input-number v-model="query.institutionId" :min="1" :precision="0" :controls="false" placeholder="机构 ID（可选）" class="finance-filter" style="width:190px" /><el-button type="primary" :loading="reconciliationLoading" data-testid="reconciliation-refresh" @click="loadReconciliation">重新对账</el-button></div><span class="proto-note">只读检查，不自动修账或补流水</span></div>
+        <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input-number v-model="query.institutionId" :min="1" :precision="0" :controls="false" placeholder="机构编号（可选）" class="finance-filter" style="width:190px" /><el-button type="primary" :loading="reconciliationLoading" data-testid="reconciliation-refresh" @click="loadReconciliation">重新对账</el-button></div><span class="proto-note">只读检查，不自动修账或补流水</span></div>
         <el-alert v-if="reconciliationError" type="error" :title="reconciliationError" :closable="false" />
         <template v-else-if="reconciliation">
           <div class="finance-recon-grid"><div v-for="group in reconciliationGroups" :key="group.label" class="finance-recon-metric" :class="{ 'has-issue': group.count > 0 }"><small>{{ group.label }}</small><strong>{{ group.count }}</strong></div></div>

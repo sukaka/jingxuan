@@ -13,7 +13,7 @@ const props = defineProps<{
   scopeLabel: string
   badgeValues: Record<string, number>
 }>()
-const emit = defineEmits<{ close: []; navigate: []; switchUser: [] }>()
+const emit = defineEmits<{ close: []; navigate: []; switchUser: []; changePassword: [] }>()
 const closeButton = ref<HTMLButtonElement | null>(null)
 const expandedGroups = ref<Record<string, boolean>>({})
 const showDevelopmentBadge = import.meta.env.DEV
@@ -60,7 +60,7 @@ watch(() => props.open, async (open) => { if (open) { await nextTick(); closeBut
           </button>
           <div v-show="isExpanded(entry,index)" class="nav-children">
             <template v-for="child in entry.children" :key="child.title">
-              <button v-if="child.disabled" type="button" class="nav-btn future" disabled title="后续阶段开放">
+              <button v-if="child.disabled" type="button" class="nav-btn future" disabled title="后续开放">
                 <ShellIcon :name="child.icon" :size="15" /><span>{{ child.title }}</span><small>后续</small>
               </button>
               <RouterLink
@@ -78,7 +78,10 @@ watch(() => props.open, async (open) => { if (open) { await nextTick(); closeBut
     <div class="nav-bottom">
       <div class="nav-user"><span class="user-avatar">{{ displayName.slice(0,1) || '用' }}</span><div><strong>{{ displayName }}</strong><small>{{ roleLabel }}</small></div></div>
       <div class="sidebar-footer">{{ scopeLabel }}<template v-if="showDevelopmentBadge"><br>开发环境</template></div>
-      <button type="button" class="switch-login" @click="emit('switchUser')"><ShellIcon name="logout" :size="13" />切换登录身份</button>
+      <div class="sidebar-account-actions">
+        <button type="button" class="switch-login" @click="emit('switchUser')"><ShellIcon name="logout" :size="13" />切换登录身份</button>
+        <button type="button" class="switch-login" data-testid="sidebar-change-password" @click="emit('changePassword')"><ShellIcon name="lock" :size="13" />修改密码</button>
+      </div>
     </div>
   </aside>
 </template>
@@ -96,7 +99,7 @@ watch(() => props.open, async (open) => { if (open) { await nextTick(); closeBut
 .nav-children{margin:3px 0 8px 25px;padding:2px 0 3px 10px;border-left:1px solid rgb(145 190 197 / 18%)}
 .nav-btn{padding:9px 11px;margin:2px 0;color:#9fb8c5;font-size:12px;font-weight:520}.nav-btn>span:first-of-type{flex:1}.nav-btn:hover{color:#fff;background:rgb(255 255 255 / 6%)}.nav-btn.active{color:#e0fff6;background:#174a54;font-weight:700}.nav-btn.active:before{position:absolute;left:-11px;width:3px;height:16px;border-radius:3px;background:#43d4b2;content:''}.nav-btn.future{cursor:not-allowed;opacity:.48}.nav-btn.future small{font-size:9px}
 .nav-group-badge{display:inline-flex;min-width:19px;height:19px;align-items:center;justify-content:center;margin-left:4px;padding:0 5px;border-radius:10px;color:#142735;background:#e7a24e;font-size:10px;font-weight:800}
-.nav-bottom{padding:18px 16px;border-top:1px solid rgb(255 255 255 / 9%)}.nav-user{display:flex;align-items:center;gap:10px}.user-avatar{display:grid;width:34px;height:34px;flex:none;place-items:center;border-radius:50%;color:#11756e;background:linear-gradient(135deg,#d2f6ef,#b6dee7);font-weight:740}.nav-user strong{display:block;font-size:12px}.nav-user small{display:block;margin-top:3px;color:#86aabb;font-size:10px}.sidebar-footer{margin-top:12px;color:#7197aa;font-size:10px;line-height:1.8}.switch-login{display:flex;align-items:center;gap:6px;margin-top:10px;padding:0;border:0;color:#9fc2ca;background:transparent;font-size:10px;cursor:pointer}
+.nav-bottom{padding:18px 16px;border-top:1px solid rgb(255 255 255 / 9%)}.nav-user{display:flex;align-items:center;gap:10px}.user-avatar{display:grid;width:34px;height:34px;flex:none;place-items:center;border-radius:50%;color:#11756e;background:linear-gradient(135deg,#d2f6ef,#b6dee7);font-weight:740}.nav-user strong{display:block;font-size:12px}.nav-user small{display:block;margin-top:3px;color:#86aabb;font-size:10px}.sidebar-footer{margin-top:12px;color:#7197aa;font-size:10px;line-height:1.8}.sidebar-account-actions{display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap}.switch-login{display:flex;align-items:center;gap:6px;padding:0;border:0;color:#9fc2ca;background:transparent;font-size:10px;cursor:pointer}.switch-login:hover{color:#e6fbf6}
 @media(max-width:1020px){.shell-sidebar{width:212px}.brand-row{padding:21px 17px}.brand-copy small{font-size:7px}}
 @media(max-width:760px){.shell-sidebar{width:238px;transform:translateX(-100%);transition:transform .2s}.shell-sidebar.is-open{transform:translateX(0)}.sidebar-close{display:block}}
 </style>

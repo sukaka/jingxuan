@@ -47,7 +47,7 @@ const refund = computed(() => props.detail?.refund ?? null)
       </el-descriptions>
 
       <section class="finance-section">
-        <div class="finance-section-head"><div><h3>权益回收与现金分摊</h3><p>成功事务按以下人工决策追加回收流水，已消费项目不自动返还。</p></div></div>
+        <div class="finance-section-head"><div><h3>权益回收与现金分摊</h3><p>退款成功后将按以下方案回收对应权益，已消费项目不自动返还。</p></div></div>
         <app-table :data="detail.items" size="small">
           <el-table-column label="权益批次" min-width="130"><template #default="{ row }">权益 #{{ row.entitlementId }}</template></el-table-column>
           <el-table-column prop="revokeCount" label="拟回收次数" width="120" align="right" />
@@ -69,11 +69,11 @@ const refund = computed(() => props.detail?.refund ?? null)
       </section>
 
       <section class="finance-section">
-        <div class="finance-section-head"><div><h3>状态历史（只追加）</h3></div></div>
+        <div class="finance-section-head"><div><h3>状态变更记录</h3></div></div>
         <el-timeline>
           <el-timeline-item v-for="item in detail.history" :key="item.id" :timestamp="formatDateTime(item.createdAt)">
             <strong>{{ item.fromStatus === 'NONE' ? '未创建' : refundStatusLabel(item.fromStatus) }} → {{ refundStatusLabel(item.toStatus) }}</strong>
-            <div class="crm-muted">{{ item.actorUserId === null ? '供应商回调' : `用户 #${item.actorUserId}` }}<span v-if="item.reason"> · {{ item.reason }}</span></div>
+            <div class="crm-muted">{{ item.actorUserId === null ? '渠道自动回执' : `用户 #${item.actorUserId}` }}<span v-if="item.reason"> · {{ item.reason }}</span></div>
           </el-timeline-item>
         </el-timeline>
       </section>

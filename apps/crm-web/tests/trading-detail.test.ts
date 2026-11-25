@@ -143,7 +143,8 @@ describe('OrderDetailDrawer 订单事实与快照', () => {
     wrappers.push(wrapper)
     await settleDrawer()
 
-    expect(document.body.textContent).toContain('Q02 未确认：多项目实付金额待分摊')
+    expect(document.body.textContent).toContain('多项目实付金额分摊规则待确认')
+    expect(document.body.textContent).not.toContain('Q02')
     expect(document.body.querySelector('.allocation-value')?.textContent).toBe('待分摊')
     expect(document.body.querySelector('.allocation-value')?.textContent).not.toBe('0.00')
   })
@@ -235,7 +236,7 @@ describe('EntitlementDetailDrawer 权威权益流水', () => {
     wrappers.push(wrapper)
     await settleDrawer()
 
-    expect(document.body.textContent).toContain('权威流水汇总可用次数')
+    expect(document.body.textContent).toContain('当前可用次数（按流水汇总）')
     expect(document.body.textContent).toContain('权益发放')
     expect(document.body.textContent).toContain('+10')
     expect(document.body.textContent).toContain('entitlement.grant:71:711:101')

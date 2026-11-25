@@ -212,7 +212,7 @@ public class CatalogApplicationService {
         PackageVersion input = new PackageVersion(id, before.packageId(), before.versionNo(), request.selectionMode(),
                 request.choiceCount(), blankToNull(request.selectionRules()), before.status(), before.createdAt(), request.version());
         if (repository.updateVersionDraft(tenantId, input) == 0) {
-            throw new BusinessException(ErrorCode.CONFLICT, "版本已被修改或已激活，不能覆盖快照");
+            throw new BusinessException(ErrorCode.CONFLICT, "版本已被修改或已启用，不能直接覆盖");
         }
         if (!"CHOOSE_N".equals(request.selectionMode())) {
             repository.deleteSelectionGroups(tenantId, id);
@@ -238,7 +238,7 @@ public class CatalogApplicationService {
             validateSelection(before.selectionMode(), before.choiceCount());
             if (!groups.isEmpty()) {
                 if (!"CHOOSE_N".equals(before.selectionMode())) {
-                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "仅 CHOOSE_N 支持结构化选项组");
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "仅自选项目套餐支持配置选项组");
                 }
                 PackageSelectionRules.validateConfiguration(groups, items);
             }
@@ -274,8 +274,8 @@ public class CatalogApplicationService {
         List<PackageSelectionGroup> groups = repository.findSelectionGroups(tenantId, id);
         if ("USE_N".equals(before.selectionMode())) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
-                    "Q01 选择规则未确认，USE_N 仅作历史模板，不能激活或发放权益",
-                    List.of(new ApiResponse.ErrorDetail("Q01", "USE_N 共享次数池规则待运营确认")));
+                    "任选次数套餐规则尚未确认，仅可保存为历史模板，暂不支持启用或发放权益",
+                    List.of(new ApiResponse.ErrorDetail("Q01", "任选次数共享池规则待运营确认")));
         }
         if (!CatalogRules.canActivate(before, projects, groups)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "激活前必须配置有效子项目、次数和选择模式");
@@ -292,7 +292,7 @@ public class CatalogApplicationService {
     public PackageVersionSnapshot archiveVersion(long tenantId, CurrentUser user, long id, long version) {
         PackageVersion before = requireVersion(tenantId, id);
         if (!"ACTIVE".equals(before.status())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "仅 ACTIVE 版本可归档");
+            throw new BusinessException(ErrorCode.CONFLICT, "仅启用中的版本可归档");
         }
         if (repository.updateVersionStatus(tenantId, id, version, "ACTIVE", "ARCHIVED") == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "版本状态已变化，请刷新后重试");
@@ -432,7 +432,7 @@ public class CatalogApplicationService {
         if (!CatalogRules.entitlementIssuable(packageVersion, projects, groups)) {
             if ("PENDING_Q01".equals(CatalogRules.rulesStatus(packageVersion, groups))) {
                 throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
-                        "Q01 选择规则未确认，只能保存模板，不能上架发放权益",
+                        "套餐选择规则尚未确认，当前仅可保存模板，暂不支持上架或发放权益",
                         java.util.List.of(new ApiResponse.ErrorDetail("Q01", "选 N 项的组合、重复选择和每项次数仍需运营确认")));
             }
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "版本未激活或权益配置不完整，不能上架 SKU");
@@ -537,7 +537,7 @@ public class CatalogApplicationService {
             return List.of();
         }
         if (!"CHOOSE_N".equals(selectionMode)) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "仅 CHOOSE_N 支持结构化选项组");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "仅自选项目套餐支持配置选项组");
         }
         List<PackageSelectionGroup> groups = requests.stream()
                 .map(request -> new PackageSelectionGroup(null, null, request.groupCode().strip(),

@@ -254,7 +254,7 @@ public class FileApplicationService {
         PrivateObjectStorage storage = storage();
         FileMetadata metadata = requireFile(tenantId, fileId);
         if (FileClassification.MATERIAL != FileClassification.valueOf(metadata.classification())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "只有 MATERIAL 文件可以作为知识资料");
+            throw new BusinessException(ErrorCode.CONFLICT, "仅素材库文件可作为知识资料");
         }
         if (!Objects.equals(institutionId, metadata.institutionId())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "文件机构归属不匹配");

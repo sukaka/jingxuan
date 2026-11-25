@@ -7,5 +7,5 @@ import jakarta.validation.constraints.Size;
 public record UpdateTaskAssigneeRequest(
         @NotNull Long assigneeUserId,
         @NotBlank(message = "转派原因不能为空") @Size(max = 500) String reason,
-        @NotNull(message = "version 不能为空") Long version) {
+        @NotNull(message = "数据版本号不能为空") Long version) {
 }

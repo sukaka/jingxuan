@@ -84,7 +84,7 @@ async function submit() {
     return
   }
   if (!form.fileId) {
-    errorMessage.value = '请先完成真实文件上传，并等待 ClamAV 扫描结果为 CLEAN'
+    errorMessage.value = '请先上传文件并等待安全检测通过'
     return
   }
   const tags = Array.from(new Set(form.tagsText.split(/[,，\n]/).map((tag) => tag.trim()).filter(Boolean)))
@@ -132,8 +132,8 @@ async function submit() {
     :show-close="!submitting"
   >
     <div class="revision-intro">
-      <strong>{{ isCreate ? '新素材 · 首个 DRAFT 版本' : `${material?.materialNo} · 新版本` }}</strong>
-      <span>{{ isCreate ? '素材编号由服务端生成；CLEAN 文件与首个草稿版本一次提交。' : '只追加 DRAFT 版本，不覆盖已审核历史；机构归属不可在修订中变更。' }}送审后由具备权限的审核人处理。</span>
+      <strong>{{ isCreate ? '新素材 · 首个草稿版本' : `${material?.materialNo} · 新版本` }}</strong>
+      <span>{{ isCreate ? '素材编号由系统自动生成；文件通过安全检测后将与首个草稿版本一并提交。' : '本次修改将生成新的草稿版本，不会覆盖已审核的历史版本；所属机构不可在修订中变更。' }}送审后由审核人员处理。</span>
     </div>
     <el-alert
       v-if="errorMessage"
@@ -148,11 +148,11 @@ async function submit() {
         <el-input v-model="form.title" maxlength="160" show-word-limit data-testid="revision-title" />
       </el-form-item>
       <el-form-item label="素材类型" required>
-        <el-select v-model="form.categoryCode" placeholder="选择字典中的素材类型" data-testid="revision-category">
+        <el-select v-model="form.categoryCode" placeholder="请选择素材类型" data-testid="revision-category">
           <el-option v-for="item in categories" :key="item.code" :label="item.label" :value="item.code" />
         </el-select>
       </el-form-item>
-      <el-form-item :label="isCreate ? '所属机构 ID（留空为受控全局素材）' : '所属机构 ID（版本间不可变更）'">
+      <el-form-item :label="isCreate ? '所属机构 ID（留空为全平台通用素材）' : '所属机构 ID（修订时不可变更）'">
         <el-input-number v-model="form.institutionId" :min="1" :controls="false" :disabled="!isCreate" placeholder="机构 ID" data-testid="revision-institution" />
       </el-form-item>
       <el-form-item label="关联项目 ID（可选）">
@@ -178,9 +178,9 @@ async function submit() {
       v-model="form.fileId"
       classification="MATERIAL"
       :institution-id="form.institutionId"
-      label="版本文件（PDF / JPEG / PNG / TXT / Markdown）"
+      label="版本文件（支持 PDF / JPG / PNG / TXT / Markdown）"
     />
-    <p class="upload-rule">文件须完成 SHA-256 校验、真实预签名上传、ETag 登记，并取得 ClamAV CLEAN；扫描中或失败均不能保存版本。</p>
+    <p class="upload-rule">上传文件后系统将自动完成校验与病毒安全扫描，扫描通过后方可保存版本。</p>
     <template #footer>
       <el-button :disabled="submitting" @click="visible = false">取消</el-button>
       <el-button type="primary" :loading="submitting" data-testid="revision-save" @click="submit">{{ isCreate ? '创建素材草稿' : '保存为新版本' }}</el-button>

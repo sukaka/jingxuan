@@ -70,14 +70,14 @@ export function useDictionaries() {
     if (!currentCode || !loadedMap.value[dictCode] || active.some((option) => option.code === currentCode)) {
       return active
     }
-    return [...active, { code: currentCode, label: `${currentCode}（历史/停用）`, sortNo: -1, disabled: true }]
+    return [...active, { code: currentCode, label: `${currentCode}（已停用）`, sortNo: -1, disabled: true }]
   }
 
   function label(dictCode: string, optionCode: string | null | undefined): string {
     if (!optionCode) return '-'
     const hit = optionsMap.value[dictCode]?.find((option) => option.code === optionCode)
     if (hit) return hit.label
-    return loadedMap.value[dictCode] ? `${optionCode}（历史/停用）` : optionCode
+    return loadedMap.value[dictCode] ? `${optionCode}（已停用）` : optionCode
   }
 
   return { optionsMap, load, options, optionsWithHistory, label }

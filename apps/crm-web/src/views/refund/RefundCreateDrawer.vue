@@ -51,7 +51,7 @@ function resetForm() {
 async function loadOrder(id?: number) {
   const orderId = id ?? form.orderId
   if (!orderId || orderId < 1) {
-    ElMessage.warning('请输入有效订单 ID')
+    ElMessage.warning('请输入有效的订单编号')
     return
   }
   orderLoading.value = true
@@ -137,7 +137,7 @@ async function save() {
     emit('saved', saved)
     emit('update:modelValue', false)
   } catch (error) {
-    ElMessage.error(`${tradingErrorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${tradingErrorText(error)}；重试时系统会自动防止重复提交`)
   } finally {
     saving.value = false
   }
@@ -149,9 +149,9 @@ async function save() {
     <el-alert type="warning" :closable="false" title="申请不代表退款成功。请逐笔明确权益回收次数和现金分摊，不按比例自动推断。" class="finance-action-note" />
     <el-form label-position="top" @submit.prevent>
       <div class="finance-form-grid">
-        <el-form-item label="订单 ID" required>
+        <el-form-item label="订单编号" required>
           <div class="finance-field" style="display:flex;gap:8px">
-            <el-input-number v-model="form.orderId" :min="1" :precision="0" :controls="false" class="finance-field" placeholder="输入真实订单 ID" data-testid="refund-order-id" />
+            <el-input-number v-model="form.orderId" :min="1" :precision="0" :controls="false" class="finance-field" placeholder="输入订单编号" data-testid="refund-order-id" />
             <el-button :loading="orderLoading" @click="loadOrder()">读取订单</el-button>
           </div>
         </el-form-item>

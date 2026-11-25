@@ -123,7 +123,8 @@ public class OrderApplicationService {
                 details.put("refundedFen", order.refundedFen());
                 Instant occurredAt = order.createdAt() != null ? order.createdAt() : order.orderedAt();
                 CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("ORDER", order.id(), "ORDER",
-                        occurredAt, "订单 " + order.orderNo(), "订单状态：" + order.status(), details, order.soldByUserId());
+                        occurredAt, "订单 " + order.orderNo(), "订单状态：" + orderStatusLabel(order.status()), details,
+                        order.soldByUserId());
                 if (cursor == null || cursor.allows(event)) {
                     events.add(event);
                 }
@@ -131,6 +132,24 @@ public class OrderApplicationService {
             page++;
         } while ((long) (page - 1) * 100 < total);
         return events;
+    }
+
+    private static String orderStatusLabel(String status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case "DRAFT" -> "草稿";
+            case "PENDING_PAYMENT" -> "待支付";
+            case "PAID" -> "已支付";
+            case "PARTIALLY_REDEEMED" -> "部分核销";
+            case "FULFILLED" -> "已完成";
+            case "PARTIALLY_REFUNDED", "PARTIAL_REFUNDED" -> "部分退款";
+            case "REFUNDED" -> "已退款";
+            case "CANCELED", "CANCELLED" -> "已取消";
+            case "CLOSED" -> "已关闭";
+            default -> "其他状态";
+        };
     }
 
     @Transactional
@@ -198,7 +217,7 @@ public class OrderApplicationService {
     public OrderFulfillmentView submit(long tenantId, CurrentUser user, long orderId, OrderReviewRequest request) {
         Order before = requireVisibleOrder(tenantId, user, orderId);
         if (!"DRAFT".equals(before.status())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "仅 DRAFT 订单可提交待支付");
+            throw new BusinessException(ErrorCode.CONFLICT, "仅草稿状态的订单可提交待支付");
         }
         changeStatus(tenantId, user, before, "PENDING_PAYMENT", request.version(), "SUBMIT", null, request.reason());
         OrderFulfillmentView after = detail(tenantId, user, orderId);
@@ -238,8 +257,8 @@ public class OrderApplicationService {
         }
         if (!snapshot.entitlementIssuable()) {
             if ("PENDING_Q01".equals(snapshot.rulesStatus())) {
-                throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "Q01 选择规则未确认，只能保存模板，不能发放权益",
-                        List.of(new ApiResponse.ErrorDetail("Q01", "请配置结构化选项组、选择数和每个项目的次数后再下单")));
+                throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "套餐选择规则尚未确认，当前仅可保存模板，暂不支持发放权益",
+                        List.of(new ApiResponse.ErrorDetail("Q01", "请配置选项组、选择数和每个项目的次数后再下单")));
             }
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "套餐权益配置不完整，不能创建订单");
         }
@@ -367,7 +386,7 @@ public class OrderApplicationService {
         long totalWeight = 0;
         for (long weight : weights) {
             if (weight <= 0) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Q02 分摊权重必须大于 0");
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "项目分摊权重必须大于 0");
             }
             totalWeight += weight;
         }

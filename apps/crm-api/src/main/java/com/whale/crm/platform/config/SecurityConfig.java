@@ -5,6 +5,7 @@ import com.whale.crm.platform.security.AuthSecurityProperties;
 import com.whale.crm.platform.security.CryptoProperties;
 import com.whale.crm.platform.security.CsrfValidationFilter;
 import com.whale.crm.platform.security.JwtAuthenticationFilter;
+import com.whale.crm.platform.security.PasswordPolicyProperties;
 import com.whale.crm.platform.web.ApiResponse;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.RequestIdFilter;
@@ -37,7 +38,7 @@ import java.nio.charset.StandardCharsets;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@EnableConfigurationProperties({AuthSecurityProperties.class, CryptoProperties.class})
+@EnableConfigurationProperties({AuthSecurityProperties.class, CryptoProperties.class, PasswordPolicyProperties.class})
 public class SecurityConfig {
 
     private final ObjectMapper objectMapper;

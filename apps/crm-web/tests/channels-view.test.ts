@@ -308,6 +308,10 @@ describe('ChannelsView 真实渠道主数据', () => {
 
     expect(wrapper.find('[data-testid="channel-change-approve-701"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('本人不可自审')
+    expect(wrapper.text()).toContain('分佣比例：10%')
+    expect(wrapper.text()).toContain('分佣比例：15%')
+    expect(wrapper.text()).not.toContain('commissionPercent')
+    expect(wrapper.text()).not.toContain('channel:approve_finance')
     await wrapper.get('[data-testid="channel-change-approve-702"]').trigger('click')
     await flushPromises()
 

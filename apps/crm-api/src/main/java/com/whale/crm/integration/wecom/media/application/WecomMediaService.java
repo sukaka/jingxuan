@@ -81,7 +81,7 @@ public class WecomMediaService {
             String target = terminal ? "FAILED" : "RETRY";
             Instant next = terminal ? null : Instant.now().plusMillis(
                     Math.min(60000, 1000L * (1L << Math.min(6, asset.attemptCount()))));
-            String masked = "媒体下载失败：" + error.getClass().getSimpleName();
+            String masked = "媒体下载失败，请稍后重试";
             if (repository.markFailure(tenantId, id, asset.version(), owner, target, masked, next, Instant.now()) != 1) {
                 throw new BusinessException(ErrorCode.CONFLICT, "媒体失败状态已变化");
             }

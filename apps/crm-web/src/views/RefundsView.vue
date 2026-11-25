@@ -187,8 +187,8 @@ onMounted(() => {
     <PageCard>
       <div class="proto-toolbar">
         <div class="proto-toolbar-left">
-          <el-input-number v-model="query.orderId" :min="1" :precision="0" :controls="false" placeholder="订单 ID" class="finance-filter" style="width:150px" @keyup.enter="search" />
-          <el-input-number v-model="query.customerId" :min="1" :precision="0" :controls="false" placeholder="客户 ID" class="finance-filter" style="width:150px" @keyup.enter="search" />
+          <el-input-number v-model="query.orderId" :min="1" :precision="0" :controls="false" placeholder="订单编号" class="finance-filter" style="width:150px" @keyup.enter="search" />
+          <el-input-number v-model="query.customerId" :min="1" :precision="0" :controls="false" placeholder="客户编号" class="finance-filter" style="width:150px" @keyup.enter="search" />
           <el-select v-model="query.status" placeholder="全部退款状态" clearable class="finance-filter" style="width:170px" data-testid="refund-status-filter">
             <el-option label="待审批" value="REQUESTED" /><el-option label="已批准 · 待执行" value="APPROVED" /><el-option label="已驳回" value="REJECTED" /><el-option label="退款执行中" value="PROCESSING" /><el-option label="退款成功" value="SUCCEEDED" /><el-option label="退款失败" value="FAILED" />
           </el-select>

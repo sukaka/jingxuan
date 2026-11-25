@@ -108,7 +108,7 @@ async function addKeyword(): Promise<void> {
   try {
     await createComplaintKeyword({ keyword }, newKey())
     newKeyword.value = ''
-    successMessage.value = '关键词已新增，仅用于后续合法来源检测'
+    successMessage.value = '关键词已新增，将用于后续记录检测'
     await load()
   } catch (error) {
     errorMessage.value = errorText(error)
@@ -133,7 +133,7 @@ async function saveKeyword(item: ComplaintKeyword): Promise<void> {
   try {
     await updateComplaintKeyword(item.id, { keyword, version: item.version, reason }, newKey())
     keywordReasons[item.id] = ''
-    successMessage.value = '关键词已修改；历史快照保持原值'
+    successMessage.value = '关键词已修改，历史命中记录保持原样'
     await load()
   } catch (error) {
     errorMessage.value = errorText(error)
@@ -192,9 +192,9 @@ onMounted(() => { if (allowed.value) void load() })
       <PageCard
         class="settings-card policy-card"
         title="检测策略"
-        subtitle="通知依次查找客户负责人、本组唯一在职主管和兜底接收人；无有效接收人时只记录异常。"
+        subtitle="命中后依次通知客户所属管家、本组主管或备用接收人；若均无有效接收人，则仅记录异常提醒。"
       >
-        <template #actions><span v-if="policy" class="version-chip">配置版本 v{{ policy.version }}</span></template>
+        <template #actions><span v-if="policy" class="version-chip">第 {{ policy.version }} 版</span></template>
         <form v-if="policy" class="policy-form" @submit.prevent="savePolicy">
           <div class="policy-layout">
             <label class="policy-enabled" for="policy-enabled">
@@ -203,19 +203,19 @@ onMounted(() => { if (allowed.value) void load() })
               <span class="switch-copy"><strong>启用关键词规则检测</strong><small>关闭后不再产生新的关键词命中</small></span>
             </label>
             <div class="field fallback-field">
-              <label for="fallback-recipient">兜底接收人 <span>选填</span></label>
+              <label for="fallback-recipient">备用接收人 <span>选填</span></label>
               <div class="input-with-suffix">
                 <input id="fallback-recipient" v-model.number="policy.fallbackRecipientUserId" type="number" min="1" placeholder="输入 CRM 员工 ID">
                 <span>ID</span>
               </div>
-              <p class="field-help">仅在找不到客户负责人和主管时使用，留空则不配置兜底。</p>
+              <p class="field-help">仅在找不到客户负责人和主管时使用，留空则不设置备用接收人。</p>
             </div>
           </div>
           <div class="policy-audit">
             <div class="field">
               <label for="policy-reason">本次修改理由 <em>必填</em></label>
-              <input id="policy-reason" v-model="policy.reason" data-testid="policy-reason" maxlength="1000" placeholder="例如：调整检测开关或兜底接收人">
-              <p class="field-help">保存后写入不可覆盖的审计记录。</p>
+              <input id="policy-reason" v-model="policy.reason" data-testid="policy-reason" maxlength="1000" placeholder="例如：调整检测开关或备用接收人">
+              <p class="field-help">保存后记入不可覆盖的操作日志。</p>
             </div>
             <div class="policy-actions">
               <span>修改仅影响后续检测</span>
@@ -231,7 +231,7 @@ onMounted(() => { if (allowed.value) void load() })
       <PageCard
         class="settings-card keyword-card"
         title="关键词配置"
-        subtitle="新增、修改与停用均需填写理由；历史关键词快照保持原值。"
+        subtitle="新增、修改与停用均需填写理由；历史命中记录中的关键词保持原样。"
       >
         <template #actions><span class="section-count"><strong>{{ activeKeywordCount }}</strong> 个启用</span></template>
         <div class="keyword-body">
@@ -254,7 +254,7 @@ onMounted(() => { if (allowed.value) void load() })
                   <input :id="`keyword-input-${item.id}`" v-model="keywordDrafts[item.id]" :disabled="item.status !== 'ACTIVE'" maxlength="128" :aria-label="`关键词 ${item.id}`">
                   <div class="keyword-meta">
                     <span class="status-pill" :class="item.status === 'ACTIVE' ? 'is-active' : 'is-disabled'"><i aria-hidden="true" />{{ item.status === 'ACTIVE' ? '启用中' : '已停用' }}</span>
-                    <small>配置版本 v{{ item.version }}</small>
+                    <small>第 {{ item.version }} 版</small>
                   </div>
                 </div>
               </div>

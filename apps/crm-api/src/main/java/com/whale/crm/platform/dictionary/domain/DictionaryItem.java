@@ -29,7 +29,7 @@ public class DictionaryItem {
      */
     public void disable() {
         if (!STATUS_ACTIVE.equals(status)) {
-            throw new IllegalStateException("仅 ACTIVE 状态的字典项可停用");
+            throw new IllegalStateException("仅启用中的字典项可停用");
         }
         this.status = STATUS_INACTIVE;
     }

@@ -35,11 +35,11 @@ async function load() {
 }
 
 function statusText(status: string) {
-  return ({ RUNNING: '执行中', SUCCEEDED: '成功', PARTIAL: '部分异常', FAILED: '失败', PENDING: '待执行' } as Record<string, string>)[status] ?? status
+  return ({ RUNNING: '执行中', SUCCEEDED: '成功', PARTIAL: '部分异常', FAILED: '失败', PENDING: '待执行' } as Record<string, string>)[status] ?? '未知状态'
 }
 
 function typeText(type: string) {
-  return ({ FULL: '历史导入', INCREMENTAL: '增量同步', RECONCILE: '手动补偿', WEBHOOK: '消息补单' } as Record<string, string>)[type] ?? type
+  return ({ FULL: '历史导入', INCREMENTAL: '增量同步', RECONCILE: '手动补偿', WEBHOOK: '消息补单' } as Record<string, string>)[type] ?? '其他同步'
 }
 
 watch(() => props.shopId, () => { query.page = 1; void load() }, { immediate: true })

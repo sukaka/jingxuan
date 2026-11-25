@@ -55,7 +55,7 @@ async function copyRaw() {
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div v-if="order" class="youzan-order-detail">
-      <el-alert v-if="order.shopId.startsWith('MOCK-')" type="warning" :closable="false" title="模拟数据只用于适配验证，不代表真实有赞连接或真实资金到账。" class="detail-tip" />
+      <el-alert v-if="order.shopId.startsWith('MOCK-')" type="warning" :closable="false" title="模拟演示数据仅用于功能验证，不代表真实有赞连接或真实资金到账。" class="detail-tip" />
       <el-alert v-else type="info" :closable="false" title="真实订单以有赞订单详情和 CRM 支付核验结果为准，消息接收不代表资金已确认。" class="detail-tip" />
 
       <section class="detail-section" aria-labelledby="youzan-order-status">
@@ -177,7 +177,7 @@ async function copyRaw() {
         <el-alert v-if="!hasRaw" type="info" :closable="false" title="当前记录无脱敏原始数据，不能据此自动匹配客户、SKU 或支付。" />
         <div v-else-if="rawExpanded" id="youzan-raw-content" class="raw-content">
           <div class="raw-toolbar">
-            <span>已安全格式化；非法 JSON 保留原文</span>
+            <span>已安全格式化；格式异常时保留原始内容</span>
             <el-button size="small" data-testid="youzan-raw-copy" @click="copyRaw">复制原始数据</el-button>
           </div>
           <pre class="youzan-raw" data-testid="youzan-raw-json">{{ formattedRaw }}</pre>

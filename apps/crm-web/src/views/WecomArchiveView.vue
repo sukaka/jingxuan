@@ -49,6 +49,10 @@ function senderLabel(message: ConversationMessage) {
 function time(value: string) { return shanghaiTimeString(value) }
 function errorText(error: unknown) { return error instanceof Error ? error.message : '操作失败，请稍后重试' }
 function statusLabel(status: string) { return ({ QUEUED: '排队等待', RUNNING: '分析中', RETRY: '等待重试', PROPOSED: '待人工确认', FAILED: '分析失败', CONFIRMED: '已生成待办', REJECTED: '已驳回' } as Record<string, string>)[status] || '未知任务状态' }
+function providerLabel(provider: string | null | undefined) {
+  if (!provider) return ''
+  return ({ mock: '模拟演示', MOCK: '模拟演示', openai_compatible: '大模型服务', OPENAI_COMPATIBLE: '大模型服务' } as Record<string, string>)[provider] || 'AI 服务'
+}
 function intentLabel(type: string) { return aiIntentLabel(type) }
 function riskLabel(value: string) { return ({ COMPLAINT: '投诉风险', REFUND_REQUEST: '退款诉求', SERVICE_CLAIM: '服务完成陈述', URGENT: '需优先复核' } as Record<string, string>)[value] || '未知风险' }
 function actionLabel(value: string) { return ({ VERIFY_BALANCE: '核实剩余权益', ASK_PREFERRED_INSTITUTION: '确认意向机构', CREATE_FOLLOWUP_DRAFT: '生成回访草稿', VERIFY_SERVICE_RECORD: '核实服务记录', OFFER_HUMAN_SUPPORT: '转人工支持', VERIFY_PAYMENT_RECORD: '核实支付记录' } as Record<string, string>)[value] || '未知操作' }
@@ -210,8 +214,8 @@ onMounted(async () => {
     <PageHeader title="企业微信 · AI 管家" description="官方客户联系与会话归档；AI 只提供证据建议，不能自动执行交易或发送消息">
       <template #actions><span class="proto-pill info">归档只读 · 权限受控</span><RouterLink to="/integrations/wecom/archive" class="el-button">接入状态 / 归档管理</RouterLink></template>
     </PageHeader>
-    <div v-if="canRead" class="proto-callout">官方采集需完成企业授权与 SDK 配置，不接个人微信。AI 识别不等于自动执行，全文与媒体仅在成员、同意与客户数据范围均满足时读取。</div>
-    <el-alert v-if="!canRead" type="error" :title="auth.user?.userType === 'INSTITUTION' ? '机构用户无企业微信归档访问入口' : '缺少 wecom:read 权限'" :closable="false" />
+    <div v-if="canRead" class="proto-callout">官方采集需完成企业授权与会话存档配置，不接个人微信。AI 识别不等于自动执行，全文与媒体仅在成员、同意与客户数据范围均满足时读取。</div>
+    <el-alert v-if="!canRead" type="error" :title="auth.user?.userType === 'INSTITUTION' ? '机构用户无企业微信归档访问入口' : '当前账号暂无企业微信会话查看权限'" :closable="false" />
     <el-alert v-else-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
     <PageCard v-if="canRead">
       <div v-loading="loading" class="chat-layout">
@@ -237,7 +241,7 @@ onMounted(async () => {
           <h3>AI 智能洞察</h3>
           <p class="proto-note">只依据授权证据生成待核实建议；置信度不是校准概率，人工确认前不改变业务事实。</p>
           <el-alert v-if="aiError" type="warning" :title="aiError" :closable="false" />
-          <div v-if="activeJob" class="ai-suggestion"><strong>任务状态</strong><span class="proto-pill warning">{{ statusLabel(activeJob.status) }}</span><div v-if="activeJob.provider" class="proto-subcell">{{ activeJob.provider }} · {{ activeJob.modelName }}</div><div v-if="activeJob.errorMasked">{{ activeJob.errorMasked }}</div></div>
+          <div v-if="activeJob" class="ai-suggestion"><strong>任务状态</strong><span class="proto-pill warning">{{ statusLabel(activeJob.status) }}</span><div v-if="activeJob.provider" class="proto-subcell">{{ providerLabel(activeJob.provider) }}{{ activeJob.modelName ? ` · ${activeJob.modelName}` : '' }}</div><div v-if="activeJob.errorMasked">{{ activeJob.errorMasked }}</div></div>
           <template v-if="hasInsight && activeJob?.insight">
             <div class="ai-suggestion"><strong>客户意图</strong>{{ intentLabel(activeJob.insight.insightType) }}<div class="proto-subcell">模型自报置信度 {{ Math.round(activeJob.insight.confidence * 100) }}%</div></div>
             <div class="ai-suggestion"><strong>涉及项目 / 机构</strong>{{ activeJob.insight.projectCodes.map(projectCodeLabel).join('、') || '未明确' }}<div class="proto-subcell">{{ activeJob.insight.mentionedInstitution || '机构待确认' }} · {{ activeJob.insight.mentionedTime || '时间待确认' }}</div></div>

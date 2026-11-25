@@ -302,6 +302,46 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/AuthUserEnvelope'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /auth/password-policy:
+    get:
+      tags: [Auth]
+      operationId: getPasswordPolicy
+      summary: 查询当前生效的个人密码复杂度策略（任意已登录账号可查）
+      responses:
+        '200':
+          description: 当前密码复杂度策略
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PasswordPolicyEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /auth/password:
+    post:
+      tags: [Auth]
+      operationId: changeOwnPassword
+      summary: 个人账号自助修改登录密码（原密码校验 + 两次新密码一致 + 复杂度策略 + CSRF + 限流 + 全会话吊销 + 审计）
+      description: 仅可修改当前登录主体自身密码；原密码错误返回 400 VALIDATION_FAILED（不退出当前会话），连续失败触发 429 RATE_LIMITED；修改成功后立即吊销该用户全部登录会话并清理 CRM_TOKEN / CRM_CSRF Cookie，要求使用新密码重新登录。
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChangePasswordRequest'}
+      responses:
+        '200': {description: 修改成功，已吊销该用户全部登录会话并清理 Cookie}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/CsrfInvalid'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429':
+          description: 原密码连续校验失败达到限流阈值，Retry-After=900
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503':
+          description: 登录保护存储不可用，未跳过改密限流保护
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
   /users:
     get:
       tags: [Users]
@@ -8191,6 +8231,32 @@ components:
         code: {type: string, enum: [OK]}
         data: {$ref: '#/components/schemas/AuthUser'}
         requestId: {type: string}
+    PasswordPolicy:
+      type: object
+      required: [minLength, maxLength, requireUppercase, requireLowercase, requireDigit, requireSpecial, forbidWhitespace, forbidUsername, forbidSameAsCurrent]
+      properties:
+        minLength: {type: integer, minimum: 8, maximum: 128, example: 8}
+        maxLength: {type: integer, minimum: 8, maximum: 128, example: 64}
+        requireUppercase: {type: boolean, example: true}
+        requireLowercase: {type: boolean, example: true}
+        requireDigit: {type: boolean, example: true}
+        requireSpecial: {type: boolean, example: true}
+        forbidWhitespace: {type: boolean, example: true}
+        forbidUsername: {type: boolean, example: true}
+        forbidSameAsCurrent: {type: boolean, example: true}
+    PasswordPolicyEnvelope:
+      type: object
+      properties:
+        code: {type: string, enum: [OK]}
+        data: {$ref: '#/components/schemas/PasswordPolicy'}
+        requestId: {type: string}
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword, confirmPassword]
+      properties:
+        currentPassword: {type: string, minLength: 1, maxLength: 128, format: password, description: 当前密码（原密码）}
+        newPassword: {type: string, minLength: 8, maxLength: 128, format: password, description: 新密码，须满足当前 PasswordPolicy 复杂度规则}
+        confirmPassword: {type: string, minLength: 8, maxLength: 128, format: password, description: 再次输入的新密码，必须与 newPassword 一致}
     UserSummary:
       type: object
       properties:

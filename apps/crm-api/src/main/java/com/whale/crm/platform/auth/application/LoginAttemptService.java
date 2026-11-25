@@ -100,6 +100,36 @@ public class LoginAttemptService {
         }
     }
 
+    public void checkPasswordChangeAllowed(String tenantScope, long userId, String clientIp) {
+        if (count(passwordChangeAccountKey(tenantScope, userId)) >= maxAccountFailures
+                || count(key(clientIp, "pw-change-ip")) >= maxIpFailures) {
+            throw new BusinessException(ErrorCode.RATE_LIMITED, "原密码校验失败次数过多，请15分钟后再试");
+        }
+    }
+
+    public void recordPasswordChangeFailure(String tenantScope, long userId, String clientIp) {
+        long accountAttempts = increment(passwordChangeAccountKey(tenantScope, userId));
+        long ipAttempts = increment(key(clientIp, "pw-change-ip"));
+        if (accountAttempts >= maxAccountFailures || ipAttempts >= maxIpFailures) {
+            throw new BusinessException(ErrorCode.RATE_LIMITED, "原密码校验失败次数过多，请15分钟后再试");
+        }
+    }
+
+    public void recordPasswordChangeSuccess(String tenantScope, long userId) {
+        try {
+            redis.delete(passwordChangeAccountKey(tenantScope, userId));
+        } catch (DataAccessException ex) {
+            throw new BusinessException(ErrorCode.AUTH_PROTECTION_UNAVAILABLE, "登录保护服务暂不可用，请稍后重试");
+        }
+    }
+
+    private String passwordChangeAccountKey(String tenantScope, long userId) {
+        String normalizedScope = tenantScope == null || tenantScope.isBlank()
+                ? DEFAULT_TENANT_SCOPE
+                : tenantScope.strip().toLowerCase(Locale.ROOT);
+        return keyPrefix + "pw-change-account:" + sha256(normalizedScope + ":" + userId);
+    }
+
     private long count(String key) {
         try {
             String value = redis.opsForValue().get(key);

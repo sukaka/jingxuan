@@ -43,7 +43,7 @@ public class NotificationController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @RequestParam(required = false) Boolean unreadOnly,
             @RequestParam(required = false) @Size(max = 64)
-            @Pattern(regexp = "[A-Z][A-Z0-9_]*", message = "notificationType 格式无效") String notificationType,
+            @Pattern(regexp = "[A-Z][A-Z0-9_]*", message = "通知类型格式无效") String notificationType,
             HttpServletRequest request) {
         return ApiResponse.ok(service.searchOwn(TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser(),
                 unreadOnly, notificationType, page, size), requestId(request));
@@ -61,7 +61,7 @@ public class NotificationController {
     public ApiResponse<NotificationResponse> markRead(
             @PathVariable long id, @Valid @RequestBody(required = true) MarkNotificationReadRequest body,
             @RequestHeader("Idempotency-Key") @Size(min = 1, max = 128)
-            @Pattern(regexp = ".*\\S.*", message = "Idempotency-Key 不能为空白") String idempotencyKey,
+            @Pattern(regexp = ".*\\S.*", message = "请求标识不能为空白") String idempotencyKey,
             HttpServletRequest request) {
         return ApiResponse.ok(service.markRead(TenantContext.currentTenantId(), SecuritySupport.requireCurrentUser(),
                 id, body, idempotencyKey), requestId(request));

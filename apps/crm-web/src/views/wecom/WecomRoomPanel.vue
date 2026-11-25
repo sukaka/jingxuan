@@ -77,7 +77,7 @@ async function save() {
   if (!props.canWrite || saving.value) return
   const members = [...new Set(form.members.split(/[\s，,]+/).map((item) => item.trim()).filter(Boolean))]
   if (!form.roomId.trim() || !members.length || !form.sourceEvidenceRef.trim() || !form.reason.trim()) {
-    errorMessage.value = '请填写 roomid、完整成员清单、清单来源证据和操作理由'
+    errorMessage.value = '请填写群聊编号（RoomID）、完整成员清单、清单来源证据和操作理由'
     return
   }
   if (members.length > 500) {
@@ -101,7 +101,7 @@ async function save() {
     emit('saved')
     ElMessage.success('群聊与完整成员清单已保存；不代表供应商线上权限已验收')
   } catch (error) {
-    errorMessage.value = `${tradingErrorText(error)}；重试沿用同一幂等键`
+    errorMessage.value = `${tradingErrorText(error)}；重新提交不会重复保存`
   } finally {
     saving.value = false
   }
@@ -117,8 +117,8 @@ watch(() => props.corpId, () => {
 <template>
   <section class="room-settings">
     <div class="room-intro">
-      <div><span class="room-eyebrow">ROOM CONTEXT</span><h3>群聊归档授权</h3></div>
-      <p>以 roomid 独立保存群会话，不任选成员充当客户。仅登记管理员已核对的完整成员清单；外部参与人的同意和员工归档覆盖由后端逐条校验。</p>
+      <div><span class="room-eyebrow">群聊归档</span><h3>群聊归档授权</h3></div>
+      <p>以群聊编号独立保存群会话，不任选成员充当客户。仅登记管理员已核对的完整成员清单；外部参与人的同意和员工归档覆盖由系统逐条校验。</p>
       <el-button v-if="canWrite" type="primary" data-testid="wecom-room-create" @click="create">登记群聊</el-button>
     </div>
     <el-alert type="info" :closable="false" title="这里没有自动读取群成员名单；清单来源应可追溯到企业授权核对记录。群聊停用只影响新归档，历史事实不删除。" />
@@ -130,7 +130,7 @@ watch(() => props.corpId, () => {
         <button v-for="room in rooms" :key="room.roomId" type="button" class="room-item" :class="{ active: selectedRoomId === room.roomId }" @click="selectedRoomId = room.roomId; editing = false">
           <span class="room-item-title">{{ room.displayName || '未命名群聊' }}<i :class="{ ready: room.archivable }" /></span>
           <span class="room-id">{{ room.roomId }}</span>
-          <span class="room-meta">{{ room.participants.filter((item) => item.status === 'ACTIVE').length }} 位当前成员 · 清单 v{{ room.version }}</span>
+          <span class="room-meta">{{ room.participants.filter((item) => item.status === 'ACTIVE').length }} 位当前成员 · 清单版本 {{ room.version }}</span>
           <span class="room-state">{{ !room.enabled ? '已停用新归档' : room.archivable ? '授权条件已满足' : '授权条件待补齐' }}</span>
         </button>
         <div v-if="!rooms.length && !loading" class="room-empty"><strong>尚未登记群聊</strong><span>先完成员工映射、成员覆盖与外部联系人同意，再确认完整成员清单。</span></div>
@@ -138,25 +138,25 @@ watch(() => props.corpId, () => {
 
       <div class="room-detail">
         <template v-if="editing">
-          <div class="room-detail-head"><div><h3>{{ selected ? '更新完整成员清单' : '登记群聊与成员' }}</h3><p>{{ selected ? `当前清单版本 v${selected.version}，保存需通过版本校验` : '新群聊从版本 v0 开始' }}</p></div><el-button text @click="editing = false">取消</el-button></div>
+          <div class="room-detail-head"><div><h3>{{ selected ? '更新完整成员清单' : '登记群聊与成员' }}</h3><p>{{ selected ? `当前清单版本 ${selected.version}，保存需通过版本校验` : '新群聊从初始版本 0 开始' }}</p></div><el-button text @click="editing = false">取消</el-button></div>
           <form class="room-form" data-testid="wecom-room-form" @submit.prevent="save">
             <div class="room-form-grid">
-              <label>企业 ID<input :value="corpId" disabled></label>
-              <label>群聊 roomid<input v-model="form.roomId" :disabled="!!selected" maxlength="192" required placeholder="企微官方 roomid，不是群名称" data-testid="wecom-room-id"></label>
+              <label>企业标识（CorpID）<input :value="corpId" disabled></label>
+              <label>群聊编号（RoomID）<input v-model="form.roomId" :disabled="!!selected" maxlength="192" required placeholder="企微官方群聊编号，不是群名称" data-testid="wecom-room-id"></label>
               <label>显示名称（选填）<input v-model="form.displayName" maxlength="128" placeholder="仅用于 CRM 展示，不冒充官方群名"></label>
               <label class="room-switch">允许新消息归档<input v-model="form.enabled" type="checkbox" role="switch"><small>停用后仍按权限保留历史记录</small></label>
             </div>
-            <label class="room-roster">完整成员企微 ID（每行一个）<textarea v-model="form.members" rows="7" required placeholder="员工账号或 external_userid；请勿填写昵称、手机号" data-testid="wecom-room-members" /><small>保存即确认清单完整；未列出的旧成员将标记为已退出，不删除历史消息。</small></label>
+            <label class="room-roster">完整成员企微标识（每行一个）<textarea v-model="form.members" rows="7" required placeholder="企微员工账号或外部联系人标识；请勿填写昵称、手机号" data-testid="wecom-room-members" /><small>保存即确认清单完整；未列出的旧成员将标记为已退出，不删除历史消息。</small></label>
             <div class="room-form-grid">
               <label>清单来源证据引用<input v-model="form.sourceEvidenceRef" maxlength="255" required placeholder="内部核对记录或授权凭证引用" data-testid="wecom-room-evidence"></label>
               <label>本次操作理由<input v-model="form.reason" maxlength="1000" required placeholder="说明成员核对或调整原因" data-testid="wecom-room-reason"></label>
             </div>
-            <div class="room-form-actions"><span>成员身份、同意与员工覆盖由服务端复核</span><el-button type="primary" native-type="submit" :loading="saving" data-testid="wecom-room-save">保存完整清单</el-button></div>
+            <div class="room-form-actions"><span>成员身份、同意与员工覆盖由系统复核</span><el-button type="primary" native-type="submit" :loading="saving" data-testid="wecom-room-save">保存完整清单</el-button></div>
           </form>
         </template>
         <template v-else-if="selected">
           <div class="room-detail-head"><div><h3>{{ selected.displayName || '未命名群聊' }}</h3><p class="room-id">{{ selected.roomId }}</p></div><el-button v-if="canWrite" type="primary" plain data-testid="wecom-room-edit" @click="edit(selected)">核对并更新清单</el-button></div>
-          <dl class="room-facts"><div><dt>当前状态</dt><dd>{{ selected.enabled ? '允许新归档' : '已停用新归档' }}</dd></div><div><dt>归档资格</dt><dd>{{ selected.archivable ? '成员、同意与覆盖均已满足' : '仍有条件未满足' }}</dd></div><div><dt>完整清单版本</dt><dd>v{{ selected.version }}</dd></div><div><dt>最近确认</dt><dd>{{ new Date(selected.membershipConfirmedAt).toLocaleString('zh-CN', { hour12: false }) }}</dd></div></dl>
+          <dl class="room-facts"><div><dt>当前状态</dt><dd>{{ selected.enabled ? '允许新归档' : '已停用新归档' }}</dd></div><div><dt>归档资格</dt><dd>{{ selected.archivable ? '成员、同意与覆盖均已满足' : '仍有条件未满足' }}</dd></div><div><dt>完整清单版本</dt><dd>版本 {{ selected.version }}</dd></div><div><dt>最近确认</dt><dd>{{ new Date(selected.membershipConfirmedAt).toLocaleString('zh-CN', { hour12: false }) }}</dd></div></dl>
           <div class="member-head"><h4>当前参与人</h4><span>{{ activeMembers.length }} 人</span></div>
           <div class="member-list"><div v-for="member in activeMembers" :key="member.wecomUserid" class="member-row"><span class="member-type" :class="member.participantType.toLowerCase()">{{ member.participantType === 'STAFF' ? '企微员工' : '外部参与人' }}</span><div><strong>{{ member.wecomUserid }}</strong><small v-if="member.staffUserId !== null">已映射 CRM 员工 #{{ member.staffUserId }}</small><small v-else>不代表已关联某个 CRM 客户</small></div><span class="member-status">在群</span></div></div>
           <details v-if="removedMembers.length" class="removed-members"><summary>已退出成员（{{ removedMembers.length }}）</summary><div v-for="member in removedMembers" :key="member.wecomUserid" class="removed-row">{{ member.wecomUserid }}<span>保留历史身份记录</span></div></details>

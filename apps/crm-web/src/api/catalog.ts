@@ -234,10 +234,13 @@ const QUALITY_CHECK_NAMES: Record<string, string> = {
 }
 
 function qualityHandlingRule(code: string, description: string, automaticAction: string): string {
-  if (code === 'LOW_FREQUENCY') return `进入长尾复核，不自动下架（自动动作：${automaticAction}）`
+  if (code === 'LOW_FREQUENCY') {
+    const actionLabel = ({ NONE: '不自动处理', REVIEW: '仅人工复核' } as Record<string, string>)[automaticAction] ?? '需人工复核'
+    return `进入长尾复核，不自动下架（自动动作：${actionLabel}）`
+  }
   if (code === 'MISSING_ACTIVE_INSTITUTION') return '未配置启用机构禁止上架'
   if (code === 'MISSING_SKU_CODE') return '补齐 SKU 编码后再上架'
-  if (code === 'MISSING_STANDARD_NAME') return '人工补齐标准名称与规格，不改写历史快照'
+  if (code === 'MISSING_STANDARD_NAME') return '人工补齐标准名称与规格，不改写历史记录'
   return description
 }
 

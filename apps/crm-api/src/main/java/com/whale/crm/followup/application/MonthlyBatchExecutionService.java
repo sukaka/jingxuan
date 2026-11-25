@@ -168,7 +168,7 @@ public class MonthlyBatchExecutionService {
             String message = business.getMessage();
             return message.length() <= 400 ? message : message.substring(0, 400);
         }
-        return "批次明细执行失败（" + error.getClass().getSimpleName() + "）";
+        return "批次明细执行失败，请稍后重试";
     }
 
     private Map<String, Object> itemSnapshot(FollowupBatchItem item) {

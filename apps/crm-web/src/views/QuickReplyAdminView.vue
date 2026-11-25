@@ -110,8 +110,27 @@ function newKey(prefix: string): string {
   return `${prefix}-${typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`
 }
 
+const SCENE_LABELS: Record<string, string> = {
+  FOLLOWUP: '日常跟进',
+  PACKAGE_REMAINING: '套餐余次提醒',
+  POSTOPERATIVE: '术后关怀',
+  APPOINTMENT: '预约提醒',
+  APPOINTMENT_REMINDER: '预约提醒',
+  GREETING: '客户问候',
+  WELCOME: '欢迎语',
+  AFTER_SALES: '售后安抚',
+  COMPLAINT: '客诉安抚',
+  PROMOTION: '活动邀约',
+  GENERAL: '通用场景',
+}
+
 function scopeLabel(type: ScopeType): string {
   return ({ GLOBAL: '全公司', DEPARTMENT: '当前部门', PERSONAL: '本人专用', INSTITUTION: '指定机构' } as Record<ScopeType, string>)[type]
+}
+
+function sceneLabel(code: string): string {
+  if (!code) return '通用场景'
+  return SCENE_LABELS[code] ?? '自定义场景'
 }
 
 function categoryName(id: number): string {
@@ -239,7 +258,7 @@ async function removeTemplate(): Promise<void> {
     await disableQuickReply(form.id, { version: form.version, reason: form.reason.trim() }, newKey('quick-reply-template-disable'))
     await loadBase()
     templateForm.value = null
-    successMessage.value = '话术已停用；历史使用日志与 AI 候选保留，不提供物理删除'
+    successMessage.value = '话术已停用；历史使用日志与 AI 候选保留，不支持直接删除'
   } catch (error) {
     errorMessage.value = errorText(error)
   } finally {
@@ -360,7 +379,7 @@ async function removeCategory(): Promise<void> {
     await disableQuickReplyCategory(form.id, { version: form.version, reason: form.reason.trim() }, newKey('quick-reply-category-disable'))
     await loadBase()
     categoryEditing.value = false
-    successMessage.value = '分类已停用；有启用话术时后端会拒绝操作'
+    successMessage.value = '分类已停用；若分类下仍有启用话术，系统将阻止停用'
   } catch (error) {
     errorMessage.value = errorText(error)
   } finally {
@@ -400,14 +419,14 @@ onMounted(() => { void loadBase() })
 
 <template>
   <div class="proto-page quick-reply-admin">
-    <PageHeader title="快捷话术库" description="把高频服务表达沉淀为受控模板；真实变量由 CRM 服务端解析，员工始终人工确认后使用。">
+    <PageHeader title="快捷话术库" description="把高频服务表达沉淀为受控模板；业务变量由系统自动解析填充，员工始终人工确认后使用。">
       <template #actions>
         <button v-if="allowed" class="button-primary" type="button" data-testid="new-template" @click="switchTab('TEMPLATES'); openNewTemplate()">新建话术</button>
       </template>
     </PageHeader>
 
     <PageCard v-if="!allowed" class="admin-card">
-      <div class="admin-empty" data-testid="quick-reply-admin-denied"><strong>没有话术管理权限</strong><span>请联系管理员配置 quickreply:manage；客户数据权限不会因本页面扩大。</span></div>
+      <div class="admin-empty" data-testid="quick-reply-admin-denied"><strong>没有话术管理权限</strong><span>请联系管理员为当前岗位配置快捷话术管理权限；客户数据权限不会因本页面扩大。</span></div>
     </PageCard>
     <template v-else>
       <div class="admin-notice"><strong>配置变更可审计</strong><span>编码创建后不可修改；停用不删除历史话术、AI 候选或使用日志。AI 候选开关不等于自动发送。</span></div>
@@ -433,10 +452,10 @@ onMounted(() => { void loadBase() })
               <thead><tr><th>话术</th><th>分类 / 场景</th><th>使用策略</th><th>版本</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="item in filteredTemplates" :key="item.id" :class="{ selected: templateForm?.id === item.id }">
-                  <td><button class="template-name" type="button" @click="openTemplate(item)">{{ item.name }}</button><code>{{ item.code }}</code><p>{{ item.content }}</p></td>
-                  <td><span>{{ categoryName(item.categoryId) }}</span><code>{{ item.scene }}</code></td>
+                  <td><button class="template-name" type="button" @click="openTemplate(item)">{{ item.name }}</button><p>{{ item.content }}</p></td>
+                  <td><span>{{ categoryName(item.categoryId) }}</span><small class="scene-sub">{{ sceneLabel(item.scene) }}</small></td>
                   <td><div class="policy-tags"><span>{{ scopeLabel(item.scopeType) }}</span><span v-if="item.allowEdit">可编辑</span><span v-if="item.requirePreview">需预览</span><span v-if="item.aiEnabled" class="ai-tag">AI 候选</span><span v-if="item.featured">公司推荐</span></div></td>
-                  <td>v{{ item.version }}</td>
+                  <td>版本 {{ item.version }}</td>
                   <td><button class="table-action" type="button" :data-testid="`edit-template-${item.id}`" @click="openTemplate(item)">编辑</button></td>
                 </tr>
               </tbody>
@@ -450,12 +469,12 @@ onMounted(() => { void loadBase() })
             <label>所属分类<select v-model.number="templateForm.categoryId" data-testid="template-category" required><option v-for="item in categories" :key="item.id" :value="item.id" :disabled="item.status !== 'ACTIVE'">{{ item.name }} · {{ scopeLabel(item.scopeType) }}</option></select></label>
             <div class="form-grid">
               <label>话术名称<input v-model="templateForm.name" data-testid="template-name" maxlength="96" required placeholder="例如：术后第 7 天回访"></label>
-              <label>稳定编码<input v-model="templateForm.code" data-testid="template-code" maxlength="64" required :readonly="templateForm.id !== null" placeholder="POSTOPERATIVE_DAY_7" @blur="templateForm.code = templateForm.code.toUpperCase()"></label>
-              <label>业务场景<input v-model="templateForm.scene" data-testid="template-scene" maxlength="64" required placeholder="POSTOPERATIVE" @blur="templateForm.scene = templateForm.scene.toUpperCase()"></label>
+              <label>模板编码<input v-model="templateForm.code" data-testid="template-code" maxlength="64" required :readonly="templateForm.id !== null" placeholder="大写字母、数字或下划线" @blur="templateForm.code = templateForm.code.toUpperCase()"></label>
+              <label>业务场景编码<input v-model="templateForm.scene" data-testid="template-scene" maxlength="64" required placeholder="大写字母、数字或下划线" @blur="templateForm.scene = templateForm.scene.toUpperCase()"></label>
               <label>分类内排序<input v-model.number="templateForm.sortNo" type="number" min="0" required></label>
             </div>
             <label>话术正文<textarea ref="contentInput" v-model="templateForm.content" data-testid="template-content" rows="6" maxlength="2000" required placeholder="输入固定文本，或从下方插入变量" @input="preview = null" /></label>
-            <div class="variable-picker"><span>插入真实变量</span><div><button v-for="item in variables" :key="item.variableCode" type="button" :title="item.description" @click="insertVariable(item.variableCode)">{{ item.variableName }}</button></div><small>缺失必填变量时，员工端会阻止使用；不支持自定义 SQL 或脚本。</small></div>
+            <div class="variable-picker"><span>插入真实变量</span><div><button v-for="item in variables" :key="item.variableCode" type="button" :title="item.description" @click="insertVariable(item.variableCode)">{{ item.variableName }}</button></div><small>缺失必填变量时，员工端会阻止使用；不支持自定义脚本表达式。</small></div>
             <fieldset class="policy-options"><legend>使用策略</legend><label><input v-model="templateForm.allowEdit" type="checkbox">允许员工编辑</label><label><input v-model="templateForm.requirePreview" type="checkbox">使用前必须预览</label><label><input v-model="templateForm.aiEnabled" data-testid="template-ai" type="checkbox">允许 AI 草拟候选</label><label><input v-model="templateForm.featured" data-testid="template-featured" type="checkbox">设为公司推荐</label></fieldset>
             <label>本次操作理由<textarea v-model="templateForm.reason" data-testid="template-reason" rows="2" maxlength="1000" required placeholder="写入不可覆盖审计，例如：新增术后回访标准表达" /></label>
             <div class="editor-actions"><button class="button-primary" type="submit" data-testid="save-template" :disabled="saving">{{ saving ? '正在保存…' : templateForm.id ? '保存修改' : '创建话术' }}</button><button v-if="templateForm.id" class="danger-action" type="button" data-testid="disable-template" :disabled="saving" @click="removeTemplate">停用当前话术</button></div>
@@ -472,11 +491,11 @@ onMounted(() => { void loadBase() })
         <PageCard class="admin-card" title="分类与可见范围" subtitle="分类最多两层；已有话术后不能直接改变分类作用域">
           <template #actions><button class="button-primary" type="button" data-testid="new-category" @click="openNewCategory">新建分类</button></template>
           <div v-if="!categories.length" class="admin-empty">暂无启用分类，请先新建。</div>
-          <div v-else class="category-list"><article v-for="item in categories" :key="item.id"><div><strong>{{ item.name }}</strong><code>{{ item.code }}</code></div><span>{{ scopeLabel(item.scopeType) }}</span><small>排序 {{ item.sortNo }} · v{{ item.version }}</small><button class="table-action" type="button" :data-testid="`edit-category-${item.id}`" @click="openCategory(item)">编辑</button></article></div>
+          <div v-else class="category-list"><article v-for="item in categories" :key="item.id"><div><strong>{{ item.name }}</strong></div><span>{{ scopeLabel(item.scopeType) }}</span><small>排序 {{ item.sortNo }} · 版本 {{ item.version }}</small><button class="table-action" type="button" :data-testid="`edit-category-${item.id}`" @click="openCategory(item)">编辑</button></article></div>
         </PageCard>
-        <PageCard v-if="categoryEditing" class="admin-card editor-card" :title="categoryForm.id ? '编辑分类' : '新建分类'" subtitle="机构、部门和个人范围由后端再次校验">
+        <PageCard v-if="categoryEditing" class="admin-card editor-card" :title="categoryForm.id ? '编辑分类' : '新建分类'" subtitle="机构、部门和个人范围由系统再次校验">
           <form class="editor-form" data-testid="category-form" @submit.prevent="saveCategory">
-            <div class="form-grid"><label>分类名称<input v-model="categoryForm.name" data-testid="category-name" maxlength="64" required></label><label>稳定编码<input v-model="categoryForm.code" data-testid="category-code" maxlength="48" required :readonly="categoryForm.id !== null" @blur="categoryForm.code = categoryForm.code.toUpperCase()"></label><label>父分类<select v-model.number="categoryForm.parentId" data-testid="category-parent"><option :value="null">无（一级分类）</option><option v-for="item in parentOptions" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>排序<input v-model.number="categoryForm.sortNo" type="number" min="0" required></label></div>
+            <div class="form-grid"><label>分类名称<input v-model="categoryForm.name" data-testid="category-name" maxlength="64" required></label><label>分类编码<input v-model="categoryForm.code" data-testid="category-code" maxlength="48" required :readonly="categoryForm.id !== null" @blur="categoryForm.code = categoryForm.code.toUpperCase()"></label><label>父分类<select v-model.number="categoryForm.parentId" data-testid="category-parent"><option :value="null">无（一级分类）</option><option v-for="item in parentOptions" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>排序<input v-model.number="categoryForm.sortNo" type="number" min="0" required></label></div>
             <label>作用域<select v-model="categoryForm.scopeType" data-testid="category-scope" @change="changeCategoryScope"><option value="GLOBAL">全公司</option><option value="DEPARTMENT">当前部门</option><option value="PERSONAL">本人专用</option><option value="INSTITUTION">指定机构</option></select></label>
             <label v-if="categoryForm.scopeType === 'INSTITUTION'">机构<select v-model.number="categoryForm.scopeId" data-testid="category-institution" required><option :value="null" disabled>请选择机构</option><option v-for="item in institutions" :key="item.id" :value="item.id">{{ item.shortName || item.fullName }}</option></select><small v-if="!institutions.length" class="field-warning">没有可读取的启用机构，请先在机构中心配置。</small></label>
             <label>本次操作理由<textarea v-model="categoryForm.reason" data-testid="category-reason" rows="2" maxlength="1000" required /></label>
@@ -485,11 +504,11 @@ onMounted(() => { void loadBase() })
         </PageCard>
       </div>
 
-      <PageCard v-else class="admin-card" title="使用统计" subtitle="按只追加日志聚合；成功率只计算 SDK 回调，不把复制或客户已读混入分母">
+      <PageCard v-else class="admin-card" title="使用统计" subtitle="按历史使用记录聚合；发送成功率仅统计企微发送回执，不把复制或客户已读混入分母">
         <form class="statistics-filter" @submit.prevent="loadStatistics"><label>开始日期<input v-model="statisticsFrom" data-testid="statistics-from" type="date"></label><label>结束日期<input v-model="statisticsTo" data-testid="statistics-to" type="date"></label><button class="button-primary" type="submit" data-testid="load-statistics" :disabled="statisticsLoading">{{ statisticsLoading ? '正在统计…' : '查询统计' }}</button></form>
-        <div v-if="statisticsLoading" class="admin-empty">正在聚合真实使用日志…</div>
+        <div v-if="statisticsLoading" class="admin-empty">正在统计真实使用记录…</div>
         <div v-else-if="!statistics.length" class="admin-empty">当前时间范围内暂无使用记录。</div>
-        <div v-else class="template-table-wrap"><table class="template-table statistics-table"><thead><tr><th>话术</th><th>总使用</th><th>复制</th><th>SDK 成功</th><th>失败 / 未知</th><th>编辑数</th><th>SDK 成功率</th><th>最近使用</th></tr></thead><tbody><tr v-for="item in statistics" :key="item.templateId"><td><strong>{{ item.templateName }}</strong><code>{{ item.templateCode }}</code></td><td>{{ item.totalCount }}</td><td>{{ item.copiedCount }}</td><td>{{ item.successCount }}</td><td>{{ item.failedCount }} / {{ item.unknownCount }}</td><td>{{ item.editedCount }}</td><td>{{ item.successRate === null ? '—' : `${item.successRate}%` }}</td><td>{{ formatLastUsed(item.lastUsedAt) }}</td></tr></tbody></table></div>
+        <div v-else class="template-table-wrap"><table class="template-table statistics-table"><thead><tr><th>话术</th><th>总使用</th><th>复制</th><th>企微发送成功</th><th>失败 / 未知</th><th>编辑数</th><th>企微发送成功率</th><th>最近使用</th></tr></thead><tbody><tr v-for="item in statistics" :key="item.templateId"><td><strong>{{ item.templateName }}</strong></td><td>{{ item.totalCount }}</td><td>{{ item.copiedCount }}</td><td>{{ item.successCount }}</td><td>{{ item.failedCount }} / {{ item.unknownCount }}</td><td>{{ item.editedCount }}</td><td>{{ item.successRate === null ? '—' : `${item.successRate}%` }}</td><td>{{ formatLastUsed(item.lastUsedAt) }}</td></tr></tbody></table></div>
       </PageCard>
     </template>
   </div>
@@ -527,7 +546,7 @@ onMounted(() => { void loadBase() })
 .template-table th { padding: 10px 12px; border-bottom: 1px solid var(--qr-line); color: #82968b; font-size: 10px; font-weight: 600; text-align: left; white-space: nowrap; }
 .template-table td { padding: 14px 12px; border-bottom: 1px solid #edf2ef; vertical-align: top; }
 .template-table tr.selected td { background: #f2f7f4; }
-.template-table td code, .category-list code { display: block; margin-top: 4px; color: #8a9d92; font-size: 9px; overflow-wrap: anywhere; }
+.template-table td code, .template-table td .scene-sub, .category-list code { display: block; margin-top: 4px; color: #8a9d92; font-size: 10px; overflow-wrap: anywhere; }
 .template-table td p { display: -webkit-box; max-width: 330px; margin: 8px 0 0; overflow: hidden; color: #7c9186; font-size: 11px; line-height: 1.7; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .template-name { padding: 0; border: 0; color: #315e48; background: transparent; font: inherit; font-weight: 700; cursor: pointer; }
 .policy-tags { display: flex; max-width: 190px; gap: 5px; flex-wrap: wrap; }

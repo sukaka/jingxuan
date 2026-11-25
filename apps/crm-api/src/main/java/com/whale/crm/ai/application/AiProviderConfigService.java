@@ -145,7 +145,7 @@ public class AiProviderConfigService {
         AiProviderConfig current = repository.find(user.tenantId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "请先保存 AI 供应商配置"));
         if ("disabled".equals(current.provider())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "disabled 供应商无需连接测试");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "未启用模型服务时无需连接测试");
         }
         String status = "CONNECTED";
         String error = null;
@@ -200,7 +200,7 @@ public class AiProviderConfigService {
 
     private void validate(AiProviderConfigRequest request) {
         if (request.enabled() && "disabled".equals(request.provider())) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "disabled 供应商不能启用 AI 任务");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "未选择可用模型服务，不能启用 AI 任务");
         }
         String baseUrl = normalize(request.baseUrl());
         if (baseUrl != null) {
@@ -213,12 +213,12 @@ public class AiProviderConfigService {
             return;
         }
         if (normalize(request.baseUrl()) == null || normalize(request.model()) == null || keyCipher == null) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "openai_compatible 必须完整配置 baseUrl、apiKey 和 model");
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "使用 OpenAI 兼容模型时，必须完整配置接口地址、API Key 和模型名称");
         }
     }
 
     private void validateBaseUrl(String value) {
-        urlValidator.validate(value, "AI baseUrl");
+        urlValidator.validate(value, "AI 接口地址");
     }
 
     private AiProviderConfigResponse view(AiProviderConfig config) {

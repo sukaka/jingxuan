@@ -21,7 +21,7 @@ function statusLabel(status: string): string {
     REJECTED: '已驳回',
     CANCELLED: '已取消',
     CONFLICT_REVALIDATE: '版本冲突',
-  } as Record<string, string>)[status] ?? status
+  } as Record<string, string>)[status] ?? '未知状态'
 }
 
 function statusTone(status: string): 'warning' | 'success' | 'danger' | 'dark' {
@@ -31,11 +31,32 @@ function statusTone(status: string): 'warning' | 'success' | 'danger' | 'dark' {
   return 'dark'
 }
 
+const FINANCIAL_FIELD_LABELS: Record<string, string> = {
+  commissionPercent: '分佣比例',
+  settlementMethod: '结算方式',
+  paymentAccountName: '收款账户',
+  paymentAccountNo: '收款账号',
+  paymentBankName: '收款开户行',
+}
+
+const SETTLEMENT_METHOD_LABELS: Record<string, string> = {
+  MONTHLY: '电汇月结',
+  TWICE_MONTHLY: '电汇每月两次',
+}
+
+function formatFieldValue(key: string, val: string | number): string {
+  if (key === 'commissionPercent') return `${String(val)}%`
+  if (key === 'settlementMethod') return SETTLEMENT_METHOD_LABELS[String(val)] ?? '其他结算方式'
+  return String(val)
+}
+
 function formatMaskedSummary(value: Record<string, string | number | null> | string | null | undefined): string {
   if (!value) return '—'
   if (typeof value === 'string') return value
   const entries = Object.entries(value).filter(([, v]) => v !== null && v !== undefined && v !== '')
-  return entries.length ? entries.map(([k, v]) => `${k}: ${String(v)}`).join(' · ') : '—'
+  return entries.length
+    ? entries.map(([k, v]) => `${FINANCIAL_FIELD_LABELS[k] ?? '其他字段'}：${formatFieldValue(k, v!)}`).join(' · ')
+    : '—'
 }
 
 function canReview(row: ChannelFinancialChangeRequest): boolean {
@@ -48,7 +69,7 @@ function canReview(row: ChannelFinancialChangeRequest): boolean {
     <el-table-column label="申请 / 渠道" min-width="180">
       <template #default="{ row }">
         <strong>#{{ row.id }} · {{ row.channelName || `渠道 #${row.channelId}` }}</strong>
-        <div class="proto-subcell">{{ row.channelNo || `ID ${row.channelId}` }} · {{ formatDateTime(row.requestedAt) }}</div>
+        <div class="proto-subcell">{{ row.channelNo || `渠道编号 #${row.channelId}` }} · {{ formatDateTime(row.requestedAt) }}</div>
       </template>
     </el-table-column>
     <el-table-column label="变更前 → 变更后（脱敏）" min-width="260">
@@ -64,7 +85,7 @@ function canReview(row: ChannelFinancialChangeRequest): boolean {
     <el-table-column label="审批状态" width="130">
       <template #default="{ row }">
         <StatusPill :text="statusLabel(row.status)" :tone="statusTone(row.status)" />
-        <div class="proto-subcell">基准 v{{ row.baseVersion }}</div>
+        <div class="proto-subcell">变更前版本 {{ row.baseVersion }}</div>
       </template>
     </el-table-column>
     <el-table-column label="操作" width="180" fixed="right">

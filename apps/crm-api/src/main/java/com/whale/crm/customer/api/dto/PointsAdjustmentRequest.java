@@ -9,7 +9,7 @@ import jakarta.validation.constraints.Size;
  * 客户端可带 Idempotency-Key 防重复提交（同键同请求返回首次结果）。
  */
 public record PointsAdjustmentRequest(
-        @NotNull(message = "delta 不能为空") Integer delta,
-        @NotBlank(message = "reasonCode 不能为空") @Size(max = 48) String reasonCode,
+        @NotNull(message = "积分变动值不能为空") Integer delta,
+        @NotBlank(message = "请选择调整原因") @Size(max = 48) String reasonCode,
         @Size(max = 500) String reason) {
 }

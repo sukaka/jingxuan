@@ -38,7 +38,7 @@ def validate_dify_endpoint(
             value,
             allow_http=settings.ai_dify_allow_http,
             allowed_hosts=settings.ai_dify_allowed_hosts,
-            label="Dify baseUrl",
+            label="Dify 接口地址",
             resolver=resolver,
             resolve_dns=resolve_dns,
         )
@@ -80,7 +80,7 @@ class DifyKnowledgeAdapter:
         resolver: Resolver | None = None,
     ):
         if not base_url.strip() or not api_key.strip():
-            raise _configuration_error("Dify 必须完整配置 baseUrl 和 API Key")
+            raise _configuration_error("使用 Dify 知识服务时，必须完整配置接口地址和 API Key")
         self.base_url = base_url.strip().rstrip("/")
         self.api_key = api_key.strip()
         self.timeout_seconds = max(0.01, min(300.0, float(timeout_seconds)))

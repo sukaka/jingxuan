@@ -50,7 +50,7 @@ const entitlementEmptyText = computed(() => {
   if (order.value?.status === 'DRAFT') return '草稿不发放权益'
   if (order.value?.status === 'PENDING_PAYMENT') return '待支付订单尚未发放权益'
   if (order.value?.status === 'CANCELED') return '订单已取消，无可用权益'
-  return '暂无权益记录，请核对后端处理结果'
+  return '暂无权益记录'
 })
 const hasRefundableBalance = computed(() => {
   const current = order.value
@@ -90,7 +90,7 @@ watch(() => [props.modelValue, order.value?.id, props.canViewRefunds], () => { v
 function allocationText(item: OrderItem): string {
   const status = orderItemAllocationStatus(item)
   if (status === 'PENDING_Q02') return '待分摊'
-  if (status === 'UNKNOWN') return '快照待核验'
+  if (status === 'UNKNOWN') return '待核验'
   return fenToYuan(item.paidAllocatedFen)
 }
 
@@ -127,18 +127,18 @@ function historyStatusLabel(status: string): string {
         <el-descriptions-item label="应付（元）">{{ fenToYuan(order.payableFen) }}</el-descriptions-item>
         <el-descriptions-item label="已确认实付（元）">{{ fenToYuan(order.paidFen) }}</el-descriptions-item>
         <el-descriptions-item label="已退款（元）">{{ fenToYuan(order.refundedFen) }}</el-descriptions-item>
-        <el-descriptions-item label="乐观锁版本">{{ order.version }}</el-descriptions-item>
+        <el-descriptions-item label="记录版本">{{ order.version }}</el-descriptions-item>
         <el-descriptions-item label="外部订单号">{{ order.externalOrderNo || '-' }}</el-descriptions-item>
         <el-descriptions-item label="下单时间">{{ formatDateTime(order.orderedAt) }}</el-descriptions-item>
         <el-descriptions-item label="实际支付时间">{{ formatDateTime(order.paidAt) }}</el-descriptions-item>
       </el-descriptions>
 
-      <h4 class="trading-section-title">订单行与权益快照</h4>
+      <h4 class="trading-section-title">订单明细与已锁定规则</h4>
       <el-alert
         v-if="hasPendingAllocation"
         type="warning"
         :closable="false"
-        title="Q02 未确认：多项目实付金额待分摊。此处的 0 或订单行金额均不代表已确认的项目/机构结算金额。"
+        title="多项目实付金额分摊规则待确认：此处的 0 或订单明细金额均不代表最终的项目或机构结算金额。"
         class="allocation-alert"
         data-testid="q02-allocation-alert"
       />
@@ -179,7 +179,7 @@ function historyStatusLabel(status: string): string {
         <template #empty><el-empty :description="entitlementEmptyText" /></template>
       </app-table>
 
-      <h4 class="trading-section-title">支付流水（可信人工确认）</h4>
+      <h4 class="trading-section-title">支付流水（人工核验确认）</h4>
       <app-table :data="view.order.payments" size="small">
         <el-table-column prop="externalTradeNo" label="真实交易号" min-width="145" />
         <el-table-column label="渠道" width="105">
@@ -225,7 +225,7 @@ function historyStatusLabel(status: string): string {
         </app-table>
       </template>
 
-      <h4 class="trading-section-title">状态历史（只追加）</h4>
+      <h4 class="trading-section-title">订单状态记录</h4>
       <el-timeline>
         <el-timeline-item v-for="item in view.order.history" :key="item.id" :timestamp="formatDateTime(item.createdAt)">
           <strong>{{ historyStatusLabel(item.fromStatus) }} → {{ historyStatusLabel(item.toStatus) }}</strong>

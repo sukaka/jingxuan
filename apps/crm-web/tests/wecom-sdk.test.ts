@@ -293,8 +293,8 @@ describe('企微消息发送、防串客校验与移动端 enterChat', () => {
     await expect(sendH5CardToCurrentChat({
       link: 'javascript:alert(1)', title: '项目', summary: '摘要', imageUrl: 'https://crm.example.com/h5-card-cover.png',
     })).rejects.toThrow('HTTP 或 HTTPS')
-    await expect(sendImageToCurrentChat('   ')).rejects.toThrow('mediaId')
-    await expect(sendFileToCurrentChat('')).rejects.toThrow('mediaId')
+    await expect(sendImageToCurrentChat('   ')).rejects.toThrow('图片素材标识')
+    await expect(sendFileToCurrentChat('')).rejects.toThrow('文件素材标识')
     expect(window.ww).toBeUndefined()
   })
 })

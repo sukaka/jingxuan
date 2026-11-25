@@ -103,8 +103,8 @@ onMounted(() => { void load() })
     <template #actions><span class="mapping-count"><strong>{{ enabledMappingCount }}</strong> 人允许通知</span></template>
     <div class="mapping-body">
       <div v-if="hasMockMappings" class="mock-notice">
-        <span class="mock-label">开发模拟数据</span>
-        <p><code>staff-2</code>、<code>staff-3</code> 等是虚构企微成员 ID，仅用于本地联调，<strong>不是员工姓名</strong>。</p>
+        <span class="mock-label">模拟演示数据</span>
+        <p>带有“模拟”标识的成员账号为模拟演示账号，仅用于功能演示，<strong>不是真实员工姓名</strong>。</p>
       </div>
       <div v-if="errorMessage" role="alert" class="mapping-alert">{{ errorMessage }}</div>
       <div v-if="successMessage" role="status" class="mapping-success">{{ successMessage }}</div>
@@ -150,7 +150,7 @@ onMounted(() => { void load() })
                   <span>{{ drafts[row.id].messageEnabled ? '允许通知' : '已停用' }}</span>
                 </label>
                 <span v-else>{{ row.messageEnabled ? '允许通知' : '已停用' }}</span>
-                <small class="row-version">配置版本 v{{ row.version }}</small>
+                <small class="row-version">版本 {{ row.version }}</small>
               </td>
               <td><input v-if="canWrite" v-model="drafts[row.id].reason" :aria-label="`映射 ${row.id} 修改理由`" maxlength="1000" placeholder="填写本次修改原因"><span v-else class="readonly-copy">只读</span></td>
               <td class="mapping-action"><button v-if="canWrite" class="mapping-save" type="button" :disabled="busy" @click="update(row)">保存修改</button></td>

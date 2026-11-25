@@ -196,7 +196,7 @@ describe('OrdersView 订单列表与操作权限', () => {
     await new Promise((resolve) => setTimeout(resolve, 40))
 
     expect(getOrder).toHaveBeenCalledWith(71)
-    expect(document.body.textContent).toContain('订单行与权益快照')
+    expect(document.body.textContent).toContain('订单明细与已锁定规则')
     expect(document.body.textContent).toContain('测试套餐｜3次')
     expect(document.body.textContent).toContain('当前为草稿：未确认支付，不发放任何可用权益')
     expect(document.body.textContent).toContain('草稿不发放权益')

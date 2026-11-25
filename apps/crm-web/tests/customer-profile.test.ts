@@ -180,7 +180,7 @@ describe('CustomerDetailDrawer 基础档案', () => {
     vi.mocked(getCustomerLegacyProfile).mockRejectedValue(new Error('网络不可用'))
     const wrapper = await mountProfile()
 
-    expect(wrapper.text()).toContain('档案加载失败:网络不可用')
+    expect(wrapper.text()).toContain('档案加载失败：网络不可用')
     expect(wrapper.find('.profile-card').exists()).toBe(false)
   })
 

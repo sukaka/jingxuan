@@ -76,8 +76,8 @@ function evidenceMasked(evidence: unknown): string {
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 409) return '该候选状态已变化,请刷新后重试'
-    if (error.status === 404) return '候选或客户不在你的数据范围内'
+    if (error.status === 409) return '该候选状态已变更，请刷新后重试'
+    if (error.status === 404) return '候选记录或客户不在您的权限范围内'
     return error.message
   }
   return error instanceof Error ? error.message : '未知错误'
@@ -151,7 +151,7 @@ async function submitCreate() {
       primaryCustomerId: createForm.primaryCustomerId,
       secondaryCustomerId: createForm.secondaryCustomerId,
     })
-    ElMessage.success('候选已登记(待审核),未经确认不会迁移任何数据')
+    ElMessage.success('合并候选已登记（待审核），未经确认不会迁移任何客户数据')
     createDialogVisible.value = false
     await load(1)
   } catch (error) {
@@ -186,13 +186,13 @@ function openConfirmDialog(item: MergeCaseItem) {
 async function submitConfirm() {
   if (!confirmTarget.value) return
   if (!confirmReason.value.trim()) {
-    ElMessage.warning('请填写合并理由(将写入审计)')
+    ElMessage.warning('请填写合并理由（将记入操作日志）')
     return
   }
   confirmSubmitting.value = true
   try {
     await confirmMergeCase(confirmTarget.value.id, confirmTarget.value.version, confirmReason.value.trim())
-    ElMessage.success('合并已确认:身份/标签/跟进/任务/积分已迁移至主客户,被合并客户已归档')
+    ElMessage.success('合并已确认：身份、标签、跟进、任务和积分已迁移至主客户，被合并客户已归档')
     confirmDialogVisible.value = false
     await load()
   } catch (error) {
@@ -268,7 +268,7 @@ async function submitReversal() {
   const reason = reversalReason.value.trim()
   if (!item) return
   if (!reason) {
-    ElMessage.warning('请填写理由或处理说明（将写入审计）')
+    ElMessage.warning('请填写理由或处理说明（将记入操作日志）')
     return
   }
   if (reason.length > 1000) {
@@ -285,7 +285,7 @@ async function submitReversal() {
       }, reversalKey)
     if (reversalAction.value === 'approve') {
       ElMessage[ saved.status === 'MANUAL_REVIEW' ? 'warning' : 'success' ](
-        saved.status === 'MANUAL_REVIEW' ? '从客户已恢复，其他关联数据需人工逐项迁移确认' : '已按合并前快照执行更正',
+        saved.status === 'MANUAL_REVIEW' ? '被合并客户已恢复，其他关联数据需人工逐项迁移确认' : '已按合并前记录执行更正',
       )
     } else {
       ElMessage.success(reversalAction.value === 'reject' ? '更正申请已驳回，客户数据未改变' : '操作已完成')
@@ -294,7 +294,7 @@ async function submitReversal() {
     await load()
     void loadSummary()
   } catch (error) {
-    ElMessage.error(`${errorText(error)}；重试将沿用同一幂等键`)
+    ElMessage.error(`${errorText(error)}，请核对后重试`)
   } finally {
     reversalSubmitting.value = false
   }
@@ -322,10 +322,10 @@ onMounted(() => { void load(); void loadSummary() })
 
 <template>
   <div class="proto-page">
-    <PageHeader title="客户查重合并" description="系统只生成候选，必须人工确认；保留主客户ID，迁移关联数据并记录操作日志">
+    <PageHeader title="客户查重合并" description="系统只生成重复候选，必须人工确认；保留主客户档案，迁移关联数据并留存操作记录">
       <template #actions><el-button @click="showRules=true">查重规则说明</el-button><el-button v-if="canMerge" :loading="scanning" @click="handleScan">扫描重复客户</el-button><el-button v-if="canMerge" type="primary" @click="openCreateDialog">登记候选</el-button></template>
     </PageHeader>
-    <div class="proto-stat-grid three"><StatCard label="待确认候选" :value="`${summary.pending} 组`" sub="必须人工审核" icon="users" /><StatCard label="高相似度" value="按证据" sub="只使用后端可信证据" icon="heart" /><StatCard label="已处理" :value="`${summary.processed} 组`" sub="合并与拒绝均留痕" icon="check" /></div>
+    <div class="proto-stat-grid three"><StatCard label="待确认候选" :value="`${summary.pending} 组`" sub="必须人工审核" icon="users" /><StatCard label="高相似度" value="按核验依据" sub="依据手机号或外部身份识别" icon="heart" /><StatCard label="已处理" :value="`${summary.processed} 组`" sub="合并与拒绝均留痕" icon="check" /></div>
     <PageCard>
       <div class="proto-toolbar"><div class="proto-toolbar-left"><el-select v-model="query.status" placeholder="全部状态" clearable><el-option label="待审核" value="SUGGESTED" /><el-option label="审核中" value="REVIEWING" /><el-option label="已合并" value="CONFIRMED" /><el-option label="已拒绝" value="REJECTED" /><el-option label="已更正" value="REVERSED" /></el-select><el-button type="primary" @click="search">查询</el-button></div><span class="proto-note">昵称相似不构成自动合并依据</span></div>
       <el-alert v-if="scanMessage" type="success" :closable="false" :title="scanMessage" />
@@ -333,7 +333,7 @@ onMounted(() => { void load(); void loadSummary() })
       <div class="proto-table-wrap">
         <app-table v-loading="loading" :data="items">
           <el-table-column prop="id" label="候选" width="80" />
-          <el-table-column label="CRM客户" min-width="170"><template #default="{row}">{{ row.primarySummary }}<div class="proto-subcell">保留 #{{ row.primaryCustomerId }}</div></template></el-table-column>
+          <el-table-column label="CRM 客户" min-width="170"><template #default="{row}">{{ row.primarySummary }}<div class="proto-subcell">保留 #{{ row.primaryCustomerId }}</div></template></el-table-column>
           <el-table-column label="另一身份" min-width="170"><template #default="{row}">{{ row.secondarySummary }}<div class="proto-subcell">{{ row.status === 'REVERSED' || row.reversalStatus === 'MANUAL_REVIEW' || row.reversalStatus === 'EXECUTED' ? '已恢复' : '归档' }} #{{ row.secondaryCustomerId }}</div></template></el-table-column>
           <el-table-column label="相似度" width="95"><template #default="{row}">{{ scoreOf(row.matchEvidence) ?? '待评估' }}</template></el-table-column>
           <el-table-column label="命中依据" min-width="190"><template #default="{row}"><template v-if="evidenceReasons(row.matchEvidence).length"><StatusPill v-for="reason in evidenceReasons(row.matchEvidence)" :key="reason" :text="reason" tone="info" /><div v-if="evidenceMasked(row.matchEvidence)" class="proto-subcell">{{ evidenceMasked(row.matchEvidence) }}</div></template><span v-else class="proto-muted">-</span></template></el-table-column>
@@ -369,8 +369,8 @@ onMounted(() => { void load(); void loadSummary() })
       </div>
       <el-pagination v-model:current-page="query.page" v-model:page-size="query.size" :total="total" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="query.size=$event;load(1)" />
     </PageCard>
-    <div class="proto-callout" style="margin-top:18px">合并保留主客户 ID，迁移身份、标签、跟进、任务和积分；被合并客户归档，操作全程写入审计。</div>
-    <el-dialog v-model="showRules" title="查重规则说明" width="520px"><p>候选依据同手机号哈希或同外部身份生成，仅昵称相似不构成合并依据。确认前不迁移任何数据，确认后在同一事务完成关联数据迁移。</p></el-dialog>
+    <div class="proto-callout" style="margin-top:18px">合并保留主客户档案，迁移身份、标签、跟进、任务和积分；被合并客户归档，操作全程记入操作日志。</div>
+    <el-dialog v-model="showRules" title="查重规则说明" width="520px"><p>系统依据手机号一致或外部身份一致生成重复候选，仅昵称相似不会判定为同一客户。人工确认前不会迁移任何数据，确认后将统一完成关联数据迁移。</p></el-dialog>
 
     <el-dialog v-model="createDialogVisible" title="登记合并候选" width="460px">
       <el-form label-width="110px">
@@ -399,7 +399,7 @@ onMounted(() => { void load(); void loadSummary() })
       />
       <el-form label-width="90px">
         <el-form-item label="合并理由" required>
-          <el-input v-model="confirmReason" type="textarea" :rows="2" placeholder="写入审计快照" />
+          <el-input v-model="confirmReason" type="textarea" :rows="2" placeholder="请填写合并理由（将记入操作日志）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -411,7 +411,7 @@ onMounted(() => { void load(); void loadSummary() })
     <el-dialog v-model="rejectDialogVisible" title="拒绝合并" width="460px">
       <el-form label-width="90px">
         <el-form-item label="拒绝原因" required>
-          <el-input v-model="rejectReason" type="textarea" :rows="2" placeholder="如:核实后不是同一人" />
+          <el-input v-model="rejectReason" type="textarea" :rows="2" placeholder="如：核实后不是同一人" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -428,9 +428,9 @@ onMounted(() => { void load(); void loadSummary() })
         :title="reversalAction === 'request'
           ? `申请对候选 #${reversalTarget.id} 的合并进行更正；申请不会立即修改客户，须由有更正审批权限的管理员执行。`
           : reversalAction === 'approve'
-            ? '有快照时仅迁回合并时记录的资源；历史无快照时只恢复从客户，其余数据须人工逐项处理。原合并与审计历史均保留。'
+            ? '合并时留有迁出记录的，系统将自动迁回对应数据；无历史迁出记录的仅恢复被合并客户档案，其余关联数据须人工逐项处理。原合并记录与操作日志均永久保留。'
             : reversalAction === 'complete'
-              ? '仅在已逐项人工核对并迁移旧合并关联数据后完成；完成不代表系统自动恢复去重删除的身份或标签。'
+              ? '仅在已逐项人工核对并迁移旧合并关联数据后完成；完成后不会自动恢复合并时去重合并的身份或标签。'
               : '驳回只关闭本次更正申请，不改变原合并结果或客户数据。'"
         class="crm-table-alert"
       />

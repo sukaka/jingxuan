@@ -78,11 +78,11 @@ onMounted(() => {
 <template>
   <div class="proto-page customers-page">
     <PageHeader title="客户中心" description="客户等级（S/A/B/C/D）+ 基础档案 + 跟进节奏；与意向/消费能力分开管理">
-      <template #actions><RouterLink v-if="canMerge" to="/customers/merge" class="el-button" data-testid="customer-merge-link">查重合并</RouterLink><button class="el-button" disabled title="后续阶段开放">数据导出 · 后续</button><el-button v-if="auth.hasPermission('customer:write')" type="primary" @click="openCreate">＋ 新建客户</el-button></template>
+      <template #actions><RouterLink v-if="canMerge" to="/customers/merge" class="el-button" data-testid="customer-merge-link">查重合并</RouterLink><button class="el-button" disabled title="批量导出功能暂未开放">数据导出（暂未开放）</button><el-button v-if="auth.hasPermission('customer:write')" type="primary" @click="openCreate">＋ 新建客户</el-button></template>
     </PageHeader>
     <div class="proto-stat-grid"><StatCard label="S 级客户" :value="`${summary.s} 位`" sub="高消费 / 重点维护" icon="users" /><StatCard label="A 级客户" :value="`${summary.a} 位`" sub="较高消费 / 持续维护" icon="heart" /><StatCard label="今天需跟进" :value="`${summary.due} 条`" sub="按下次跟进时间提醒" icon="calendar" /><StatCard v-if="canMerge" label="查重候选" :value="`${summary.merge} 组`" sub="合并前必须人工确认" icon="users" /></div>
     <PageCard>
-      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input ref="keywordInput" v-model="query.keyword" placeholder="姓名 / 手机 / 微信昵称 / 标签" clearable style="width:290px" data-testid="customer-keyword" @keyup.enter="load(1)" /><el-select :model-value="query.needsAttention ? 'NEED' : query.tierCode" placeholder="全部客户等级" clearable style="width:145px" @change="(value:string) => { query.needsAttention = value === 'NEED'; query.tierCode = value && value !== 'NEED' ? value : ''; load(1) }"><el-option label="全部客户等级" value="" /><el-option v-for="tier in ['S','A','B','C','D']" :key="tier" :label="`${tier}级客户`" :value="tier" /><el-option label="需要处理" value="NEED" /></el-select><el-button type="primary" :loading="loading" @click="load(1)">查询</el-button></div><span class="proto-note">导出权限正式上线后按角色控制，管家默认禁止批量导出</span></div>
+      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-input ref="keywordInput" v-model="query.keyword" placeholder="姓名 / 手机 / 微信昵称 / 标签" clearable style="width:290px" data-testid="customer-keyword" @keyup.enter="load(1)" /><el-select :model-value="query.needsAttention ? 'NEED' : query.tierCode" placeholder="全部客户等级" clearable style="width:145px" @change="(value:string) => { query.needsAttention = value === 'NEED'; query.tierCode = value && value !== 'NEED' ? value : ''; load(1) }"><el-option label="全部客户等级" value="" /><el-option v-for="tier in ['S','A','B','C','D']" :key="tier" :label="`${tier}级客户`" :value="tier" /><el-option label="需要处理" value="NEED" /></el-select><el-button type="primary" :loading="loading" @click="load(1)">查询</el-button></div><span class="proto-note">数据导出按角色权限控制，管家默认不可批量导出</span></div>
       <el-alert v-if="errorMessage" type="error" :title="errorMessage" :closable="false" />
       <div class="proto-table-wrap">
         <app-table v-loading="loading" :data="customers">
@@ -102,7 +102,7 @@ onMounted(() => {
       </div>
       <el-pagination v-model:current-page="query.page" v-model:page-size="query.size" :total="total" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="load(1)" />
     </PageCard>
-    <footer class="proto-footer">客户唯一 ID 不等于手机号或昵称；客户等级与消费能力分开管理</footer>
+    <footer class="proto-footer">客户编号独立于手机号和昵称；客户等级与消费能力分开管理</footer>
     <CustomerFormDrawer v-model="formVisible" :mode="formMode" :customer-id="formCustomerId" @saved="reload" />
     <CustomerDetailDrawer v-model="detailVisible" :customer-id="detailCustomerId" :initial-tab="detailTab" @edit="openEdit" @changed="reload" />
   </div>

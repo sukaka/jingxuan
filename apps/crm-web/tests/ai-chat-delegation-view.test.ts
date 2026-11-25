@@ -83,8 +83,8 @@ describe('AI 聊天自动托管页面', () => {
     const wrapper = mount(AiChatDelegationView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('模拟模式：不会发送给客户')
-    expect(wrapper.text()).toContain('模拟完成，未发送给客户')
+    expect(wrapper.text()).toContain('模拟演示模式：不会发送给客户')
+    expect(wrapper.text()).toContain('模拟演示完成，未发送给客户')
     expect(wrapper.text()).toContain('结果未知，禁止自动重发')
     expect(wrapper.text()).toContain('普通咨询')
     expect(wrapper.text()).not.toContain('客户已收到')

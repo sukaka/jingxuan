@@ -149,7 +149,7 @@ public class OfficialWecomSidebarClient implements WecomSidebarClient {
             }
             if (!response.isSuccessful() || code != 0) {
                 ErrorCode error = oauth ? ErrorCode.UNAUTHORIZED : ErrorCode.CONFLICT;
-                throw new BusinessException(error, "企微身份或票据服务调用失败，errcode=" + code);
+                throw new BusinessException(error, "企微身份或票据服务调用失败（错误码：" + code + "）");
             }
             return body;
         } catch (BusinessException ex) {

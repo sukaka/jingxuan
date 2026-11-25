@@ -40,8 +40,8 @@ function transferStatusLabel(status: string) {
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 404) return '客户不存在或不在你的数据范围内'
-    if (error.status === 409) return '申请状态已变化,请刷新后重试'
+    if (error.status === 404) return '客户不存在或不在您的可见范围内'
+    if (error.status === 409) return '申请状态已变更，请刷新后重试'
     return error.message
   }
   return error instanceof Error ? error.message : '未知错误'
@@ -95,7 +95,7 @@ async function submitCreate() {
     return
   }
   if (!createForm.reason.trim()) {
-    ElMessage.warning('请填写转交原因(将写入归属日志与审计)')
+    ElMessage.warning('请填写转交原因（将记入归属日志）')
     return
   }
   createSubmitting.value = true
@@ -104,7 +104,7 @@ async function submitCreate() {
       newOwnerId: createForm.toOwnerId,
       reason: createForm.reason.trim(),
     })
-    ElMessage.success('转交申请已提交,审批生效后归属才会变更')
+    ElMessage.success('转交申请已提交，审批生效后归属才会变更')
     createDialogVisible.value = false
     await load()
   } catch (error) {
@@ -118,7 +118,7 @@ async function submitCreate() {
 async function handleApprove(item: OwnershipTransferItem) {
   try {
     await ElMessageBox.confirm(
-      '批准后客户归属(管家与团队)立即变更并追加不可改的归属日志。确认批准?',
+      '批准后客户归属（管家与团队）将立即变更，并保留不可修改的归属日志。确认批准？',
       '批准转交',
       { type: 'warning', confirmButtonText: '批准', cancelButtonText: '取消' },
     )
@@ -178,7 +178,7 @@ onMounted(load)
       v-if="errorMessage"
       type="error"
       :closable="false"
-      :title="`加载失败:${errorMessage}`"
+      :title="`加载失败：${errorMessage}`"
       class="crm-table-alert"
     />
 
@@ -225,7 +225,7 @@ onMounted(load)
     </app-table>
 
     <div class="section-head">
-      <span class="section-title">归属历史(已生效,不可修改)</span>
+      <span class="section-title">归属历史（已生效，不可修改）</span>
     </div>
     <app-table :data="history" size="small">
       <el-table-column label="原管家" width="100">
@@ -252,14 +252,14 @@ onMounted(load)
       <el-alert
         type="info"
         :closable="false"
-        title="同组主管可转交本组客户,跨组转交仅管理员;批准后归属才变更,历史日志不可覆盖"
+        title="同组主管可转交本组客户，跨组转交需管理员处理；批准后归属生效，历史日志不可覆盖"
         class="crm-table-alert"
       />
       <el-alert
         v-if="ownerOptionsError"
         type="error"
         :closable="false"
-        :title="`管家选项加载失败:${ownerOptionsError}`"
+        :title="`管家选项加载失败：${ownerOptionsError}`"
         class="crm-table-alert"
       />
       <el-form label-width="90px">

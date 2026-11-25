@@ -181,8 +181,39 @@ public class OfficialWecomArchiveAdapter implements WecomAdapter {
                 if (value.isBlank()) {
                     value = message.path(type.toLowerCase(Locale.ROOT)).path("title").asText("");
                 }
-                yield value.isBlank() ? "[" + (type.isBlank() ? "未知" : type) + " 消息]" : value;
+                yield value.isBlank() ? "[" + archiveMessageTypeLabel(type) + "消息]" : value;
             }
+        };
+    }
+
+    private static String archiveMessageTypeLabel(String type) {
+        if (type == null || type.isBlank()) {
+            return "未知";
+        }
+        return switch (type.toUpperCase(Locale.ROOT)) {
+            case "TEXT" -> "文本";
+            case "IMAGE" -> "图片";
+            case "VOICE" -> "语音";
+            case "VIDEO" -> "视频";
+            case "FILE" -> "文件";
+            case "EMOTION" -> "表情";
+            case "CARD" -> "名片";
+            case "LOCATION" -> "位置";
+            case "LINK" -> "链接";
+            case "WEAPP" -> "小程序";
+            case "CHATRECORD" -> "聊天记录";
+            case "MIXED" -> "图文混合";
+            case "MEETING_VOICE_CALL", "VOIP_DOC_SHARE" -> "音视频通话";
+            case "EXTERNAL_REDPACKET", "REDPACKET" -> "红包";
+            case "SPHFEED" -> "视频号";
+            case "COLLECT" -> "填表";
+            case "DOCMSG" -> "在线文档";
+            case "MARKDOWN" -> "富文本";
+            case "NEWS" -> "图文";
+            case "CALENDAR" -> "日程";
+            case "TODO" -> "待办";
+            case "VOTE" -> "投票";
+            default -> "其他类型";
         };
     }
 

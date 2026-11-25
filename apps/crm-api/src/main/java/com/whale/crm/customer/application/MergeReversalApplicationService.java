@@ -202,7 +202,7 @@ public class MergeReversalApplicationService {
         List<MergeResourceSnapshot> snapshots = snapshotRepository.findByMergeCaseId(user.tenantId(), mergeCase.getId());
         Instant now = Instant.now();
         if (snapshots.isEmpty()) {
-            String warning = "该历史合并没有资源快照：仅恢复了从客户，身份、标签、跟进、任务、积分、订单和权益仍需人工逐项迁移确认。";
+            String warning = "该历史合并未留存资源迁移记录：仅恢复了原合并客户，身份、标签、跟进、任务、积分、订单和权益仍需人工逐项核对迁移。";
             update(reversal, "MANUAL_REVIEW", request.reason(), user.userId(), now, null, warning, null);
         } else {
             referenceGuard.requireUnreferenced(user.tenantId(), ids(snapshots, "ORDER"), ids(snapshots, "ENTITLEMENT"));
