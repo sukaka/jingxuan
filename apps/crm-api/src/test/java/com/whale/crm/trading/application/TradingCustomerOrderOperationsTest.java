@@ -2,6 +2,7 @@ package com.whale.crm.trading.application;
 
 import com.whale.crm.customer.application.CustomerApplicationService;
 import com.whale.crm.customer.application.MergeOrderResourceSnapshot;
+import com.whale.crm.trading.domain.OrderStats;
 import com.whale.crm.trading.domain.TradingRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -74,5 +75,19 @@ class TradingCustomerOrderOperationsTest {
         emptyOps.reassignSpecific(1L, List.of(), null, 200L, 100L);
         verify(emptyRepo, never()).reassignSpecificOrders(anyLong(), any(), anyLong(), anyLong());
         verify(emptyRepo, never()).reassignSpecificEntitlements(anyLong(), any(), anyLong(), anyLong());
+    }
+
+    @Test
+    void orderStatsReturnsPaidAmountSummaryFromRepository() {
+        TradingRepository repository = mock(TradingRepository.class);
+        TradingCustomerOrderOperations operations = new TradingCustomerOrderOperations(
+                repository, mock(CustomerApplicationService.class));
+        OrderStats expected = new OrderStats(2L, 80_000L, 60_000L);
+        when(repository.orderStats(1L, 200L)).thenReturn(expected);
+
+        OrderStats actual = operations.orderStats(1L, 200L);
+
+        assertThat(actual).isEqualTo(expected);
+        verify(repository).orderStats(1L, 200L);
     }
 }

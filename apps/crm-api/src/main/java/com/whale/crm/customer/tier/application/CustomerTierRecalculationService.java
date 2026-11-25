@@ -11,6 +11,7 @@ import com.whale.crm.customer.tier.domain.CustomerTierRepository;
 import com.whale.crm.customer.tier.domain.CustomerTierRule;
 import com.whale.crm.customer.tier.domain.TierLevelDefinition;
 import com.whale.crm.customer.tier.domain.TierWindow;
+import com.whale.crm.integration.wecom.application.WecomArchiveService;
 import com.whale.crm.notification.application.NotificationRequestService;
 import com.whale.crm.notification.domain.NotificationChannel;
 import com.whale.crm.notification.domain.NotificationRequest;
@@ -40,12 +41,14 @@ public class CustomerTierRecalculationService {
     private final NotificationRequestService notificationService;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final WecomArchiveService wecomArchiveService;
 
     public CustomerTierRecalculationService(CustomerTierRepository repository, CustomerRepository customerRepository,
                                             TierEvaluationService evaluationService,
                                             CustomerTierConfigMapper configMapper,
                                             NotificationRequestService notificationService,
-                                            UserRepository userRepository, AuditService auditService) {
+                                            UserRepository userRepository, AuditService auditService,
+                                            WecomArchiveService wecomArchiveService) {
         this.repository = repository;
         this.customerRepository = customerRepository;
         this.evaluationService = evaluationService;
@@ -53,6 +56,7 @@ public class CustomerTierRecalculationService {
         this.notificationService = notificationService;
         this.userRepository = userRepository;
         this.auditService = auditService;
+        this.wecomArchiveService = wecomArchiveService;
     }
 
     @Transactional
@@ -82,8 +86,9 @@ public class CustomerTierRecalculationService {
         CustomerTierRule rule = repository.findActiveRuleForUpdate(tenantId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "租户尚未激活客户分级规则"));
         TierWindow window = evaluationService.window(asOf, ZoneId.of(rule.zoneId()));
+        String archiveScope = wecomArchiveService.activeArchiveScope(tenantId);
         CustomerTierMetrics values = repository.loadMetrics(tenantId, customerId,
-                window.startInclusive(), window.endExclusive());
+                window.startInclusive(), window.endExclusive(), archiveScope);
         List<TierLevelDefinition> levels = configMapper.levels(rule);
         TierEvaluation evaluation = evaluationService.evaluate(levels, configMapper.metrics(rule), values);
         CustomerTierMetricSnapshot candidate = new CustomerTierMetricSnapshot(null, tenantId, customerId, rule.id(),

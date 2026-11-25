@@ -260,6 +260,56 @@ class WecomRoomArchiveApiIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.data.total").value(0));
     }
 
+    @Test
+    void removedExternalRevocationDoesNotBlockRoomWhileActiveExternalRevocationStillBlocks() throws Exception {
+        String suffix = suffix();
+        String room = "wr-removed-consent-" + suffix;
+        String activeExternal = "wm-active-ext-" + suffix;
+        String removedExternal = "wm-removed-ext-" + suffix;
+        String msgId = "ROOM-REMOVED-CONSENT-" + suffix;
+        grantContact(activeExternal);
+        grantContact(removedExternal);
+        saveRoom(room, List.of("staff-2", activeExternal, removedExternal), 0, true, "init-" + suffix)
+                .andExpect(status().isOk());
+        when(session.pullChatData(0, 100)).thenReturn(page(441, msgId,
+                roomMessage(msgId, room, activeExternal, "退群成员撤回不影响在群消息可读")));
+        sync("removed-consent-init-" + suffix).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.stored").value(1));
+        WecomMessage message = repository.findMessage(1L, CORP, msgId).orElseThrow();
+
+        // Remove removedExternal from room roster (status becomes REMOVED), then revoke its consent
+        saveRoom(room, List.of("staff-2", activeExternal), 0, true, "remove-ext-" + suffix)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value(1));
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM crm_wecom_room_participant WHERE tenant_id=1 "
+                + "AND corp_id=? AND room_id=? AND wecom_userid=?", String.class, CORP, room, removedExternal))
+                .isEqualTo("REMOVED");
+        jdbcTemplate.update("UPDATE crm_wecom_contact SET consent_status='REVOKED',version=version+1 "
+                + "WHERE tenant_id=1 AND corp_id=? AND external_userid=? AND staff_user_id=2", CORP, removedExternal);
+
+        // Room messages must remain readable because only ACTIVE external participants determine current room consent
+        AuthCookies manager = login("manager1");
+        mockMvc.perform(get("/api/v1/integrations/wecom/messages/" + message.id() + "/content")
+                        .cookie(manager.cookies())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content").value("退群成员撤回不影响在群消息可读"));
+        mockMvc.perform(get("/api/v1/integrations/wecom/messages").param("conversationId", room)
+                        .cookie(manager.cookies())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].currentConsentStatus").value("GRANTED"));
+        assertThat(repository.findMessage(1L, CORP, msgId).orElseThrow().currentConsentStatus())
+                .isEqualTo("GRANTED");
+
+        // Revoking an ACTIVE external participant's consent must still block the room immediately
+        jdbcTemplate.update("UPDATE crm_wecom_contact SET consent_status='REVOKED',version=version+1 "
+                + "WHERE tenant_id=1 AND corp_id=? AND external_userid=? AND staff_user_id=2", CORP, activeExternal);
+        mockMvc.perform(get("/api/v1/integrations/wecom/messages/" + message.id() + "/content")
+                        .cookie(manager.cookies())).andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/integrations/wecom/messages").param("conversationId", room)
+                        .cookie(manager.cookies())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+        assertThat(repository.findMessage(1L, CORP, msgId).orElseThrow().currentConsentStatus())
+                .isEqualTo("REVOKED");
+    }
+
     private void grantContact(String external) {
         jdbcTemplate.update("INSERT INTO crm_wecom_contact (tenant_id,corp_id,external_userid,staff_user_id,"
                 + "consent_status,consent_evidence_ref,follow_status) VALUES (1,?,?,2,'GRANTED','synthetic://consent','ACTIVE')",

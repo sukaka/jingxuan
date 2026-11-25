@@ -22,7 +22,7 @@ public interface WecomMapper {
             + "JOIN sys_user su ON su.tenant_id=covered.tenant_id AND su.id=covered.staff_user_id AND su.user_type='EMPLOYEE' AND su.status='ACTIVE' "
             + "WHERE covered.tenant_id=m.tenant_id AND covered.corp_id=m.corp_id AND covered.room_id=m.conversation_id AND covered.participant_type='STAFF' AND covered.status='ACTIVE' ";
     String ROOM_CURRENT_CONSENT = " NOT EXISTS (SELECT 1 FROM crm_wecom_room_participant rpe "
-            + "WHERE rpe.tenant_id=m.tenant_id AND rpe.corp_id=m.corp_id AND rpe.room_id=m.conversation_id AND rpe.participant_type='EXTERNAL' "
+            + "WHERE rpe.tenant_id=m.tenant_id AND rpe.corp_id=m.corp_id AND rpe.room_id=m.conversation_id AND rpe.participant_type='EXTERNAL' AND rpe.status='ACTIVE' "
             + "AND NOT EXISTS (SELECT 1 FROM crm_wecom_contact rc WHERE rc.tenant_id=rpe.tenant_id AND rc.corp_id=rpe.corp_id "
             + "AND rc.external_userid=rpe.external_userid AND rc.consent_status='GRANTED' AND EXISTS ("
             + ROOM_COVERED_STAFF + "AND covered.staff_user_id=rc.staff_user_id))) ";

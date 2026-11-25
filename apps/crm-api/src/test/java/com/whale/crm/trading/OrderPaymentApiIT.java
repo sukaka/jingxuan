@@ -18,6 +18,8 @@ import com.whale.crm.trading.application.OrderApplicationService;
 import com.whale.crm.trading.application.PaymentApplicationService;
 import com.whale.crm.trading.domain.EntitlementDetail;
 import com.whale.crm.trading.domain.OrderFulfillmentView;
+import com.whale.crm.trading.domain.OrderStats;
+import com.whale.crm.trading.domain.TradingRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
@@ -59,6 +61,8 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
     private EntitlementApplicationService entitlementService;
     @Autowired
     private CurrentUserService currentUserService;
+    @Autowired
+    private TradingRepository tradingRepository;
 
     @Test
     void o01_draftAndUnverifiedPaymentCannotGrantEntitlements() throws Exception {
@@ -1010,6 +1014,37 @@ class OrderPaymentApiIT extends AbstractMysqlIT {
                 assertNoPaymentArtifacts(orderId);
             }
         }
+    }
+
+    @Test
+    void orderStatsAndLegacyProfileUsePaidFenWhenPayableDiffersFromPaid() throws Exception {
+        AuthCookies admin = login("admin");
+        long customerId = createCustomer(admin, "IT-STATS-PAID-FEN");
+        insertOrderAmounts(customerId, "PAID", 50_000L, 40_000L, 35_000L);
+        insertOrderAmounts(customerId, "PARTIALLY_REDEEMED", 30_000L, 28_000L, 25_000L);
+        insertOrderAmounts(customerId, "FULFILLED", 20_000L, 18_000L, 15_000L);
+        insertOrderAmounts(customerId, "DRAFT", 90_000L, 90_000L, 90_000L);
+        insertOrderAmounts(customerId, "CANCELED", 80_000L, 80_000L, 80_000L);
+
+        OrderStats stats = tradingRepository.orderStats(1L, customerId);
+        assertThat(stats.orderCount()).isEqualTo(3L);
+        assertThat(stats.listAmountFen()).isEqualTo(100_000L);
+        assertThat(stats.paidAmountFen()).isEqualTo(75_000L);
+
+        mockMvc.perform(get("/api/v1/customers/" + customerId + "/legacy-profile").cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.fieldKey == 'ORDER_COUNT')].value").value("3"))
+                .andExpect(jsonPath("$.data[?(@.fieldKey == 'ORDER_TOTAL_AMOUNT')].value")
+                        .value("原价 1000.00 元 / 实付 750.00 元"));
+    }
+
+    private void insertOrderAmounts(long customerId, String status, long listFen, long payableFen, long paidFen) {
+        String orderNo = "ITSTAT" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
+        jdbcTemplate.update("INSERT INTO crm_order (tenant_id,order_no,customer_id,sold_by_user_id,owner_at_sale_id,"
+                        + "source_system,order_type_code,status,receiver_type,list_amount_fen,discount_amount_fen,"
+                        + "payable_fen,paid_fen,refunded_fen,ordered_at,paid_at) "
+                        + "VALUES (1,?,?,2,2,'CRM','REGULAR',?,'PLATFORM',?,0,?,?,0,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))",
+                orderNo, customerId, status, listFen, payableFen, paidFen);
     }
 
     private <T> Outcome<T> runWithLatch(CountDownLatch ready, CountDownLatch start, Callable<T> action) {

@@ -273,7 +273,7 @@
   </update>
 
   <select id="orderStats" resultType="com.whale.crm.trading.domain.OrderStats">
-    SELECT COUNT(*) AS orderCount,COALESCE(SUM(list_amount_fen),0) AS listAmountFen,COALESCE(SUM(payable_fen),0) AS paidAmountFen
+    SELECT COUNT(*) AS orderCount,COALESCE(SUM(list_amount_fen),0) AS listAmountFen,COALESCE(SUM(paid_fen),0) AS paidAmountFen
     FROM crm_order WHERE tenant_id=#{tenantId} AND customer_id=#{customerId} AND status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
   </select>
   <update id="reassignOrders">

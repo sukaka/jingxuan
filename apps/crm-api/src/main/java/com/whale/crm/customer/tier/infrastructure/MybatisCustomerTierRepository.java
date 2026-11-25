@@ -97,8 +97,8 @@ public class MybatisCustomerTierRepository implements CustomerTierRepository {
 
     @Override
     public CustomerTierMetrics loadMetrics(long tenantId, long customerId, Instant startInclusive,
-                                           Instant endExclusive) {
-        return mapper.selectMetrics(tenantId, customerId, startInclusive, endExclusive);
+                                           Instant endExclusive, String archiveScope) {
+        return mapper.selectMetrics(tenantId, customerId, startInclusive, endExclusive, archiveScope);
     }
 
     @Override

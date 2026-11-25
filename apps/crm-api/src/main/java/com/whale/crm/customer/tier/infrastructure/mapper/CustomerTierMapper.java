@@ -49,7 +49,8 @@ public interface CustomerTierMapper {
 
     CustomerTierMetrics selectMetrics(@Param("tenantId") long tenantId, @Param("customerId") long customerId,
                                       @Param("startInclusive") Instant startInclusive,
-                                      @Param("endExclusive") Instant endExclusive);
+                                      @Param("endExclusive") Instant endExclusive,
+                                      @Param("archiveScope") String archiveScope);
 
     int insertSnapshot(CustomerTierMetricSnapshot snapshot);
 
