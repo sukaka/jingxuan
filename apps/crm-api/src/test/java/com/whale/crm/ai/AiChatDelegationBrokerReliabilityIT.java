@@ -127,7 +127,7 @@ class AiChatDelegationBrokerReliabilityIT extends AbstractMysqlIT {
         ), 2L, false));
 
         wecomArchiveService.sync(admin, new WecomSyncRequest(corpId, 0L, 50));
-        assertThat(outboxRelayService.relayOnce()).isGreaterThanOrEqualTo(2);
+        assertThat(relayUntilSent(directEventId, roomEventId)).isGreaterThanOrEqualTo(2);
 
         WecomMessage directPersisted = wecomRepository.findMessage(1L, corpId, longMsgId).orElseThrow();
         WecomMessage roomPersisted = wecomRepository.findMessage(1L, corpId, roomMsgId).orElseThrow();
@@ -216,6 +216,28 @@ class AiChatDelegationBrokerReliabilityIT extends AbstractMysqlIT {
             }
         }
         throw new AssertionError("非法AI托管事件未进入真实 DLQ: " + targetKey);
+    }
+
+    private int relayUntilSent(String... eventIds) throws InterruptedException {
+        int relayed = 0;
+        for (int attempt = 0; attempt < 1200; attempt++) {
+            relayed += outboxRelayService.relayOnce();
+            boolean allSent = true;
+            for (String eventId : eventIds) {
+                String status = jdbcTemplate.queryForObject(
+                        "SELECT status FROM crm_outbox_event WHERE tenant_id=1 AND event_id=?",
+                        String.class, eventId);
+                if (!"SENT".equals(status)) {
+                    allSent = false;
+                    break;
+                }
+            }
+            if (allSent) {
+                return relayed;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("目标 Outbox 事件未在超时前完成发送: " + String.join(", ", eventIds));
     }
 
     private long queryLong(String sql, Object... args) {

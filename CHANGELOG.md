@@ -2,6 +2,17 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [QUERY-PERF-V56-V57] Wave 1 / Wave 2 / Phase 2 SQL 与索引性能优化及 EXPLAIN 回归闭环 — 2026-11-26
+- 变更摘要（**0 REST API / DTO / Kafka 契约变更，0 前端 `apps/crm-web` 变更**）：
+  - **Wave 1（`V56__query_speed_and_accuracy_indexes.sql`）**：新增 `crm_youzan_event` 物化列与覆盖索引、`crm_youzan_order_latest`、`crm_risk_case` 反向连接索引 `idx_risk_case_order_link_1`、`crm_wecom_contact` 生成列索引 `idx_wecom_contact_unlinked`、`crm_customer.idx_customer_next_followup`、`crm_followup.idx_followup_contact_at` 等；改造 `CustomerMapper`/`CustomerTagMapper`（消除 `GROUP_CONCAT` 并改用批量标签装配 + `next_followup_at` 范围下推）、`ExportDataMapper`（4 类导出 keyset 游标分页）、`YouzanMapper` 与 `RiskCaseMapper`（消除 `JSON_EXTRACT`/`REGEXP`/`CAST`）、`ReportingMapper` 与 `WecomAnalyticsMapper`（消除 `CURRENT_DATE`/`CURDATE` 与 `crm_appointment_history` 重算）、`WecomMapper`（deferred-join 分页）。
+  - **Wave 2**：统一 9 个客户时间线 Mapper（`CustomerOwnerHistoryMapper`/`FollowupMapper`/`TaskMapper`/`TradingMapper`/`FulfillmentMapper`/`RefundMapper`/`ComplaintMapper`/`CustomerTierMapper`/`YouzanMapper`）的 `cursorMode`（`ALL`/`EQ`/`LT`/`LE`）键集下推并优化多分支过滤；消除 `CustomerSegmentMapper` `GROUP_CONCAT`。
+  - **Phase 2（`V57__phase2_query_optimization_indexes.sql`）**：新增 `crm_audit_log` 租户/动作索引、`crm_institution`/`crm_profile_change_request` 状态索引、`crm_material_tag` + `uk_material_tag_1` 反向标签表、`crm_notification.idx_notification_unread`、`crm_task.idx_task_due_poll`，并同步优化 `MaterialMapper`（消除 `ROW_NUMBER()` 与 `tags_json LIKE`）、`InstitutionMapper`、`NotificationMapper`、`AuditLogMapper`、`TaskMapper`。
+  - **测试加固与验证**：新增 `apps/crm-api/src/test/java/com/whale/crm/platform/Wave1Wave2ExplainIT.java`（独立 MySQL 8.4.8 Testcontainer + Flyway V57 + 1,000 行分偏斜种子 + `ANALYZE TABLE` + 真实 MyBatis XML/注解 Mapper `EXPLAIN` 与 5 组 `EXPLAIN ANALYZE` 断言）；修复 `ComplaintBrokerReliabilityIT`、`AiChatDelegationBrokerReliabilityIT`、`WecomDualConsumerKafkaE2EIT` 在共享 MySQL 容器下因 `crm_outbox_event` 积压超过单批 `batchSize=50` 导致的单次 `relayOnce()` 饥饿问题（改用 `relayUntilSent(...)` 轮询）。
+- 验证命令与实测结果：
+  - `./mvnw -B -pl apps/crm-api -am verify`：Surefire `635 passed`（0 failures, 0 errors, 0 skipped）、Failsafe `503 passed`（0 failures, 0 errors, 0 skipped，含 `Wave1Wave2ExplainIT` `3/3` 与全部 Kafka/WeCom IT）、Spotless `1294 files clean`、Checkstyle `0 violations`、SpotBugs `0 bugs / 0 errors`。
+  - `npm --prefix apps/crm-web run typecheck && npm --prefix apps/crm-web run lint && npm --prefix apps/crm-web run test && npm --prefix apps/crm-web run build`：`typecheck` 通过、`eslint` 0 errors/warnings、`vitest` `155` files / `725` tests passed、`vite build` 成功。
+  - 静态 SQL/Mapper 检查（`CURRENT_DATE|CURDATE`、`JSON_EXTRACT`、`REGEXP|CAST(`、`crm_appointment_history`、`ROW_NUMBER(|tags_json\s+LIKE`、`GROUP_CONCAT`）：全部 0 命中。
+
 ## [UI-COPY-CLEANUP-2.0.3] 全站 UI 中文文案与内部术语全面清理及离线增量更新包（2.0.3） — 2026-11-25
 - **全站 UI 中文文案与内部术语全面清理**：
   - 全面清理前端页面、弹窗、表单校验与状态提示、后端校验/业务错误文案（含新增 `ValidationMessages.properties`）及 `apps/ai-worker` 回复/提取/知识库提示文案（共涉及前后端与 AI Worker 278 个文件），统一将内部枚举编码、研发术语与生硬英文状态替换为面向业务人员的规范中文表达，保持既有权限边界、状态机、API 契约与数据结构不变（无新增数据库表或 Flyway SQL 迁移）。

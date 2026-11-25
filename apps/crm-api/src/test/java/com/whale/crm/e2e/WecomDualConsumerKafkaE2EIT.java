@@ -256,7 +256,8 @@ class WecomDualConsumerKafkaE2EIT extends AbstractE2EIT {
                     + "AND from_seq=904 AND to_seq=904", CORP_ID)).isEqualTo(1);
 
             // C-05: Relay outbox -> both ComplaintEventConsumer & AiChatDelegationEventConsumer consume DIRECT, skip ROOM
-            assertThat(outboxRelayService.relayOnce()).isGreaterThanOrEqualTo(3);
+            String mixedEventId = "wecom.message.archived.v1:" + CORP_ID + ":" + mixedMsgId;
+            assertThat(relayUntilSent(directEventId, mixedEventId, roomEventId)).isGreaterThanOrEqualTo(3);
 
             awaitCount("SELECT COUNT(*) FROM crm_complaint_hit WHERE tenant_id=1 "
                     + "AND source_type='WECOM_MESSAGE' AND source_id=?", 1L, Long.toString(directPersisted.id()));
@@ -336,6 +337,28 @@ class WecomDualConsumerKafkaE2EIT extends AbstractE2EIT {
             jdbcTemplate.update("DELETE FROM sys_user WHERE tenant_id=?", t2Id);
             jdbcTemplate.update("DELETE FROM sys_org WHERE id=?", t2Id);
         }
+    }
+
+    private int relayUntilSent(String... eventIds) throws InterruptedException {
+        int relayed = 0;
+        for (int attempt = 0; attempt < 1200; attempt++) {
+            relayed += outboxRelayService.relayOnce();
+            boolean allSent = true;
+            for (String eventId : eventIds) {
+                String status = jdbcTemplate.queryForObject(
+                        "SELECT status FROM crm_outbox_event WHERE tenant_id=1 AND event_id=?",
+                        String.class, eventId);
+                if (!"SENT".equals(status)) {
+                    allSent = false;
+                    break;
+                }
+            }
+            if (allSent) {
+                return relayed;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Target outbox events not SENT in time: " + String.join(", ", eventIds));
     }
 
     private void awaitListenerReady() throws InterruptedException {
