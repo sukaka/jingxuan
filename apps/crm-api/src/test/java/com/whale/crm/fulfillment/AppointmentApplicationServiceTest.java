@@ -144,4 +144,22 @@ class AppointmentApplicationServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> assertThat(((BusinessException) ex).errorCode()).isEqualTo(ErrorCode.VALIDATION_FAILED));
     }
+
+    @Test
+    void appointmentTwelveArgAndFifteenArgConstructorsMapMilestoneTimestamps() {
+        Appointment twelveArg = new Appointment(1L, "A001", 10L, 20L, 2L, 3L,
+                NOW, "remark", "PENDING_INSTITUTION", 2L, NOW, 0L);
+        assertThat(twelveArg.confirmedAt()).isNull();
+        assertThat(twelveArg.checkedInAt()).isNull();
+        assertThat(twelveArg.serviceDoneAt()).isNull();
+
+        Instant confirmed = NOW.plusSeconds(60);
+        Instant checkedIn = NOW.plusSeconds(120);
+        Instant serviceDone = NOW.plusSeconds(180);
+        Appointment fifteenArg = new Appointment(1L, "A001", 10L, 20L, 2L, 3L,
+                NOW, "remark", "SERVICE_DONE", confirmed, checkedIn, serviceDone, 2L, NOW, 3L);
+        assertThat(fifteenArg.confirmedAt()).isEqualTo(confirmed);
+        assertThat(fifteenArg.checkedInAt()).isEqualTo(checkedIn);
+        assertThat(fifteenArg.serviceDoneAt()).isEqualTo(serviceDone);
+    }
 }

@@ -58,22 +58,14 @@
   </select>
 
   <select id="appointmentFacts" resultType="com.whale.crm.reporting.domain.WecomAnalyticsRepository$AppointmentFacts">
-    WITH appointment_events AS (
-      SELECT h.tenant_id, h.appointment_id,
-             MIN(CASE WHEN h.to_status = 'CONFIRMED' THEN h.created_at END) AS confirmed_at,
-             MIN(CASE WHEN h.to_status = 'CHECKED_IN' THEN h.created_at END) AS checked_in_at
-      FROM crm_appointment_history h
-      WHERE h.tenant_id = #{tenantId}
-      GROUP BY h.tenant_id, h.appointment_id
-    )
     SELECT COUNT(*) AS confirmedCount,
-           COALESCE(SUM(CASE WHEN e.checked_in_at IS NOT NULL AND e.checked_in_at &gt;= e.confirmed_at
-                                  AND e.checked_in_at &lt; #{toUtcExclusive} THEN 1 ELSE 0 END), 0) AS checkedInCount
-    FROM appointment_events e
-    JOIN crm_appointment a ON a.tenant_id = e.tenant_id AND a.id = e.appointment_id
+           COALESCE(SUM(CASE WHEN a.checked_in_at IS NOT NULL AND a.checked_in_at &gt;= a.confirmed_at
+                                  AND a.checked_in_at &lt; #{toUtcExclusive} THEN 1 ELSE 0 END), 0) AS checkedInCount
+    FROM crm_appointment a
     JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
-    WHERE e.confirmed_at IS NOT NULL
-      AND e.confirmed_at &gt;= #{fromUtc} AND e.confirmed_at &lt; #{toUtcExclusive}
+    WHERE a.tenant_id = #{tenantId}
+      AND a.confirmed_at IS NOT NULL
+      AND a.confirmed_at &gt;= #{fromUtc} AND a.confirmed_at &lt; #{toUtcExclusive}
       <include refid="customerScope"/>
       <if test="employeeId != null">AND a.owner_staff_id = #{employeeId}</if>
   </select>

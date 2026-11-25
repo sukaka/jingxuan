@@ -49,35 +49,32 @@
       <include refid="customerScope"/>
       <if test="query.criteria.customerId != null">AND f.customer_id = #{query.criteria.customerId}</if>
     UNION ALL
-    SELECT 'APPOINTMENT_CONFIRMED', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
-           h.created_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
-    FROM crm_appointment_history h
-    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+    SELECT 'APPOINTMENT_CONFIRMED', a.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
+           a.confirmed_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
+    FROM crm_appointment a
     INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
-    WHERE h.tenant_id = #{query.tenantId} AND h.to_status = 'CONFIRMED'
-      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+    WHERE a.tenant_id = #{query.tenantId} AND a.confirmed_at IS NOT NULL
+      AND a.confirmed_at &gt;= #{query.window.fromUtc} AND a.confirmed_at &lt; #{query.window.toUtcExclusive}
       <include refid="customerScope"/>
       <if test="query.criteria.customerId != null">AND a.customer_id = #{query.criteria.customerId}</if>
       <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
     UNION ALL
-    SELECT 'CHECKED_IN', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
-           h.created_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
-    FROM crm_appointment_history h
-    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+    SELECT 'CHECKED_IN', a.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
+           a.checked_in_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
+    FROM crm_appointment a
     INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
-    WHERE h.tenant_id = #{query.tenantId} AND h.to_status = 'CHECKED_IN'
-      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+    WHERE a.tenant_id = #{query.tenantId} AND a.checked_in_at IS NOT NULL
+      AND a.checked_in_at &gt;= #{query.window.fromUtc} AND a.checked_in_at &lt; #{query.window.toUtcExclusive}
       <include refid="customerScope"/>
       <if test="query.criteria.customerId != null">AND a.customer_id = #{query.criteria.customerId}</if>
       <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
     UNION ALL
-    SELECT 'SERVICE_DONE', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
-           h.created_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
-    FROM crm_appointment_history h
-    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+    SELECT 'SERVICE_DONE', a.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
+           a.service_done_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
+    FROM crm_appointment a
     INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
-    WHERE h.tenant_id = #{query.tenantId} AND h.from_status = 'CHECKED_IN' AND h.to_status = 'SERVICE_DONE'
-      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+    WHERE a.tenant_id = #{query.tenantId} AND a.service_done_at IS NOT NULL
+      AND a.service_done_at &gt;= #{query.window.fromUtc} AND a.service_done_at &lt; #{query.window.toUtcExclusive}
       <include refid="customerScope"/>
       <if test="query.criteria.customerId != null">AND a.customer_id = #{query.criteria.customerId}</if>
       <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
@@ -386,33 +383,31 @@
       <include refid="orderFactFilters"/>
       <include refid="orderReceiverFilter"/>
     UNION ALL
-    SELECT 'APPOINTMENT_CONFIRMED', h.id, a.id, o.id, a.customer_id, o.campaign_id, o.campaign_batch_id,
+    SELECT 'APPOINTMENT_CONFIRMED', a.id, a.id, o.id, a.customer_id, o.campaign_id, o.campaign_batch_id,
            o.campaign_code_snapshot, o.campaign_name_snapshot, o.batch_code_snapshot, o.batch_name_snapshot,
-           h.created_at, NULL, NULL, o.source_system, o.receiver_type
-    FROM crm_appointment_history h
-    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+           a.confirmed_at, NULL, NULL, o.source_system, o.receiver_type
+    FROM crm_appointment a
     INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
     INNER JOIN crm_appointment_item ai ON ai.tenant_id = a.tenant_id AND ai.appointment_id = a.id
     INNER JOIN crm_entitlement e ON e.tenant_id = ai.tenant_id AND e.id = ai.entitlement_id
     <include refid="campaignOrderJoin"/>
-    WHERE h.tenant_id = #{query.tenantId} AND h.to_status = 'CONFIRMED'
-      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+    WHERE a.tenant_id = #{query.tenantId} AND a.confirmed_at IS NOT NULL
+      AND a.confirmed_at &gt;= #{query.window.fromUtc} AND a.confirmed_at &lt; #{query.window.toUtcExclusive}
       <include refid="customerScope"/>
       <include refid="orderFactFilters"/>
       <include refid="orderReceiverFilter"/>
       <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
     UNION ALL
-    SELECT 'CHECKED_IN', h.id, a.id, o.id, a.customer_id, o.campaign_id, o.campaign_batch_id,
+    SELECT 'CHECKED_IN', a.id, a.id, o.id, a.customer_id, o.campaign_id, o.campaign_batch_id,
            o.campaign_code_snapshot, o.campaign_name_snapshot, o.batch_code_snapshot, o.batch_name_snapshot,
-           h.created_at, NULL, NULL, o.source_system, o.receiver_type
-    FROM crm_appointment_history h
-    INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
+           a.checked_in_at, NULL, NULL, o.source_system, o.receiver_type
+    FROM crm_appointment a
     INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
     INNER JOIN crm_appointment_item ai ON ai.tenant_id = a.tenant_id AND ai.appointment_id = a.id
     INNER JOIN crm_entitlement e ON e.tenant_id = ai.tenant_id AND e.id = ai.entitlement_id
     <include refid="campaignOrderJoin"/>
-    WHERE h.tenant_id = #{query.tenantId} AND h.to_status = 'CHECKED_IN'
-      AND h.created_at &gt;= #{query.window.fromUtc} AND h.created_at &lt; #{query.window.toUtcExclusive}
+    WHERE a.tenant_id = #{query.tenantId} AND a.checked_in_at IS NOT NULL
+      AND a.checked_in_at &gt;= #{query.window.fromUtc} AND a.checked_in_at &lt; #{query.window.toUtcExclusive}
       <include refid="customerScope"/>
       <include refid="orderFactFilters"/>
       <include refid="orderReceiverFilter"/>

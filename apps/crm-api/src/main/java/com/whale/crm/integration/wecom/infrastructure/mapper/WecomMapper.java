@@ -16,6 +16,7 @@ import java.util.List;
 @Mapper
 public interface WecomMapper {
     String CONTACT_COLUMNS = "id,corp_id AS corpId,external_userid AS externalUserid,staff_user_id AS staffUserId,name,avatar,contact_type AS contactType,gender,unionid,remark,description,add_way AS addWay,channel_state AS channelState,follow_created_at AS followCreatedAt,tag_snapshot_json AS tagSnapshotJson,follow_status AS followStatus,customer_id AS customerId,consent_status AS consentStatus,consent_evidence_ref AS consentEvidenceRef,link_type AS linkType,link_reason AS linkReason,created_by AS createdBy,last_synced_at AS lastSyncedAt,version";
+    String ALIASED_CONTACT_COLUMNS = "c.id,c.corp_id AS corpId,c.external_userid AS externalUserid,c.staff_user_id AS staffUserId,c.name,c.avatar,c.contact_type AS contactType,c.gender,c.unionid,c.remark,c.description,c.add_way AS addWay,c.channel_state AS channelState,c.follow_created_at AS followCreatedAt,c.tag_snapshot_json AS tagSnapshotJson,c.follow_status AS followStatus,c.customer_id AS customerId,c.consent_status AS consentStatus,c.consent_evidence_ref AS consentEvidenceRef,c.link_type AS linkType,c.link_reason AS linkReason,c.created_by AS createdBy,c.last_synced_at AS lastSyncedAt,c.version";
     String ROOM_COVERED_STAFF = " SELECT 1 FROM crm_wecom_room_participant covered "
             + "JOIN crm_wecom_staff_account sa ON sa.tenant_id=covered.tenant_id AND sa.corp_id=covered.corp_id AND sa.wecom_userid=covered.wecom_userid AND sa.staff_user_id=covered.staff_user_id AND sa.enabled=1 "
             + "JOIN crm_wecom_archive_member am ON am.tenant_id=covered.tenant_id AND am.corp_id=covered.corp_id AND am.staff_user_id=covered.staff_user_id AND am.enabled=1 "
@@ -87,12 +88,16 @@ public interface WecomMapper {
     int linkContact(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
                     @Param("customerId") long customerId, @Param("reason") String reason, @Param("actorUserId") long actorUserId);
 
-    @Select("<script>SELECT " + CONTACT_COLUMNS + " FROM crm_wecom_contact c WHERE c.tenant_id=#{tenantId} AND " +
-            "<choose><when test=\"scopeType == 'ALL'\">1=1</when>" +
-            "<when test=\"scopeType == 'TEAM' or scopeType == 'SELF'\">c.customer_id IS NOT NULL AND EXISTS (SELECT 1 FROM crm_customer cu WHERE cu.tenant_id=c.tenant_id AND cu.id=c.customer_id AND cu.deleted=0 AND " +
-            "<choose><when test=\"scopeType == 'TEAM'\">(cu.owner_staff_id=#{selfId} OR cu.team_id IN <foreach collection=\"teamIds\" item=\"teamId\" open=\"(\" separator=\",\" close=\")\">#{teamId}</foreach>)</when><otherwise>cu.owner_staff_id=#{selfId}</otherwise></choose>) " +
-            "<choose><when test=\"scopeType == 'TEAM'\">AND (c.staff_user_id=#{selfId} OR EXISTS (SELECT 1 FROM sys_user su WHERE su.tenant_id=c.tenant_id AND su.id=c.staff_user_id AND su.team_id IN <foreach collection=\"teamIds\" item=\"teamId\" open=\"(\" separator=\",\" close=\")\">#{teamId}</foreach>))</when><otherwise>AND c.staff_user_id=#{selfId}</otherwise></choose>" +
-            "</when><otherwise>1=0</otherwise></choose> ORDER BY c.customer_id IS NULL DESC,c.id DESC LIMIT 200</script>")
+    @Select("<script>SELECT " + ALIASED_CONTACT_COLUMNS + " FROM ("
+            + "SELECT c.id,c.is_unlinked FROM crm_wecom_contact c WHERE c.tenant_id=#{tenantId} AND "
+            + "<choose><when test=\"scopeType == 'ALL'\">1=1</when>"
+            + "<when test=\"scopeType == 'TEAM' or scopeType == 'SELF'\">c.is_unlinked=0 AND c.customer_id IS NOT NULL AND EXISTS (SELECT 1 FROM crm_customer cu WHERE cu.tenant_id=c.tenant_id AND cu.id=c.customer_id AND cu.deleted=0 AND "
+            + "<choose><when test=\"scopeType == 'TEAM'\">(cu.owner_staff_id=#{selfId}<if test=\"teamIds != null and teamIds.size() > 0\"> OR cu.team_id IN <foreach collection=\"teamIds\" item=\"teamId\" open=\"(\" separator=\",\" close=\")\">#{teamId}</foreach></if>)</when><otherwise>cu.owner_staff_id=#{selfId}</otherwise></choose>) "
+            + "<choose><when test=\"scopeType == 'TEAM'\">AND (c.staff_user_id=#{selfId}<if test=\"teamIds != null and teamIds.size() > 0\"> OR EXISTS (SELECT 1 FROM sys_user su WHERE su.tenant_id=c.tenant_id AND su.id=c.staff_user_id AND su.team_id IN <foreach collection=\"teamIds\" item=\"teamId\" open=\"(\" separator=\",\" close=\")\">#{teamId}</foreach>)</if>)</when><otherwise>AND c.staff_user_id=#{selfId}</otherwise></choose>"
+            + "</when><otherwise>1=0</otherwise></choose> "
+            + "ORDER BY c.is_unlinked DESC,c.id DESC LIMIT 200"
+            + ") p INNER JOIN crm_wecom_contact c ON c.tenant_id=#{tenantId} AND c.id=p.id "
+            + "ORDER BY p.is_unlinked DESC,p.id DESC</script>")
     List<WecomContact> selectContacts(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
                                       @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId);
 
@@ -167,7 +172,7 @@ public interface WecomMapper {
                      @Param("status") String status, @Param("failures") int failures, @Param("error") String error,
                      @Param("dataGap") boolean dataGap, @Param("gapReason") String gapReason);
 
-    @Insert("INSERT INTO crm_wecom_data_gap (tenant_id,corp_id,archive_scope,gap_type,status,from_seq,to_seq,detail_masked,first_seen_at,last_seen_at) VALUES (#{tenantId},#{corpId},#{archiveScope},#{gapType},'OPEN',#{fromSeq},#{toSeq},#{detail},#{now},#{now}) ON DUPLICATE KEY UPDATE status='OPEN',to_seq=VALUES(to_seq),detail_masked=VALUES(detail_masked),last_seen_at=VALUES(last_seen_at),resolved_at=NULL,version=version+1")
+    @Insert("INSERT INTO crm_wecom_data_gap (tenant_id,corp_id,archive_scope,gap_type,status,from_seq,to_seq,detail_masked,first_seen_at,last_seen_at) VALUES (#{tenantId},#{corpId},#{archiveScope},#{gapType},'OPEN',COALESCE(#{fromSeq},0),#{toSeq},#{detail},#{now},#{now}) ON DUPLICATE KEY UPDATE status='OPEN',to_seq=VALUES(to_seq),detail_masked=VALUES(detail_masked),last_seen_at=VALUES(last_seen_at),resolved_at=NULL,version=version+1")
     void insertGap(@Param("tenantId") long tenantId, @Param("corpId") String corpId, @Param("archiveScope") String archiveScope,
                    @Param("gapType") String gapType, @Param("fromSeq") Long fromSeq, @Param("toSeq") Long toSeq,
                    @Param("detail") String detail, @Param("now") Instant now);

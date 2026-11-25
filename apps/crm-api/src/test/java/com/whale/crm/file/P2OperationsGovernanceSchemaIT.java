@@ -229,7 +229,7 @@ class P2OperationsGovernanceSchemaIT {
         rollbackDataSource.setPassword(MYSQL.getPassword());
         try {
             Flyway.configure().dataSource(rollbackDataSource).schemas(schema)
-                    .locations("classpath:db/migration").baselineOnMigrate(true).load().migrate();
+                    .locations("classpath:db/migration").target("21").baselineOnMigrate(true).load().migrate();
             for (String script : List.of(
                     "V21__p2_kb_2_knowledge_publication_rollback.sql",
                     "V20__p2_kb_1_dify_knowledge_config_rollback.sql",

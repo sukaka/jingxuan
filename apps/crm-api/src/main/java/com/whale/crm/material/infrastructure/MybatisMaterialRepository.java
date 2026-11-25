@@ -98,6 +98,21 @@ public class MybatisMaterialRepository implements MaterialRepository {
     }
 
     @Override
+    public int updateLatestRevisionId(long tenantId, long materialId, long latestRevisionId) {
+        return mapper.updateLatestRevisionId(tenantId, materialId, latestRevisionId);
+    }
+
+    @Override
+    public void deleteMaterialTags(long tenantId, long materialId) {
+        mapper.deleteMaterialTags(tenantId, materialId);
+    }
+
+    @Override
+    public void insertMaterialTags(long tenantId, long materialId, List<String> tagCodes) {
+        mapper.insertMaterialTags(tenantId, materialId, tagCodes);
+    }
+
+    @Override
     public int submitRevision(long tenantId, long revisionId, long materialId, long expectedVersion,
                               MaterialScopeQuery scope) {
         return mapper.submitRevision(tenantId, revisionId, materialId, expectedVersion, scope);

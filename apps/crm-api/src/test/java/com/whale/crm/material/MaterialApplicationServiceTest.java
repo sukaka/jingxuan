@@ -87,6 +87,7 @@ class MaterialApplicationServiceTest {
                 .thenReturn(cleanFile(1L));
         when(repository.findInsertedMaterial(eq(TENANT), anyString(), eq(7L))).thenReturn(Optional.of(material));
         when(repository.findInsertedRevision(TENANT, 10, 1, 7)).thenReturn(Optional.of(revision));
+        when(repository.updateLatestRevisionId(TENANT, 10L, 11L)).thenReturn(1);
         stubDetail(material, List.of(revision));
 
         MaterialResponse response = service.create(TENANT, WRITER, createRequest(1L));
@@ -97,9 +98,29 @@ class MaterialApplicationServiceTest {
         verify(repository).insertMaterial(materialCaptor.capture());
         assertThat(materialCaptor.getValue().materialNo()).startsWith("MT");
         assertThat(materialCaptor.getValue().currentRevisionId()).isNull();
+        verify(repository).updateLatestRevisionId(TENANT, 10L, 11L);
+        verify(repository).insertMaterialTags(TENANT, 10L, List.of("合成标签"));
         verify(fileService).requireCleanUsable(TENANT, WRITER, 99, FileClassification.MATERIAL, 1L);
         verify(auditService).record(eq(TENANT), eq(7L), eq("MATERIAL_CREATE"), eq("MATERIAL"),
                 eq("10"), any(), any(), any());
+    }
+
+    @Test
+    void createsMaterialWithEmptyTagsSkipsInsertMaterialTags() {
+        Material material = material("DRAFT", null);
+        MaterialRevision revision = revision(11, 1, "DRAFT", 7);
+        when(fileService.requireCleanUsable(TENANT, WRITER, 99, FileClassification.MATERIAL, 1L))
+                .thenReturn(cleanFile(1L));
+        when(repository.findInsertedMaterial(eq(TENANT), anyString(), eq(7L))).thenReturn(Optional.of(material));
+        when(repository.findInsertedRevision(TENANT, 10, 1, 7)).thenReturn(Optional.of(revision));
+        when(repository.updateLatestRevisionId(TENANT, 10L, 11L)).thenReturn(1);
+        stubDetail(material, List.of(revision));
+
+        service.create(TENANT, WRITER, new CreateMaterialRequest("合成素材", "CASE", 1L, 20L, "310100", "合成摘要",
+                List.of(), 99L, "首个合成版本"));
+
+        verify(repository).updateLatestRevisionId(TENANT, 10L, 11L);
+        verify(repository, never()).insertMaterialTags(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -136,6 +157,8 @@ class MaterialApplicationServiceTest {
         assertThat(captor.getValue().title()).isEqualTo("合成素材修改");
         assertThat(captor.getValue().version()).isEqualTo(2L);
         verify(repository).updateMaterialContent(eq(TENANT), eq(10L), eq(3L), any(), any());
+        verify(repository).deleteMaterialTags(TENANT, 10L);
+        verify(repository).insertMaterialTags(TENANT, 10L, List.of("合成标签"));
         verify(auditService).record(eq(TENANT), eq(7L), eq("MATERIAL_UPDATE"), eq("MATERIAL"),
                 eq("10"), any(), any(), any());
     }
@@ -161,6 +184,8 @@ class MaterialApplicationServiceTest {
         assertThat(captor.getValue().revisionNo()).isEqualTo(2);
         assertThat(captor.getValue().status()).isEqualTo("DRAFT");
         verify(repository).updateMaterialContent(eq(TENANT), eq(10L), eq(3L), any(), any());
+        verify(repository).deleteMaterialTags(TENANT, 10L);
+        verify(repository).insertMaterialTags(TENANT, 10L, List.of("合成标签"));
     }
 
     @Test

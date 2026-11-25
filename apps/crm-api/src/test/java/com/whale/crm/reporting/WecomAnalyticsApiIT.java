@@ -115,6 +115,45 @@ class WecomAnalyticsApiIT extends AbstractMysqlIT {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void appointmentFactsRespectWindowBoundariesAndSoftDeletedCustomers() throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        long activeCustomer = customer(suffix + "-active", 2, 1);
+        long deletedCustomer = customer(suffix + "-deleted", 2, 1);
+
+        // 1. Confirmed in window [2026-12-10, 2026-12-11], checked in AFTER toUtcExclusive (2026-12-11T16:00:00Z) -> counted in confirmed only
+        jdbcTemplate.update("INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,"
+                        + "owner_staff_id,team_id,scheduled_at,status,confirmed_at,checked_in_at,created_by,created_at) "
+                        + "VALUES (1,?,?,1,2,1,'2026-12-15 02:00:00','CHECKED_IN','2026-12-10 04:00:00','2026-12-11 16:00:00',2,'2026-12-10 00:00:00')",
+                "wa-late-checkin-" + suffix, activeCustomer);
+        // 2. Confirmed BEFORE fromUtc (2026-12-09T16:00:00Z), checked in INSIDE window -> excluded from both
+        jdbcTemplate.update("INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,"
+                        + "owner_staff_id,team_id,scheduled_at,status,confirmed_at,checked_in_at,created_by,created_at) "
+                        + "VALUES (1,?,?,1,2,1,'2026-12-15 02:00:00','CHECKED_IN','2026-12-09 15:59:59','2026-12-10 10:00:00',2,'2026-12-09 00:00:00')",
+                "wa-early-confirm-" + suffix, activeCustomer);
+        // 3. Soft-deleted customer -> excluded from both
+        jdbcTemplate.update("INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,"
+                        + "owner_staff_id,team_id,scheduled_at,status,confirmed_at,checked_in_at,created_by,created_at) "
+                        + "VALUES (1,?,?,1,2,1,'2026-12-15 02:00:00','CHECKED_IN','2026-12-10 04:00:00','2026-12-10 05:00:00',2,'2026-12-10 00:00:00')",
+                "wa-deleted-cust-" + suffix, deletedCustomer);
+        jdbcTemplate.update("UPDATE crm_customer SET deleted=1 WHERE tenant_id=1 AND id=?", deletedCustomer);
+
+        String staffUser = "wa_bound_" + suffix;
+        jdbcTemplate.update("INSERT INTO sys_user (tenant_id,org_id,team_id,username,display_name,password_hash,user_type,status) "
+                        + "SELECT 1,1,1,?,'边界分析员工',password_hash,'EMPLOYEE','ACTIVE' FROM sys_user WHERE id=2",
+                staffUser);
+        Long staffId = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE tenant_id=1 AND username=?",
+                Long.class, staffUser);
+        jdbcTemplate.update("UPDATE crm_appointment SET owner_staff_id=? WHERE tenant_id=1 AND appointment_no IN (?,?,?)",
+                staffId, "wa-late-checkin-" + suffix, "wa-early-confirm-" + suffix, "wa-deleted-cust-" + suffix);
+
+        mockMvc.perform(get("/api/v1/reports/wecom-analytics").param("from", "2026-12-10").param("to", "2026-12-11")
+                        .param("employeeId", Long.toString(staffId)).cookie(login("admin").cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.conversion.confirmedAppointmentCount").value(1))
+                .andExpect(jsonPath("$.data.conversion.checkedInFromConfirmedCount").value(0));
+    }
+
     private long customer(String suffix, long ownerId, long teamId) {
         jdbcTemplate.update("INSERT INTO crm_customer (tenant_id,owner_staff_id,team_id,customer_no,display_name) "
                 + "VALUES (1,?,?,CONCAT('ANALYTICS-',?),'合成分析客户')", ownerId, teamId, suffix);
@@ -160,9 +199,10 @@ class WecomAnalyticsApiIT extends AbstractMysqlIT {
         Long teamId = jdbcTemplate.queryForObject("SELECT team_id FROM crm_customer WHERE tenant_id=1 AND id=?",
                 Long.class, customerId);
         jdbcTemplate.update("INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,"
-                        + "owner_staff_id,team_id,scheduled_at,status,created_by,created_at) VALUES (1,?,?,1,?,?,"
-                        + "'2026-11-12 02:00:00',?,2,'2026-11-10 00:00:00')",
-                "appointment-analytics-" + suffix + "-" + key, customerId, ownerId, teamId, checkedIn ? "CHECKED_IN" : "NO_SHOW");
+                        + "owner_staff_id,team_id,scheduled_at,status,confirmed_at,checked_in_at,created_by,created_at) "
+                        + "VALUES (1,?,?,1,?,?,'2026-11-12 02:00:00',?,'2026-11-10 04:00:00',?,2,'2026-11-10 00:00:00')",
+                "appointment-analytics-" + suffix + "-" + key, customerId, ownerId, teamId,
+                checkedIn ? "CHECKED_IN" : "NO_SHOW", checkedIn ? "2026-11-11 04:00:00" : null);
         long appointmentId = jdbcTemplate.queryForObject("SELECT id FROM crm_appointment WHERE tenant_id=1 "
                 + "AND appointment_no=?", Long.class, "appointment-analytics-" + suffix + "-" + key);
         jdbcTemplate.update("INSERT INTO crm_appointment_history (tenant_id,appointment_id,from_status,to_status,"

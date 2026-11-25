@@ -100,6 +100,12 @@ public class MaterialApplicationService {
         repository.insertRevision(revision);
         MaterialRevision created = repository.findInsertedRevision(tenantId, material.id(), 1, user.userId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "素材修订创建失败"));
+        if (repository.updateLatestRevisionId(tenantId, material.id(), created.id()) != 1) {
+            throw new BusinessException(ErrorCode.CONFLICT, "素材最新版本更新失败");
+        }
+        if (!input.tagCodes().isEmpty()) {
+            repository.insertMaterialTags(tenantId, material.id(), input.tagCodes());
+        }
         auditService.record(tenantId, user.userId(), "MATERIAL_CREATE", "MATERIAL", material.id().toString(),
                 null, auditSnapshot(material.id(), created), created.changeNote());
         return detailInternal(tenantId, material.id(), scope);
@@ -127,6 +133,7 @@ public class MaterialApplicationService {
                 || repository.updateMaterialContent(tenantId, materialId, material.version(), updated, scope) != 1) {
             throw new BusinessException(ErrorCode.CONFLICT, "素材已变化，请刷新后重试");
         }
+        replaceMaterialTags(tenantId, materialId, input.tagCodes());
         auditService.record(tenantId, user.userId(), "MATERIAL_UPDATE", "MATERIAL", Long.toString(materialId),
                 auditSnapshot(materialId, revision), auditSnapshot(materialId, updated), updated.changeNote());
         return detailInternal(tenantId, materialId, scope);
@@ -158,6 +165,7 @@ public class MaterialApplicationService {
         if (repository.updateMaterialContent(tenantId, materialId, material.version(), created, scope) != 1) {
             throw new BusinessException(ErrorCode.CONFLICT, "素材已变化，请刷新后重试");
         }
+        replaceMaterialTags(tenantId, materialId, input.tagCodes());
         auditService.record(tenantId, user.userId(), "MATERIAL_REVISION_CREATE", "MATERIAL",
                 Long.toString(materialId), auditSnapshot(materialId, latest), auditSnapshot(materialId, created),
                 created.changeNote());
@@ -406,6 +414,13 @@ public class MaterialApplicationService {
                 criteria.globalOnly(), criteria.page(), criteria.size());
     }
 
+    private void replaceMaterialTags(long tenantId, long materialId, List<String> tagCodes) {
+        repository.deleteMaterialTags(tenantId, materialId);
+        if (!tagCodes.isEmpty()) {
+            repository.insertMaterialTags(tenantId, materialId, tagCodes);
+        }
+    }
+
     private Input input(String title, String categoryCode, Long institutionId, Long projectId, String cityCode,
                         String summary, List<String> tags, Long fileId, String changeNote) {
         String normalizedTitle = normalized(title);
@@ -413,11 +428,12 @@ public class MaterialApplicationService {
         if (normalizedTitle == null || normalizedCategory == null || fileId == null || fileId <= 0) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "素材标题、分类和文件不能为空");
         }
+        List<String> tagCodes = normalizeTagCodes(tags);
         return new Input(normalizedTitle, normalizedCategory, institutionId, projectId, normalized(cityCode),
-                normalized(summary), tagsJson(tags), fileId, normalized(changeNote));
+                normalized(summary), tagsJson(tagCodes), tagCodes, fileId, normalized(changeNote));
     }
 
-    private String tagsJson(List<String> tags) {
+    private List<String> normalizeTagCodes(List<String> tags) {
         LinkedHashSet<String> normalized = new LinkedHashSet<>();
         if (tags != null) {
             if (tags.size() > 20) {
@@ -431,6 +447,10 @@ public class MaterialApplicationService {
                 normalized.add(value);
             }
         }
+        return List.copyOf(normalized);
+    }
+
+    private String tagsJson(List<String> normalized) {
         try {
             return objectMapper.writeValueAsString(normalized);
         } catch (JsonProcessingException ex) {
@@ -468,7 +488,7 @@ public class MaterialApplicationService {
     }
 
     private record Input(String title, String categoryCode, Long institutionId, Long projectId, String cityCode,
-                         String summary, String tagsJson, Long fileId, String changeNote) {
+                         String summary, String tagsJson, List<String> tagCodes, Long fileId, String changeNote) {
     }
 
     private record OfflineCanonical(long materialId, long version, String reason) {

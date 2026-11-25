@@ -168,4 +168,40 @@ class RedemptionApplicationServiceTest {
         verify(repository).insertReversal(eq(2L), any());
         verify(repository).insertReversalHistory(eq(2L), any());
     }
+
+    @Test
+    void partialRedemptionTransitionsServiceDoneToServiceDone() {
+        Appointment appointment = new Appointment(30L, "A000000000030", 100L, 1L, 2L, null,
+                NOW.plusSeconds(3600), "remark", "SERVICE_DONE",
+                NOW.minusSeconds(600), NOW.minusSeconds(300), NOW.minusSeconds(120), 2L, NOW, 2L);
+        AppointmentItem item = new AppointmentItem(40L, 30L, 70L, 101L, 3, NOW, 0L);
+        Redemption createdRedemption = new Redemption(50L, 30L, 100L, 1L, 2L, null, NOW.minusSeconds(60), "proof",
+                null, "POSTED", "PENDING_VERIFICATION", "post-partial", 10L, NOW, NOW, 0L);
+        RedemptionLine persistedLine = new RedemptionLine(60L, 50L, 40L, 70L, 101L, 1, NOW);
+        Entitlement entitlement = new Entitlement(70L, 100L, 20L, 101L, "水光", 3, 3, 0,
+                LocalDate.of(2026, 1, 1), LocalDate.of(2027, 12, 31), "AVAILABLE", NOW, 0L);
+        Order order = new Order(10L, "J10", 100L, null, 2L, 2L, null, "CRM", null, "REGULAR",
+                null, null, "PAID", "PLATFORM", 1000L, 0L, 1000L, 1000L, 0L, NOW, NOW, NOW, 0L);
+        LockedEntitlementBatch locked = new LockedEntitlementBatch(
+                Map.of(10L, order),
+                Map.of(70L, new FulfillmentEntitlementView(entitlement, 10L, List.of(1L), "CONFIGURED")));
+
+        when(repository.findAppointment(2L, 30L)).thenReturn(Optional.of(appointment));
+        when(repository.findAppointmentForUpdate(2L, 30L)).thenReturn(Optional.of(appointment));
+        when(repository.findAppointmentHistory(2L, 30L)).thenReturn(List.of(
+                new AppointmentHistory(1L, 30L, "CONFIRMED", "CHECKED_IN", 10L, "arrived", NOW.minusSeconds(300))));
+        when(repository.findAppointmentItems(2L, 30L)).thenReturn(List.of(item));
+        when(repository.findPostedLinesByAppointment(2L, 30L)).thenReturn(List.of());
+        when(tradingOperations.lockRedeemables(eq(2L), anyList())).thenReturn(locked);
+        when(repository.findRedemptionByKey(2L, "post-partial")).thenReturn(Optional.of(createdRedemption));
+        when(repository.findRedemptionLines(2L, 50L)).thenReturn(List.of(persistedLine));
+        when(repository.updateAppointmentStatus(2L, 30L, 2L, "SERVICE_DONE", "SERVICE_DONE")).thenReturn(1);
+        when(repository.findRedemption(2L, 50L)).thenReturn(Optional.of(createdRedemption));
+
+        service.post(2L, OPERATOR_T2, 30L,
+                new PostRedemptionRequest(2L, NOW.minusSeconds(60), "proof", null,
+                        List.of(new RedemptionLineRequest(70L, 1))), "post-partial");
+
+        verify(repository).updateAppointmentStatus(2L, 30L, 2L, "SERVICE_DONE", "SERVICE_DONE");
+    }
 }

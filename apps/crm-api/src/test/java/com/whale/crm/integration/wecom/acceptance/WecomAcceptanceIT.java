@@ -64,6 +64,8 @@ class WecomAcceptanceIT extends AbstractMysqlIT {
     private MockWecomAdapter adapter;
     @Autowired
     private AesGcmCipher cipher;
+    @Autowired
+    private com.whale.crm.integration.wecom.domain.WecomRepository wecomRepository;
 
     @MockitoBean
     private PrivateObjectStorage storage;
@@ -431,6 +433,79 @@ class WecomAcceptanceIT extends AbstractMysqlIT {
         assertThat(archivedOutboxCount()).isEqualTo(2);
         assertThat(monitor().at("/historicalGaps").asLong()).isEqualTo(1);
         assertNoPlaintextOutsideControlledContent();
+    }
+
+    @Test
+    void contactListOrdersUnlinkedFirstViaIsUnlinkedExcludesUnlinkedForTeamScopeAndCoalescesNullGapFromSeq()
+            throws Exception {
+        // 1. Insert additional unlinked contact (higher id) to verify DESC ordering within unlinked & linked groups
+        jdbcTemplate.update("INSERT INTO crm_wecom_contact (tenant_id,corp_id,external_userid,staff_user_id,customer_id,"
+                        + "consent_status,consent_evidence_ref) VALUES "
+                        + "(1,?,'WECOM-EXT-UNLINKED-2',2,NULL,'GRANTED','mock://consent/unlinked-2')",
+                CORP);
+
+        JsonNode adminContacts = data(get("/api/v1/integrations/wecom/contacts").cookie(admin.cookies()));
+        List<String> orderedIds = new ArrayList<>();
+        List<Boolean> orderedUnlinkedFlags = new ArrayList<>();
+        adminContacts.forEach(c -> {
+            if (CORP.equals(c.at("/corpId").asText())) {
+                orderedIds.add(c.at("/externalUserid").asText());
+                orderedUnlinkedFlags.add(c.at("/customerId").isNull());
+            }
+        });
+        assertThat(orderedUnlinkedFlags).containsExactly(true, true, true, false);
+        assertThat(orderedIds.get(0)).isEqualTo("WECOM-EXT-UNLINKED-2");
+        assertThat(orderedIds.get(3)).isEqualTo("WECOM-EXT-1010");
+
+        // Verify TEAM / SELF scope (manager1) excludes all unlinked contacts and returns only visible linked contacts
+        JsonNode managerContacts = data(get("/api/v1/integrations/wecom/contacts").cookie(manager1.cookies()));
+        List<String> managerExtIds = new ArrayList<>();
+        managerContacts.forEach(c -> {
+            if (CORP.equals(c.at("/corpId").asText())) {
+                assertThat(c.at("/customerId").isNull()).isFalse();
+                managerExtIds.add(c.at("/externalUserid").asText());
+            }
+        });
+        assertThat(managerExtIds).containsExactly("WECOM-EXT-1010");
+
+        // Link WECOM-EXT-UNMATCHED -> is_unlinked flips 1 -> 0 and it moves after remaining unlinked contacts
+        JsonNode unmatched = contactFromApi("WECOM-EXT-UNMATCHED");
+        long unmatchedId = unmatched.at("/id").asLong();
+        assertThat(queryInt("SELECT is_unlinked FROM crm_wecom_contact WHERE tenant_id=1 AND id=?", unmatchedId))
+                .isEqualTo(1);
+        data(admin.withAuth(post("/api/v1/integrations/wecom/contacts/{id}/link", unmatchedId))
+                .header("Idempotency-Key", key("link-unlinked"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("customerId", 1010, "version", unmatched.at("/version").asLong(),
+                        "reason", "人工关联验证 is_unlinked 排序切换"))));
+        assertThat(queryInt("SELECT is_unlinked FROM crm_wecom_contact WHERE tenant_id=1 AND id=?", unmatchedId))
+                .isZero();
+
+        JsonNode afterLinkContacts = data(get("/api/v1/integrations/wecom/contacts").cookie(admin.cookies()));
+        List<String> afterLinkExtIds = new ArrayList<>();
+        afterLinkContacts.forEach(c -> {
+            if (CORP.equals(c.at("/corpId").asText())) {
+                afterLinkExtIds.add(c.at("/externalUserid").asText());
+            }
+        });
+        assertThat(afterLinkExtIds).containsExactly(
+                "WECOM-EXT-UNLINKED-2", "WECOM-EXT-REVOKED", "WECOM-EXT-UNMATCHED", "WECOM-EXT-1010");
+
+        // 2. Verify recordGap(..., null, ...) coalesces from_seq to 0 and updates idempotently on duplicate
+        java.time.Instant now = java.time.Instant.parse("2026-11-25T10:00:00Z");
+        wecomRepository.recordGap(1L, CORP, SCOPE, "COLLECTOR_ERROR", null, 50L, "first-null-seq", now);
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_wecom_data_gap WHERE tenant_id=1 AND corp_id=? "
+                + "AND archive_scope=? AND gap_type='COLLECTOR_ERROR' AND from_seq=0", CORP, SCOPE)).isEqualTo(1);
+        assertThat(queryInt("SELECT version FROM crm_wecom_data_gap WHERE tenant_id=1 AND corp_id=? "
+                + "AND archive_scope=? AND gap_type='COLLECTOR_ERROR' AND from_seq=0", CORP, SCOPE)).isZero();
+
+        wecomRepository.recordGap(1L, CORP, SCOPE, "COLLECTOR_ERROR", null, 75L, "second-null-seq", now.plusSeconds(10));
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_wecom_data_gap WHERE tenant_id=1 AND corp_id=? "
+                + "AND archive_scope=? AND gap_type='COLLECTOR_ERROR' AND from_seq=0", CORP, SCOPE)).isEqualTo(1);
+        assertThat(queryLong("SELECT to_seq FROM crm_wecom_data_gap WHERE tenant_id=1 AND corp_id=? "
+                + "AND archive_scope=? AND gap_type='COLLECTOR_ERROR' AND from_seq=0", CORP, SCOPE)).isEqualTo(75L);
+        assertThat(queryInt("SELECT version FROM crm_wecom_data_gap WHERE tenant_id=1 AND corp_id=? "
+                + "AND archive_scope=? AND gap_type='COLLECTOR_ERROR' AND from_seq=0", CORP, SCOPE)).isEqualTo(1);
     }
 
     private void resetFixture() {

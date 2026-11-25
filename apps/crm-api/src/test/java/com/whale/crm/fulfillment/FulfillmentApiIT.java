@@ -1029,6 +1029,75 @@ class FulfillmentApiIT extends AbstractMysqlIT {
         }
     }
 
+    @Test
+    void milestoneTimestampsTrackTransitionsAndPreserveServiceDoneOnPartialRedemption() throws Exception {
+        PaidOrder paid = paidOrder(SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+        EntitlementRow entitlement = singleEntitlement(paid.orderId());
+        long appointmentId = newAppointment(paid.customerId(), List.of(new Line(entitlement.id(), 3)));
+
+        JsonNode initial = data(operator1.withAuth(get("/api/v1/appointments/" + appointmentId)));
+        assertThat(initial.at("/appointment/status").asText()).isEqualTo("PENDING_INSTITUTION");
+        assertThat(initial.at("/appointment/confirmedAt").isNull()).isTrue();
+        assertThat(initial.at("/appointment/checkedInAt").isNull()).isTrue();
+        assertThat(initial.at("/appointment/serviceDoneAt").isNull()).isTrue();
+
+        transition(appointmentId, "confirm", 0);
+        JsonNode afterConfirm = data(operator1.withAuth(get("/api/v1/appointments/" + appointmentId)));
+        String confirmedAt = afterConfirm.at("/appointment/confirmedAt").asText();
+        assertThat(confirmedAt).isNotBlank();
+        assertThat(afterConfirm.at("/appointment/checkedInAt").isNull()).isTrue();
+        assertThat(afterConfirm.at("/appointment/serviceDoneAt").isNull()).isTrue();
+
+        transition(appointmentId, "check-in", 1);
+        JsonNode afterCheckIn = data(operator1.withAuth(get("/api/v1/appointments/" + appointmentId)));
+        String checkedInAt = afterCheckIn.at("/appointment/checkedInAt").asText();
+        assertThat(afterCheckIn.at("/appointment/confirmedAt").asText()).isEqualTo(confirmedAt);
+        assertThat(checkedInAt).isNotBlank();
+        assertThat(afterCheckIn.at("/appointment/serviceDoneAt").isNull()).isTrue();
+
+        long versionAfterServiceDone = transition(appointmentId, "service-done", 2);
+        serviceAt = Instant.now().toString();
+        JsonNode afterServiceDone = data(operator1.withAuth(get("/api/v1/appointments/" + appointmentId)));
+        String serviceDoneAt = afterServiceDone.at("/appointment/serviceDoneAt").asText();
+        assertThat(afterServiceDone.at("/appointment/confirmedAt").asText()).isEqualTo(confirmedAt);
+        assertThat(afterServiceDone.at("/appointment/checkedInAt").asText()).isEqualTo(checkedInAt);
+        assertThat(serviceDoneAt).isNotBlank();
+
+        // Partial redemption (1 of 3): SERVICE_DONE -> SERVICE_DONE must NOT overwrite service_done_at
+        Thread.sleep(20);
+        serviceAt = Instant.now().toString();
+        data(redemptionRequest(operator1, appointmentId, versionAfterServiceDone,
+                List.of(new Line(entitlement.id(), 1)), "MS-PARTIAL", key("ms-partial")));
+        JsonNode afterPartial = data(operator1.withAuth(get("/api/v1/appointments/" + appointmentId)));
+        assertThat(afterPartial.at("/appointment/status").asText()).isEqualTo("SERVICE_DONE");
+        assertThat(afterPartial.at("/appointment/confirmedAt").asText()).isEqualTo(confirmedAt);
+        assertThat(afterPartial.at("/appointment/checkedInAt").asText()).isEqualTo(checkedInAt);
+        assertThat(afterPartial.at("/appointment/serviceDoneAt").asText()).isEqualTo(serviceDoneAt);
+
+        // Final redemption (remaining 2 of 3): SERVICE_DONE -> REDEEMED preserves all 3 milestone timestamps
+        long versionAfterPartial = afterPartial.at("/appointment/version").asLong();
+        serviceAt = Instant.now().toString();
+        data(redemptionRequest(operator1, appointmentId, versionAfterPartial,
+                List.of(new Line(entitlement.id(), 2)), "MS-FINAL", key("ms-final")));
+        JsonNode afterFinal = data(operator1.withAuth(get("/api/v1/appointments/" + appointmentId)));
+        assertThat(afterFinal.at("/appointment/status").asText()).isEqualTo("REDEEMED");
+        assertThat(afterFinal.at("/appointment/confirmedAt").asText()).isEqualTo(confirmedAt);
+        assertThat(afterFinal.at("/appointment/checkedInAt").asText()).isEqualTo(checkedInAt);
+        assertThat(afterFinal.at("/appointment/serviceDoneAt").asText()).isEqualTo(serviceDoneAt);
+
+        // No-show branch: confirm -> no-show preserves confirmed_at and leaves checked_in_at & service_done_at NULL
+        PaidOrder noShowPaid = paidOrder(SINGLE_PROJECT_SKU, SINGLE_PROJECT_PRICE);
+        EntitlementRow noShowEntitlement = singleEntitlement(noShowPaid.orderId());
+        long noShowAppt = newAppointment(noShowPaid.customerId(), List.of(new Line(noShowEntitlement.id(), 1)));
+        transition(noShowAppt, "confirm", 0);
+        transition(noShowAppt, "no-show", 1);
+        JsonNode afterNoShow = data(operator1.withAuth(get("/api/v1/appointments/" + noShowAppt)));
+        assertThat(afterNoShow.at("/appointment/status").asText()).isEqualTo("NO_SHOW");
+        assertThat(afterNoShow.at("/appointment/confirmedAt").isTextual()).isTrue();
+        assertThat(afterNoShow.at("/appointment/checkedInAt").isNull()).isTrue();
+        assertThat(afterNoShow.at("/appointment/serviceDoneAt").isNull()).isTrue();
+    }
+
     private long createMonthlyBatch(long institutionId, String periodKey, long redemptionId) throws Exception {
         return data(finance1.withAuth(post("/api/v1/settlements/batches"))
                         .header("Idempotency-Key", key("c01-batch"))

@@ -437,6 +437,76 @@ class ReportingApiIT extends AbstractMysqlIT {
     }
 
     @Test
+    void appointmentMilestoneFactsUseTimestampColumnsForOperationsAndCampaignDrillDownAndBoundaries() throws Exception {
+        long customer = fixture.customer(1, 2, 1);
+        Fixture.CatalogIds catalog = fixture.catalog("ITR-MILESTONE", "里程碑卡", "3次", true);
+        Fixture.CampaignIds campaign = fixture.campaign("ITR-MS-1", "里程碑活动");
+        long order = fixture.order(1, customer, 2, "PARTIALLY_REDEEMED", "PLATFORM",
+                10_000, "2026-10-05T03:00:00Z", "ITR_MILESTONE",
+                new Fixture.SaleAttribution(campaign.campaignId(), campaign.firstBatchId(), null, null,
+                        "MS-CAMP", "里程碑活动", "MS-BATCH", "里程碑批次"));
+        long orderItem = fixture.orderItem(1, order, catalog, 1);
+        fixture.payment(1, order, "PLATFORM", "CONFIRMED", 10_000, "2026-10-05T03:00:00Z");
+
+        long appointmentId = fixture.id();
+        long entitlementId = fixture.id();
+        long appointmentItemId = fixture.id();
+        jdbcTemplate.update("INSERT INTO crm_entitlement (id,tenant_id,customer_id,order_item_id,project_id,granted_count,"
+                        + "available_count,version_no,status) VALUES (?,1,?,?,?,?,1,0,'AVAILABLE')",
+                entitlementId, customer, orderItem, catalog.projectId(), 3);
+        jdbcTemplate.update("INSERT INTO crm_appointment (id,tenant_id,appointment_no,customer_id,institution_id,owner_staff_id,"
+                        + "team_id,scheduled_at,status,confirmed_at,checked_in_at,service_done_at,created_by) "
+                        + "VALUES (?,1,?,?,?,2,1,?,'SERVICE_DONE',?,?,?,2)",
+                appointmentId, "ITR-MS-A-" + appointmentId, customer, catalog.institutionId(),
+                java.sql.Timestamp.from(Instant.parse("2026-10-10T06:00:00Z")),
+                java.sql.Timestamp.from(Instant.parse("2026-10-10T01:00:00Z")),
+                java.sql.Timestamp.from(Instant.parse("2026-10-10T02:00:00Z")),
+                java.sql.Timestamp.from(Instant.parse("2026-10-10T03:00:00Z")));
+        jdbcTemplate.update("INSERT INTO crm_appointment_item (id,tenant_id,appointment_id,entitlement_id,project_id,planned_count) "
+                        + "VALUES (?,1,?,?,?,3)", appointmentItemId, appointmentId, entitlementId, catalog.projectId());
+        // Partial redemption history row must not affect serviceCompletedCount
+        fixture.history(1, appointmentId, "SERVICE_DONE", "SERVICE_DONE", "2026-10-10T04:00:00Z");
+
+        // Outside window [2026-09-30T16:00:00Z, 2026-10-31T16:00:00Z) must be excluded
+        long outsideAppt = fixture.id();
+        jdbcTemplate.update("INSERT INTO crm_appointment (id,tenant_id,appointment_no,customer_id,institution_id,owner_staff_id,"
+                        + "team_id,scheduled_at,status,confirmed_at,checked_in_at,service_done_at,created_by) "
+                        + "VALUES (?,1,?,?,?,2,1,?,'SERVICE_DONE',?,?,?,2)",
+                outsideAppt, "ITR-MS-OUT-" + outsideAppt, customer, catalog.institutionId(),
+                java.sql.Timestamp.from(Instant.parse("2026-10-31T16:00:00Z")),
+                java.sql.Timestamp.from(Instant.parse("2026-10-31T16:00:00Z")),
+                java.sql.Timestamp.from(Instant.parse("2026-10-31T16:00:00Z")),
+                java.sql.Timestamp.from(Instant.parse("2026-10-31T16:00:00Z")));
+
+        for (String factType : List.of("APPOINTMENT_CONFIRMED", "CHECKED_IN", "SERVICE_DONE")) {
+            JsonNode ops = data(withRange(get("/api/v1/reports/operations"), "ITR_MILESTONE")
+                    .param("customerId", Long.toString(customer))
+                    .param("drillDownType", factType)
+                    .param("drillDownLimit", "5")
+                    .cookie(login("admin").cookies()));
+            assertThat(ops.at("/metrics/confirmedAppointmentCount").asLong()).isEqualTo(1);
+            assertThat(ops.at("/metrics/checkedInAppointmentCount").asLong()).isEqualTo(1);
+            assertThat(ops.at("/metrics/serviceCompletedCount").asLong()).isEqualTo(1);
+            assertThat(ops.at("/drillDown")).hasSize(1);
+            assertThat(ops.at("/drillDown/0/factType").asText()).isEqualTo(factType);
+            assertThat(ops.at("/drillDown/0/sourceId").asLong()).isEqualTo(appointmentId);
+        }
+
+        for (String factType : List.of("APPOINTMENT_CONFIRMED", "CHECKED_IN")) {
+            JsonNode camp = data(withRange(get("/api/v1/reports/campaigns"), "ITR_MILESTONE")
+                    .param("campaignId", Long.toString(campaign.campaignId()))
+                    .param("drillDownType", factType)
+                    .param("drillDownLimit", "5")
+                    .cookie(login("admin").cookies()));
+            assertThat(camp.at("/totals/confirmedAppointmentCount").asLong()).isEqualTo(1);
+            assertThat(camp.at("/totals/checkedInAppointmentCount").asLong()).isEqualTo(1);
+            assertThat(camp.at("/drillDown")).hasSize(1);
+            assertThat(camp.at("/drillDown/0/factType").asText()).isEqualTo(factType);
+            assertThat(camp.at("/drillDown/0/sourceId").asLong()).isEqualTo(appointmentId);
+        }
+    }
+
+    @Test
     void skuQualityCountsOnlyActuallyPaidLinesAndNeverAutoDisablesSku() throws Exception {
         long customer = fixture.customer(1, 2, 1);
         Fixture.CatalogIds paidSku = fixture.catalog("ITR-SKU-PAID", "光子卡", "3次", true);
@@ -801,13 +871,16 @@ class ReportingApiIT extends AbstractMysqlIT {
 
         void serviceDoneAppointment(long tenant, long customer, long institution, long owner, String scheduledAt) {
             long appointment = id();
+            Instant base = Instant.parse(scheduledAt);
+            String confirmedAt = base.minusSeconds(7200).toString();
+            String checkedInAt = base.minusSeconds(3600).toString();
             jdbc.update("INSERT INTO crm_appointment (id,tenant_id,appointment_no,customer_id,institution_id,owner_staff_id,"
-                            + "team_id,scheduled_at,status,created_by) VALUES (?,?,?,?,?,?,1,?,'SERVICE_DONE',2)",
-                    appointment, tenant, "ITR-A-" + appointment, customer, institution, owner, ts(scheduledAt));
-            history(tenant, appointment, "PENDING_INSTITUTION", "CONFIRMED",
-                    Instant.parse(scheduledAt).minusSeconds(7200).toString());
-            history(tenant, appointment, "CONFIRMED", "CHECKED_IN",
-                    Instant.parse(scheduledAt).minusSeconds(3600).toString());
+                            + "team_id,scheduled_at,status,confirmed_at,checked_in_at,service_done_at,created_by) "
+                            + "VALUES (?,?,?,?,?,?,1,?,'SERVICE_DONE',?,?,?,2)",
+                    appointment, tenant, "ITR-A-" + appointment, customer, institution, owner, ts(scheduledAt),
+                    ts(confirmedAt), ts(checkedInAt), ts(scheduledAt));
+            history(tenant, appointment, "PENDING_INSTITUTION", "CONFIRMED", confirmedAt);
+            history(tenant, appointment, "CONFIRMED", "CHECKED_IN", checkedInAt);
             history(tenant, appointment, "CHECKED_IN", "SERVICE_DONE", scheduledAt);
         }
 
@@ -817,20 +890,23 @@ class ReportingApiIT extends AbstractMysqlIT {
             long appointment = id();
             long appointmentItem = id();
             long redemption = id();
+            Instant posted = Instant.parse(postedAt);
+            String confirmedAt = posted.minusSeconds(7200).toString();
+            String checkedInAt = posted.minusSeconds(3600).toString();
+            String serviceDoneAt = posted.minusSeconds(1800).toString();
             jdbc.update("INSERT INTO crm_entitlement (id,tenant_id,customer_id,order_item_id,project_id,granted_count,"
                             + "available_count,version_no,status) VALUES (?,?,?,?,?,?,0,0,'AVAILABLE')",
                     entitlement, tenant, customer, orderItem, catalog.projectId(), count);
             jdbc.update("INSERT INTO crm_appointment (id,tenant_id,appointment_no,customer_id,institution_id,owner_staff_id,"
-                            + "team_id,scheduled_at,status,created_by) VALUES (?,?,?,?,?,?,1,?,'REDEEMED',2)",
-                    appointment, tenant, "ITR-A-" + appointment, customer, catalog.institutionId(), owner, ts(postedAt));
+                            + "team_id,scheduled_at,status,confirmed_at,checked_in_at,service_done_at,created_by) "
+                            + "VALUES (?,?,?,?,?,?,1,?,'REDEEMED',?,?,?,2)",
+                    appointment, tenant, "ITR-A-" + appointment, customer, catalog.institutionId(), owner, ts(postedAt),
+                    ts(confirmedAt), ts(checkedInAt), ts(serviceDoneAt));
             jdbc.update("INSERT INTO crm_appointment_item (id,tenant_id,appointment_id,entitlement_id,project_id,planned_count) "
                     + "VALUES (?,?,?,?,?,?)", appointmentItem, tenant, appointment, entitlement, catalog.projectId(), count);
-            history(tenant, appointment, "PENDING_INSTITUTION", "CONFIRMED",
-                    Instant.parse(postedAt).minusSeconds(7200).toString());
-            history(tenant, appointment, "CONFIRMED", "CHECKED_IN",
-                    Instant.parse(postedAt).minusSeconds(3600).toString());
-            history(tenant, appointment, "CHECKED_IN", "SERVICE_DONE",
-                    Instant.parse(postedAt).minusSeconds(1800).toString());
+            history(tenant, appointment, "PENDING_INSTITUTION", "CONFIRMED", confirmedAt);
+            history(tenant, appointment, "CONFIRMED", "CHECKED_IN", checkedInAt);
+            history(tenant, appointment, "CHECKED_IN", "SERVICE_DONE", serviceDoneAt);
             jdbc.update("INSERT INTO crm_redemption (id,tenant_id,appointment_id,customer_id,institution_id,owner_staff_id,"
                             + "team_id,service_at,evidence_ref,status,idempotency_key,posted_by,posted_at) "
                             + "VALUES (?,?,?,?,?,?,1,?,'ITR-EVIDENCE','POSTED',?,10,?)",
@@ -917,7 +993,7 @@ class ReportingApiIT extends AbstractMysqlIT {
             return id;
         }
 
-        private long id() {
+        long id() {
             return IDS.getAndIncrement();
         }
 

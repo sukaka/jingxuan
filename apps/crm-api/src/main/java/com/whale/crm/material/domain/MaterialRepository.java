@@ -38,6 +38,12 @@ public interface MaterialRepository {
     int updateMaterialContent(long tenantId, long materialId, long expectedVersion, MaterialRevision revision,
                               MaterialScopeQuery scope);
 
+    int updateLatestRevisionId(long tenantId, long materialId, long latestRevisionId);
+
+    void deleteMaterialTags(long tenantId, long materialId);
+
+    void insertMaterialTags(long tenantId, long materialId, List<String> tagCodes);
+
     int submitRevision(long tenantId, long revisionId, long materialId, long expectedVersion,
                        MaterialScopeQuery scope);
 

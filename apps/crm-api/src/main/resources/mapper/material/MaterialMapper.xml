@@ -21,8 +21,30 @@
     <if test="scope.canWrite and scope.scopeType == 'ALL'">OR 1=1</if>
     <if test="scope.canWrite">OR r.created_by=#{scope.selfId}</if>)
   </sql>
+  <sql id="latestRevisionVisibility">
+    (r_lat.status='APPROVED'
+    <if test="scope.canReview">OR r_lat.status IN ('PENDING','REJECTED')</if>
+    <if test="scope.canWrite and scope.scopeType == 'ALL'">OR 1=1</if>
+    <if test="scope.canWrite">OR r_lat.created_by=#{scope.selfId}</if>)
+  </sql>
+  <sql id="currentRevisionVisibility">
+    (r_cur.status='APPROVED'
+    <if test="scope.canReview">OR r_cur.status IN ('PENDING','REJECTED')</if>
+    <if test="scope.canWrite and scope.scopeType == 'ALL'">OR 1=1</if>
+    <if test="scope.canWrite">OR r_cur.created_by=#{scope.selfId}</if>)
+  </sql>
   <sql id="materialLifecycleVisibility">
     (m.offline_at IS NULL<if test="scope.canWrite or scope.canReview"> OR 1=1</if>)
+  </sql>
+  <sql id="materialScopeAndLifecycle">
+    <choose>
+      <when test="scope.scopeType == 'ALL'">1=1</when>
+      <when test="scope.scopeType == 'INSTITUTION' and scope.institutionIds != null and scope.institutionIds.size() > 0">
+        m.institution_id IN <foreach collection="scope.institutionIds" item="institutionId" open="(" separator="," close=")">#{institutionId}</foreach>
+      </when>
+      <otherwise>1=0</otherwise>
+    </choose>
+    AND <include refid="materialLifecycleVisibility"/>
   </sql>
   <sql id="revisionScope">
     <choose>
@@ -37,51 +59,74 @@
     </choose>
     AND <include refid="materialLifecycleVisibility"/>
   </sql>
-  <sql id="visibleMaterialRows">
-    SELECT m.id,m.tenant_id,m.material_no,m.current_revision_id,m.created_by AS material_created_by,
-      m.created_at AS material_created_at,m.updated_at AS material_updated_at,m.version AS material_version,
-      m.offline_at AS material_offline_at,m.offline_by AS material_offline_by,
-      m.offline_reason AS material_offline_reason,
-      r.id AS revision_id,r.revision_no,r.title,r.summary,r.category_code,r.institution_id,r.project_id,r.city_code,
-      r.tags_json,r.file_id,r.change_note,r.status,r.reviewer_id,r.review_note,r.reviewed_at,r.created_by,
-      r.created_at,r.updated_at,r.version AS revision_version,
-      ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY r.revision_no DESC) AS rn
-    FROM crm_material m
-    JOIN crm_material_revision r ON r.tenant_id=m.tenant_id AND r.material_id=m.id
-    WHERE m.tenant_id=#{tenantId} AND <include refid="revisionScope"/>
+  <sql id="dualRevisionColumns">
+    m.id,m.tenant_id AS tenantId,m.material_no AS materialNo,m.current_revision_id AS currentRevisionId,
+    m.created_by AS materialCreatedBy,m.created_at AS materialCreatedAt,
+    m.updated_at AS materialUpdatedAt,m.version AS materialVersion,
+    m.offline_at AS materialOfflineAt,m.offline_by AS materialOfflineBy,
+    m.offline_reason AS materialOfflineReason,
+    COALESCE(r_lat.id,r_cur.id) AS revisionId,
+    COALESCE(r_lat.revision_no,r_cur.revision_no) AS revisionNo,
+    COALESCE(r_lat.title,r_cur.title) AS title,
+    COALESCE(r_lat.summary,r_cur.summary) AS summary,
+    COALESCE(r_lat.category_code,r_cur.category_code) AS categoryCode,
+    COALESCE(r_lat.institution_id,r_cur.institution_id) AS institutionId,
+    COALESCE(r_lat.project_id,r_cur.project_id) AS projectId,
+    COALESCE(r_lat.city_code,r_cur.city_code) AS cityCode,
+    COALESCE(r_lat.tags_json,r_cur.tags_json) AS tagsJson,
+    COALESCE(r_lat.file_id,r_cur.file_id) AS fileId,
+    COALESCE(r_lat.change_note,r_cur.change_note) AS changeNote,
+    COALESCE(r_lat.status,r_cur.status) AS status,
+    COALESCE(r_lat.reviewer_id,r_cur.reviewer_id) AS reviewerId,
+    COALESCE(r_lat.review_note,r_cur.review_note) AS reviewNote,
+    COALESCE(r_lat.reviewed_at,r_cur.reviewed_at) AS reviewedAt,
+    COALESCE(r_lat.created_by,r_cur.created_by) AS createdBy,
+    COALESCE(r_lat.created_at,r_cur.created_at) AS createdAt,
+    COALESCE(r_lat.updated_at,r_cur.updated_at) AS updatedAt,
+    COALESCE(r_lat.version,r_cur.version) AS revisionVersion
   </sql>
-  <sql id="listColumns">
-    v.id,v.tenant_id AS tenantId,v.material_no AS materialNo,v.current_revision_id AS currentRevisionId,
-    v.material_created_by AS materialCreatedBy,v.material_created_at AS materialCreatedAt,
-    v.material_updated_at AS materialUpdatedAt,v.material_version AS materialVersion,
-    v.material_offline_at AS materialOfflineAt,v.material_offline_by AS materialOfflineBy,
-    v.material_offline_reason AS materialOfflineReason,v.revision_id AS revisionId,
-    v.revision_no AS revisionNo,v.title,v.summary,v.category_code AS categoryCode,v.institution_id AS institutionId,
-    v.project_id AS projectId,v.city_code AS cityCode,v.tags_json AS tagsJson,v.file_id AS fileId,
-    v.change_note AS changeNote,v.status,v.reviewer_id AS reviewerId,v.review_note AS reviewNote,
-    v.reviewed_at AS reviewedAt,v.created_by AS createdBy,v.created_at AS createdAt,v.updated_at AS updatedAt,
-    v.revision_version AS revisionVersion
+  <sql id="dualRevisionFrom">
+    FROM crm_material m
+    LEFT JOIN crm_material_revision r_lat
+      ON r_lat.tenant_id=m.tenant_id AND r_lat.id=m.latest_revision_id
+      AND <include refid="latestRevisionVisibility"/>
+    LEFT JOIN crm_material_revision r_cur
+      ON r_cur.tenant_id=m.tenant_id AND r_cur.id=m.current_revision_id
+      AND r_lat.id IS NULL AND m.current_revision_id IS NOT NULL
+      AND (m.latest_revision_id IS NULL OR m.current_revision_id&lt;&gt;m.latest_revision_id)
+      AND <include refid="currentRevisionVisibility"/>
   </sql>
   <sql id="listFilters">
-    <if test="criteria.keyword != null and criteria.keyword != ''">
-      AND (v.material_no LIKE CONCAT('%',#{criteria.keyword},'%') OR v.title LIKE CONCAT('%',#{criteria.keyword},'%')
-        OR v.summary LIKE CONCAT('%',#{criteria.keyword},'%') OR v.city_code LIKE CONCAT('%',#{criteria.keyword},'%')
-        OR v.tags_json LIKE CONCAT('%',#{criteria.keyword},'%'))
+    <if test="criteria.keyword != null and criteria.keyword.trim() != ''">
+      AND (m.material_no LIKE CONCAT('%',#{criteria.keyword},'%')
+        OR COALESCE(r_lat.title,r_cur.title) LIKE CONCAT('%',#{criteria.keyword},'%')
+        OR COALESCE(r_lat.summary,r_cur.summary) LIKE CONCAT('%',#{criteria.keyword},'%')
+        OR COALESCE(r_lat.city_code,r_cur.city_code) LIKE CONCAT('%',#{criteria.keyword},'%')
+        OR (r_lat.id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM crm_material_tag mt
+          WHERE mt.tenant_id=m.tenant_id AND mt.material_id=m.id AND mt.tag_code=TRIM(#{criteria.keyword})
+        ))
+        OR (r_lat.id IS NULL AND r_cur.id IS NOT NULL
+          AND JSON_VALID(r_cur.tags_json)=1 AND JSON_TYPE(r_cur.tags_json)='ARRAY'
+          AND EXISTS (
+            SELECT 1 FROM JSON_TABLE(r_cur.tags_json, '$[*]' COLUMNS (elem JSON PATH '$')) jt
+            WHERE JSON_TYPE(jt.elem)='STRING' AND TRIM(JSON_UNQUOTE(jt.elem))=TRIM(#{criteria.keyword})
+          )))
     </if>
-    <if test="criteria.categoryCode != null and criteria.categoryCode != ''">AND v.category_code=#{criteria.categoryCode}</if>
-    <if test="criteria.institutionId != null">AND v.institution_id=#{criteria.institutionId}</if>
-    <if test="criteria.projectId != null">AND v.project_id=#{criteria.projectId}</if>
-    <if test="criteria.cityCode != null and criteria.cityCode != ''">AND v.city_code=#{criteria.cityCode}</if>
+    <if test="criteria.categoryCode != null and criteria.categoryCode != ''">AND COALESCE(r_lat.category_code,r_cur.category_code)=#{criteria.categoryCode}</if>
+    <if test="criteria.institutionId != null">AND m.institution_id=#{criteria.institutionId}</if>
+    <if test="criteria.projectId != null">AND COALESCE(r_lat.project_id,r_cur.project_id)=#{criteria.projectId}</if>
+    <if test="criteria.cityCode != null and criteria.cityCode != ''">AND COALESCE(r_lat.city_code,r_cur.city_code)=#{criteria.cityCode}</if>
     <if test="criteria.status != null and criteria.status != ''">
       <choose>
-        <when test="criteria.status == 'OFFLINE'">AND v.material_offline_at IS NOT NULL</when>
-        <otherwise>AND v.status=#{criteria.status} AND v.material_offline_at IS NULL</otherwise>
+        <when test="criteria.status == 'OFFLINE'">AND m.offline_at IS NOT NULL</when>
+        <otherwise>AND COALESCE(r_lat.status,r_cur.status)=#{criteria.status} AND m.offline_at IS NULL</otherwise>
       </choose>
     </if>
     <if test="criteria.globalOnly != null">
       <choose>
-        <when test="criteria.globalOnly">AND v.institution_id IS NULL</when>
-        <otherwise>AND v.institution_id IS NOT NULL</otherwise>
+        <when test="criteria.globalOnly">AND m.institution_id IS NULL</when>
+        <otherwise>AND m.institution_id IS NOT NULL</otherwise>
       </choose>
     </if>
   </sql>
@@ -111,13 +156,17 @@
   </select>
 
   <select id="search" resultType="com.whale.crm.material.domain.MaterialListRow">
-    SELECT <include refid="listColumns"/> FROM (<include refid="visibleMaterialRows"/>) v
-    WHERE v.rn=1 <include refid="listFilters"/>
-    ORDER BY v.id DESC LIMIT #{size} OFFSET #{offset}
+    SELECT <include refid="dualRevisionColumns"/> <include refid="dualRevisionFrom"/>
+    WHERE m.tenant_id=#{tenantId} AND <include refid="materialScopeAndLifecycle"/>
+      AND (r_lat.id IS NOT NULL OR r_cur.id IS NOT NULL)
+      <include refid="listFilters"/>
+    ORDER BY m.id DESC LIMIT #{size} OFFSET #{offset}
   </select>
   <select id="count" resultType="long">
-    SELECT COUNT(*) FROM (<include refid="visibleMaterialRows"/>) v
-    WHERE v.rn=1 <include refid="listFilters"/>
+    SELECT COUNT(*) <include refid="dualRevisionFrom"/>
+    WHERE m.tenant_id=#{tenantId} AND <include refid="materialScopeAndLifecycle"/>
+      AND (r_lat.id IS NOT NULL OR r_cur.id IS NOT NULL)
+      <include refid="listFilters"/>
   </select>
 
   <select id="selectScopedMaterial" resultType="com.whale.crm.material.domain.Material">
@@ -175,13 +224,29 @@
     UPDATE crm_material m
     SET m.title=#{entity.title},m.summary=#{entity.summary},m.category_code=#{entity.categoryCode},
       m.institution_id=#{entity.institutionId},m.project_id=#{entity.projectId},m.city_code=#{entity.cityCode},
-      m.tags_json=#{entity.tagsJson},m.review_status='DRAFT',m.reviewer_id=NULL,
+      m.tags_json=#{entity.tagsJson},m.latest_revision_id=#{entity.id},m.review_status='DRAFT',m.reviewer_id=NULL,
       m.updated_at=UTC_TIMESTAMP(3),m.version=m.version+1
     WHERE m.tenant_id=#{tenantId} AND m.id=#{materialId} AND m.version=#{expectedVersion}
       AND m.offline_at IS NULL AND m.review_status IN ('DRAFT','APPROVED','REJECTED')
       AND EXISTS (SELECT 1 FROM crm_material_revision r
         WHERE r.tenant_id=m.tenant_id AND r.material_id=m.id AND <include refid="revisionScope"/>)
   </update>
+  <update id="updateLatestRevisionId">
+    UPDATE crm_material
+    SET latest_revision_id=#{latestRevisionId}
+    WHERE tenant_id=#{tenantId} AND id=#{materialId}
+  </update>
+  <delete id="deleteMaterialTags">
+    DELETE FROM crm_material_tag
+    WHERE tenant_id=#{tenantId} AND material_id=#{materialId}
+  </delete>
+  <insert id="insertMaterialTags">
+    INSERT IGNORE INTO crm_material_tag (tenant_id,material_id,tag_code)
+    VALUES
+    <foreach collection="tagCodes" item="tagCode" separator=",">
+      (#{tenantId},#{materialId},#{tagCode})
+    </foreach>
+  </insert>
   <update id="submitRevision">
     UPDATE crm_material_revision r
     SET r.status='PENDING',r.reviewer_id=NULL,r.review_note=NULL,r.reviewed_at=NULL,

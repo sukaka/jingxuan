@@ -74,7 +74,8 @@ class MaterialMapperContractTest {
 
         BoundSql bound = configuration.getMappedStatement(NAMESPACE + "search").getBoundSql(params);
 
-        assertThat(normalize(bound.getSql())).doesNotContain(hostileKeyword).contains("v.status=?", "LIMIT ? OFFSET ?");
+        assertThat(normalize(bound.getSql())).doesNotContain(hostileKeyword)
+                .contains("COALESCE(r_lat.status,r_cur.status)=?", "crm_material_tag", "LIMIT ? OFFSET ?");
         assertThat(bound.getParameterMappings()).anyMatch(mapping -> mapping.getProperty().equals("criteria.keyword"));
     }
 
@@ -161,7 +162,41 @@ class MaterialMapperContractTest {
 
         String sql = sql("search", params);
 
-        assertThat(sql).contains("v.material_offline_at IS NOT NULL").doesNotContain("v.status=?");
+        assertThat(sql).contains("m.offline_at IS NOT NULL").doesNotContain("COALESCE(r_lat.status,r_cur.status)=?");
+    }
+
+    @Test
+    void searchUsesDualRevisionJoinAndMaterialTagWithCurrentFallbackWithoutRowNumber() {
+        Map<String, Object> params = new HashMap<>();
+        params.put("tenantId", 1L);
+        params.put("scope", scope("ALL", true, false, false));
+        params.put("criteria", new MaterialSearchCriteria("vip", null, null, null, null,
+                null, null, 1, 20));
+        params.put("offset", 0);
+        params.put("size", 20);
+
+        String sql = sql("search", params);
+
+        assertThat(sql).doesNotContain("ROW_NUMBER()", "tags_json LIKE")
+                .contains("m.latest_revision_id", "m.current_revision_id",
+                        "r_lat.id IS NOT NULL AND EXISTS ( SELECT 1 FROM crm_material_tag mt",
+                        "r_lat.id IS NULL AND r_cur.id IS NOT NULL", "JSON_TABLE(r_cur.tags_json");
+    }
+
+    @Test
+    void tagMaintenanceStatementsAreTenantScopedAndIdempotent() {
+        Map<String, Object> latestParams = Map.of("tenantId", 1L, "materialId", 10L, "latestRevisionId", 22L);
+        assertThat(sql("updateLatestRevisionId", latestParams))
+                .contains("UPDATE crm_material SET latest_revision_id=? WHERE tenant_id=? AND id=?");
+
+        Map<String, Object> deleteParams = Map.of("tenantId", 1L, "materialId", 10L);
+        assertThat(sql("deleteMaterialTags", deleteParams))
+                .contains("DELETE FROM crm_material_tag WHERE tenant_id=? AND material_id=?");
+
+        Map<String, Object> insertParams = Map.of("tenantId", 1L, "materialId", 10L,
+                "tagCodes", java.util.List.of("vip", "case"));
+        assertThat(sql("insertMaterialTags", insertParams))
+                .contains("INSERT IGNORE INTO crm_material_tag (tenant_id,material_id,tag_code) VALUES");
     }
 
     private Map<String, Object> revisionParams(MaterialScopeQuery scope) {

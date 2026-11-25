@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.whale.crm.fulfillment.infrastructure.mapper.FulfillmentMapper">
-  <sql id="appointmentColumns">id,appointment_no AS appointmentNo,customer_id AS customerId,institution_id AS institutionId,owner_staff_id AS ownerStaffId,team_id AS teamId,scheduled_at AS scheduledAt,remark,status,created_by AS createdBy,created_at AS createdAt,version</sql>
-  <sql id="aliasedAppointmentColumns">a.id,a.appointment_no AS appointmentNo,a.customer_id AS customerId,a.institution_id AS institutionId,a.owner_staff_id AS ownerStaffId,a.team_id AS teamId,a.scheduled_at AS scheduledAt,a.remark,a.status,a.created_by AS createdBy,a.created_at AS createdAt,a.version</sql>
+  <sql id="appointmentColumns">id,appointment_no AS appointmentNo,customer_id AS customerId,institution_id AS institutionId,owner_staff_id AS ownerStaffId,team_id AS teamId,scheduled_at AS scheduledAt,remark,status,confirmed_at AS confirmedAt,checked_in_at AS checkedInAt,service_done_at AS serviceDoneAt,created_by AS createdBy,created_at AS createdAt,version</sql>
+  <sql id="aliasedAppointmentColumns">a.id,a.appointment_no AS appointmentNo,a.customer_id AS customerId,a.institution_id AS institutionId,a.owner_staff_id AS ownerStaffId,a.team_id AS teamId,a.scheduled_at AS scheduledAt,a.remark,a.status,a.confirmed_at AS confirmedAt,a.checked_in_at AS checkedInAt,a.service_done_at AS serviceDoneAt,a.created_by AS createdBy,a.created_at AS createdAt,a.version</sql>
   <sql id="appointmentItemColumns">id,appointment_id AS appointmentId,entitlement_id AS entitlementId,project_id AS projectId,planned_count AS plannedCount,created_at AS createdAt,version</sql>
   <sql id="appointmentHistoryColumns">id,appointment_id AS appointmentId,from_status AS fromStatus,to_status AS toStatus,actor_user_id AS actorUserId,reason,created_at AS createdAt</sql>
   <sql id="redemptionColumns">id,appointment_id AS appointmentId,customer_id AS customerId,institution_id AS institutionId,owner_staff_id AS ownerStaffId,team_id AS teamId,service_at AS serviceAt,evidence_ref AS evidenceRef,voucher_file_id AS voucherFileId,status,settlement_status AS settlementStatus,idempotency_key AS idempotencyKey,posted_by AS postedBy,posted_at AS postedAt,created_at AS createdAt,version</sql>
@@ -28,8 +28,8 @@
   </sql>
 
   <insert id="insertAppointment">
-    INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,owner_staff_id,team_id,scheduled_at,remark,status,created_by)
-    VALUES (#{tenantId},#{entity.appointmentNo},#{entity.customerId},#{entity.institutionId},#{entity.ownerStaffId},#{entity.teamId},#{entity.scheduledAt},#{entity.remark},#{entity.status},#{entity.createdBy})
+    INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,owner_staff_id,team_id,scheduled_at,remark,status,confirmed_at,checked_in_at,service_done_at,created_by)
+    VALUES (#{tenantId},#{entity.appointmentNo},#{entity.customerId},#{entity.institutionId},#{entity.ownerStaffId},#{entity.teamId},#{entity.scheduledAt},#{entity.remark},#{entity.status},#{entity.confirmedAt},#{entity.checkedInAt},#{entity.serviceDoneAt},#{entity.createdBy})
   </insert>
   <select id="selectAppointmentByNo" resultType="com.whale.crm.fulfillment.domain.Appointment">
     SELECT <include refid="appointmentColumns"/> FROM crm_appointment WHERE tenant_id=#{tenantId} AND appointment_no=#{appointmentNo}
@@ -112,7 +112,12 @@
     LIMIT #{limit}
   </select>
   <update id="updateAppointmentStatus">
-    UPDATE crm_appointment SET status=#{toStatus},version=version+1
+    UPDATE crm_appointment
+    SET status=#{toStatus},
+        confirmed_at=CASE WHEN #{toStatus} = 'CONFIRMED' THEN COALESCE(confirmed_at, UTC_TIMESTAMP(3)) ELSE confirmed_at END,
+        checked_in_at=CASE WHEN #{toStatus} = 'CHECKED_IN' THEN COALESCE(checked_in_at, UTC_TIMESTAMP(3)) ELSE checked_in_at END,
+        service_done_at=CASE WHEN #{expectedStatus} = 'CHECKED_IN' AND #{toStatus} = 'SERVICE_DONE' THEN COALESCE(service_done_at, UTC_TIMESTAMP(3)) ELSE service_done_at END,
+        version=version+1
     WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status=#{expectedStatus}
   </update>
   <insert id="insertAppointmentItem">

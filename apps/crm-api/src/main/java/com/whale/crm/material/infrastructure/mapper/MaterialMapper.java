@@ -58,6 +58,14 @@ public interface MaterialMapper {
                               @Param("expectedVersion") long expectedVersion,
                               @Param("entity") MaterialRevision entity, @Param("scope") MaterialScopeQuery scope);
 
+    int updateLatestRevisionId(@Param("tenantId") long tenantId, @Param("materialId") long materialId,
+                               @Param("latestRevisionId") long latestRevisionId);
+
+    void deleteMaterialTags(@Param("tenantId") long tenantId, @Param("materialId") long materialId);
+
+    void insertMaterialTags(@Param("tenantId") long tenantId, @Param("materialId") long materialId,
+                            @Param("tagCodes") List<String> tagCodes);
+
     int submitRevision(@Param("tenantId") long tenantId, @Param("revisionId") long revisionId,
                        @Param("materialId") long materialId, @Param("expectedVersion") long expectedVersion,
                        @Param("scope") MaterialScopeQuery scope);
