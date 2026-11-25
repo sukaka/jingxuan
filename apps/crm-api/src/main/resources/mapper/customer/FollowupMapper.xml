@@ -115,7 +115,7 @@
              f.next_followup_at AS nextFollowupAt, f.blocker_note AS blockerNote, f.created_by AS createdBy,
              f.created_at AS createdAt, COALESCE(f.contact_at, f.created_at) AS occurredAt
       <include refid="timelineBranchWhere"/>
-      AND f.intent_project IS NOT NULL AND TRIM(f.intent_project) &lt;&gt; ''
+      AND f.intent_project IS NOT NULL AND REGEXP_LIKE(f.intent_project, '[^[:space:]]')
       <choose>
         <when test="intentMode == 'LE'">
           AND COALESCE(f.contact_at, f.created_at) &lt;= #{cursorOccurredAt}
@@ -162,7 +162,7 @@
              f.next_followup_at AS nextFollowupAt, f.blocker_note AS blockerNote, f.created_by AS createdBy,
              f.created_at AS createdAt, COALESCE(f.contact_at, f.created_at) AS occurredAt
       <include refid="timelineBranchWhere"/>
-      AND f.blocker_note IS NOT NULL AND TRIM(f.blocker_note) &lt;&gt; ''
+      AND f.blocker_note IS NOT NULL AND REGEXP_LIKE(f.blocker_note, '[^[:space:]]')
       <choose>
         <when test="blockerMode == 'LE'">
           AND COALESCE(f.contact_at, f.created_at) &lt;= #{cursorOccurredAt}

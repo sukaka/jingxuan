@@ -26,7 +26,8 @@ public class CustomerTimelineCursorCodec {
             CursorPayload payload = objectMapper.readValue(decoded, CursorPayload.class);
             if (payload.version() != 1 || payload.customerId() != customerId || payload.occurredAt() == null
                     || payload.type() == null || payload.type().isBlank() || payload.type().length() > 48
-                    || payload.eventKey() == null || payload.eventKey().isBlank() || payload.eventKey().length() > 128) {
+                    || !isCanonicalEventKey(payload.eventKey(), payload.type())
+                    || payload.eventKey().length() > 128) {
                 throw invalid();
             }
             return new CustomerTimelineCursor(payload.occurredAt(), payload.type(), payload.eventKey());
@@ -34,6 +35,31 @@ public class CustomerTimelineCursorCodec {
             throw ex;
         } catch (Exception ex) {
             throw invalid();
+        }
+    }
+
+    private static boolean isCanonicalEventKey(String eventKey, String type) {
+        if (eventKey == null || type == null || type.isBlank()) {
+            return false;
+        }
+        int prefixLength = 20;
+        if (eventKey.length() != prefixLength + 1 + type.length() || eventKey.charAt(prefixLength) != ':') {
+            return false;
+        }
+        for (int i = 0; i < prefixLength; i++) {
+            char ch = eventKey.charAt(i);
+            if (ch < '0' || ch > '9') {
+                return false;
+            }
+        }
+        if (!eventKey.regionMatches(prefixLength + 1, type, 0, type.length())) {
+            return false;
+        }
+        try {
+            Long.parseLong(eventKey.substring(0, prefixLength));
+            return true;
+        } catch (NumberFormatException ex) {
+            return false;
         }
     }
 

@@ -128,11 +128,11 @@ public class FollowupApplicationService {
         return switch (row.eventType()) {
             case "FOLLOWUP" -> CustomerTimelineItemResponse.of("FOLLOWUP", row.id(), "FOLLOWUP", occurredAt,
                     "跟进记录", row.summary(), Map.of("channelCode", row.channelCode()), row.createdBy());
-            case "INTENT" -> (row.intentProject() == null || row.intentProject().isBlank()) ? null
+            case "INTENT" -> isTimelineBlank(row.intentProject()) ? null
                     : CustomerTimelineItemResponse.of("INTENT", row.id(), "INTENT", occurredAt,
                             "意向项目", row.intentProject(), Map.of("estimatedAmountFen", row.estimatedAmountFen()),
                             row.createdBy());
-            case "BLOCKER" -> (row.blockerNote() == null || row.blockerNote().isBlank()) ? null
+            case "BLOCKER" -> isTimelineBlank(row.blockerNote()) ? null
                     : CustomerTimelineItemResponse.of("BLOCKER", row.id(), "BLOCKER", occurredAt,
                             "跟进卡点", row.blockerNote(), Map.of("followupId", row.id()), row.createdBy());
             case "NEXT_FOLLOWUP" -> row.nextFollowupAt() == null ? null
@@ -331,5 +331,11 @@ public class FollowupApplicationService {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    /** 与 MySQL 8.4 ICU REGEXP_LIKE(col, '[^[:space:]]') 对齐，覆盖控制空白及 U+00A0/U+3000 等空格字符。 */
+    private static boolean isTimelineBlank(String value) {
+        return value == null || value.codePoints()
+                .allMatch(cp -> Character.isWhitespace(cp) || Character.isSpaceChar(cp) || cp == '\u0085');
     }
 }

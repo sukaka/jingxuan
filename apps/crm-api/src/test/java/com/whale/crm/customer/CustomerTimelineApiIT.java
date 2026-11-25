@@ -16,11 +16,14 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -278,6 +281,91 @@ class CustomerTimelineApiIT extends AbstractMysqlIT {
                 .orElseThrow();
         assertThat(ccRow.get("key")).isEqualTo("idx_complaint_case_customer");
         assertThat(ccRow.get("type")).isEqualTo("ref");
+    }
+
+    @Test
+    void timelineFiltersControlAndUnicodeWhitespaceIntentAndBlockerInSqlWithoutStarvingPagination()
+            throws Exception {
+        AuthCookies admin = login("admin");
+        long customerId = customer(admin);
+        Instant base = Instant.now().minus(7, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS);
+
+        // 4 rows sharing exact occurredAt=base with whitespace-only intent_project / blocker_note
+        insertFollowupRow(customerId, base, "WS-1", "\t", null, "\u3000");
+        insertFollowupRow(customerId, base, "WS-2", "\n", null, "\u00A0");
+        insertFollowupRow(customerId, base, "WS-3", "\r\n", null, "   ");
+        insertFollowupRow(customerId, base, "WS-4", "\u3000\t\n", null, "\r\n\u00A0");
+        // Additional older whitespace-only rows + 1 older valid followup with real intent/blocker/nextFollowupAt
+        insertFollowupRow(customerId, base.minusSeconds(1), "WS-5", "\u00A0", null, "\t\n");
+        insertFollowupRow(customerId, base.minusSeconds(2), "WS-6", "  ", null, "\u3000");
+        insertFollowupRow(customerId, base.minusSeconds(10), "VALID-OLD", "  热玛吉  ",
+                base.plusSeconds(600), "预算确认");
+
+        List<String> referenceKeys = new ArrayList<>();
+        List<String> referenceTypes = new ArrayList<>();
+        String refBody = mockMvc.perform(get("/api/v1/customers/{id}/timeline?size=100", customerId)
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode refData = objectMapper.readTree(refBody).at("/data");
+        assertThat(refData.at("/nextCursor").isNull()).isTrue();
+        for (JsonNode item : refData.withArray("items")) {
+            String type = item.at("/type").asText();
+            referenceKeys.add(item.at("/eventKey").asText());
+            referenceTypes.add(type);
+            if ("INTENT".equals(type)) {
+                assertThat(item.at("/summary").asText()).isEqualTo("  热玛吉  ");
+            }
+            if ("BLOCKER".equals(type)) {
+                assertThat(item.at("/summary").asText()).isEqualTo("预算确认");
+            }
+        }
+        // 7 FOLLOWUP + 1 NEXT_FOLLOWUP + 1 INTENT + 1 BLOCKER = 10 events (zero whitespace false positives)
+        assertThat(referenceKeys).hasSize(10);
+        assertThat(referenceTypes.stream().filter("FOLLOWUP"::equals).count()).isEqualTo(7L);
+        assertThat(referenceTypes.stream().filter("INTENT"::equals).count()).isEqualTo(1L);
+        assertThat(referenceTypes.stream().filter("BLOCKER"::equals).count()).isEqualTo(1L);
+        assertThat(referenceTypes.stream().filter("NEXT_FOLLOWUP"::equals).count()).isEqualTo(1L);
+
+        for (int size : new int[]{1, 2}) {
+            List<String> pagedKeys = new ArrayList<>();
+            String cursor = null;
+            int expectedPages = 10 / size;
+            for (int page = 0; page < expectedPages; page++) {
+                String path = "/api/v1/customers/" + customerId + "/timeline?size=" + size
+                        + (cursor == null ? "" : "&cursor=" + cursor);
+                String body = mockMvc.perform(get(path).cookie(admin.cookies()))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString();
+                JsonNode data = objectMapper.readTree(body).at("/data");
+                assertThat(data.withArray("items").size()).isEqualTo(size);
+                data.withArray("items").forEach(item -> pagedKeys.add(item.at("/eventKey").asText()));
+                if (page < expectedPages - 1) {
+                    assertThat(data.at("/nextCursor").isNull()).isFalse();
+                    cursor = data.at("/nextCursor").asText();
+                } else {
+                    assertThat(data.at("/nextCursor").isNull()).isTrue();
+                    cursor = null;
+                }
+            }
+            assertThat(pagedKeys)
+                    .as("size=%d 分页不得因空白字符饿死 LIMIT 或产生假阳性", size)
+                    .containsExactlyElementsOf(referenceKeys);
+        }
+
+        // Crafted cursor with non-canonical eventKey must return 400 VALIDATION_FAILED
+        Map<String, Object> crafted = new LinkedHashMap<>();
+        crafted.put("version", 1);
+        crafted.put("customerId", customerId);
+        crafted.put("occurredAt", base.toString());
+        crafted.put("type", "FOLLOWUP");
+        crafted.put("eventKey", "bad");
+        String craftedCursor = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(objectMapper.writeValueAsString(crafted).getBytes(StandardCharsets.UTF_8));
+        mockMvc.perform(get("/api/v1/customers/{id}/timeline?cursor={cursor}", customerId, craftedCursor)
+                        .cookie(admin.cookies()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     private List<String> collectAllEventKeys(AuthCookies actor, long customerId, int size) throws Exception {

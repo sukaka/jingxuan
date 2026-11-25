@@ -2,6 +2,7 @@ package com.whale.crm.customer.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.customer.api.dto.CreateFollowupRequest;
+import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.api.dto.FollowupItemResponse;
 import com.whale.crm.customer.api.dto.UpdateFollowupRequest;
 import com.whale.crm.customer.domain.Customer;
@@ -24,12 +25,14 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -175,6 +178,28 @@ class FollowupApplicationServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(ex -> ((BusinessException) ex).errorCode())
                 .isEqualTo(ErrorCode.CONFLICT);
+    }
+
+    @Test
+    void timelineTreatsUnicodeAndControlWhitespaceIntentAndBlockerAsBlank() {
+        Customer customer = customer(100L, 2L, 1L);
+        when(customerRepository.findById(1L, 100L)).thenReturn(Optional.of(customer));
+        when(followupRepository.findTimelineEvents(anyLong(), any(), any(), anyLong(), anyLong(),
+                any(), any(), any(), any(), any(), any(), anyInt()))
+                .thenReturn(List.of(
+                        new FollowupRepository.FollowupTimelineRow("INTENT", 1L, "PHONE", CONTACT_AT, "跟进1",
+                                "\u00A0\u3000\t\n\r\u0085", 0L, null, null, 2L, CONTACT_AT, CONTACT_AT),
+                        new FollowupRepository.FollowupTimelineRow("BLOCKER", 1L, "PHONE", CONTACT_AT, "跟进1",
+                                null, 0L, null, "\u00A0\u2007\u202F\u3000", 2L, CONTACT_AT, CONTACT_AT),
+                        new FollowupRepository.FollowupTimelineRow("FOLLOWUP", 1L, "PHONE", CONTACT_AT, "跟进1",
+                                null, 0L, null, null, 2L, CONTACT_AT, CONTACT_AT),
+                        new FollowupRepository.FollowupTimelineRow("INTENT", 2L, "PHONE", CONTACT_AT, "跟进2",
+                                "  热玛吉  ", 100L, null, null, 2L, CONTACT_AT, CONTACT_AT)));
+
+        List<CustomerTimelineItemResponse> items = service.timeline(1L, MANAGER, 100L, null, 10);
+
+        assertThat(items).extracting(CustomerTimelineItemResponse::eventKey)
+                .containsExactly("00000000000000000001:FOLLOWUP", "00000000000000000002:INTENT");
     }
 
     private static Customer customer(long id, long ownerStaffId, long teamId) {
