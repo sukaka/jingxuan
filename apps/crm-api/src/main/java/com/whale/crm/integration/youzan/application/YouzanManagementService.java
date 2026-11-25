@@ -109,7 +109,7 @@ public class YouzanManagementService {
         this.objectMapper = objectMapper;
         this.cipher = cipher;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
-        this.clock = Objects.requireNonNull(clock, "clock");
+        this.clock = clock != null ? clock : Clock.system(BUSINESS_ZONE);
     }
 
     public PageResponse<YouzanOrderView> orders(long tenantId, CurrentUser user, String shopId, int page, int size) {
