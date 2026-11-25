@@ -8,8 +8,13 @@ import java.util.Optional;
 
 public interface YouzanRepository {
     void insertEvent(long tenantId, YouzanEvent event);
-    int updateEventPayload(long tenantId, long id, long version, String externalOrderNo, String eventType,
+    int updateEventPayload(long tenantId, long id, long version, String externalOrderNo,
+                           String externalCustomerId, Long campaignId, String eventType,
                            String masked, String encrypted, String providerMasked, String providerEncrypted);
+    void upsertOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId);
+    Long findMaxEventIdByExternalOrder(long tenantId, String shopId, String externalOrderNo);
+    int setOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId);
+    int deleteOrderLatest(long tenantId, String shopId, String externalOrderNo, long expectedEventId);
     Optional<YouzanEvent> findEventByKey(long tenantId, String shopId, String eventId);
     Optional<YouzanEvent> findEvent(long tenantId, long id);
     Optional<YouzanEvent> findEventForUpdate(long tenantId, long id);
@@ -51,6 +56,8 @@ public interface YouzanRepository {
     Optional<YouzanSyncIssue> findIssue(long tenantId, long id);
     Optional<YouzanSyncIssue> findIssueForUpdate(long tenantId, long id);
     Optional<YouzanSyncIssue> findIssueByEventAndType(long tenantId, long eventId, String issueType);
+    List<Long> findIssueIdsWithoutOrderByExternalCustomer(long tenantId, String shopId, String externalCustomerId);
+    List<Long> findIssueIdsByEventOrOrder(long tenantId, String shopId, String externalOrderNo, long eventId);
     List<YouzanSyncIssue> findOpenUnpaidIssuesByExternalOrderForUpdate(long tenantId, String shopId,
                                                                        String externalOrderNo, long excludeEventId);
     List<YouzanSyncIssue> findIssues(long tenantId, String status, int offset, int size);

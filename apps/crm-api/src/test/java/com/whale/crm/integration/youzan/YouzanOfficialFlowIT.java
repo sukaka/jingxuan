@@ -403,16 +403,36 @@ class YouzanOfficialFlowIT extends AbstractMysqlIT {
                 shopId, msgId);
         assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=1 AND id=?", rawEventId))
                 .isEqualTo("RECEIVED");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT external_customer_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?",
+                String.class, rawEventId)).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT campaign_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?",
+                Long.class, rawEventId)).isNull();
+        assertThat(queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shopId, tid))
+                .isEqualTo(rawEventId);
 
         officialMessageService.refreshAndProcess(1L, rawEventId);
 
         assertThat(DETAIL_CALLS.get()).isEqualTo(1);
         assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=1 AND id=?", rawEventId))
                 .isEqualTo("PROCESSED");
+        assertThat(queryString("SELECT external_customer_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?",
+                rawEventId)).isEqualTo(linkedCustomer);
+        assertThat(queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shopId, tid))
+                .isEqualTo(rawEventId);
         long orderId = queryLong("SELECT crm_order_id FROM crm_youzan_order_map WHERE tenant_id=1 AND shop_id=? "
                 + "AND external_order_no=?", shopId, tid);
         assertThat(queryString("SELECT status FROM crm_order WHERE tenant_id=1 AND id=?", orderId)).isEqualTo("PAID");
         assertThat(grantCountForCustomer(1010L)).isEqualTo(grantsBefore + 3);
+        JsonNode managerOrders = data(manager1.withAuth(get("/api/v1/integrations/youzan/orders")
+                .param("shopId", shopId).param("page", "1").param("size", "20")));
+        assertThat(findOrder(managerOrders, tid).at("/externalCustomerId").asText()).isEqualTo(linkedCustomer);
+        JsonNode managerReport = data(manager1.withAuth(get("/api/v1/integrations/youzan/reconcile-report")
+                .param("shopId", shopId)));
+        assertThat(managerReport.at("/totalEvents").asLong()).isEqualTo(1L);
     }
 
     private void enableYouzanRealRuntime() throws Exception {

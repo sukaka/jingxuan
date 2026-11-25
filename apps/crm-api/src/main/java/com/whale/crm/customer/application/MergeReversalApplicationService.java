@@ -21,6 +21,7 @@ import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.DataScope;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -46,6 +47,7 @@ public class MergeReversalApplicationService {
     private final AuditService auditService;
     private final TransactionTemplate transactions;
     private final MergeReferenceGuard referenceGuard;
+    private final CustomerRiskOperations customerRiskOperations;
 
     public MergeReversalApplicationService(MergeCaseRepository mergeCaseRepository,
                                            MergeReversalRepository reversalRepository,
@@ -62,6 +64,29 @@ public class MergeReversalApplicationService {
                                            AuditService auditService,
                                            PlatformTransactionManager transactionManager,
                                            MergeReferenceGuard referenceGuard) {
+        this(mergeCaseRepository, reversalRepository, snapshotRepository, customerRepository, identityRepository,
+                tagRepository, followupRepository, taskRepository, pointsLedgerRepository, customerOrderOperations,
+                scopeSupport, idempotencyService, auditService, transactionManager, referenceGuard,
+                CustomerRiskOperations.NOOP);
+    }
+
+    @Autowired
+    public MergeReversalApplicationService(MergeCaseRepository mergeCaseRepository,
+                                           MergeReversalRepository reversalRepository,
+                                           MergeResourceSnapshotRepository snapshotRepository,
+                                           CustomerRepository customerRepository,
+                                           CustomerIdentityRepository identityRepository,
+                                           CustomerTagRepository tagRepository,
+                                           FollowupRepository followupRepository,
+                                           TaskRepository taskRepository,
+                                           PointsLedgerRepository pointsLedgerRepository,
+                                           CustomerOrderOperations customerOrderOperations,
+                                           CustomerScopeSupport scopeSupport,
+                                           IdempotencyService idempotencyService,
+                                           AuditService auditService,
+                                           PlatformTransactionManager transactionManager,
+                                           MergeReferenceGuard referenceGuard,
+                                           CustomerRiskOperations customerRiskOperations) {
         this.mergeCaseRepository = mergeCaseRepository;
         this.reversalRepository = reversalRepository;
         this.snapshotRepository = snapshotRepository;
@@ -77,6 +102,8 @@ public class MergeReversalApplicationService {
         this.auditService = auditService;
         this.transactions = new TransactionTemplate(transactionManager);
         this.referenceGuard = referenceGuard;
+        this.customerRiskOperations = customerRiskOperations != null
+                ? customerRiskOperations : CustomerRiskOperations.NOOP;
     }
 
     public MergeReversalResponse get(CurrentUser user, long mergeCaseId) {
@@ -245,7 +272,10 @@ public class MergeReversalApplicationService {
         if (!pointIds.isEmpty()) {
             pointsLedgerRepository.reassignSpecific(tenantId, pointIds, primaryId, secondaryId);
         }
-        customerOrderOperations.reassignSpecific(tenantId, ids(snapshots, "ORDER"), ids(snapshots, "ENTITLEMENT"),
+        List<Long> orderIds = ids(snapshots, "ORDER");
+        customerOrderOperations.reassignSpecific(tenantId, orderIds, ids(snapshots, "ENTITLEMENT"),
+                primaryId, secondaryId);
+        customerRiskOperations.reassignSpecific(tenantId, ids(snapshots, "RISK_CASE"), orderIds,
                 primaryId, secondaryId);
     }
 

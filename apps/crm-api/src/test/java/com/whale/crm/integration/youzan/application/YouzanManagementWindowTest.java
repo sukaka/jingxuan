@@ -471,7 +471,8 @@ class YouzanManagementWindowTest {
         assertThat(replaced.duplicate()).isTrue();
 
         verify(repository, never()).updateEventStatus(anyLong(), anyLong(), anyLong(), any(), any(), any(), any(), any());
-        verify(repository, never()).updateEventPayload(anyLong(), anyLong(), anyLong(), any(), any(), any(), any(), any(), any());
+        verify(repository, never()).updateEventPayload(anyLong(), anyLong(), anyLong(), any(), any(), any(), any(),
+                any(), any(), any(), any());
         verify(repository, never()).insertIssue(anyLong(), any());
         verify(repository, never()).updateIssueStatus(anyLong(), anyLong(), anyLong(), any(), org.mockito.ArgumentMatchers.anyInt(),
                 any(), any(), any(), any());

@@ -21,6 +21,7 @@ import com.whale.crm.risk.domain.RiskCase;
 import com.whale.crm.risk.domain.RiskCaseHistory;
 import com.whale.crm.risk.domain.RiskCaseRepository;
 import com.whale.crm.risk.domain.RiskCustomerLink;
+import com.whale.crm.risk.domain.RiskSourceCustomerLink;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -162,8 +163,8 @@ class RiskCaseApplicationServiceTest {
         RiskCase item = riskCase("OPEN", null, null, 0);
         when(repository.search(any())).thenReturn(List.of(item));
         when(repository.countSearch(any())).thenReturn(1L);
-        when(repository.findCustomerLinks(1, List.of(10L))).thenReturn(List.of(
-                new RiskCustomerLink(10L, 21L, "J000000000021", 31L, "C0000000031", "合成真实客户")));
+        when(repository.findDelayedYouzanIssueCustomerLinks(1L, List.of(99L))).thenReturn(List.of(
+                new RiskSourceCustomerLink(99L, 21L, "J000000000021", 31L, "C0000000031", "合成真实客户")));
 
         var result = service.search(ADMIN, null, null, null, null, null, null, null, 1, 20);
 
@@ -174,7 +175,8 @@ class RiskCaseApplicationServiceTest {
         assertThat(view.customerId()).isEqualTo(31L);
         assertThat(view.customerNo()).isEqualTo("C0000000031");
         assertThat(view.customerName()).isEqualTo("合成真实客户");
-        verify(repository).findCustomerLinks(1, List.of(10L));
+        verify(repository).findDelayedYouzanIssueCustomerLinks(1L, List.of(99L));
+        verify(repository, never()).findResolvedCustomerLinks(anyLong(), any());
         verifyNoInteractions(sourceSynchronizer);
     }
 
@@ -221,7 +223,7 @@ class RiskCaseApplicationServiceTest {
     void missingSourceLinkStaysNullInsteadOfFabricatingCustomer() {
         RiskCase item = riskCase("OPEN", null, null, 0);
         when(repository.findById(1, 10)).thenReturn(Optional.of(item));
-        when(repository.findCustomerLinks(1, List.of(10L))).thenReturn(List.of());
+        when(repository.findDelayedYouzanIssueCustomerLinks(1L, List.of(99L))).thenReturn(List.of());
         when(repository.findHistory(1, 10)).thenReturn(List.of());
 
         var result = service.get(ADMIN, 10);
@@ -231,6 +233,49 @@ class RiskCaseApplicationServiceTest {
         assertThat(result.riskCase().customerId()).isNull();
         assertThat(result.riskCase().customerNo()).isNull();
         assertThat(result.riskCase().customerName()).isNull();
+    }
+
+    @Test
+    void searchSplitsFastPathAndDelayedBucketsAndSkipsNonNumericOverflowAndUnsupportedTypes() {
+        Instant now = Instant.parse("2026-10-26T08:00:00Z");
+        RiskCase fastCase = new RiskCase(1L, 1L, "RC-FAST", "ORDER_PAYMENT_CASH", "HIGH", "ORDER", "401",
+                101L, 401L, "OPEN", null, "{}", null, null, now, now, 0L);
+        RiskCase delayedOrder = new RiskCase(2L, 1L, "RC-D-ORD", "ORDER_PAYMENT_CASH", "HIGH", "ORDER", "402",
+                null, null, "OPEN", null, "{}", null, null, now, now, 0L);
+        RiskCase delayedRefund = new RiskCase(3L, 1L, "RC-D-RF", "REFUND_ALLOCATION", "HIGH", "REFUND", "431",
+                null, null, "OPEN", null, "{}", null, null, now, now, 0L);
+        RiskCase nonNumeric = new RiskCase(4L, 1L, "RC-NN", "ORDER_PAYMENT_CASH", "HIGH", "ORDER", "NON-NUMERIC",
+                null, null, "OPEN", null, "{}", null, null, now, now, 0L);
+        RiskCase overflow = new RiskCase(5L, 1L, "RC-OVF", "ORDER_PAYMENT_CASH", "HIGH", "ORDER",
+                "99999999999999999999999999", null, null, "OPEN", null, "{}", null, null, now, now, 0L);
+        RiskCase settlement = new RiskCase(6L, 1L, "RC-SET", "SETTLEMENT_PAYMENT", "HIGH", "SETTLEMENT_BATCH",
+                "123", null, null, "OPEN", null, "{}", null, null, now, now, 0L);
+
+        when(repository.search(any())).thenReturn(List.of(
+                fastCase, delayedOrder, delayedRefund, nonNumeric, overflow, settlement));
+        when(repository.countSearch(any())).thenReturn(6L);
+        when(repository.findResolvedCustomerLinks(1L, List.of(1L))).thenReturn(List.of(
+                new RiskCustomerLink(1L, 401L, "J401", 101L, "C101", "快路径客户")));
+        when(repository.findDelayedOrderCustomerLinks(1L, List.of(402L))).thenReturn(List.of(
+                new RiskSourceCustomerLink(402L, 402L, "J402", 102L, "C102", "延迟订单客户")));
+        when(repository.findDelayedRefundCustomerLinks(1L, List.of(431L))).thenReturn(List.of(
+                new RiskSourceCustomerLink(431L, 403L, "J403", 103L, "C103", "延迟退款客户")));
+
+        var page = service.search(ADMIN, null, null, null, null, null, null, null, 1, 20);
+
+        assertThat(page.items()).hasSize(6);
+        assertThat(page.items().get(0).customerName()).isEqualTo("快路径客户");
+        assertThat(page.items().get(1).customerName()).isEqualTo("延迟订单客户");
+        assertThat(page.items().get(2).customerName()).isEqualTo("延迟退款客户");
+        assertThat(page.items().get(3).customerId()).isNull();
+        assertThat(page.items().get(4).customerId()).isNull();
+        assertThat(page.items().get(5).customerId()).isNull();
+        verify(repository).findResolvedCustomerLinks(1L, List.of(1L));
+        verify(repository).findDelayedOrderCustomerLinks(1L, List.of(402L));
+        verify(repository).findDelayedRefundCustomerLinks(1L, List.of(431L));
+        verify(repository, never()).findDelayedYouzanIssueCustomerLinks(anyLong(), any());
+        verify(repository, never()).findDelayedEntitlementCustomerLinks(anyLong(), any());
+        verify(repository, never()).findDelayedRedemptionCustomerLinks(anyLong(), any());
     }
 
     private static RiskCase riskCase(String status, Long owner, String resolution, long version) {

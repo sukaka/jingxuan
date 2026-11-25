@@ -5,6 +5,7 @@ import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.risk.domain.RiskCase;
 import com.whale.crm.risk.domain.RiskCaseHistory;
 import com.whale.crm.risk.domain.RiskCaseRepository;
+import com.whale.crm.risk.domain.RiskResolvedIds;
 import com.whale.crm.risk.domain.RiskSourceRecord;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -36,11 +37,25 @@ public class RiskCaseRegistrationService {
         var existing = repository.findBySource(source.tenantId(), source.sourceType(), source.sourceRef(),
                 source.riskType());
         if (existing.isPresent()) {
-            return new RegistrationResult(existing.get(), false);
+            RiskCase current = existing.get();
+            if (!"CLOSED".equals(current.status())
+                    && (current.customerId() == null || current.orderId() == null)) {
+                RiskResolvedIds resolved = resolveSourceLink(source.tenantId(), source.sourceType(),
+                        source.sourceRef());
+                if (resolved != null && ((current.customerId() == null && resolved.customerId() != null)
+                        || (current.orderId() == null && resolved.orderId() != null))) {
+                    repository.backfillLinkIfAbsent(source.tenantId(), current.id(),
+                            resolved.customerId(), resolved.orderId());
+                    current = repository.findById(source.tenantId(), current.id()).orElse(current);
+                }
+            }
+            return new RegistrationResult(current, false);
         }
+        RiskResolvedIds resolved = resolveSourceLink(source.tenantId(), source.sourceType(), source.sourceRef());
         RiskCase input = new RiskCase(null, source.tenantId(), "RC" + UlidCreator.getUlid(),
-                source.riskType(), source.severity(), source.sourceType(), source.sourceRef(), "OPEN", null,
-                masker.mask(source.evidence()), null, null, null, null, 0);
+                source.riskType(), source.severity(), source.sourceType(), source.sourceRef(),
+                resolved == null ? null : resolved.customerId(), resolved == null ? null : resolved.orderId(),
+                "OPEN", null, masker.mask(source.evidence()), null, null, null, null, 0);
         try {
             repository.insert(input);
         } catch (DuplicateKeyException ex) {
@@ -56,6 +71,42 @@ public class RiskCaseRegistrationService {
                 created.id().toString(), null, snapshot(created),
                 "真实来源幂等登记: " + source.sourceType() + "/" + source.sourceRef());
         return new RegistrationResult(created, true);
+    }
+
+    static Long parsePositiveLong(String ref) {
+        if (ref == null || ref.isEmpty()) {
+            return null;
+        }
+        if (ref.charAt(0) < '1' || ref.charAt(0) > '9') {
+            return null;
+        }
+        for (int i = 1; i < ref.length(); i++) {
+            char c = ref.charAt(i);
+            if (c < '0' || c > '9') {
+                return null;
+            }
+        }
+        try {
+            long value = Long.parseLong(ref);
+            return value > 0L ? value : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private RiskResolvedIds resolveSourceLink(long tenantId, String sourceType, String sourceRef) {
+        Long sourceId = parsePositiveLong(sourceRef);
+        if (sourceId == null || sourceType == null) {
+            return null;
+        }
+        return switch (sourceType) {
+            case "ORDER" -> repository.resolveOrderLink(tenantId, sourceId).orElse(null);
+            case "YOUZAN_SYNC_ISSUE" -> repository.resolveYouzanIssueLink(tenantId, sourceId).orElse(null);
+            case "REFUND" -> repository.resolveRefundLink(tenantId, sourceId).orElse(null);
+            case "ENTITLEMENT" -> repository.resolveEntitlementLink(tenantId, sourceId).orElse(null);
+            case "REDEMPTION" -> repository.resolveRedemptionLink(tenantId, sourceId).orElse(null);
+            default -> null;
+        };
     }
 
     public record RegistrationResult(RiskCase riskCase, boolean created) {

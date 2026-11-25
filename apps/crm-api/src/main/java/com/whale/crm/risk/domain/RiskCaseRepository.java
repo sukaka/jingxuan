@@ -17,9 +17,41 @@ public interface RiskCaseRepository {
 
     long countSearch(RiskCaseQuery query);
 
-    List<RiskCustomerLink> findCustomerLinks(long tenantId, List<Long> riskCaseIds);
+    List<RiskCustomerLink> findResolvedCustomerLinks(long tenantId, List<Long> riskCaseIds);
+
+    List<RiskSourceCustomerLink> findDelayedOrderCustomerLinks(long tenantId, List<Long> sourceIds);
+
+    List<RiskSourceCustomerLink> findDelayedYouzanIssueCustomerLinks(long tenantId, List<Long> sourceIds);
+
+    List<RiskSourceCustomerLink> findDelayedRefundCustomerLinks(long tenantId, List<Long> sourceIds);
+
+    List<RiskSourceCustomerLink> findDelayedEntitlementCustomerLinks(long tenantId, List<Long> sourceIds);
+
+    List<RiskSourceCustomerLink> findDelayedRedemptionCustomerLinks(long tenantId, List<Long> sourceIds);
+
+    Optional<RiskResolvedIds> resolveOrderLink(long tenantId, long sourceId);
+
+    Optional<RiskResolvedIds> resolveYouzanIssueLink(long tenantId, long sourceId);
+
+    Optional<RiskResolvedIds> resolveRefundLink(long tenantId, long sourceId);
+
+    Optional<RiskResolvedIds> resolveEntitlementLink(long tenantId, long sourceId);
+
+    Optional<RiskResolvedIds> resolveRedemptionLink(long tenantId, long sourceId);
 
     void insert(RiskCase riskCase);
+
+    int backfillLinkIfAbsent(long tenantId, long id, Long customerId, Long orderId);
+
+    int linkCustomerToYouzanIssues(long tenantId, List<String> sourceRefs, long customerId);
+
+    int linkOrderToYouzanIssues(long tenantId, List<String> sourceRefs, long orderId, long customerId);
+
+    List<Long> findIdsByCustomerId(long tenantId, long customerId);
+
+    int reassignSpecific(long tenantId, List<Long> ids, long fromCustomerId, long toCustomerId);
+
+    int reassignSpecificByOrderIds(long tenantId, List<Long> orderIds, long fromCustomerId, long toCustomerId);
 
     int updateStatus(long tenantId, long id, long version, String fromStatus, String toStatus,
                      Long ownerUserId, String resolution, Instant resolvedAt);

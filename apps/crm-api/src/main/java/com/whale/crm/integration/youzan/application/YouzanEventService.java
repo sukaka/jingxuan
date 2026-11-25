@@ -26,6 +26,7 @@ import com.whale.crm.trading.api.dto.OrderItemRequest;
 import com.whale.crm.trading.api.dto.OrderReviewRequest;
 import com.whale.crm.trading.api.dto.PaymentConfirmRequest;
 import com.whale.crm.trading.domain.OrderFulfillmentView;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -62,6 +63,7 @@ public class YouzanEventService {
     private final OutboxService outboxService;
     private final TransactionTemplate transactionTemplate;
     private final TaskExecutor taskExecutor;
+    private final YouzanRiskLinkOperations riskLinkOperations;
 
     public YouzanEventService(YouzanRepository repository, ObjectMapper objectMapper, AesGcmCipher cipher,
                               OrderApplicationService orderService, PaymentApplicationService paymentService,
@@ -69,6 +71,18 @@ public class YouzanEventService {
                               AuditService auditService, OutboxService outboxService,
                               PlatformTransactionManager transactionManager,
                               @org.springframework.beans.factory.annotation.Qualifier("youzanSyncExecutor") TaskExecutor taskExecutor) {
+        this(repository, objectMapper, cipher, orderService, paymentService, scopeSupport, currentUserService,
+                auditService, outboxService, transactionManager, taskExecutor, YouzanRiskLinkOperations.NOOP);
+    }
+
+    @Autowired
+    public YouzanEventService(YouzanRepository repository, ObjectMapper objectMapper, AesGcmCipher cipher,
+                              OrderApplicationService orderService, PaymentApplicationService paymentService,
+                              CustomerScopeSupport scopeSupport, CurrentUserService currentUserService,
+                              AuditService auditService, OutboxService outboxService,
+                              PlatformTransactionManager transactionManager,
+                              @org.springframework.beans.factory.annotation.Qualifier("youzanSyncExecutor") TaskExecutor taskExecutor,
+                              YouzanRiskLinkOperations riskLinkOperations) {
         this.repository = repository;
         this.objectMapper = objectMapper;
         this.cipher = cipher;
@@ -80,6 +94,7 @@ public class YouzanEventService {
         this.outboxService = outboxService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.taskExecutor = taskExecutor;
+        this.riskLinkOperations = riskLinkOperations != null ? riskLinkOperations : YouzanRiskLinkOperations.NOOP;
     }
 
     public YouzanEventResponse ingest(long tenantId, YouzanOrderEvent event, String source, String rawBody) {
@@ -89,16 +104,22 @@ public class YouzanEventService {
             String encrypted = cipher.encrypt(normalized);
             String providerMasked = mask(rawBody);
             String providerEncrypted = cipher.encrypt(rawBody);
+            String externalCustomerId = normalizeExternalCustomerId(event.externalCustomerId());
+            Long campaignId = normalizeCampaignId(event.campaignId());
             return transactionTemplate.execute(status -> {
                 YouzanEvent existing = repository.findEventByKey(tenantId, event.shopId(), event.eventId()).orElse(null);
                 if (existing != null) {
                     return response(tenantId, existing, true);
                 }
                 YouzanEvent input = new YouzanEvent(null, event.shopId(), event.eventId(), event.eventType(),
-                        event.externalOrderNo(), masked, encrypted, true, source, "RECEIVED", 0, null, null,
-                        Instant.now(), null, null, providerMasked, providerEncrypted, null);
+                        event.externalOrderNo(), externalCustomerId, campaignId, masked, encrypted, true, source,
+                        "RECEIVED", 0, null, null, Instant.now(), null, null, providerMasked, providerEncrypted, null);
                 repository.insertEvent(tenantId, input);
                 YouzanEvent created = repository.findEventByKey(tenantId, event.shopId(), event.eventId()).orElseThrow();
+                if (created.id() != null && created.externalOrderNo() != null
+                        && !created.externalOrderNo().isBlank()) {
+                    repository.upsertOrderLatest(tenantId, created.shopId(), created.externalOrderNo(), created.id());
+                }
                 boolean duplicateOrder = repository.findOrderMap(tenantId, event.shopId(), event.externalOrderNo()).isPresent();
                 return response(tenantId, created, duplicateOrder);
             });
@@ -117,15 +138,40 @@ public class YouzanEventService {
 
     private void transactionsExecuteUpdate(long tenantId, long eventId, YouzanOrderEvent event,
                                            String normalized, String providerPayload) {
+        String externalCustomerId = normalizeExternalCustomerId(event.externalCustomerId());
+        Long campaignId = normalizeCampaignId(event.campaignId());
         transactionTemplate.executeWithoutResult(status -> {
             YouzanEvent raw = repository.findEventForUpdate(tenantId, eventId).orElseThrow();
             if ("PROCESSED".equals(raw.processStatus())) {
                 return;
             }
             if (repository.updateEventPayload(tenantId, eventId, raw.version(), event.externalOrderNo(),
-                    event.eventType(), maskedView(normalized, providerPayload), cipher.encrypt(normalized), mask(providerPayload),
-                    cipher.encrypt(providerPayload)) != 1) {
+                    externalCustomerId, campaignId, event.eventType(), maskedView(normalized, providerPayload),
+                    cipher.encrypt(normalized), mask(providerPayload), cipher.encrypt(providerPayload)) != 1) {
                 throw new BusinessException(ErrorCode.CONFLICT, "有赞消息已被其他任务更新");
+            }
+            if (event.externalOrderNo() != null && !event.externalOrderNo().isBlank()) {
+                repository.upsertOrderLatest(tenantId, raw.shopId(), event.externalOrderNo(), eventId);
+            }
+            if (raw.externalOrderNo() != null && !raw.externalOrderNo().isBlank()
+                    && !raw.externalOrderNo().equals(event.externalOrderNo())) {
+                Long oldLatest = repository.findMaxEventIdByExternalOrder(tenantId, raw.shopId(),
+                        raw.externalOrderNo());
+                if (oldLatest != null) {
+                    repository.setOrderLatest(tenantId, raw.shopId(), raw.externalOrderNo(), oldLatest);
+                } else {
+                    repository.deleteOrderLatest(tenantId, raw.shopId(), raw.externalOrderNo(), eventId);
+                }
+            }
+            if (externalCustomerId != null && raw.orderId() == null) {
+                repository.findCustomerLink(tenantId, raw.shopId(), externalCustomerId).ifPresent(link -> {
+                    List<Long> issueIds = repository.findIssueIdsWithoutOrderByExternalCustomer(
+                            tenantId, raw.shopId(), externalCustomerId);
+                    if (issueIds != null && !issueIds.isEmpty()) {
+                        riskLinkOperations.linkCustomerToYouzanIssues(tenantId,
+                                issueIds.stream().map(Object::toString).toList(), link.customerId());
+                    }
+                });
             }
         });
     }
@@ -177,7 +223,8 @@ public class YouzanEventService {
                 if (!"ORDER_PAID".equals(event.eventType())
                         || existingOrder == null
                         || !isUnpaidStatus(existingOrder.order().order().status())) {
-                    return complete(tenantId, eventId, raw, existing.crmOrderId(), true, actor.userId());
+                    return complete(tenantId, eventId, raw, existing.crmOrderId(),
+                            customerIdOf(existingOrder), true, actor.userId());
                 }
             }
         }
@@ -239,7 +286,8 @@ public class YouzanEventService {
                 throw new ProcessingFailure("PAYMENT_MISMATCH", "订单当前状态不允许供应商支付确认");
             }
         }
-        return complete(tenantId, eventId, raw, existing.crmOrderId(), false, actor.userId());
+        return complete(tenantId, eventId, raw, existing.crmOrderId(), order.order().order().customerId(),
+                false, actor.userId());
     }
 
     private static boolean isUnpaidStatus(String status) {
@@ -258,7 +306,8 @@ public class YouzanEventService {
         }
         if (event.externalUpdatedAt() != null && existing.lastExternalUpdatedAt() != null
                 && event.externalUpdatedAt().isBefore(existing.lastExternalUpdatedAt())) {
-            return complete(tenantId, eventId, raw, existing.crmOrderId(), true, actor.userId());
+            return complete(tenantId, eventId, raw, existing.crmOrderId(),
+                    existingOrder.order().order().customerId(), true, actor.userId());
         }
         // 先锁 crm_customer 再写 crm_order，与 MergeApplicationService.confirm 保持一致（M3 §3.2）
         scopeSupport.requireVisibleForUpdate(tenantId, existingOrder.order().order().customerId(), actor);
@@ -267,10 +316,12 @@ public class YouzanEventService {
         if (isUnpaidStatus(status)) {
             orderService.cancel(tenantId, actor, existing.crmOrderId(),
                     new OrderReviewRequest(order.order().order().version(), "有赞订单已关闭"));
-            return complete(tenantId, eventId, raw, existing.crmOrderId(), false, actor.userId());
+            return complete(tenantId, eventId, raw, existing.crmOrderId(),
+                    order.order().order().customerId(), false, actor.userId());
         }
         if ("CANCELED".equals(status) || "REFUNDED".equals(status)) {
-            return complete(tenantId, eventId, raw, existing.crmOrderId(), true, actor.userId());
+            return complete(tenantId, eventId, raw, existing.crmOrderId(),
+                    order.order().order().customerId(), true, actor.userId());
         }
         throw new ProcessingFailure("PAYMENT_MISMATCH", "有赞订单已关闭，但CRM订单已支付，请核实是否需在CRM人工退款");
     }
@@ -318,8 +369,8 @@ public class YouzanEventService {
         return resolvedIds;
     }
 
-    private YouzanEventResponse complete(long tenantId, long eventId, YouzanEvent raw, long orderId, boolean duplicate,
-                                         long actorUserId) {
+    private YouzanEventResponse complete(long tenantId, long eventId, YouzanEvent raw, long orderId,
+                                         Long customerId, boolean duplicate, long actorUserId) {
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
         YouzanOrderMap map = repository.findOrderMapForUpdate(tenantId, event.shopId(), event.externalOrderNo()).orElseThrow();
         if (event.externalUpdatedAt().isAfter(map.lastExternalUpdatedAt())) {
@@ -332,6 +383,14 @@ public class YouzanEventService {
             throw new BusinessException(ErrorCode.CONFLICT, "原始事件已被其他任务处理");
         }
         resolveOpenIssues(tenantId, eventId, actorUserId);
+        if (customerId != null && raw.externalOrderNo() != null && !raw.externalOrderNo().isBlank()) {
+            List<Long> issueIds = repository.findIssueIdsByEventOrOrder(
+                    tenantId, raw.shopId(), raw.externalOrderNo(), eventId);
+            if (issueIds != null && !issueIds.isEmpty()) {
+                riskLinkOperations.linkOrderToYouzanIssues(tenantId,
+                        issueIds.stream().map(Object::toString).toList(), orderId, customerId);
+            }
+        }
         outboxService.append(tenantId, "youzan.order.processed.v1:" + raw.eventId(), "youzan.order.processed.v1",
                 "youzan", Long.toString(orderId), Map.of("shopId", raw.shopId(),
                         "externalOrderNo", raw.externalOrderNo(), "orderId", orderId));
@@ -405,7 +464,10 @@ public class YouzanEventService {
         }
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
         YouzanOrderMap map = repository.findOrderMap(tenantId, event.shopId(), event.externalOrderNo()).orElseThrow();
-        return complete(tenantId, eventId, raw, map.crmOrderId(), true, actor(tenantId).userId());
+        CurrentUser actor = actor(tenantId);
+        OrderFulfillmentView existingOrder = orderService.detail(tenantId, actor, map.crmOrderId());
+        return complete(tenantId, eventId, raw, map.crmOrderId(),
+                customerIdOf(existingOrder), true, actor.userId());
     }
 
     private YouzanOrderEvent readEvent(String encrypted) {
@@ -479,6 +541,25 @@ public class YouzanEventService {
     private CurrentUser actor(long tenantId) {
         return currentUserService.loadFirstActiveByRole(tenantId, "ADMIN")
                 .orElseThrow(() -> new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "当前租户未配置有赞系统操作员"));
+    }
+
+    private static Long customerIdOf(OrderFulfillmentView order) {
+        return order == null ? null : order.order().order().customerId();
+    }
+
+    private static String normalizeExternalCustomerId(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.strip();
+        if (trimmed.isEmpty() || trimmed.length() > 128) {
+            return null;
+        }
+        return trimmed;
+    }
+
+    private static Long normalizeCampaignId(Long raw) {
+        return raw != null && raw > 0L ? raw : null;
     }
 
     private YouzanEventResponse response(long tenantId, YouzanEvent event, boolean duplicate) {

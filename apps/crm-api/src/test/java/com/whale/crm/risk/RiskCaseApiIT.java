@@ -1,7 +1,12 @@
 package com.whale.crm.risk;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.whale.crm.integration.youzan.adapter.YouzanOrderEvent;
+import com.whale.crm.integration.youzan.adapter.YouzanOrderLine;
+import com.whale.crm.integration.youzan.application.YouzanEventService;
 import com.whale.crm.platform.support.AbstractMysqlIT;
+import com.whale.crm.risk.application.RiskCaseRegistrationService;
+import com.whale.crm.risk.domain.RiskSourceRecord;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -10,6 +15,9 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -24,6 +32,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class RiskCaseApiIT extends AbstractMysqlIT {
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private YouzanEventService youzanEventService;
+    @Autowired
+    private RiskCaseRegistrationService registrationService;
 
     private AuthCookies admin;
     private AuthCookies managerWithRiskPermission;
@@ -260,8 +272,9 @@ class RiskCaseApiIT extends AbstractMysqlIT {
         long customerId = newCustomer(1, "IT-RISK-LINK-CUSTOMER-" + suffix, "合成确认映射客户");
         String externalCustomerId = "IT-RISK-EXTERNAL-CUSTOMER-" + suffix;
         String shopId = queryString("SELECT shop_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?", eventId);
-        jdbcTemplate.update("UPDATE crm_youzan_event SET payload_masked_json=? WHERE tenant_id=1 AND id=?",
-                json(Map.of("external_customer_id", externalCustomerId)), eventId);
+        jdbcTemplate.update("UPDATE crm_youzan_event SET external_customer_id=?,payload_masked_json=? "
+                        + "WHERE tenant_id=1 AND id=?",
+                externalCustomerId, json(Map.of("external_customer_id", externalCustomerId)), eventId);
         jdbcTemplate.update("INSERT INTO crm_youzan_customer_link "
                         + "(tenant_id,shop_id,external_customer_id,customer_id,link_type,confidence,created_by) "
                         + "VALUES (1,?, ?,?,'MANUAL','HIGH',1)", shopId, externalCustomerId, customerId);
@@ -340,6 +353,172 @@ class RiskCaseApiIT extends AbstractMysqlIT {
         assertThat(detail.at("/riskCase/orderId").isMissingNode()).isTrue();
         assertThat(detail.at("/riskCase/customerId").isMissingNode()).isTrue();
         assertThat(detail.at("/riskCase/customerName").isMissingNode()).isTrue();
+    }
+
+    @Test
+    void delayedMappingBoundaryBackfillAndFastPathCutoverWorkCleanly() throws Exception {
+        String suffix = suffix();
+        String shopId = "IT-RISK-DELAY-SHOP-" + suffix;
+        String extCustomerId = "IT-RISK-DELAY-CUST-" + suffix;
+        jdbcTemplate.update("INSERT INTO crm_youzan_event (tenant_id,shop_id,event_id,event_type,external_order_no,"
+                        + "external_customer_id,payload_masked_json,payload_cipher,signature_valid,source_system,"
+                        + "process_status,process_attempts,received_at) "
+                        + "VALUES (1,?,?,'ORDER_PAID',?,?,?,'synthetic-cipher',1,'WEBHOOK','CUSTOMER_UNRESOLVED',1,NOW(3))",
+                shopId, "IT-RISK-DELAY-EV-" + suffix, "IT-RISK-DELAY-ORD-" + suffix, extCustomerId,
+                json(Map.of("external_customer_id", extCustomerId)));
+        long eventId = queryLong("SELECT id FROM crm_youzan_event WHERE tenant_id=1 AND shop_id=?", shopId);
+        jdbcTemplate.update("INSERT INTO crm_youzan_sync_issue (tenant_id,event_id,issue_type,status,detail_masked,attempts) "
+                + "VALUES (1,?,'CUSTOMER_UNRESOLVED','OPEN','客户未映射',1)", eventId);
+        long issueId = queryLong("SELECT id FROM crm_youzan_sync_issue WHERE tenant_id=1 AND event_id=?", eventId);
+
+        syncRisks(admin, key());
+        String filter = "/api/v1/risks?sourceType=YOUZAN_SYNC_ISSUE&sourceRef=" + issueId
+                + "&riskType=CUSTOMER_UNRESOLVED";
+        JsonNode initial = data(get(filter).cookie(admin.cookies()));
+        assertThat(initial.at("/total").asInt()).isEqualTo(1);
+        long riskId = initial.at("/items/0/id").asLong();
+        assertThat(initial.at("/items/0/customerId").isMissingNode()).isTrue();
+        assertThat(jdbcTemplate.queryForObject("SELECT customer_id FROM crm_risk_case WHERE id=?", Long.class, riskId))
+                .isNull();
+        assertThat(queryLong("SELECT version FROM crm_risk_case WHERE id=?", riskId)).isZero();
+
+        // Raw SQL insert simulates delayed mapping outside service hook -> GET must resolve via delayed fallback
+        long customerId = newCustomer(1L, "IT-RISK-DELAY-NO-" + suffix, "延迟映射客户");
+        jdbcTemplate.update("INSERT INTO crm_youzan_customer_link (tenant_id,shop_id,external_customer_id,customer_id,"
+                        + "link_type,confidence,created_by) VALUES (1,?,?,?,'MANUAL','HIGH',1)",
+                shopId, extCustomerId, customerId);
+        JsonNode viaFallback = data(get(filter).cookie(admin.cookies()));
+        assertThat(viaFallback.at("/items/0/customerId").asLong()).isEqualTo(customerId);
+        assertThat(viaFallback.at("/items/0/customerName").asText()).isEqualTo("延迟映射客户");
+        assertThat(jdbcTemplate.queryForObject("SELECT customer_id FROM crm_risk_case WHERE id=?", Long.class, riskId))
+                .isNull();
+
+        // Sync backfills customer_id with updatedCount=0, version unchanged, history count unchanged
+        JsonNode resync = syncRisks(admin, key());
+        assertThat(resync.at("/updatedCount").asInt()).isZero();
+        assertThat(queryLong("SELECT customer_id FROM crm_risk_case WHERE id=?", riskId)).isEqualTo(customerId);
+        assertThat(jdbcTemplate.queryForObject("SELECT order_id FROM crm_risk_case WHERE id=?", Long.class, riskId))
+                .isNull();
+        assertThat(queryLong("SELECT version FROM crm_risk_case WHERE id=?", riskId)).isZero();
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_risk_case_history WHERE tenant_id=1 AND risk_case_id=?", riskId))
+                .isEqualTo(1);
+
+        // Subsequent GET resolves via fast-path
+        JsonNode viaFastPath = data(get(filter).cookie(admin.cookies()));
+        assertThat(viaFastPath.at("/items/0/customerId").asLong()).isEqualTo(customerId);
+        assertThat(viaFastPath.at("/items/0/customerName").asText()).isEqualTo("延迟映射客户");
+    }
+
+    @Test
+    void upsertCustomerLinkAndOrderCompletionImmediatelyUpdateRiskCaseLinks() throws Exception {
+        String suffix = suffix();
+        String shopId = "IT-RISK-HOOK-SHOP-" + suffix;
+        String extCustomerId = "IT-RISK-HOOK-CUST-" + suffix;
+        String extOrderNo = "IT-RISK-HOOK-ORD-" + suffix;
+        String extSkuId = "IT-RISK-HOOK-SKU-" + suffix;
+        long customerId = newCustomer(1L, "IT-RISK-HOOK-CNO-" + suffix, "即时回填客户");
+        jdbcTemplate.update("INSERT INTO crm_youzan_sku_map (tenant_id,shop_id,external_sku_id,crm_sku_id,status) "
+                + "VALUES (1,?,?,301,'ACTIVE')", shopId, extSkuId);
+
+        Instant now = Instant.now();
+        YouzanOrderEvent yzEvent = new YouzanOrderEvent("IT-RISK-HOOK-EV-" + suffix, "WAIT_PAY", shopId,
+                extOrderNo, extCustomerId, null, "WAIT_PAY", 181100L, null, now, "REGULAR", null, null,
+                "PLATFORM", LocalDate.parse("2027-12-31"), List.of(new YouzanOrderLine(extSkuId, 1)));
+        var ingested = youzanEventService.ingest(1L, yzEvent, "WEBHOOK", json(yzEvent));
+        youzanEventService.process(1L, ingested.id());
+        long issueId = queryLong("SELECT id FROM crm_youzan_sync_issue WHERE tenant_id=1 AND event_id=?", ingested.id());
+
+        syncRisks(admin, key());
+        long riskId = queryLong("SELECT id FROM crm_risk_case WHERE tenant_id=1 AND source_type='YOUZAN_SYNC_ISSUE' "
+                + "AND source_ref=?", Long.toString(issueId));
+        assertThat(jdbcTemplate.queryForObject("SELECT customer_id FROM crm_risk_case WHERE id=?", Long.class, riskId))
+                .isNull();
+
+        // 1. upsertCustomerLink immediately updates crm_risk_case.customer_id
+        data(admin.withAuth(post("/api/v1/integrations/youzan/customer-links"))
+                .header("Idempotency-Key", key())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("shopId", shopId, "externalCustomerId", extCustomerId,
+                        "customerId", customerId, "reason", "测试即时回填"))));
+        assertThat(queryLong("SELECT customer_id FROM crm_risk_case WHERE id=?", riskId)).isEqualTo(customerId);
+        assertThat(jdbcTemplate.queryForObject("SELECT order_id FROM crm_risk_case WHERE id=?", Long.class, riskId))
+                .isNull();
+
+        // 2. retryIssue -> complete immediately updates crm_risk_case.order_id
+        data(admin.withAuth(post("/api/v1/integrations/youzan/sync-issues/" + issueId + "/retry"))
+                .header("Idempotency-Key", key()));
+        long orderId = queryLong("SELECT crm_order_id FROM crm_youzan_order_map WHERE tenant_id=1 AND shop_id=? "
+                + "AND external_order_no=?", shopId, extOrderNo);
+        assertThat(queryLong("SELECT order_id FROM crm_risk_case WHERE id=?", riskId)).isEqualTo(orderId);
+        assertThat(queryLong("SELECT customer_id FROM crm_risk_case WHERE id=?", riskId)).isEqualTo(customerId);
+    }
+
+    @Test
+    void nonNumericOverflowAndSettlementBatchStayUnlinkedWithoutError() throws Exception {
+        String suffix = suffix();
+        long nonNumericId = newRisk(1L, "IT-RISK-NN-" + suffix, "ORDER_PAYMENT_CASH", "ORDER",
+                "NON-NUMERIC-" + suffix, "OPEN", "非数字");
+        long overflowId = newRisk(1L, "IT-RISK-OVF-" + suffix, "ORDER_PAYMENT_CASH", "ORDER",
+                "99999999999999999999999999", "OPEN", "溢出");
+        long settlementId = newRisk(1L, "IT-RISK-SET-" + suffix, "SETTLEMENT_PAYMENT", "SETTLEMENT_BATCH",
+                "123", "OPEN", "结算批次");
+
+        for (long id : List.of(nonNumericId, overflowId, settlementId)) {
+            JsonNode detail = data(get("/api/v1/risks/" + id).cookie(admin.cookies()));
+            assertThat(detail.at("/riskCase/id").asLong()).isEqualTo(id);
+            assertThat(detail.at("/riskCase/customerId").isMissingNode()).isTrue();
+            assertThat(detail.at("/riskCase/orderId").isMissingNode()).isTrue();
+            assertThat(jdbcTemplate.queryForObject("SELECT customer_id FROM crm_risk_case WHERE id=?", Long.class, id))
+                    .isNull();
+            assertThat(jdbcTemplate.queryForObject("SELECT order_id FROM crm_risk_case WHERE id=?", Long.class, id))
+                    .isNull();
+        }
+    }
+
+    @Test
+    void registrationPersistsCustomerAndOrderAcrossAllFiveSourceTypes() {
+        String suffix = suffix();
+        long customerId = newCustomer(1L, "IT-RISK-5SRC-" + suffix, "五源持久化客户");
+        long orderId = newOrder(1L, "IT-RISK-5ORD-" + suffix, customerId);
+        jdbcTemplate.update("INSERT INTO crm_order_item (tenant_id,order_id,sku_id,package_version_id,sku_name_snapshot,"
+                + "purchase_quantity,paid_allocated_fen) SELECT 1,?,id,package_version_id,'快照',1,1000 FROM crm_sku WHERE id=301",
+                orderId);
+        long itemId = queryLong("SELECT id FROM crm_order_item WHERE tenant_id=1 AND order_id=?", orderId);
+        jdbcTemplate.update("INSERT INTO crm_entitlement (tenant_id,customer_id,order_item_id,project_id,granted_count,"
+                + "available_count,version_no,status) VALUES (1,?,?,101,1,1,1,'AVAILABLE')", customerId, itemId);
+        long entitlementId = queryLong("SELECT id FROM crm_entitlement WHERE tenant_id=1 AND order_item_id=?", itemId);
+        jdbcTemplate.update("INSERT INTO crm_refund (tenant_id,refund_no,order_id,customer_id,requested_fen,reason_code,"
+                + "status,requested_by) VALUES (1,?,?,?,500,'TEST','REQUESTED',1)",
+                "IT-RISK-RF-" + suffix, orderId, customerId);
+        long refundId = queryLong("SELECT id FROM crm_refund WHERE tenant_id=1 AND refund_no=?",
+                "IT-RISK-RF-" + suffix);
+        jdbcTemplate.update("INSERT INTO crm_appointment (tenant_id,appointment_no,customer_id,institution_id,owner_staff_id,"
+                + "scheduled_at,status,created_by) VALUES (1,?,?,1,2,NOW(3),'REDEEMED',1)",
+                "IT-RISK-APT-" + suffix, customerId);
+        long aptId = queryLong("SELECT id FROM crm_appointment WHERE tenant_id=1 AND appointment_no=?",
+                "IT-RISK-APT-" + suffix);
+        jdbcTemplate.update("INSERT INTO crm_redemption (tenant_id,appointment_id,customer_id,institution_id,owner_staff_id,"
+                + "service_at,evidence_ref,status,idempotency_key,posted_by,posted_at) "
+                + "VALUES (1,?,?,1,2,NOW(3),'EV','POSTED',?,1,NOW(3))", aptId, customerId, "IDEM-" + suffix);
+        long redemptionId = queryLong("SELECT id FROM crm_redemption WHERE tenant_id=1 AND appointment_id=?", aptId);
+
+        var orderCase = registrationService.register(new RiskSourceRecord(1L, "ORDER_PAYMENT_CASH", "HIGH",
+                "ORDER", Long.toString(orderId), "{}"), null);
+        var refundCase = registrationService.register(new RiskSourceRecord(1L, "REFUND_ALLOCATION", "HIGH",
+                "REFUND", Long.toString(refundId), "{}"), null);
+        var entCase = registrationService.register(new RiskSourceRecord(1L, "ENTITLEMENT_LEDGER", "HIGH",
+                "ENTITLEMENT", Long.toString(entitlementId), "{}"), null);
+        var redCase = registrationService.register(new RiskSourceRecord(1L, "UNBATCHED_REDEMPTION", "MEDIUM",
+                "REDEMPTION", Long.toString(redemptionId), "{}"), null);
+
+        assertThat(orderCase.customerId()).isEqualTo(customerId);
+        assertThat(orderCase.orderId()).isEqualTo(orderId);
+        assertThat(refundCase.customerId()).isEqualTo(customerId);
+        assertThat(refundCase.orderId()).isEqualTo(orderId);
+        assertThat(entCase.customerId()).isEqualTo(customerId);
+        assertThat(entCase.orderId()).isEqualTo(orderId);
+        assertThat(redCase.customerId()).isEqualTo(customerId);
+        assertThat(redCase.orderId()).isNull();
     }
 
     private JsonNode syncRisks(AuthCookies actor, String idempotencyKey) throws Exception {

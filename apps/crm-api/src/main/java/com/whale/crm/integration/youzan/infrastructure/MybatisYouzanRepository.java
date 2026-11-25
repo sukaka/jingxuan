@@ -24,10 +24,23 @@ public class MybatisYouzanRepository implements YouzanRepository {
     }
 
     public void insertEvent(long tenantId, YouzanEvent e) { mapper.insertEvent(tenantId, e); }
-    public int updateEventPayload(long tenantId, long id, long version, String externalOrderNo, String eventType,
+    public int updateEventPayload(long tenantId, long id, long version, String externalOrderNo,
+                                  String externalCustomerId, Long campaignId, String eventType,
                                   String masked, String encrypted, String providerMasked, String providerEncrypted) {
-        return mapper.updateEventPayload(tenantId, id, version, externalOrderNo, eventType, masked, encrypted,
-                providerMasked, providerEncrypted);
+        return mapper.updateEventPayload(tenantId, id, version, externalOrderNo, externalCustomerId, campaignId,
+                eventType, masked, encrypted, providerMasked, providerEncrypted);
+    }
+    public void upsertOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId) {
+        mapper.upsertOrderLatest(tenantId, shopId, externalOrderNo, latestEventId);
+    }
+    public Long findMaxEventIdByExternalOrder(long tenantId, String shopId, String externalOrderNo) {
+        return mapper.selectMaxEventIdByExternalOrder(tenantId, shopId, externalOrderNo);
+    }
+    public int setOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId) {
+        return mapper.setOrderLatest(tenantId, shopId, externalOrderNo, latestEventId);
+    }
+    public int deleteOrderLatest(long tenantId, String shopId, String externalOrderNo, long expectedEventId) {
+        return mapper.deleteOrderLatest(tenantId, shopId, externalOrderNo, expectedEventId);
     }
     public Optional<YouzanEvent> findEventByKey(long tenantId, String shopId, String eventId) { return Optional.ofNullable(mapper.selectEventByKey(tenantId, shopId, eventId)); }
     public Optional<YouzanEvent> findEvent(long tenantId, long id) { return Optional.ofNullable(mapper.selectEvent(tenantId, id)); }
@@ -75,6 +88,12 @@ public class MybatisYouzanRepository implements YouzanRepository {
     public Optional<YouzanSyncIssue> findIssue(long tenantId, long id) { return Optional.ofNullable(mapper.selectIssue(tenantId, id)); }
     public Optional<YouzanSyncIssue> findIssueForUpdate(long tenantId, long id) { return Optional.ofNullable(mapper.selectIssueForUpdate(tenantId, id)); }
     public Optional<YouzanSyncIssue> findIssueByEventAndType(long tenantId, long eventId, String issueType) { return Optional.ofNullable(mapper.selectIssueByEventAndType(tenantId, eventId, issueType)); }
+    public List<Long> findIssueIdsWithoutOrderByExternalCustomer(long tenantId, String shopId, String externalCustomerId) {
+        return mapper.selectIssueIdsWithoutOrderByExternalCustomer(tenantId, shopId, externalCustomerId);
+    }
+    public List<Long> findIssueIdsByEventOrOrder(long tenantId, String shopId, String externalOrderNo, long eventId) {
+        return mapper.selectIssueIdsByEventOrOrder(tenantId, shopId, externalOrderNo, eventId);
+    }
     public List<YouzanSyncIssue> findOpenUnpaidIssuesByExternalOrderForUpdate(long tenantId, String shopId, String externalOrderNo, long excludeEventId) {
         return mapper.selectOpenUnpaidIssuesByExternalOrderForUpdate(tenantId, shopId, externalOrderNo, excludeEventId);
     }

@@ -26,6 +26,7 @@ import com.whale.crm.platform.security.DataScope;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -63,6 +64,7 @@ public class MergeApplicationService {
     private final MergeResourceSnapshotRepository snapshotRepository;
     private final MergeReversalRepository reversalRepository;
     private final MergeReferenceGuard referenceGuard;
+    private final CustomerRiskOperations customerRiskOperations;
 
     public MergeApplicationService(MergeCaseRepository mergeCaseRepository,
                                    CustomerRepository customerRepository,
@@ -79,6 +81,29 @@ public class MergeApplicationService {
                                    MergeResourceSnapshotRepository snapshotRepository,
                                    MergeReversalRepository reversalRepository,
                                    MergeReferenceGuard referenceGuard) {
+        this(mergeCaseRepository, customerRepository, identityRepository, tagRepository, followupRepository,
+                taskRepository, pointsLedgerRepository, scopeSupport, mobileSupport, auditService, objectMapper,
+                customerOrderOperations, snapshotRepository, reversalRepository, referenceGuard,
+                CustomerRiskOperations.NOOP);
+    }
+
+    @Autowired
+    public MergeApplicationService(MergeCaseRepository mergeCaseRepository,
+                                   CustomerRepository customerRepository,
+                                   CustomerIdentityRepository identityRepository,
+                                   CustomerTagRepository tagRepository,
+                                   FollowupRepository followupRepository,
+                                   TaskRepository taskRepository,
+                                   PointsLedgerRepository pointsLedgerRepository,
+                                   CustomerScopeSupport scopeSupport,
+                                   MobileSupport mobileSupport,
+                                   AuditService auditService,
+                                   ObjectMapper objectMapper,
+                                   CustomerOrderOperations customerOrderOperations,
+                                   MergeResourceSnapshotRepository snapshotRepository,
+                                   MergeReversalRepository reversalRepository,
+                                   MergeReferenceGuard referenceGuard,
+                                   CustomerRiskOperations customerRiskOperations) {
         this.mergeCaseRepository = mergeCaseRepository;
         this.customerRepository = customerRepository;
         this.identityRepository = identityRepository;
@@ -94,6 +119,8 @@ public class MergeApplicationService {
         this.snapshotRepository = snapshotRepository;
         this.reversalRepository = reversalRepository;
         this.referenceGuard = referenceGuard;
+        this.customerRiskOperations = customerRiskOperations != null
+                ? customerRiskOperations : CustomerRiskOperations.NOOP;
     }
 
     @Transactional(readOnly = true)
@@ -247,7 +274,7 @@ public class MergeApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "客户已归档，无法执行合并");
         }
 
-        MergeOrderResourceSnapshot resources = snapshotSecondaryResources(tenantId, caseId, primaryId, secondaryId);
+        SecondaryResources resources = snapshotSecondaryResources(tenantId, caseId, primaryId, secondaryId);
 
         // identity：与主客户完全同 (type,app,externalId) 的去重删除，其余改挂主客户（规避唯一键冲突）
         Set<String> primaryIdentityKeys = new HashSet<>();
@@ -271,8 +298,10 @@ public class MergeApplicationService {
         int followupsMigrated = followupRepository.reassignCustomer(tenantId, secondaryId, primaryId);
         int tasksMigrated = taskRepository.reassignCustomer(tenantId, secondaryId, primaryId);
         int pointsMigrated = pointsLedgerRepository.reassignCustomer(tenantId, secondaryId, primaryId);
-        customerOrderOperations.reassignSpecific(tenantId, resources.orderIds(), resources.entitlementIds(),
-                secondaryId, primaryId);
+        customerOrderOperations.reassignSpecific(tenantId, resources.orderResources().orderIds(),
+                resources.orderResources().entitlementIds(), secondaryId, primaryId);
+        customerRiskOperations.reassignSpecific(tenantId, resources.riskCaseIds(),
+                resources.orderResources().orderIds(), secondaryId, primaryId);
         long pointsBalance = pointsLedgerRepository.sumDelta(tenantId, primaryId);
         customerRepository.refreshPointsCached(tenantId, primaryId, Math.toIntExact(pointsBalance));
         customerRepository.refreshNextFollowupAt(tenantId, primaryId);
@@ -310,7 +339,7 @@ public class MergeApplicationService {
         return toResponse(tenantId, after);
     }
 
-    private MergeOrderResourceSnapshot snapshotSecondaryResources(long tenantId, long caseId, long primaryId, long secondaryId) {
+    private SecondaryResources snapshotSecondaryResources(long tenantId, long caseId, long primaryId, long secondaryId) {
         Set<String> primaryIdentityKeys = new HashSet<>();
         for (CustomerIdentity identity : identityRepository.findByCustomerId(tenantId, primaryId)) {
             primaryIdentityKeys.add(identityKey(identity));
@@ -343,7 +372,11 @@ public class MergeApplicationService {
         for (Long entitlementId : resources.entitlementIds()) {
             snapshotRepository.insert(tenantId, new MergeResourceSnapshot(null, caseId, "ENTITLEMENT", entitlementId.toString()));
         }
-        return resources;
+        List<Long> riskCaseIds = customerRiskOperations.findRiskCaseIdsByCustomer(tenantId, secondaryId);
+        for (Long riskCaseId : riskCaseIds) {
+            snapshotRepository.insert(tenantId, new MergeResourceSnapshot(null, caseId, "RISK_CASE", riskCaseId.toString()));
+        }
+        return new SecondaryResources(resources, riskCaseIds);
     }
 
     // ========== 内部 ==========
@@ -483,5 +516,8 @@ public class MergeApplicationService {
             case MergeCase.STATUS_REJECTED -> "已驳回";
             default -> "已结束";
         };
+    }
+
+    private record SecondaryResources(MergeOrderResourceSnapshot orderResources, List<Long> riskCaseIds) {
     }
 }

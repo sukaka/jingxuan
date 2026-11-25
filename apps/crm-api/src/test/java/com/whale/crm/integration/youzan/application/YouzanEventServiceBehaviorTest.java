@@ -402,6 +402,54 @@ class YouzanEventServiceBehaviorTest {
         verify(repository).insertIssue(eq(TENANT_ID), any());
     }
 
+    @Test
+    void completeLinksOrderAndCustomerToYouzanSyncIssuesWhenIssuesExist() throws Exception {
+        YouzanRepository repository = mock(YouzanRepository.class);
+        AesGcmCipher cipher = mock(AesGcmCipher.class);
+        OrderApplicationService orderService = mock(OrderApplicationService.class);
+        PaymentApplicationService paymentService = mock(PaymentApplicationService.class);
+        CustomerScopeSupport scopeSupport = mock(CustomerScopeSupport.class);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        YouzanRiskLinkOperations riskLinkOperations = mock(YouzanRiskLinkOperations.class);
+
+        Instant now = Instant.parse("2026-10-24T12:00:00Z");
+        CurrentUser actor = new CurrentUser(1L, TENANT_ID, "admin", "管理员", "EMPLOYEE", null,
+                Set.of("ADMIN"), Set.of("order:write"), Set.of());
+        when(currentUserService.loadFirstActiveByRole(TENANT_ID, "ADMIN")).thenReturn(Optional.of(actor));
+
+        YouzanOrderEvent paidEvent = new YouzanOrderEvent("EV-LINK-ORD", "ORDER_PAID", SHOP, "EXT-LINK-ORD",
+                "EXT-CUST-1", "TR-LINK-1", "PAID", 181100L, now, now, "REGULAR", null, null,
+                "PLATFORM", LocalDate.parse("2027-12-31"), List.of(new YouzanOrderLine("YZ-SKU-1", 1)));
+        String json = mapper.writeValueAsString(paidEvent);
+        YouzanEvent raw = new YouzanEvent(209L, SHOP, "EV-LINK-ORD", "ORDER_PAID", "EXT-LINK-ORD",
+                "{}", "cipher-link", true, "PULL", "RECEIVED", 0, null, null, now, null, null, 0L);
+        YouzanEvent done = new YouzanEvent(209L, SHOP, "EV-LINK-ORD", "ORDER_PAID", "EXT-LINK-ORD",
+                "{}", "cipher-link", true, "PULL", "PROCESSED", 1, null, null, now, now, 909L, 1L);
+        YouzanOrderMap orderMap = new YouzanOrderMap(59L, SHOP, "EXT-LINK-ORD", 909L, now, now, 0L);
+        Order paidOrder = order(909L, 1010L, "PAID", 181100L, 181100L, 2L);
+        OrderFulfillmentView paidView = new OrderFulfillmentView(
+                new OrderDetail(paidOrder, List.of(), List.of(), List.of()), List.of());
+
+        when(repository.findEventForUpdate(TENANT_ID, 209L)).thenReturn(Optional.of(raw));
+        when(cipher.decrypt("cipher-link")).thenReturn(json);
+        when(repository.findOrderMap(TENANT_ID, SHOP, "EXT-LINK-ORD")).thenReturn(Optional.of(orderMap));
+        when(repository.findOrderMapForUpdate(TENANT_ID, SHOP, "EXT-LINK-ORD")).thenReturn(Optional.of(orderMap));
+        when(orderService.detail(TENANT_ID, actor, 909L)).thenReturn(paidView);
+        when(repository.updateEventStatus(eq(TENANT_ID), eq(209L), eq(0L), eq("PROCESSED"),
+                any(), any(), any(), eq(909L))).thenReturn(1);
+        when(repository.findIssueIdsByEventOrOrder(TENANT_ID, SHOP, "EXT-LINK-ORD", 209L))
+                .thenReturn(List.of(801L, 802L));
+        when(repository.findEvent(TENANT_ID, 209L)).thenReturn(Optional.of(done));
+
+        YouzanEventService service = new YouzanEventService(repository, mapper, cipher, orderService, paymentService,
+                scopeSupport, currentUserService, mock(AuditService.class), mock(OutboxService.class),
+                txManager(), mock(TaskExecutor.class), riskLinkOperations);
+
+        YouzanEventResponse response = service.process(TENANT_ID, 209L);
+        assertThat(response.processStatus()).isEqualTo("PROCESSED");
+        verify(riskLinkOperations).linkOrderToYouzanIssues(TENANT_ID, List.of("801", "802"), 909L, 1010L);
+    }
+
     private static Order order(long id, long customerId, String status, long payableFen, long paidFen, long version) {
         return new Order(id, "J00000000000" + id, customerId, "测试客户", 8L, 8L, "EXT-ORD-" + id,
                 "YOUZAN", SHOP, "REGULAR", null, null, null, null, null, null, null, null, null,

@@ -12,6 +12,7 @@ import com.whale.crm.integration.youzan.api.dto.YouzanReconcileReport;
 import com.whale.crm.integration.youzan.api.dto.YouzanSkuMappingRequest;
 import com.whale.crm.integration.youzan.application.YouzanEventService;
 import com.whale.crm.integration.youzan.application.YouzanManagementService;
+import com.whale.crm.integration.youzan.application.YouzanRiskLinkOperations;
 import com.whale.crm.integration.youzan.domain.YouzanCustomerLink;
 import com.whale.crm.integration.youzan.domain.YouzanEvent;
 import com.whale.crm.integration.youzan.domain.YouzanOrderMap;
@@ -428,6 +429,30 @@ class YouzanManagementServiceTest {
                 Clock.fixed(Instant.parse("2026-10-24T15:59:59.999Z"), ZoneId.of("Asia/Shanghai")));
         assertThat(beijingPrevDayLastMs.report(TENANT_ID, admin, SHOP).todayEvents()).isEqualTo(7L);
         verify(repository).countTodayEvents(TENANT_ID, SHOP, prevDayStart, prevDayEndExclusive);
+    }
+
+    @Test
+    void upsertCustomerLinkNotifiesRiskLinkOperationsWhenUnlinkedIssuesExist() {
+        YouzanRiskLinkOperations riskLinkOperations = mock(YouzanRiskLinkOperations.class);
+        YouzanManagementService wiredService = new YouzanManagementService(repository,
+                mock(com.whale.crm.integration.youzan.domain.YouzanConfigRepository.class),
+                eventService, mock(YouzanAdapterRouter.class), orderService,
+                catalogService, scopeSupport, idempotencyService,
+                auditService, mock(OutboxService.class), objectMapper, cipher,
+                new SimpleTxManager(), riskLinkOperations);
+        CurrentUser admin = user(1L, "integration:youzan:manage");
+        when(idempotencyService.lookup(eq(TENANT_ID), any(), any(), any())).thenReturn(Optional.empty());
+        YouzanCustomerLink saved = new YouzanCustomerLink(15L, SHOP, "ext-cust-delay", 1010L, "MANUAL", "HIGH",
+                "人工确认", 1L, Instant.now(), 0L);
+        when(repository.findCustomerLink(TENANT_ID, SHOP, "ext-cust-delay"))
+                .thenReturn(Optional.empty(), Optional.of(saved));
+        when(repository.findIssueIdsWithoutOrderByExternalCustomer(TENANT_ID, SHOP, "ext-cust-delay"))
+                .thenReturn(List.of(901L, 902L));
+
+        wiredService.upsertCustomerLink(admin,
+                new YouzanCustomerLinkRequest(SHOP, "ext-cust-delay", 1010L, null, "人工确认"), "link-delay-key");
+
+        verify(riskLinkOperations).linkCustomerToYouzanIssues(TENANT_ID, List.of("901", "902"), 1010L);
     }
 
     private YouzanManagementService serviceWithClock(Clock clock) {

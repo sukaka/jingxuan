@@ -60,6 +60,7 @@ class MergeReversalApplicationServiceTest {
     private CustomerRepository customerRepository;
     private PointsLedgerRepository pointsLedgerRepository;
     private CustomerOrderOperations customerOrderOperations;
+    private CustomerRiskOperations customerRiskOperations;
     private DataScopeService dataScopeService;
     private MergeReferenceGuard referenceGuard;
     private MergeReversalApplicationService service;
@@ -72,6 +73,7 @@ class MergeReversalApplicationServiceTest {
         customerRepository = mock(CustomerRepository.class);
         pointsLedgerRepository = mock(PointsLedgerRepository.class);
         customerOrderOperations = mock(CustomerOrderOperations.class);
+        customerRiskOperations = mock(CustomerRiskOperations.class);
         dataScopeService = mock(DataScopeService.class);
         referenceGuard = mock(MergeReferenceGuard.class);
         IdempotencyService idempotencyService = mock(IdempotencyService.class);
@@ -94,7 +96,8 @@ class MergeReversalApplicationServiceTest {
                 idempotencyService,
                 mock(AuditService.class),
                 txManager,
-                referenceGuard);
+                referenceGuard,
+                customerRiskOperations);
         when(dataScopeService.scopeFor(ADMIN, DataScopeService.RESOURCE_CUSTOMER)).thenReturn(DataScope.all());
         when(dataScopeService.scopeFor(LEAD_OUT_OF_SCOPE, DataScopeService.RESOURCE_CUSTOMER))
                 .thenReturn(DataScope.team(Set.of(9L)));
@@ -141,6 +144,7 @@ class MergeReversalApplicationServiceTest {
         verify(mergeCaseRepository, never()).findById(anyLong(), anyLong());
         verify(customerRepository, never()).findById(anyLong(), anyLong());
         verify(customerOrderOperations).reassignSpecific(1L, List.of(300L), List.of(), 100L, 200L);
+        verify(customerRiskOperations).reassignSpecific(1L, List.of(), List.of(300L), 100L, 200L);
         verify(customerRepository).refreshNextFollowupAt(1L, 100L);
         verify(customerRepository).refreshNextFollowupAt(1L, 200L);
     }
@@ -169,6 +173,7 @@ class MergeReversalApplicationServiceTest {
         assertThat(response.status()).isEqualTo("MANUAL_REVIEW");
         verify(customerRepository, never()).refreshNextFollowupAt(anyLong(), anyLong());
         verify(customerRepository, never()).refreshPointsCached(anyLong(), anyLong(), anyInt());
+        verify(customerRiskOperations, never()).reassignSpecific(anyLong(), any(), any(), anyLong(), anyLong());
     }
 
     @Test
@@ -222,6 +227,7 @@ class MergeReversalApplicationServiceTest {
 
         verify(customerRepository, never()).restore(anyLong(), anyLong(), anyLong());
         verify(customerRepository, never()).refreshNextFollowupAt(anyLong(), anyLong());
+        verify(customerRiskOperations, never()).reassignSpecific(anyLong(), any(), any(), anyLong(), anyLong());
         verify(reversalRepository, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyString(),
                 any(), anyLong(), any(), any(), any(), any());
     }
@@ -250,6 +256,37 @@ class MergeReversalApplicationServiceTest {
                 any(), anyLong(), any(), any(), any(), any());
         verify(customerRepository, never()).refreshPointsCached(anyLong(), anyLong(), anyInt());
         verify(customerRepository, never()).refreshNextFollowupAt(anyLong(), anyLong());
+        verify(customerRiskOperations, never()).reassignSpecific(anyLong(), any(), any(), anyLong(), anyLong());
+    }
+
+    @Test
+    void approveReassignsRiskCaseSnapshotsAndOrderLinkedCases() {
+        MergeReversal requested = reversal(10L, 20L, "REQUESTED", 3L, 4L, 0L);
+        MergeReversal executed = reversal(10L, 20L, "EXECUTED", 3L, 4L, 1L);
+        MergeCase mergeCase = mergeCase(20L, 100L, 200L, MergeCase.STATUS_CONFIRMED, 2L);
+        Customer primary = customer(100L, 2L, 1L, 3L, false);
+        Customer secondary = customer(200L, 2L, 1L, 4L, true);
+
+        when(reversalRepository.findForUpdate(1L, 10L)).thenReturn(Optional.of(requested));
+        when(mergeCaseRepository.findByIdForUpdate(1L, 20L)).thenReturn(Optional.of(mergeCase));
+        when(customerRepository.findByIdForUpdate(1L, 100L)).thenReturn(Optional.of(primary));
+        when(customerRepository.findByIdForUpdate(1L, 200L)).thenReturn(Optional.of(secondary));
+        when(customerRepository.restore(1L, 200L, 4L)).thenReturn(1);
+        when(snapshotRepository.findByMergeCaseId(1L, 20L)).thenReturn(List.of(
+                new MergeResourceSnapshot(1L, 20L, "ORDER", "300"),
+                new MergeResourceSnapshot(2L, 20L, "RISK_CASE", "401"),
+                new MergeResourceSnapshot(3L, 20L, "RISK_CASE", "402")));
+        when(mergeCaseRepository.updateStatus(eq(1L), eq(20L), eq(2L), eq(MergeCase.STATUS_REVERSED), eq(1L), any()))
+                .thenReturn(1);
+        when(reversalRepository.updateStatus(eq(1L), eq(10L), eq(0L), eq("EXECUTED"), eq("含风控恢复"), eq(1L),
+                any(), any(), anyString(), isNull())).thenReturn(1);
+        when(reversalRepository.findById(1L, 10L)).thenReturn(Optional.of(executed));
+
+        MergeReversalResponse response = service.approve(
+                ADMIN, 10L, new MergeReversalActionRequest("含风控恢复", 0L), "k-approve-risk");
+
+        assertThat(response.status()).isEqualTo("EXECUTED");
+        verify(customerRiskOperations).reassignSpecific(1L, List.of(401L, 402L), List.of(300L), 100L, 200L);
     }
 
     private static MergeReversal reversal(long id, long caseId, String status, long primaryVersion,

@@ -92,9 +92,12 @@ class YouzanMultiTenantAndOfficialE2EIT extends AbstractE2EIT {
         assertThat(youzanRepository.findEventByKey(1L, shopId, eventId)).isEmpty();
 
         assertThat(youzanRepository.updateEventPayload(2L, persistedEvent.id(), persistedEvent.version(),
-                extOrderNo, "ORDER_PAID", "{\"k\":1}", "cipher-2", "{\"k\":1}", "p-cipher-2")).isEqualTo(1);
+                extOrderNo, extCustId, 123L, "ORDER_PAID", "{\"k\":1}", "cipher-2", "{\"k\":1}", "p-cipher-2"))
+                .isEqualTo(1);
         YouzanEvent updatedPayload = youzanRepository.findEvent(2L, persistedEvent.id()).orElseThrow();
         assertThat(updatedPayload.eventType()).isEqualTo("ORDER_PAID");
+        assertThat(updatedPayload.externalCustomerId()).isEqualTo(extCustId);
+        assertThat(updatedPayload.campaignId()).isEqualTo(123L);
         assertThat(youzanRepository.updateEventStatus(2L, updatedPayload.id(), updatedPayload.version(),
                 "RETRY", "transient", t0.plusSeconds(60), null, null)).isEqualTo(1);
 

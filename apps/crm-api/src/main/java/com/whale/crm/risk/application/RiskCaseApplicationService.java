@@ -18,17 +18,22 @@ import com.whale.crm.risk.domain.RiskCaseHistory;
 import com.whale.crm.risk.domain.RiskCaseQuery;
 import com.whale.crm.risk.domain.RiskCaseRepository;
 import com.whale.crm.risk.domain.RiskCustomerLink;
+import com.whale.crm.risk.domain.RiskSourceCustomerLink;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class RiskCaseApplicationService {
     private static final String SYNC_IDEMPOTENCY_SCOPE = "risk.sync";
+    private static final Set<String> RESOLVABLE_SOURCE_TYPES = Set.of(
+            "ORDER", "YOUZAN_SYNC_ISSUE", "REFUND", "ENTITLEMENT", "REDEMPTION");
 
     private final RiskCaseRepository repository;
     private final RiskAccessService accessService;
@@ -155,14 +160,52 @@ public class RiskCaseApplicationService {
             return Map.of();
         }
         Map<Long, RiskCustomerLink> links = new LinkedHashMap<>();
-        repository.findCustomerLinks(tenantId, riskCases.stream().map(RiskCase::id).toList())
-                .forEach(link -> links.put(link.riskCaseId(), link));
+        List<Long> resolvedIds = new ArrayList<>();
+        Map<String, Map<Long, List<RiskCase>>> delayedBySource = new LinkedHashMap<>();
+        for (RiskCase riskCase : riskCases) {
+            if (riskCase.customerId() != null || riskCase.orderId() != null) {
+                resolvedIds.add(riskCase.id());
+            } else {
+                Long sourceId = RiskCaseRegistrationService.parsePositiveLong(riskCase.sourceRef());
+                if (sourceId != null && riskCase.sourceType() != null
+                        && RESOLVABLE_SOURCE_TYPES.contains(riskCase.sourceType())) {
+                    delayedBySource
+                            .computeIfAbsent(riskCase.sourceType(), ignored -> new LinkedHashMap<>())
+                            .computeIfAbsent(sourceId, ignored -> new ArrayList<>())
+                            .add(riskCase);
+                }
+            }
+        }
+        if (!resolvedIds.isEmpty()) {
+            repository.findResolvedCustomerLinks(tenantId, resolvedIds)
+                    .forEach(link -> links.put(link.riskCaseId(), link));
+        }
+        for (Map.Entry<String, Map<Long, List<RiskCase>>> entry : delayedBySource.entrySet()) {
+            Map<Long, List<RiskCase>> casesBySourceId = entry.getValue();
+            List<Long> sourceIds = List.copyOf(casesBySourceId.keySet());
+            List<RiskSourceCustomerLink> resolved = switch (entry.getKey()) {
+                case "ORDER" -> repository.findDelayedOrderCustomerLinks(tenantId, sourceIds);
+                case "YOUZAN_SYNC_ISSUE" -> repository.findDelayedYouzanIssueCustomerLinks(tenantId, sourceIds);
+                case "REFUND" -> repository.findDelayedRefundCustomerLinks(tenantId, sourceIds);
+                case "ENTITLEMENT" -> repository.findDelayedEntitlementCustomerLinks(tenantId, sourceIds);
+                case "REDEMPTION" -> repository.findDelayedRedemptionCustomerLinks(tenantId, sourceIds);
+                default -> List.of();
+            };
+            for (RiskSourceCustomerLink link : resolved) {
+                for (RiskCase matched : casesBySourceId.getOrDefault(link.sourceId(), List.of())) {
+                    links.put(matched.id(), new RiskCustomerLink(
+                            matched.id(), link.orderId(), link.orderNo(),
+                            link.customerId(), link.customerNo(), link.customerName()));
+                }
+            }
+        }
         return links;
     }
 
     private RiskCaseResponse view(RiskCase riskCase, RiskCustomerLink customerLink) {
         return RiskCaseResponse.of(new RiskCase(riskCase.id(), riskCase.tenantId(), riskCase.riskCaseNo(),
-                riskCase.riskType(), riskCase.severity(), riskCase.sourceType(), riskCase.sourceRef(), riskCase.status(),
+                riskCase.riskType(), riskCase.severity(), riskCase.sourceType(), riskCase.sourceRef(),
+                riskCase.customerId(), riskCase.orderId(), riskCase.status(),
                 riskCase.ownerUserId(), masker.mask(riskCase.evidence()), masker.mask(riskCase.resolution()),
                 riskCase.resolvedAt(), riskCase.createdAt(), riskCase.updatedAt(), riskCase.version()), customerLink);
     }

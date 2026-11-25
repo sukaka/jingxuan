@@ -522,6 +522,12 @@ class YouzanAcceptanceIT extends AbstractMysqlIT {
                         + "payload_masked_json,payload_cipher,signature_valid,source_system,process_status,received_at) "
                         + "VALUES (999,?,?,?,?,?,'synthetic-cipher',1,'PULL','PROCESSED',NOW(3))",
                 SHOP, foreignOrder, "ORDER_PAID", foreignOrder, "{}");
+        long foreignEventId = jdbcTemplate.queryForObject(
+                "SELECT id FROM crm_youzan_event WHERE tenant_id=999 AND shop_id=? AND event_id=?",
+                Long.class, SHOP, foreignOrder);
+        jdbcTemplate.update("INSERT INTO crm_youzan_order_latest "
+                        + "(tenant_id,shop_id,external_order_no,latest_event_id) VALUES (999,?,?,?)",
+                SHOP, foreignOrder, foreignEventId);
         jdbcTemplate.update("INSERT INTO crm_youzan_order_map (tenant_id,shop_id,external_order_no,crm_order_id,"
                 + "last_external_updated_at) VALUES (999,?,?,?,NOW(3))", SHOP, foreignOrder, visibleOrderId);
         try {
@@ -530,6 +536,8 @@ class YouzanAcceptanceIT extends AbstractMysqlIT {
             assertThat(queryInt("SELECT COUNT(*) FROM crm_youzan_order_map WHERE tenant_id=999 AND shop_id=? "
                     + "AND external_order_no=?", SHOP, foreignOrder)).isEqualTo(1);
         } finally {
+            jdbcTemplate.update("DELETE FROM crm_youzan_order_latest WHERE tenant_id=999 AND shop_id=? "
+                    + "AND external_order_no=?", SHOP, foreignOrder);
             jdbcTemplate.update("DELETE FROM crm_youzan_order_map WHERE tenant_id=999 AND shop_id=? AND external_order_no=?",
                     SHOP, foreignOrder);
             jdbcTemplate.update("DELETE FROM crm_youzan_event WHERE tenant_id=999 AND shop_id=? AND event_id=?",

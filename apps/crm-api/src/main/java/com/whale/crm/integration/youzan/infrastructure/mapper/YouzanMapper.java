@@ -17,10 +17,24 @@ import java.util.List;
 public interface YouzanMapper {
     void insertEvent(@Param("tenantId") long tenantId, @Param("entity") YouzanEvent entity);
     int updateEventPayload(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
-                           @Param("externalOrderNo") String externalOrderNo, @Param("eventType") String eventType,
+                           @Param("externalOrderNo") String externalOrderNo,
+                           @Param("externalCustomerId") String externalCustomerId,
+                           @Param("campaignId") Long campaignId,
+                           @Param("eventType") String eventType,
                            @Param("masked") String masked, @Param("encrypted") String encrypted,
                            @Param("providerMasked") String providerMasked,
                            @Param("providerEncrypted") String providerEncrypted);
+    void upsertOrderLatest(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                           @Param("externalOrderNo") String externalOrderNo,
+                           @Param("latestEventId") long latestEventId);
+    Long selectMaxEventIdByExternalOrder(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                                         @Param("externalOrderNo") String externalOrderNo);
+    int setOrderLatest(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                       @Param("externalOrderNo") String externalOrderNo,
+                       @Param("latestEventId") long latestEventId);
+    int deleteOrderLatest(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
+                          @Param("externalOrderNo") String externalOrderNo,
+                          @Param("expectedEventId") long expectedEventId);
     YouzanEvent selectEventByKey(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                                  @Param("eventId") String eventId);
     YouzanEvent selectEvent(@Param("tenantId") long tenantId, @Param("id") long id);
@@ -86,6 +100,13 @@ public interface YouzanMapper {
     YouzanSyncIssue selectIssueForUpdate(@Param("tenantId") long tenantId, @Param("id") long id);
     YouzanSyncIssue selectIssueByEventAndType(@Param("tenantId") long tenantId, @Param("eventId") long eventId,
                                               @Param("issueType") String issueType);
+    List<Long> selectIssueIdsWithoutOrderByExternalCustomer(@Param("tenantId") long tenantId,
+                                                            @Param("shopId") String shopId,
+                                                            @Param("externalCustomerId") String externalCustomerId);
+    List<Long> selectIssueIdsByEventOrOrder(@Param("tenantId") long tenantId,
+                                            @Param("shopId") String shopId,
+                                            @Param("externalOrderNo") String externalOrderNo,
+                                            @Param("eventId") long eventId);
     List<YouzanSyncIssue> selectOpenUnpaidIssuesByExternalOrderForUpdate(@Param("tenantId") long tenantId,
                                                                          @Param("shopId") String shopId,
                                                                          @Param("externalOrderNo") String externalOrderNo,

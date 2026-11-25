@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.whale.crm.risk.infrastructure.mapper.RiskCaseMapper">
-  <sql id="caseColumns">id,tenant_id AS tenantId,risk_case_no AS riskCaseNo,risk_type AS riskType,severity,source_type AS sourceType,source_ref AS sourceRef,status,owner_user_id AS ownerUserId,evidence,resolution,resolved_at AS resolvedAt,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="caseColumns">id,tenant_id AS tenantId,risk_case_no AS riskCaseNo,risk_type AS riskType,severity,source_type AS sourceType,source_ref AS sourceRef,customer_id AS customerId,order_id AS orderId,status,owner_user_id AS ownerUserId,evidence,resolution,resolved_at AS resolvedAt,created_at AS createdAt,updated_at AS updatedAt,version</sql>
   <sql id="historyColumns">id,tenant_id AS tenantId,risk_case_id AS riskCaseId,action,from_status AS fromStatus,to_status AS toStatus,actor_user_id AS actorUserId,note,created_at AS createdAt</sql>
   <sql id="filters">
     <if test="q.status != null and q.status != ''">AND status=#{q.status}</if>
@@ -39,45 +39,145 @@
     SELECT COUNT(*) FROM crm_risk_case WHERE tenant_id=#{q.tenantId} <include refid="filters"/>
   </select>
 
-  <select id="findCustomerLinks" resultType="com.whale.crm.risk.domain.RiskCustomerLink">
+  <select id="findResolvedCustomerLinks" resultType="com.whale.crm.risk.domain.RiskCustomerLink">
     SELECT r.id AS riskCaseId,o.id AS orderId,o.order_no AS orderNo,
       c.id AS customerId,c.customer_no AS customerNo,COALESCE(c.display_name,c.nickname) AS customerName
     FROM crm_risk_case r
-    LEFT JOIN crm_youzan_sync_issue yi ON yi.tenant_id=r.tenant_id
-      AND r.source_type='YOUZAN_SYNC_ISSUE' AND r.source_ref REGEXP '^[1-9][0-9]*$'
-      AND yi.id=CAST(r.source_ref AS UNSIGNED)
-    LEFT JOIN crm_youzan_event ye ON ye.tenant_id=yi.tenant_id AND ye.id=yi.event_id
-    LEFT JOIN crm_youzan_order_map yom ON yom.tenant_id=ye.tenant_id AND yom.shop_id=ye.shop_id
-      AND yom.external_order_no=ye.external_order_no
-    LEFT JOIN crm_youzan_customer_link ycl ON ycl.tenant_id=ye.tenant_id AND ycl.shop_id=ye.shop_id
-      AND ycl.external_customer_id=JSON_UNQUOTE(JSON_EXTRACT(ye.payload_masked_json,'$.external_customer_id'))
-    LEFT JOIN crm_refund rf ON rf.tenant_id=r.tenant_id
-      AND r.source_type='REFUND' AND r.source_ref REGEXP '^[1-9][0-9]*$'
-      AND rf.id=CAST(r.source_ref AS UNSIGNED)
-    LEFT JOIN crm_entitlement e ON e.tenant_id=r.tenant_id
-      AND r.source_type='ENTITLEMENT' AND r.source_ref REGEXP '^[1-9][0-9]*$'
-      AND e.id=CAST(r.source_ref AS UNSIGNED)
-    LEFT JOIN crm_order_item oi ON oi.tenant_id=e.tenant_id AND oi.id=e.order_item_id
-    LEFT JOIN crm_redemption rd ON rd.tenant_id=r.tenant_id
-      AND r.source_type='REDEMPTION' AND r.source_ref REGEXP '^[1-9][0-9]*$'
-      AND rd.id=CAST(r.source_ref AS UNSIGNED)
-    LEFT JOIN crm_order o ON o.tenant_id=r.tenant_id AND (
-      (r.source_type='ORDER' AND r.source_ref REGEXP '^[1-9][0-9]*$' AND o.id=CAST(r.source_ref AS UNSIGNED))
-      OR (r.source_type='YOUZAN_SYNC_ISSUE' AND o.id=COALESCE(ye.order_id,yom.crm_order_id))
-      OR (r.source_type='REFUND' AND o.id=rf.order_id)
-      OR (r.source_type='ENTITLEMENT' AND o.id=oi.order_id))
-    INNER JOIN crm_customer c ON c.tenant_id=r.tenant_id
-      AND c.id=COALESCE(o.customer_id,ycl.customer_id,rf.customer_id,e.customer_id,rd.customer_id)
+    LEFT JOIN crm_order o ON o.tenant_id=r.tenant_id AND o.id=r.order_id
+    INNER JOIN crm_customer c ON c.tenant_id=r.tenant_id AND c.id=COALESCE(o.customer_id,r.customer_id)
     WHERE r.tenant_id=#{tenantId} AND r.id IN
     <foreach collection="riskCaseIds" item="riskCaseId" open="(" separator="," close=")">#{riskCaseId}</foreach>
     ORDER BY r.id
   </select>
+  <select id="findDelayedOrderCustomerLinks" resultType="com.whale.crm.risk.domain.RiskSourceCustomerLink">
+    SELECT o.id AS sourceId,o.id AS orderId,o.order_no AS orderNo,
+      c.id AS customerId,c.customer_no AS customerNo,COALESCE(c.display_name,c.nickname) AS customerName
+    FROM crm_order o
+    INNER JOIN crm_customer c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id
+    WHERE o.tenant_id=#{tenantId} AND o.id IN
+    <foreach collection="sourceIds" item="sourceId" open="(" separator="," close=")">#{sourceId}</foreach>
+  </select>
+  <select id="findDelayedYouzanIssueCustomerLinks" resultType="com.whale.crm.risk.domain.RiskSourceCustomerLink">
+    SELECT yi.id AS sourceId,o.id AS orderId,o.order_no AS orderNo,
+      c.id AS customerId,c.customer_no AS customerNo,COALESCE(c.display_name,c.nickname) AS customerName
+    FROM crm_youzan_sync_issue yi
+    INNER JOIN crm_youzan_event ye ON ye.tenant_id=yi.tenant_id AND ye.id=yi.event_id
+    LEFT JOIN crm_youzan_order_map yom ON yom.tenant_id=ye.tenant_id AND yom.shop_id=ye.shop_id
+      AND yom.external_order_no=ye.external_order_no
+    LEFT JOIN crm_youzan_customer_link ycl ON ycl.tenant_id=ye.tenant_id AND ycl.shop_id=ye.shop_id
+      AND ye.external_customer_id IS NOT NULL AND ycl.external_customer_id=ye.external_customer_id
+    LEFT JOIN crm_order o ON o.tenant_id=yi.tenant_id AND o.id=COALESCE(ye.order_id,yom.crm_order_id)
+    INNER JOIN crm_customer c ON c.tenant_id=yi.tenant_id AND c.id=COALESCE(o.customer_id,ycl.customer_id)
+    WHERE yi.tenant_id=#{tenantId} AND yi.id IN
+    <foreach collection="sourceIds" item="sourceId" open="(" separator="," close=")">#{sourceId}</foreach>
+  </select>
+  <select id="findDelayedRefundCustomerLinks" resultType="com.whale.crm.risk.domain.RiskSourceCustomerLink">
+    SELECT rf.id AS sourceId,o.id AS orderId,o.order_no AS orderNo,
+      c.id AS customerId,c.customer_no AS customerNo,COALESCE(c.display_name,c.nickname) AS customerName
+    FROM crm_refund rf
+    LEFT JOIN crm_order o ON o.tenant_id=rf.tenant_id AND o.id=rf.order_id
+    INNER JOIN crm_customer c ON c.tenant_id=rf.tenant_id AND c.id=COALESCE(o.customer_id,rf.customer_id)
+    WHERE rf.tenant_id=#{tenantId} AND rf.id IN
+    <foreach collection="sourceIds" item="sourceId" open="(" separator="," close=")">#{sourceId}</foreach>
+  </select>
+  <select id="findDelayedEntitlementCustomerLinks" resultType="com.whale.crm.risk.domain.RiskSourceCustomerLink">
+    SELECT e.id AS sourceId,o.id AS orderId,o.order_no AS orderNo,
+      c.id AS customerId,c.customer_no AS customerNo,COALESCE(c.display_name,c.nickname) AS customerName
+    FROM crm_entitlement e
+    LEFT JOIN crm_order_item oi ON oi.tenant_id=e.tenant_id AND oi.id=e.order_item_id
+    LEFT JOIN crm_order o ON o.tenant_id=oi.tenant_id AND o.id=oi.order_id
+    INNER JOIN crm_customer c ON c.tenant_id=e.tenant_id AND c.id=COALESCE(o.customer_id,e.customer_id)
+    WHERE e.tenant_id=#{tenantId} AND e.id IN
+    <foreach collection="sourceIds" item="sourceId" open="(" separator="," close=")">#{sourceId}</foreach>
+  </select>
+  <select id="findDelayedRedemptionCustomerLinks" resultType="com.whale.crm.risk.domain.RiskSourceCustomerLink">
+    SELECT rd.id AS sourceId,NULL AS orderId,NULL AS orderNo,
+      c.id AS customerId,c.customer_no AS customerNo,COALESCE(c.display_name,c.nickname) AS customerName
+    FROM crm_redemption rd
+    INNER JOIN crm_customer c ON c.tenant_id=rd.tenant_id AND c.id=rd.customer_id
+    WHERE rd.tenant_id=#{tenantId} AND rd.id IN
+    <foreach collection="sourceIds" item="sourceId" open="(" separator="," close=")">#{sourceId}</foreach>
+  </select>
+
+  <select id="resolveOrderLink" resultType="com.whale.crm.risk.domain.RiskResolvedIds">
+    SELECT o.id AS orderId,o.customer_id AS customerId
+    FROM crm_order o
+    WHERE o.tenant_id=#{tenantId} AND o.id=#{sourceId}
+  </select>
+  <select id="resolveYouzanIssueLink" resultType="com.whale.crm.risk.domain.RiskResolvedIds">
+    SELECT o.id AS orderId,COALESCE(o.customer_id,ycl.customer_id) AS customerId
+    FROM crm_youzan_sync_issue yi
+    INNER JOIN crm_youzan_event ye ON ye.tenant_id=yi.tenant_id AND ye.id=yi.event_id
+    LEFT JOIN crm_youzan_order_map yom ON yom.tenant_id=ye.tenant_id AND yom.shop_id=ye.shop_id
+      AND yom.external_order_no=ye.external_order_no
+    LEFT JOIN crm_order o ON o.tenant_id=yi.tenant_id AND o.id=COALESCE(ye.order_id,yom.crm_order_id)
+    LEFT JOIN crm_youzan_customer_link ycl ON ycl.tenant_id=ye.tenant_id AND ycl.shop_id=ye.shop_id
+      AND ye.external_customer_id IS NOT NULL AND ycl.external_customer_id=ye.external_customer_id
+    WHERE yi.tenant_id=#{tenantId} AND yi.id=#{sourceId}
+      AND (o.id IS NOT NULL OR ycl.customer_id IS NOT NULL)
+  </select>
+  <select id="resolveRefundLink" resultType="com.whale.crm.risk.domain.RiskResolvedIds">
+    SELECT o.id AS orderId,COALESCE(o.customer_id,rf.customer_id) AS customerId
+    FROM crm_refund rf
+    LEFT JOIN crm_order o ON o.tenant_id=rf.tenant_id AND o.id=rf.order_id
+    WHERE rf.tenant_id=#{tenantId} AND rf.id=#{sourceId}
+  </select>
+  <select id="resolveEntitlementLink" resultType="com.whale.crm.risk.domain.RiskResolvedIds">
+    SELECT o.id AS orderId,COALESCE(o.customer_id,e.customer_id) AS customerId
+    FROM crm_entitlement e
+    LEFT JOIN crm_order_item oi ON oi.tenant_id=e.tenant_id AND oi.id=e.order_item_id
+    LEFT JOIN crm_order o ON o.tenant_id=oi.tenant_id AND o.id=oi.order_id
+    WHERE e.tenant_id=#{tenantId} AND e.id=#{sourceId}
+  </select>
+  <select id="resolveRedemptionLink" resultType="com.whale.crm.risk.domain.RiskResolvedIds">
+    SELECT NULL AS orderId,rd.customer_id AS customerId
+    FROM crm_redemption rd
+    WHERE rd.tenant_id=#{tenantId} AND rd.id=#{sourceId}
+  </select>
 
   <insert id="insert">
-    INSERT INTO crm_risk_case (tenant_id,risk_case_no,risk_type,severity,source_type,source_ref,status,owner_user_id,evidence,resolution,resolved_at)
-    VALUES (#{e.tenantId},#{e.riskCaseNo},#{e.riskType},#{e.severity},#{e.sourceType},#{e.sourceRef},#{e.status},
+    INSERT INTO crm_risk_case (tenant_id,risk_case_no,risk_type,severity,source_type,source_ref,customer_id,order_id,status,owner_user_id,evidence,resolution,resolved_at)
+    VALUES (#{e.tenantId},#{e.riskCaseNo},#{e.riskType},#{e.severity},#{e.sourceType},#{e.sourceRef},
+      #{e.customerId,jdbcType=BIGINT},#{e.orderId,jdbcType=BIGINT},#{e.status},
       #{e.ownerUserId,jdbcType=BIGINT},#{e.evidence,jdbcType=VARCHAR},#{e.resolution,jdbcType=VARCHAR},#{e.resolvedAt,jdbcType=TIMESTAMP})
   </insert>
+  <update id="backfillLinkIfAbsent">
+    UPDATE crm_risk_case
+    SET customer_id=COALESCE(customer_id,#{customerId,jdbcType=BIGINT}),
+        order_id=COALESCE(order_id,#{orderId,jdbcType=BIGINT}),
+        updated_at=updated_at
+    WHERE tenant_id=#{tenantId} AND id=#{id} AND status &lt;&gt; 'CLOSED'
+      AND (customer_id IS NULL OR order_id IS NULL)
+  </update>
+  <update id="linkCustomerToYouzanIssues">
+    UPDATE crm_risk_case
+    SET customer_id=#{customerId}
+    WHERE tenant_id=#{tenantId} AND source_type='YOUZAN_SYNC_ISSUE' AND order_id IS NULL
+      AND source_ref IN <foreach collection="sourceRefs" item="ref" open="(" separator="," close=")">#{ref}</foreach>
+  </update>
+  <update id="linkOrderToYouzanIssues">
+    UPDATE crm_risk_case
+    SET order_id=#{orderId},customer_id=#{customerId}
+    WHERE tenant_id=#{tenantId} AND source_type='YOUZAN_SYNC_ISSUE'
+      AND source_ref IN <foreach collection="sourceRefs" item="ref" open="(" separator="," close=")">#{ref}</foreach>
+  </update>
+  <select id="findIdsByCustomerId" resultType="long">
+    SELECT id FROM crm_risk_case
+    WHERE tenant_id=#{tenantId} AND customer_id=#{customerId}
+    ORDER BY id
+  </select>
+  <update id="reassignSpecific">
+    UPDATE crm_risk_case
+    SET customer_id=#{toCustomerId}
+    WHERE tenant_id=#{tenantId} AND customer_id=#{fromCustomerId}
+      AND id IN <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+  </update>
+  <update id="reassignSpecificByOrderIds">
+    UPDATE crm_risk_case
+    SET customer_id=#{toCustomerId}
+    WHERE tenant_id=#{tenantId} AND customer_id=#{fromCustomerId}
+      AND order_id IN <foreach collection="orderIds" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
+  </update>
   <update id="updateStatus">
     UPDATE crm_risk_case SET status=#{toStatus},owner_user_id=#{ownerUserId,jdbcType=BIGINT},
       resolution=#{resolution,jdbcType=VARCHAR},resolved_at=#{resolvedAt,jdbcType=TIMESTAMP},

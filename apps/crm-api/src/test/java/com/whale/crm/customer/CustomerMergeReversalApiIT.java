@@ -601,6 +601,94 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
         assertThat(count("crm_merge_resource_snapshot", caseId)).isEqualTo(snapshots);
     }
 
+    @Test
+    void mergeAndReversalPreserveBothOrderLinkedAndCustomerOnlyRiskCasesSelectively() throws Exception {
+        AuthCookies admin = login("admin");
+        String suffix = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        long primary = createCustomer(admin, "合成风控合并主-" + suffix);
+        long secondary = createCustomer(admin, "合成风控合并从-" + suffix);
+        long primaryOrder = orderWithEntitlement(primary, "rsk-pri-" + suffix);
+        long secondaryOrder = orderWithEntitlement(secondary, "rsk-sec-" + suffix);
+
+        // Give secondary a followup with nextFollowupAt to verify M3 invariants stay intact alongside R2c
+        mockMvc.perform(admin.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "it-rsk-fu-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + secondary + ",\"channelCode\":\"WECOM\","
+                                + "\"summary\":\"风控合并跟进\",\"nextFollowupAt\":\"2026-12-01T00:00:00Z\"}"))
+                .andExpect(status().isCreated());
+
+        long primaryOrderRisk = insertRiskCase("RC-PO-" + suffix, "ORDER_PAYMENT_CASH", "ORDER",
+                Long.toString(primaryOrder), primary, primaryOrder);
+        long primaryYzRisk = insertRiskCase("RC-PYZ-" + suffix, "CUSTOMER_UNRESOLVED", "YOUZAN_SYNC_ISSUE",
+                "910001-" + suffix, primary, null);
+        long secondaryOrderRisk = insertRiskCase("RC-SO-" + suffix, "ORDER_PAYMENT_CASH", "ORDER",
+                Long.toString(secondaryOrder), secondary, secondaryOrder);
+        long secondaryYzRisk = insertRiskCase("RC-SYZ-" + suffix, "CUSTOMER_UNRESOLVED", "YOUZAN_SYNC_ISSUE",
+                "910002-" + suffix, secondary, null);
+
+        long caseId = createCase(admin, primary, secondary);
+        confirmCase(admin, caseId);
+
+        // Verify RISK_CASE snapshots & reassignment without bumping crm_risk_case.version or primary.version
+        assertThat(snapshotCount(caseId, "RISK_CASE", secondaryOrderRisk)).isEqualTo(1);
+        assertThat(snapshotCount(caseId, "RISK_CASE", secondaryYzRisk)).isEqualTo(1);
+        assertThat(snapshotCount(caseId, "RISK_CASE", primaryOrderRisk)).isZero();
+        assertThat(snapshotCount(caseId, "RISK_CASE", primaryYzRisk)).isZero();
+        assertThat(ownerOf("crm_risk_case", secondaryOrderRisk)).isEqualTo(primary);
+        assertThat(ownerOf("crm_risk_case", secondaryYzRisk)).isEqualTo(primary);
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM crm_risk_case WHERE id=?",
+                Long.class, secondaryOrderRisk)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM crm_risk_case WHERE id=?",
+                Long.class, secondaryYzRisk)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM crm_customer WHERE id=?",
+                Long.class, primary)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT next_followup_at FROM crm_customer WHERE id=?",
+                java.sql.Timestamp.class, primary)).isNotNull();
+
+        // Verify GET /api/v1/risks reflects primary customer after merge
+        JsonNode afterMergeView = objectMapper.readTree(mockMvc.perform(
+                        org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                                .get("/api/v1/risks/" + secondaryYzRisk).cookie(admin.cookies()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).at("/data/riskCase");
+        assertThat(afterMergeView.at("/customerId").asLong()).isEqualTo(primary);
+
+        // Post-merge risk cases: one on secondaryOrder (temporarily owned by primary), one primary-only Youzan issue
+        long postMergeSecondaryOrderRisk = insertRiskCase("RC-PMSO-" + suffix, "ORDER_REFUND_CASH", "ORDER",
+                Long.toString(secondaryOrder), primary, secondaryOrder);
+        long postMergePrimaryYzRisk = insertRiskCase("RC-PMPYZ-" + suffix, "PAYMENT_MISMATCH", "YOUZAN_SYNC_ISSUE",
+                "910003-" + suffix, primary, null);
+
+        long reversalId = requestReversal(admin, caseId, "it-rsk-rev-req-" + suffix, "误合并含风控单");
+        mockMvc.perform(admin.withAuth(post("/api/v1/customer-merge-reversals/" + reversalId + "/approve"))
+                        .header("Idempotency-Key", "it-rsk-rev-app-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0,\"reason\":\"核实恢复风控单\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("EXECUTED"));
+
+        // Secondary's pre-merge & post-merge-on-secondary-order cases move back; primary's stay on primary
+        assertThat(ownerOf("crm_risk_case", secondaryOrderRisk)).isEqualTo(secondary);
+        assertThat(ownerOf("crm_risk_case", secondaryYzRisk)).isEqualTo(secondary);
+        assertThat(ownerOf("crm_risk_case", postMergeSecondaryOrderRisk)).isEqualTo(secondary);
+        assertThat(ownerOf("crm_risk_case", primaryOrderRisk)).isEqualTo(primary);
+        assertThat(ownerOf("crm_risk_case", primaryYzRisk)).isEqualTo(primary);
+        assertThat(ownerOf("crm_risk_case", postMergePrimaryYzRisk)).isEqualTo(primary);
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM crm_risk_case WHERE id=?",
+                Long.class, secondaryOrderRisk)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM crm_risk_case WHERE id=?",
+                Long.class, secondaryYzRisk)).isZero();
+    }
+
+    private long insertRiskCase(String caseNo, String riskType, String sourceType, String sourceRef,
+                                Long customerId, Long orderId) {
+        jdbcTemplate.update("INSERT INTO crm_risk_case (tenant_id,risk_case_no,risk_type,severity,source_type,source_ref,"
+                        + "customer_id,order_id,status,evidence) VALUES (1,?,?,'HIGH',?,?,?,?, 'OPEN', '{}')",
+                caseNo, riskType, sourceType, sourceRef, customerId, orderId);
+        return jdbcTemplate.queryForObject("SELECT id FROM crm_risk_case WHERE tenant_id=1 AND risk_case_no=?",
+                Long.class, caseNo);
+    }
+
     private void refund(long order, long customer) {
         jdbcTemplate.update("INSERT INTO crm_refund (tenant_id,refund_no,order_id,customer_id,requested_fen,reason_code,status,requested_by) VALUES (1,?,?,?,100,'TEST','REQUESTED',1)",
                 "IT-REFUND-" + java.util.UUID.randomUUID(), order, customer);

@@ -77,8 +77,8 @@ public class YouzanManagementService {
     private final AesGcmCipher cipher;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
+    private final YouzanRiskLinkOperations riskLinkOperations;
 
-    @Autowired
     public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
                                    YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
                                    OrderApplicationService orderService, CatalogApplicationService catalogService,
@@ -87,7 +87,20 @@ public class YouzanManagementService {
                                    AesGcmCipher cipher, PlatformTransactionManager transactionManager) {
         this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
                 scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
-                transactionManager, Clock.system(BUSINESS_ZONE));
+                transactionManager, Clock.system(BUSINESS_ZONE), YouzanRiskLinkOperations.NOOP);
+    }
+
+    @Autowired
+    public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
+                                   YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
+                                   OrderApplicationService orderService, CatalogApplicationService catalogService,
+                                   CustomerScopeSupport scopeSupport, IdempotencyService idempotencyService,
+                                   AuditService auditService, OutboxService outboxService, ObjectMapper objectMapper,
+                                   AesGcmCipher cipher, PlatformTransactionManager transactionManager,
+                                   YouzanRiskLinkOperations riskLinkOperations) {
+        this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
+                scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
+                transactionManager, Clock.system(BUSINESS_ZONE), riskLinkOperations);
     }
 
     public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
@@ -96,6 +109,18 @@ public class YouzanManagementService {
                                    CustomerScopeSupport scopeSupport, IdempotencyService idempotencyService,
                                    AuditService auditService, OutboxService outboxService, ObjectMapper objectMapper,
                                    AesGcmCipher cipher, PlatformTransactionManager transactionManager, Clock clock) {
+        this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
+                scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
+                transactionManager, clock, YouzanRiskLinkOperations.NOOP);
+    }
+
+    public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
+                                   YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
+                                   OrderApplicationService orderService, CatalogApplicationService catalogService,
+                                   CustomerScopeSupport scopeSupport, IdempotencyService idempotencyService,
+                                   AuditService auditService, OutboxService outboxService, ObjectMapper objectMapper,
+                                   AesGcmCipher cipher, PlatformTransactionManager transactionManager, Clock clock,
+                                   YouzanRiskLinkOperations riskLinkOperations) {
         this.repository = repository;
         this.configRepository = configRepository;
         this.eventService = eventService;
@@ -110,6 +135,7 @@ public class YouzanManagementService {
         this.cipher = cipher;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.clock = clock != null ? clock : Clock.system(BUSINESS_ZONE);
+        this.riskLinkOperations = riskLinkOperations != null ? riskLinkOperations : YouzanRiskLinkOperations.NOOP;
     }
 
     public PageResponse<YouzanOrderView> orders(long tenantId, CurrentUser user, String shopId, int page, int size) {
@@ -451,6 +477,12 @@ public class YouzanManagementService {
                 }
                 YouzanCustomerLink result = repository.findCustomerLink(tenantId, request.shopId(), request.externalCustomerId())
                         .orElseThrow();
+                List<Long> issueIds = repository.findIssueIdsWithoutOrderByExternalCustomer(
+                        tenantId, request.shopId(), request.externalCustomerId());
+                if (issueIds != null && !issueIds.isEmpty()) {
+                    riskLinkOperations.linkCustomerToYouzanIssues(tenantId,
+                            issueIds.stream().map(Object::toString).toList(), result.customerId());
+                }
                 idempotencyService.recordSuccess(tenantId, scope, key, "YOUZAN_CUSTOMER_LINK",
                         result.id().toString(), payload);
                 auditService.record(tenantId, user.userId(), "YOUZAN_CUSTOMER_LINK_SAVE", "YOUZAN",

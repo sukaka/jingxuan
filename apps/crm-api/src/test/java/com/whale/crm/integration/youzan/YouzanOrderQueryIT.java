@@ -6,6 +6,7 @@ import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.integration.youzan.adapter.MockYouzanAdapter;
 import com.whale.crm.integration.youzan.adapter.YouzanOrderEvent;
 import com.whale.crm.integration.youzan.adapter.YouzanOrderLine;
+import com.whale.crm.integration.youzan.application.YouzanEventService;
 import com.whale.crm.integration.youzan.domain.YouzanRepository;
 import com.whale.crm.platform.security.crypto.AesGcmCipher;
 import com.whale.crm.platform.support.AbstractMysqlIT;
@@ -46,6 +47,8 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
     private AesGcmCipher cipher;
     @Autowired
     private YouzanRepository youzanRepository;
+    @Autowired
+    private YouzanEventService youzanEventService;
 
     private AuthCookies admin;
     private AuthCookies manager1;
@@ -411,17 +414,112 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
         assertThat(manager2Report.at("/todayEvents").asLong()).isZero();
     }
 
+    @Test
+    void scopedCampaignOrderCountsAndOrderLatestGreatestMonotonicityAndPayloadBackfillWork() throws Exception {
+        Map<String, Object> m1Row = jdbcTemplate.queryForMap(
+                "SELECT id,team_id FROM sys_user WHERE tenant_id=1 AND username='manager1'");
+        Map<String, Object> m2Row = jdbcTemplate.queryForMap(
+                "SELECT id,team_id FROM sys_user WHERE tenant_id=1 AND username='manager2'");
+        long m1Id = ((Number) m1Row.get("id")).longValue();
+        long m1Team = ((Number) m1Row.get("team_id")).longValue();
+        long m2Id = ((Number) m2Row.get("id")).longValue();
+        long m2Team = ((Number) m2Row.get("team_id")).longValue();
+
+        long cust1 = insertCustomer(m1Id, m1Team, "YZ-CAMP-M1-" + suffix());
+        long cust2 = insertCustomer(m2Id, m2Team, "YZ-CAMP-M2-" + suffix());
+        String shop = shop("campaign-latest");
+        String extCust1 = "IT-YZ-CAMP-CUST1-" + suffix();
+        String extCust2 = "IT-YZ-CAMP-CUST2-" + suffix();
+        linkCustomer(shop, extCust1, cust1);
+        linkCustomer(shop, extCust2, cust2);
+
+        String ord1 = "IT-YZ-CAMP-ORD1-" + suffix();
+        String ord2 = "IT-YZ-CAMP-ORD2-" + suffix();
+        String ord3 = "IT-YZ-CAMP-ORD3-" + suffix();
+        String ord4 = "IT-YZ-CAMP-ORD4-" + suffix();
+        Instant t0 = Instant.parse("2026-10-25T10:00:00Z");
+
+        YouzanOrderEvent ord1Ev1 = new YouzanOrderEvent("IT-YZ-CAMP-E1-" + suffix(), "WAIT_PAY", shop, ord1,
+                extCust1, null, "WAIT_PAY", 100L, null, t0, "REGULAR", null, null, "PLATFORM", null,
+                List.of(new YouzanOrderLine("YZ-SKU-MISSING", 1)));
+        YouzanOrderEvent ord1Ev2 = new YouzanOrderEvent("IT-YZ-CAMP-E2-" + suffix(), "ORDER_PAID", shop, ord1,
+                extCust1, "TR-C1", "PAID", 100L, t0, t0.plusSeconds(10), "REGULAR", 101L, 1L, "PLATFORM", null,
+                List.of(new YouzanOrderLine("YZ-SKU-MISSING", 1)));
+        YouzanOrderEvent ord2Ev = new YouzanOrderEvent("IT-YZ-CAMP-E3-" + suffix(), "ORDER_PAID", shop, ord2,
+                extCust1, "TR-C2", "PAID", 100L, t0, t0, "REGULAR", null, null, "PLATFORM", null,
+                List.of(new YouzanOrderLine("YZ-SKU-MISSING", 1)));
+        YouzanOrderEvent ord3Ev = new YouzanOrderEvent("IT-YZ-CAMP-E4-" + suffix(), "ORDER_PAID", shop, ord3,
+                extCust2, "TR-C3", "PAID", 100L, t0, t0, "REGULAR", 202L, 1L, "PLATFORM", null,
+                List.of(new YouzanOrderLine("YZ-SKU-MISSING", 1)));
+
+        long ev1Id = insertRaw(1L, shop, ord1Ev1, "MAPPING_FAILED", "err");
+        long ev2Id = insertRaw(1L, shop, ord1Ev2, "MAPPING_FAILED", "err");
+        insertRaw(1L, shop, ord2Ev, "MAPPING_FAILED", "err");
+        insertRaw(1L, shop, ord3Ev, "MAPPING_FAILED", "err");
+
+        assertThat(youzanRepository.countCampaignOrders(1L, shop)).isEqualTo(2L);
+        assertThat(youzanRepository.countScopedCampaignOrders(1L, shop,
+                new CustomerScopeSupport.ScopeQuery("SELF", List.of(), m1Id))).isEqualTo(1L);
+        assertThat(youzanRepository.countScopedCampaignOrders(1L, shop,
+                new CustomerScopeSupport.ScopeQuery("SELF", List.of(), m2Id))).isEqualTo(1L);
+
+        // Out-of-order / replay upsertOrderLatest must preserve GREATEST(latest_event_id)
+        youzanRepository.upsertOrderLatest(1L, shop, ord1, ev1Id);
+        assertThat(queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shop, ord1)).isEqualTo(ev2Id);
+        JsonNode m1Orders = orders(manager1, shop, 1, 20, null);
+        assertThat(m1Orders.at("/total").asLong()).isEqualTo(2L);
+        assertThat(item(m1Orders, ord1).at("/eventId").asText()).isEqualTo(ord1Ev2.eventId());
+
+        // Official-style placeholder ingest -> replacePayloadAndProcess backfills external_customer_id & campaign_id
+        YouzanOrderEvent placeholder = new YouzanOrderEvent("IT-YZ-CAMP-E5-" + suffix(), "trade_TradePaid", shop,
+                ord4, null, null, "NOTIFICATION", null, null, Instant.EPOCH, "REGULAR", null, null,
+                "PLATFORM", null, List.of());
+        var ingested = youzanEventService.ingest(1L, placeholder, "OFFICIAL_WEBHOOK", "{\"tid\":\"" + ord4 + "\"}");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT external_customer_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?",
+                String.class, ingested.id())).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT campaign_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?",
+                Long.class, ingested.id())).isNull();
+
+        YouzanOrderEvent fullDetail = new YouzanOrderEvent(placeholder.eventId(), "ORDER_PAID", shop, ord4,
+                extCust1, "TR-C4", "PAID", 100L, t0, t0.plusSeconds(30), "REGULAR", 303L, 1L, "PLATFORM", null,
+                List.of(new YouzanOrderLine("YZ-SKU-MISSING", 1)));
+        youzanEventService.replacePayloadAndProcess(1L, ingested.id(), fullDetail, json(fullDetail));
+
+        assertThat(queryString("SELECT external_customer_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?",
+                ingested.id())).isEqualTo(extCust1);
+        assertThat(queryLong("SELECT campaign_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?",
+                ingested.id())).isEqualTo(303L);
+        assertThat(queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shop, ord4)).isEqualTo(ingested.id());
+        assertThat(youzanRepository.countScopedCampaignOrders(1L, shop,
+                new CustomerScopeSupport.ScopeQuery("SELF", List.of(), m1Id))).isEqualTo(2L);
+    }
+
     private long insertRawAt(long tenantId, String shop, YouzanOrderEvent event, Instant receivedAtUtc) throws Exception {
         String raw = json(event);
         String receivedAtSql = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
                 .withZone(ZoneOffset.UTC).format(receivedAtUtc);
+        String extCustomerId = event.externalCustomerId() == null || event.externalCustomerId().isBlank()
+                ? null : event.externalCustomerId().strip();
+        Long campaignId = event.campaignId() != null && event.campaignId() > 0 ? event.campaignId() : null;
         jdbcTemplate.update("INSERT INTO crm_youzan_event (tenant_id,shop_id,event_id,event_type,external_order_no,"
-                        + "payload_masked_json,payload_cipher,signature_valid,source_system,process_status,"
-                        + "process_attempts,last_error,received_at) VALUES (?,?,?,?,?,?,?,1,'PULL','MAPPING_FAILED',1,'err',?)",
-                tenantId, shop, event.eventId(), event.eventType(), event.externalOrderNo(), raw,
-                cipher.encrypt(raw), receivedAtSql);
-        return queryLong("SELECT id FROM crm_youzan_event WHERE tenant_id=? AND shop_id=? AND event_id=?",
+                        + "external_customer_id,campaign_id,payload_masked_json,payload_cipher,signature_valid,"
+                        + "source_system,process_status,process_attempts,last_error,received_at) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,1,'PULL','MAPPING_FAILED',1,'err',?)",
+                tenantId, shop, event.eventId(), event.eventType(), event.externalOrderNo(), extCustomerId, campaignId,
+                raw, cipher.encrypt(raw), receivedAtSql);
+        long id = queryLong("SELECT id FROM crm_youzan_event WHERE tenant_id=? AND shop_id=? AND event_id=?",
                 tenantId, shop, event.eventId());
+        if (event.externalOrderNo() != null && !event.externalOrderNo().isBlank()) {
+            jdbcTemplate.update("INSERT INTO crm_youzan_order_latest "
+                            + "(tenant_id,shop_id,external_order_no,latest_event_id) VALUES (?,?,?,?) "
+                            + "ON DUPLICATE KEY UPDATE latest_event_id=GREATEST(latest_event_id,VALUES(latest_event_id))",
+                    tenantId, shop, event.externalOrderNo(), id);
+        }
+        return id;
     }
 
     private void seedSkuAndCustomer(String shop, String externalCustomer, boolean linked) {
@@ -458,13 +556,24 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
     private long insertRaw(long tenantId, String shop, YouzanOrderEvent event, String status, String error)
             throws Exception {
         String raw = json(event);
+        String extCustomerId = event.externalCustomerId() == null || event.externalCustomerId().isBlank()
+                ? null : event.externalCustomerId().strip();
+        Long campaignId = event.campaignId() != null && event.campaignId() > 0 ? event.campaignId() : null;
         jdbcTemplate.update("INSERT INTO crm_youzan_event (tenant_id,shop_id,event_id,event_type,external_order_no,"
-                        + "payload_masked_json,payload_cipher,signature_valid,source_system,process_status,"
-                        + "process_attempts,last_error,received_at) VALUES (?,?,?,?,?,?,?,1,'PULL',?,1,?,NOW(3))",
-                tenantId, shop, event.eventId(), event.eventType(), event.externalOrderNo(), raw,
-                cipher.encrypt(raw), status, error);
-        return queryLong("SELECT id FROM crm_youzan_event WHERE tenant_id=? AND shop_id=? AND event_id=?",
+                        + "external_customer_id,campaign_id,payload_masked_json,payload_cipher,signature_valid,"
+                        + "source_system,process_status,process_attempts,last_error,received_at) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,1,'PULL',?,1,?,NOW(3))",
+                tenantId, shop, event.eventId(), event.eventType(), event.externalOrderNo(), extCustomerId, campaignId,
+                raw, cipher.encrypt(raw), status, error);
+        long id = queryLong("SELECT id FROM crm_youzan_event WHERE tenant_id=? AND shop_id=? AND event_id=?",
                 tenantId, shop, event.eventId());
+        if (event.externalOrderNo() != null && !event.externalOrderNo().isBlank()) {
+            jdbcTemplate.update("INSERT INTO crm_youzan_order_latest "
+                            + "(tenant_id,shop_id,external_order_no,latest_event_id) VALUES (?,?,?,?) "
+                            + "ON DUPLICATE KEY UPDATE latest_event_id=GREATEST(latest_event_id,VALUES(latest_event_id))",
+                    tenantId, shop, event.externalOrderNo(), id);
+        }
+        return id;
     }
 
     private void postWebhook(String raw) throws Exception {
