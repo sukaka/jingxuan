@@ -153,14 +153,22 @@
          AND m.status = 'STORED' AND m.consent_snapshot = 'GRANTED'
          AND m.sent_at &gt;= #{startInclusive} AND m.sent_at &lt; #{endExclusive}) AS archivedMessageCount,
       CASE WHEN EXISTS (
-        SELECT 1 FROM crm_wecom_contact wc
-        LEFT JOIN crm_wecom_cursor cursor_row ON cursor_row.tenant_id = wc.tenant_id
-          AND cursor_row.corp_id = wc.corp_id AND cursor_row.archive_scope = 'MOCK_ARCHIVE'
-        WHERE wc.tenant_id = #{tenantId} AND wc.customer_id = #{customerId}
-          AND (cursor_row.id IS NULL OR cursor_row.data_gap = 1 OR EXISTS (
-            SELECT 1 FROM crm_wecom_data_gap gap
-            WHERE gap.tenant_id = wc.tenant_id AND gap.corp_id = wc.corp_id
-              AND gap.archive_scope = 'MOCK_ARCHIVE' AND gap.status = 'OPEN'))
+        <choose>
+          <when test="archiveScope != null and archiveScope != ''">
+            SELECT 1 FROM crm_wecom_contact wc
+            LEFT JOIN crm_wecom_cursor cursor_row ON cursor_row.tenant_id = wc.tenant_id
+              AND cursor_row.corp_id = wc.corp_id AND cursor_row.archive_scope = #{archiveScope}
+            WHERE wc.tenant_id = #{tenantId} AND wc.customer_id = #{customerId}
+              AND (cursor_row.id IS NULL OR cursor_row.data_gap = 1 OR EXISTS (
+                SELECT 1 FROM crm_wecom_data_gap gap
+                WHERE gap.tenant_id = wc.tenant_id AND gap.corp_id = wc.corp_id
+                  AND gap.archive_scope = #{archiveScope} AND gap.status = 'OPEN'))
+          </when>
+          <otherwise>
+            SELECT 1 FROM crm_wecom_contact wc
+            WHERE wc.tenant_id = #{tenantId} AND wc.customer_id = #{customerId}
+          </otherwise>
+        </choose>
       ) THEN 0 ELSE 1 END AS communicationComplete
   </select>
 

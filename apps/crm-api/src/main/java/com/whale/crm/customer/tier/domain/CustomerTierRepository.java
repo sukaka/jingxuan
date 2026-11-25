@@ -33,7 +33,8 @@ public interface CustomerTierRepository {
 
     List<CustomerTierLevel> findLevels(long tenantId, long ruleId);
 
-    CustomerTierMetrics loadMetrics(long tenantId, long customerId, Instant startInclusive, Instant endExclusive);
+    CustomerTierMetrics loadMetrics(long tenantId, long customerId, Instant startInclusive,
+                                    Instant endExclusive, String archiveScope);
 
     CustomerTierMetricSnapshot insertSnapshot(CustomerTierMetricSnapshot snapshot);
 

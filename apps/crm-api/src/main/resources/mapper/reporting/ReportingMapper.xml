@@ -40,7 +40,8 @@
   <sql id="operationsFactUnion">
     SELECT 'FOLLOWUP' AS fact_type, f.id AS source_id, f.id AS parent_id, NULL AS order_id,
            f.customer_id, NULL AS campaign_id, NULL AS campaign_batch_id, NULL AS sku_id,
-           f.contact_at AS event_at, NULL AS amount_fen, NULL AS quantity, NULL AS source_system, NULL AS receiver_type
+           f.contact_at AS event_at, NULL AS amount_fen, NULL AS quantity, NULL AS source_system, NULL AS receiver_type,
+           f.owner_staff_id AS staff_id, NULL AS institution_id
     FROM crm_followup f
     INNER JOIN crm_customer c ON c.tenant_id = f.tenant_id AND c.id = f.customer_id AND c.deleted = 0
     WHERE f.tenant_id = #{query.tenantId} AND f.deleted = 0 AND f.contact_at IS NOT NULL
@@ -49,7 +50,7 @@
       <if test="query.criteria.customerId != null">AND f.customer_id = #{query.criteria.customerId}</if>
     UNION ALL
     SELECT 'APPOINTMENT_CONFIRMED', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
-           h.created_at, NULL, NULL, NULL, NULL
+           h.created_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
     FROM crm_appointment_history h
     INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
     INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
@@ -60,7 +61,7 @@
       <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
     UNION ALL
     SELECT 'CHECKED_IN', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
-           h.created_at, NULL, NULL, NULL, NULL
+           h.created_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
     FROM crm_appointment_history h
     INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
     INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
@@ -71,7 +72,7 @@
       <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
     UNION ALL
     SELECT 'SERVICE_DONE', h.id, a.id, NULL, a.customer_id, NULL, NULL, NULL,
-           h.created_at, NULL, NULL, NULL, NULL
+           h.created_at, NULL, NULL, NULL, NULL, a.owner_staff_id, a.institution_id
     FROM crm_appointment_history h
     INNER JOIN crm_appointment a ON a.tenant_id = h.tenant_id AND a.id = h.appointment_id
     INNER JOIN crm_customer c ON c.tenant_id = a.tenant_id AND c.id = a.customer_id AND c.deleted = 0
@@ -82,7 +83,7 @@
       <if test="query.criteria.institutionId != null">AND a.institution_id = #{query.criteria.institutionId}</if>
     UNION ALL
     SELECT 'REDEMPTION', l.id, r.id, NULL, r.customer_id, NULL, NULL, NULL,
-           r.posted_at, NULL, l.count, NULL, NULL
+           r.posted_at, NULL, l.count, NULL, NULL, r.owner_staff_id, r.institution_id
     FROM crm_redemption_line l
     INNER JOIN crm_redemption r ON r.tenant_id = l.tenant_id AND r.id = l.redemption_id AND r.status = 'POSTED'
     INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
@@ -93,7 +94,7 @@
       <if test="query.criteria.institutionId != null">AND r.institution_id = #{query.criteria.institutionId}</if>
     UNION ALL
     SELECT 'PAYMENT', p.id, o.id, o.id, o.customer_id, o.campaign_id, o.campaign_batch_id, NULL,
-           p.confirmed_at, p.amount_fen, NULL, o.source_system, p.receiver_type
+           p.confirmed_at, p.amount_fen, NULL, o.source_system, p.receiver_type, o.owner_at_sale_id, NULL
     FROM crm_payment_txn p
     INNER JOIN crm_order o ON o.tenant_id = p.tenant_id AND o.id = p.order_id
       AND o.status IN ('PAID','PARTIALLY_REDEEMED','FULFILLED')
@@ -105,7 +106,7 @@
       <include refid="paymentReceiverFilter"/>
     UNION ALL
     SELECT 'REFUND', rp.id, r.id, o.id, r.customer_id, o.campaign_id, o.campaign_batch_id, NULL,
-           rp.succeeded_at, rp.amount_fen, NULL, o.source_system, o.receiver_type
+           rp.succeeded_at, rp.amount_fen, NULL, o.source_system, o.receiver_type, o.owner_at_sale_id, NULL
     FROM crm_refund_payment rp
     INNER JOIN crm_refund r ON r.tenant_id = rp.tenant_id AND r.id = rp.refund_id AND r.status = 'SUCCEEDED'
     INNER JOIN crm_order o ON o.tenant_id = r.tenant_id AND o.id = r.order_id
@@ -164,22 +165,6 @@
     ORDER BY event_at DESC, source_id DESC LIMIT #{limit}
   </select>
 
-  <sql id="operationsEnrichedFacts">
-    SELECT f.*, COALESCE(sf.owner_staff_id, sa.owner_staff_id, sr.owner_staff_id, so.owner_at_sale_id) AS staff_id,
-           COALESCE(sa.institution_id, sr.institution_id) AS institution_id
-    FROM operations_facts f
-    LEFT JOIN crm_followup sf ON sf.tenant_id = #{query.tenantId} AND sf.id = f.source_id
-      AND f.fact_type = 'FOLLOWUP'
-    LEFT JOIN crm_appointment_history sh ON sh.tenant_id = #{query.tenantId} AND sh.id = f.source_id
-      AND f.fact_type IN ('APPOINTMENT_CONFIRMED','CHECKED_IN','SERVICE_DONE')
-    LEFT JOIN crm_appointment sa ON sa.tenant_id = sh.tenant_id AND sa.id = sh.appointment_id
-    LEFT JOIN crm_redemption_line srl ON srl.tenant_id = #{query.tenantId} AND srl.id = f.source_id
-      AND f.fact_type = 'REDEMPTION'
-    LEFT JOIN crm_redemption sr ON sr.tenant_id = srl.tenant_id AND sr.id = srl.redemption_id
-    LEFT JOIN crm_order so ON so.tenant_id = #{query.tenantId} AND so.id = f.order_id
-      AND f.fact_type IN ('PAYMENT','REFUND')
-  </sql>
-
   <sql id="operationsStaffAggregates">
     COUNT(DISTINCT CASE WHEN e.fact_type = 'FOLLOWUP' THEN e.customer_id END) AS contactCustomerCount,
     COALESCE(SUM(CASE WHEN e.fact_type = 'FOLLOWUP' THEN 1 ELSE 0 END),0) AS contactEventCount,
@@ -205,11 +190,10 @@
   </sql>
 
   <select id="operationsStaff" resultType="com.whale.crm.reporting.domain.ReportingRepository$OperationsStaffFactRow">
-    WITH operations_facts AS (<include refid="operationsFactUnion"/>),
-    enriched AS (<include refid="operationsEnrichedFacts"/>)
+    WITH operations_facts AS (<include refid="operationsFactUnion"/>)
     SELECT e.staff_id AS staffUserId, MAX(u.display_name) AS staffName,
            <include refid="operationsStaffAggregates"/>
-    FROM enriched e
+    FROM operations_facts e
     LEFT JOIN sys_user u ON u.tenant_id = #{query.tenantId} AND u.id = e.staff_id
     WHERE e.staff_id IS NOT NULL
       <if test="query.criteria.staffUserId != null">AND e.staff_id = #{query.criteria.staffUserId}</if>
@@ -220,9 +204,8 @@
 
   <select id="operationsInstitutions" resultType="com.whale.crm.reporting.domain.ReportingRepository$OperationsInstitutionFactRow">
     WITH operations_facts AS (<include refid="operationsFactUnion"/>),
-    enriched AS (<include refid="operationsEnrichedFacts"/>),
     filtered_enriched AS (
-      SELECT * FROM enriched e
+      SELECT * FROM operations_facts e
       WHERE e.institution_id IS NOT NULL
         <if test="query.criteria.institutionId != null">AND e.institution_id = #{query.criteria.institutionId}</if>
         <if test="query.criteria.staffUserId != null">AND e.staff_id = #{query.criteria.staffUserId}</if>

@@ -14,6 +14,7 @@ import com.whale.crm.customer.tier.domain.CustomerTierRule;
 import com.whale.crm.customer.tier.domain.TierLevelDefinition;
 import com.whale.crm.customer.tier.domain.TierMetricDefinition;
 import com.whale.crm.customer.tier.domain.TierWindow;
+import com.whale.crm.integration.wecom.application.WecomArchiveService;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.idempotency.IdempotencyRecord;
 import com.whale.crm.platform.idempotency.IdempotencyService;
@@ -48,11 +49,12 @@ public class CustomerTierRuleService {
     private final IdempotencyService idempotencyService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
+    private final WecomArchiveService wecomArchiveService;
 
     public CustomerTierRuleService(CustomerTierRepository repository, TierEvaluationService evaluationService,
                                    CustomerTierConfigMapper configMapper, CustomerScopeSupport scopeSupport,
                                    IdempotencyService idempotencyService, AuditService auditService,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper, WecomArchiveService wecomArchiveService) {
         this.repository = repository;
         this.evaluationService = evaluationService;
         this.configMapper = configMapper;
@@ -60,6 +62,7 @@ public class CustomerTierRuleService {
         this.idempotencyService = idempotencyService;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.wecomArchiveService = wecomArchiveService;
     }
 
     @Transactional(readOnly = true)
@@ -233,8 +236,9 @@ public class CustomerTierRuleService {
     private CustomerTierEvaluationResponse evaluate(long tenantId, long customerId, CustomerTierRule rule,
                                                     Instant asOf, String source) {
         TierWindow window = evaluationService.window(asOf, ZoneId.of(rule.zoneId()));
+        String archiveScope = wecomArchiveService.activeArchiveScope(tenantId);
         CustomerTierMetrics values = repository.loadMetrics(tenantId, customerId,
-                window.startInclusive(), window.endExclusive());
+                window.startInclusive(), window.endExclusive(), archiveScope);
         TierEvaluation result = evaluationService.evaluate(configMapper.levels(rule), configMapper.metrics(rule), values);
         return configMapper.evaluation(customerId, rule, window, values, result, source);
     }

@@ -130,6 +130,135 @@ class CustomerTierApiIT extends AbstractMysqlIT {
     }
 
     @Test
+    void officialArchiveScopeEvaluatesCommunicationCompletenessForCompleteAndGapStates() throws Exception {
+        AuthCookies admin = login("admin");
+        long ruleId = createActiveRule(admin, "UTC");
+        long customerId = customer(1L, 2L, "D");
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        String corpA = "tier-off-a-" + suffix;
+        String corpB = "tier-off-b-" + suffix;
+
+        followup(1L, customerId, START.plusSeconds(60), false);
+        jdbcTemplate.update("INSERT INTO crm_wecom_contact "
+                        + "(tenant_id,corp_id,external_userid,staff_user_id,customer_id,consent_status) "
+                        + "VALUES (1,?,?,2,?,'GRANTED')",
+                corpA, "ext-a-" + suffix, customerId);
+        jdbcTemplate.update("INSERT INTO crm_wecom_message "
+                        + "(tenant_id,corp_id,msg_id,archive_seq,archive_scope,customer_id,external_userid,"
+                        + "staff_user_id,conversation_type,conversation_id,message_type,sender_type,sent_at,"
+                        + "content_object_key,content_sha256,consent_snapshot,status) "
+                        + "VALUES (1,?,?,101,'OFFICIAL_ARCHIVE',?,?,2,'DIRECT',?,'TEXT','CUSTOMER',?,"
+                        + "'wecom/1/tier-official.enc',?,'GRANTED','STORED')",
+                corpA, "tier-off-msg-" + suffix, customerId, "ext-a-" + suffix, "ext-a-" + suffix,
+                Timestamp.from(START.plusSeconds(120)), "0".repeat(64));
+        // Deliberately leave MOCK_ARCHIVE broken while OFFICIAL_ARCHIVE is healthy
+        jdbcTemplate.update("INSERT INTO crm_wecom_cursor "
+                        + "(tenant_id,corp_id,archive_scope,last_seq,status,data_gap,gap_reason) "
+                        + "VALUES (1,?,'MOCK_ARCHIVE',0,'ERROR',1,'mock broken'),"
+                        + "(1,?,'OFFICIAL_ARCHIVE',101,'SUCCESS',0,NULL)",
+                corpA, corpA);
+        jdbcTemplate.update("INSERT INTO crm_wecom_data_gap "
+                        + "(tenant_id,corp_id,archive_scope,gap_type,status,from_seq,to_seq,detail_masked,"
+                        + "first_seen_at,last_seen_at) "
+                        + "VALUES (1,?,'MOCK_ARCHIVE','COLLECTOR_ERROR','OPEN',0,0,'mock gap',?,?)",
+                corpA, Timestamp.from(START), Timestamp.from(START));
+
+        List<Map<String, Object>> previousConfig = jdbcTemplate.queryForList(
+                "SELECT youzan_real_enabled,wecom_archive_real_enabled,wecom_official_enabled "
+                        + "FROM crm_integration_runtime_config WHERE tenant_id=1");
+        try {
+            jdbcTemplate.update("INSERT INTO crm_integration_runtime_config "
+                            + "(tenant_id,youzan_real_enabled,wecom_archive_real_enabled,wecom_official_enabled) "
+                            + "VALUES (1,0,1,0) ON DUPLICATE KEY UPDATE wecom_archive_real_enabled=1");
+
+            // 1. OFFICIAL_ARCHIVE cursor complete & no OPEN official gap -> communicationComplete = true
+            mockMvc.perform(admin.withAuth(post("/api/v1/customer-tier-rules/{id}/trial", ruleId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"customerId\":" + customerId + ",\"asOf\":\"" + AS_OF + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.communicationComplete").value(true))
+                    .andExpect(jsonPath("$.data.manualFollowupCount").value(1))
+                    .andExpect(jsonPath("$.data.archivedMessageCount").value(1))
+                    .andExpect(jsonPath("$.data.communicationCount").value(2));
+
+            String recalcJson = recalculate(admin, customerId, 0, "tier-official-complete-" + suffix, AS_OF);
+            assertThat(objectMapper.readTree(recalcJson).at("/data/communicationComplete").asBoolean()).isTrue();
+            assertThat(objectMapper.readTree(recalcJson).at("/data/communicationCount").asLong()).isEqualTo(2L);
+
+            // 2. OPEN gap in OFFICIAL_ARCHIVE -> communicationComplete = false
+            jdbcTemplate.update("INSERT INTO crm_wecom_data_gap "
+                            + "(tenant_id,corp_id,archive_scope,gap_type,status,from_seq,to_seq,detail_masked,"
+                            + "first_seen_at,last_seen_at) "
+                            + "VALUES (1,?,'OFFICIAL_ARCHIVE','COLLECTOR_ERROR','OPEN',101,102,'official gap',?,?)",
+                    corpA, Timestamp.from(START), Timestamp.from(START));
+            mockMvc.perform(admin.withAuth(post("/api/v1/customer-tier-rules/{id}/trial", ruleId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"customerId\":" + customerId + ",\"asOf\":\"" + AS_OF + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.communicationComplete").value(false))
+                    .andExpect(jsonPath("$.data.communicationCount").doesNotExist());
+
+            // 3. Resolve gap, then set OFFICIAL_ARCHIVE cursor data_gap = 1 -> communicationComplete = false
+            jdbcTemplate.update("UPDATE crm_wecom_data_gap SET status='RESOLVED',resolved_at=? "
+                            + "WHERE tenant_id=1 AND corp_id=? AND archive_scope='OFFICIAL_ARCHIVE'",
+                    Timestamp.from(AS_OF), corpA);
+            jdbcTemplate.update("UPDATE crm_wecom_cursor SET data_gap=1 "
+                            + "WHERE tenant_id=1 AND corp_id=? AND archive_scope='OFFICIAL_ARCHIVE'",
+                    corpA);
+            mockMvc.perform(admin.withAuth(post("/api/v1/customer-tier-rules/{id}/trial", ruleId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"customerId\":" + customerId + ",\"asOf\":\"" + AS_OF + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.communicationComplete").value(false))
+                    .andExpect(jsonPath("$.data.communicationCount").doesNotExist());
+
+            // 4. Multi-corp check: restore corpA, link corpB without OFFICIAL_ARCHIVE cursor -> false, then add cursor -> true
+            jdbcTemplate.update("UPDATE crm_wecom_cursor SET data_gap=0 "
+                            + "WHERE tenant_id=1 AND corp_id=? AND archive_scope='OFFICIAL_ARCHIVE'",
+                    corpA);
+            jdbcTemplate.update("INSERT INTO crm_wecom_contact "
+                            + "(tenant_id,corp_id,external_userid,staff_user_id,customer_id,consent_status) "
+                            + "VALUES (1,?,?,2,?,'GRANTED')",
+                    corpB, "ext-b-" + suffix, customerId);
+            mockMvc.perform(admin.withAuth(post("/api/v1/customer-tier-rules/{id}/trial", ruleId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"customerId\":" + customerId + ",\"asOf\":\"" + AS_OF + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.communicationComplete").value(false));
+
+            jdbcTemplate.update("INSERT INTO crm_wecom_cursor "
+                            + "(tenant_id,corp_id,archive_scope,last_seq,status,data_gap,gap_reason) "
+                            + "VALUES (1,?,'OFFICIAL_ARCHIVE',50,'SUCCESS',0,NULL)",
+                    corpB);
+            mockMvc.perform(admin.withAuth(post("/api/v1/customer-tier-rules/{id}/trial", ruleId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"customerId\":" + customerId + ",\"asOf\":\"" + AS_OF + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.communicationComplete").value(true))
+                    .andExpect(jsonPath("$.data.communicationCount").value(2));
+
+            // 5. Switching back to MOCK_ARCHIVE hits the broken MOCK_ARCHIVE cursor -> false
+            jdbcTemplate.update("UPDATE crm_integration_runtime_config SET wecom_archive_real_enabled=0 WHERE tenant_id=1");
+            mockMvc.perform(admin.withAuth(post("/api/v1/customer-tier-rules/{id}/trial", ruleId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"customerId\":" + customerId + ",\"asOf\":\"" + AS_OF + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.communicationComplete").value(false));
+        } finally {
+            if (previousConfig.isEmpty()) {
+                jdbcTemplate.update("DELETE FROM crm_integration_runtime_config WHERE tenant_id=1");
+            } else {
+                Map<String, Object> prev = previousConfig.getFirst();
+                jdbcTemplate.update("UPDATE crm_integration_runtime_config "
+                                + "SET youzan_real_enabled=?,wecom_archive_real_enabled=?,wecom_official_enabled=? "
+                                + "WHERE tenant_id=1",
+                        prev.get("youzan_real_enabled"), prev.get("wecom_archive_real_enabled"),
+                        prev.get("wecom_official_enabled"));
+            }
+        }
+    }
+
+    @Test
     void downgradeNeedsApprovalAndNewSnapshotStalesOldReview() throws Exception {
         AuthCookies admin = login("admin");
         createActiveRule(admin, "UTC");

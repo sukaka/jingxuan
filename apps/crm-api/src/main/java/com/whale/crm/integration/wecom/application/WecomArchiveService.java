@@ -40,8 +40,8 @@ import java.util.UUID;
 
 @Service
 public class WecomArchiveService {
-    private static final String MOCK_ARCHIVE_SCOPE = "MOCK_ARCHIVE";
-    private static final String OFFICIAL_ARCHIVE_SCOPE = "OFFICIAL_ARCHIVE";
+    public static final String MOCK_ARCHIVE_SCOPE = "MOCK_ARCHIVE";
+    public static final String OFFICIAL_ARCHIVE_SCOPE = "OFFICIAL_ARCHIVE";
     private static final int MAX_CONTENT_BYTES = 2 * 1024 * 1024;
 
     private final WecomRepository repository;
@@ -250,6 +250,17 @@ public class WecomArchiveService {
                 throw new BusinessException(ErrorCode.CONFLICT, "联系身份已变化，请重试同步");
             }
         }
+    }
+
+    public String activeArchiveScope(long tenantId) {
+        WecomAdapter adapter = adapterRouter.adapter(tenantId);
+        if ("OFFICIAL_SDK".equals(adapter.name())) {
+            return OFFICIAL_ARCHIVE_SCOPE;
+        }
+        if ("MOCK_DEV_ONLY".equals(adapter.name())) {
+            return MOCK_ARCHIVE_SCOPE;
+        }
+        return null;
     }
 
     private String archiveScope(WecomAdapter adapter) {

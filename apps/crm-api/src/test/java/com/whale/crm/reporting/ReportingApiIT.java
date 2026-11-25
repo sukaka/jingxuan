@@ -245,6 +245,24 @@ class ReportingApiIT extends AbstractMysqlIT {
         JsonNode secondInstitution = arrayRow(data.at("/institutionRows"), "institutionId", secondCatalog.institutionId());
         assertThat(secondInstitution.at("/pendingReconciliationFen").asLong()).isEqualTo(1_000);
         assertThat(secondInstitution.at("/pendingReconciliationStatus").asText()).isEqualTo("VERIFIED");
+
+        // Verify staffUserId and institutionId filtering & drillDown after removing redundant LEFT JOINs
+        JsonNode filteredStaff = data(get("/api/v1/reports/operations")
+                .param("from", "2026-10-08").param("to", "2026-10-08")
+                .param("timeZone", "Asia/Shanghai").param("sourceSystem", "ITR_OPS_DETAIL")
+                .param("staffUserId", Long.toString(firstStaffId))
+                .param("institutionId", Long.toString(firstCatalog.institutionId()))
+                .param("drillDownType", "REDEMPTION").param("drillDownLimit", "5")
+                .cookie(login("admin").cookies()));
+        assertThat(filteredStaff.at("/staffRows")).hasSize(1);
+        assertThat(filteredStaff.at("/staffRows/0/staffUserId").asLong()).isEqualTo(firstStaffId);
+        assertThat(filteredStaff.at("/staffRows/0/redemptionBatchCount").asLong()).isEqualTo(2);
+        assertThat(filteredStaff.at("/staffRows/0/redeemedCount").asLong()).isEqualTo(3);
+        assertThat(filteredStaff.at("/institutionRows")).hasSize(1);
+        assertThat(filteredStaff.at("/institutionRows/0/institutionId").asLong()).isEqualTo(firstCatalog.institutionId());
+        assertThat(filteredStaff.at("/institutionRows/0/redeemedCount").asLong()).isEqualTo(3);
+        assertThat(filteredStaff.at("/drillDown")).hasSize(2);
+        assertThat(filteredStaff.at("/drillDown/0/factType").asText()).isEqualTo("REDEMPTION");
     }
 
     @Test
