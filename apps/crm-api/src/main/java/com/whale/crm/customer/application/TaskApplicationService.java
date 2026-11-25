@@ -73,37 +73,30 @@ public class TaskApplicationService {
 
     @Transactional(readOnly = true)
     public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
-                                                        CustomerTimelineCursor cursor) {
+                                                        CustomerTimelineCursor cursor, int limit) {
         scopeSupport.requireVisible(tenantId, customerId, user);
         DataScope scope = scopeSupport.scope(user);
         if (scopeSupport.isEmptyScope(scope)) {
             return List.of();
         }
+        int safeLimit = Math.max(1, limit);
         CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
         List<Long> teamIds = scope.type() == DataScope.ScopeType.SELF && user.teamId() != null
                 ? List.of(user.teamId()) : query.teamIds();
-        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
-        int offset = 0;
-        long total;
-        do {
-            List<CrmTask> tasks = taskRepository.search(tenantId, query.scopeType(), teamIds, query.selfId(),
-                    null, null, customerId, offset, 100);
-            total = taskRepository.countSearch(tenantId, query.scopeType(), teamIds, query.selfId(),
-                    null, null, customerId);
-            for (CrmTask task : tasks) {
-                Map<String, Object> details = new LinkedHashMap<>();
-                details.put("status", task.getStatus());
-                details.put("assigneeUserId", task.getAssigneeUserId());
-                details.put("dueAt", task.getDueAt());
-                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("TASK", task.getId(), "TASK",
-                        task.getCreatedAt(), task.getTitle(), task.getDescription(), details, null);
-                if (cursor == null || cursor.allows(event)) {
-                    events.add(event);
-                }
-            }
-            offset += tasks.size();
-        } while (offset < total);
-        return events;
+        CustomerTimelineCursor.SqlCursor sqlCursor = CustomerTimelineCursor.sqlCursor(cursor, "TASK");
+        return taskRepository.findTimeline(tenantId, query.scopeType(), teamIds, query.selfId(), customerId,
+                        sqlCursor.modeName(), sqlCursor.occurredAt(), sqlCursor.sourceId(), safeLimit).stream()
+                .map(task -> {
+                    Map<String, Object> details = new LinkedHashMap<>();
+                    details.put("status", task.getStatus());
+                    details.put("assigneeUserId", task.getAssigneeUserId());
+                    details.put("dueAt", task.getDueAt());
+                    return CustomerTimelineItemResponse.of("TASK", task.getId(), "TASK",
+                            task.getCreatedAt(), task.getTitle(), task.getDescription(), details, null);
+                })
+                .filter(event -> cursor == null || cursor.allows(event))
+                .limit(safeLimit)
+                .toList();
     }
 
     @Transactional(readOnly = true)

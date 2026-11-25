@@ -128,31 +128,33 @@ public class RefundApplicationService {
 
     @Transactional(readOnly = true)
     public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
-                                                        CustomerTimelineCursor cursor) {
+                                                        CustomerTimelineCursor cursor, int limit) {
         scopeSupport.requireVisible(tenantId, customerId, user);
-        List<CustomerTimelineItemResponse> events = new ArrayList<>();
-        int page = 1;
-        long total;
-        do {
-            PageResponse<Refund> result = search(tenantId, user, null, customerId, null, page, 100);
-            total = result.total();
-            for (Refund refund : result.items()) {
-                Map<String, Object> details = new java.util.LinkedHashMap<>();
-                details.put("status", refund.status());
-                details.put("orderId", refund.orderId());
-                details.put("requestedFen", refund.requestedFen());
-                details.put("approvedFen", refund.approvedFen());
-                details.put("succeededFen", refund.succeededFen());
-                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("REFUND", refund.id(), "REFUND",
-                        refund.createdAt(), "退款 " + refund.refundNo(), "退款状态：" + refundStatusLabel(refund.status()), details,
-                        refund.requestedBy());
-                if (cursor == null || cursor.allows(event)) {
-                    events.add(event);
-                }
-            }
-            page++;
-        } while ((long) (page - 1) * 100 < total);
-        return events;
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return List.of();
+        }
+        int safeLimit = Math.max(1, limit);
+        CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
+        CustomerTimelineCursor.SqlCursor sqlCursor = CustomerTimelineCursor.sqlCursor(cursor, "REFUND");
+        return repository.findTimelineRefunds(tenantId, customerId, query.scopeType(), query.teamIds(),
+                        query.selfId(), sqlCursor.modeName(), sqlCursor.occurredAt(), sqlCursor.sourceId(),
+                        safeLimit).stream()
+                .map(refund -> {
+                    Map<String, Object> details = new java.util.LinkedHashMap<>();
+                    details.put("status", refund.status());
+                    details.put("orderId", refund.orderId());
+                    details.put("requestedFen", refund.requestedFen());
+                    details.put("approvedFen", refund.approvedFen());
+                    details.put("succeededFen", refund.succeededFen());
+                    return CustomerTimelineItemResponse.of("REFUND", refund.id(), "REFUND",
+                            refund.createdAt(), "退款 " + refund.refundNo(),
+                            "退款状态：" + refundStatusLabel(refund.status()), details,
+                            refund.requestedBy());
+                })
+                .filter(event -> cursor == null || cursor.allows(event))
+                .limit(safeLimit)
+                .toList();
     }
 
     private static String refundStatusLabel(String status) {

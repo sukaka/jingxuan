@@ -106,6 +106,13 @@ public interface CustomerTierMapper {
     List<CustomerTierHistory> selectHistory(@Param("tenantId") long tenantId,
                                             @Param("customerId") long customerId, @Param("limit") int limit);
 
+    List<CustomerTierHistory> selectTimelineHistory(@Param("tenantId") long tenantId,
+                                                    @Param("customerId") long customerId,
+                                                    @Param("cursorMode") String cursorMode,
+                                                    @Param("cursorOccurredAt") Instant cursorOccurredAt,
+                                                    @Param("cursorSourceId") Long cursorSourceId,
+                                                    @Param("limit") int limit);
+
     int updateTier(@Param("tenantId") long tenantId, @Param("customerId") long customerId,
                    @Param("expectedVersion") long expectedVersion, @Param("tierCode") String tierCode,
                    @Param("locked") boolean locked, @Param("lockReason") String lockReason);

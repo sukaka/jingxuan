@@ -72,6 +72,9 @@ public interface CustomerTierRepository {
 
     List<CustomerTierHistory> findHistory(long tenantId, long customerId, int limit);
 
+    List<CustomerTierHistory> findTimelineHistory(long tenantId, long customerId, String cursorMode,
+                                                  Instant cursorOccurredAt, Long cursorSourceId, int limit);
+
     int updateTier(long tenantId, long customerId, long expectedVersion, String tierCode,
                    boolean locked, String lockReason);
 

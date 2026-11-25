@@ -1,5 +1,6 @@
 package com.whale.crm.customer.domain;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -15,6 +16,9 @@ public interface CustomerOwnerHistoryRepository {
      * 联表用户名投影（展示用）。
      */
     List<OwnerHistoryRow> findRowsByCustomerId(long tenantId, long customerId);
+
+    List<OwnerHistoryRow> findTimelineRowsByCustomerId(long tenantId, long customerId, String cursorMode,
+                                                       Instant cursorOccurredAt, Long cursorSourceId, int limit);
 
     record OwnerHistoryRow(Long id, Long customerId, Long oldOwnerId, String oldOwnerName,
                            Long newOwnerId, String newOwnerName, Long changedBy, String changedByName,

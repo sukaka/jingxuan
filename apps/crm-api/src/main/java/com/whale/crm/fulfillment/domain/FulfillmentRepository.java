@@ -13,6 +13,9 @@ public interface FulfillmentRepository {
     List<Appointment> searchAppointments(long tenantId, FulfillmentScope scope, Long customerId,
                                          Long institutionId, String status, int offset, int size);
     long countAppointments(long tenantId, FulfillmentScope scope, Long customerId, Long institutionId, String status);
+    List<Appointment> findTimelineAppointments(long tenantId, FulfillmentScope scope, long customerId,
+                                               String cursorMode, Instant cursorOccurredAt,
+                                               Long cursorSourceId, int limit);
     int updateAppointmentStatus(long tenantId, long id, long expectedVersion, String expectedStatus, String toStatus);
     void insertAppointmentItem(long tenantId, AppointmentItem item);
     List<AppointmentItem> findAppointmentItems(long tenantId, long appointmentId);
@@ -28,6 +31,9 @@ public interface FulfillmentRepository {
                                        Long institutionId, Long projectId, String status, int offset, int size);
     long countRedemptions(long tenantId, FulfillmentScope scope, Long customerId, Long institutionId,
                           Long projectId, String status);
+    List<Redemption> findTimelineRedemptions(long tenantId, FulfillmentScope scope, long customerId,
+                                             String cursorMode, Instant cursorOccurredAt,
+                                             Long cursorSourceId, int limit);
     void insertRedemptionLine(long tenantId, RedemptionLine line);
     List<RedemptionLine> findRedemptionLines(long tenantId, long redemptionId);
     List<RedemptionLine> findPostedLinesByAppointment(long tenantId, long appointmentId);

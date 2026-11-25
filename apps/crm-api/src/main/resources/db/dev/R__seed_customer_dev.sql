@@ -87,6 +87,16 @@ VALUES (9002, 1, 1002, 2, 'PHONE', '2026-10-21 15:00:00.000', '价格敏感，�
         '2026-10-25 11:00:00.000', 2)
   ON DUPLICATE KEY UPDATE summary=VALUES(summary);
 UPDATE crm_customer SET last_followup_at='2026-10-21 15:00:00.000' WHERE tenant_id=1 AND id=1002 AND deleted=0;
+UPDATE crm_customer c
+  LEFT JOIN (
+    SELECT tenant_id, customer_id, MAX(next_followup_at) AS max_next_followup_at
+    FROM crm_followup
+    WHERE tenant_id = 1 AND deleted = 0 AND next_followup_at IS NOT NULL
+    GROUP BY tenant_id, customer_id
+  ) f ON f.tenant_id = c.tenant_id AND f.customer_id = c.id
+  SET c.next_followup_at = f.max_next_followup_at,
+      c.updated_at = c.updated_at
+WHERE c.tenant_id = 1 AND c.id BETWEEN 1001 AND 1006 AND c.deleted = 0;
 
 -- ========== 任务（演示每日跟进页） ==========
 INSERT INTO crm_task (id, tenant_id, customer_id, assignee_user_id, task_type, priority, status, title,

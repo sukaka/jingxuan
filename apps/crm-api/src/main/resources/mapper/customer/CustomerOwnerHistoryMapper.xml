@@ -37,6 +37,34 @@
     ORDER BY h.id DESC
   </select>
 
+  <select id="selectTimelineRowsByCustomerId"
+          resultType="com.whale.crm.customer.domain.CustomerOwnerHistoryRepository$OwnerHistoryRow">
+    SELECT h.id, h.customer_id, h.old_owner_id, ou.display_name AS old_owner_name,
+           h.new_owner_id, nu.display_name AS new_owner_name,
+           h.changed_by, cu.display_name AS changed_by_name,
+           h.reason, h.effective_at, h.created_at
+    FROM crm_customer_owner_history h
+    LEFT JOIN sys_user ou ON ou.tenant_id = h.tenant_id AND ou.id = h.old_owner_id
+    LEFT JOIN sys_user nu ON nu.tenant_id = h.tenant_id AND nu.id = h.new_owner_id
+    LEFT JOIN sys_user cu ON cu.tenant_id = h.tenant_id AND cu.id = h.changed_by
+    WHERE h.tenant_id = #{tenantId} AND h.customer_id = #{customerId}
+    <choose>
+      <when test="cursorMode == 'LE'">
+        AND COALESCE(h.effective_at, h.created_at) &lt;= #{cursorOccurredAt}
+      </when>
+      <when test="cursorMode == 'EQ'">
+        AND (COALESCE(h.effective_at, h.created_at) &lt; #{cursorOccurredAt}
+             OR (COALESCE(h.effective_at, h.created_at) = #{cursorOccurredAt} AND h.id &lt; #{cursorSourceId}))
+      </when>
+      <when test="cursorMode == 'LT'">
+        AND COALESCE(h.effective_at, h.created_at) &lt; #{cursorOccurredAt}
+      </when>
+      <otherwise></otherwise>
+    </choose>
+    ORDER BY COALESCE(h.effective_at, h.created_at) DESC, h.id DESC
+    LIMIT #{limit}
+  </select>
+
   <insert id="insertHistory" parameterType="com.whale.crm.customer.domain.CustomerOwnerHistory"
           useGeneratedKeys="true" keyProperty="id">
     INSERT INTO crm_customer_owner_history (tenant_id, customer_id, old_owner_id, new_owner_id, changed_by,

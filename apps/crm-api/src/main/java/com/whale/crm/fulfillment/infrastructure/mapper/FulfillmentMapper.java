@@ -33,6 +33,13 @@ public interface FulfillmentMapper {
     long countAppointments(@Param("tenantId") long tenantId, @Param("scope") FulfillmentScope scope,
                            @Param("customerId") Long customerId, @Param("institutionId") Long institutionId,
                            @Param("status") String status);
+    List<Appointment> selectTimelineAppointments(@Param("tenantId") long tenantId,
+                                                 @Param("scope") FulfillmentScope scope,
+                                                 @Param("customerId") long customerId,
+                                                 @Param("cursorMode") String cursorMode,
+                                                 @Param("cursorOccurredAt") Instant cursorOccurredAt,
+                                                 @Param("cursorSourceId") Long cursorSourceId,
+                                                 @Param("limit") int limit);
     int updateAppointmentStatus(@Param("tenantId") long tenantId, @Param("id") long id,
                                 @Param("expectedVersion") long expectedVersion,
                                 @Param("expectedStatus") String expectedStatus, @Param("toStatus") String toStatus);
@@ -56,6 +63,13 @@ public interface FulfillmentMapper {
     long countRedemptions(@Param("tenantId") long tenantId, @Param("scope") FulfillmentScope scope,
                           @Param("customerId") Long customerId, @Param("institutionId") Long institutionId,
                           @Param("projectId") Long projectId, @Param("status") String status);
+    List<Redemption> selectTimelineRedemptions(@Param("tenantId") long tenantId,
+                                               @Param("scope") FulfillmentScope scope,
+                                               @Param("customerId") long customerId,
+                                               @Param("cursorMode") String cursorMode,
+                                               @Param("cursorOccurredAt") Instant cursorOccurredAt,
+                                               @Param("cursorSourceId") Long cursorSourceId,
+                                               @Param("limit") int limit);
     void insertRedemptionLine(@Param("tenantId") long tenantId, @Param("entity") RedemptionLine entity);
     List<RedemptionLine> selectRedemptionLines(@Param("tenantId") long tenantId,
                                                @Param("redemptionId") long redemptionId);

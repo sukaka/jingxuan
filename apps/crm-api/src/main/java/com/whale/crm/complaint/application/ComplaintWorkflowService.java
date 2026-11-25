@@ -17,6 +17,7 @@ import com.whale.crm.complaint.domain.ComplaintHitHistory;
 import com.whale.crm.complaint.domain.ComplaintHitQuery;
 import com.whale.crm.complaint.domain.ComplaintPolicy;
 import com.whale.crm.complaint.domain.ComplaintRepository;
+import com.whale.crm.complaint.domain.ComplaintTimelineQuery;
 import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.customer.application.CustomerTimelineCursor;
@@ -104,31 +105,30 @@ public class ComplaintWorkflowService {
 
     @Transactional(readOnly = true)
     public List<CustomerTimelineItemResponse> timeline(CurrentUser user, long customerId,
-                                                        CustomerTimelineCursor cursor) {
+                                                        CustomerTimelineCursor cursor, int limit) {
         accessService.requireCustomerVisible(user, customerId);
-        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
-        int page = 1;
-        long total;
-        do {
-            PageResponse<ComplaintCaseResponse> result = searchCases(user, null, null, page, 100);
-            total = result.total();
-            for (ComplaintCaseResponse item : result.items()) {
-                if (item.customerId() != customerId) {
-                    continue;
-                }
-                Map<String, Object> details = new LinkedHashMap<>();
-                details.put("status", item.status());
-                details.put("complaintCaseNo", item.complaintCaseNo());
-                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("COMPLAINT", item.id(),
-                        "COMPLAINT", item.createdAt(), "正式客诉 " + item.complaintCaseNo(), item.resolutionMasked(),
-                        details, item.createdBy());
-                if (cursor == null || cursor.allows(event)) {
-                    events.add(event);
-                }
-            }
-            page++;
-        } while ((long) (page - 1) * 100 < total);
-        return events;
+        DataScope scope = accessService.scope(user);
+        if (accessService.isEmpty(scope)) {
+            return List.of();
+        }
+        int safeLimit = Math.max(1, limit);
+        CustomerScopeSupport.ScopeQuery scoped = accessService.query(scope, user);
+        CustomerTimelineCursor.SqlCursor sqlCursor = CustomerTimelineCursor.sqlCursor(cursor, "COMPLAINT");
+        ComplaintTimelineQuery query = new ComplaintTimelineQuery(user.tenantId(), scoped.scopeType(),
+                scoped.teamIds(), scoped.selfId(), customerId, sqlCursor.modeName(),
+                sqlCursor.occurredAt(), sqlCursor.sourceId(), safeLimit);
+        return repository.findTimelineCases(query).stream()
+                .map(item -> {
+                    Map<String, Object> details = new LinkedHashMap<>();
+                    details.put("status", item.status());
+                    details.put("complaintCaseNo", item.complaintCaseNo());
+                    return CustomerTimelineItemResponse.of("COMPLAINT", item.id(),
+                            "COMPLAINT", item.createdAt(), "正式客诉 " + item.complaintCaseNo(),
+                            item.resolutionMasked(), details, item.createdBy());
+                })
+                .filter(event -> cursor == null || cursor.allows(event))
+                .limit(safeLimit)
+                .toList();
     }
 
     @Transactional(readOnly = true)

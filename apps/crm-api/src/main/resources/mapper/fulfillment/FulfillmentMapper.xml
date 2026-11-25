@@ -80,6 +80,37 @@
     <if test="institutionId != null">AND a.institution_id=#{institutionId}</if>
     <if test="status != null and status != ''">AND a.status=#{status}</if>
   </select>
+  <select id="selectTimelineAppointments" resultType="com.whale.crm.fulfillment.domain.Appointment">
+    SELECT <include refid="aliasedAppointmentColumns"/> FROM crm_appointment a
+    INNER JOIN crm_customer c ON c.tenant_id=a.tenant_id AND c.id=a.customer_id
+    WHERE a.tenant_id=#{tenantId}
+    <if test="scope.scopeType != 'INSTITUTION'">AND c.deleted=0</if>
+    <choose>
+      <when test="scope.scopeType == 'INSTITUTION'">
+        <choose>
+          <when test="scope.institutionIds != null and scope.institutionIds.size() > 0">AND a.institution_id IN <foreach collection="scope.institutionIds" item="institutionId" open="(" separator="," close=")">#{institutionId}</foreach></when>
+          <otherwise>AND 1=0</otherwise>
+        </choose>
+      </when>
+      <otherwise><include refid="nonInstitutionScopeCondition"/></otherwise>
+    </choose>
+      AND a.customer_id=#{customerId}
+    <choose>
+      <when test="cursorMode == 'LE'">
+        AND a.created_at &lt;= #{cursorOccurredAt}
+      </when>
+      <when test="cursorMode == 'EQ'">
+        AND (a.created_at &lt; #{cursorOccurredAt}
+             OR (a.created_at = #{cursorOccurredAt} AND a.id &lt; #{cursorSourceId}))
+      </when>
+      <when test="cursorMode == 'LT'">
+        AND a.created_at &lt; #{cursorOccurredAt}
+      </when>
+      <otherwise></otherwise>
+    </choose>
+    ORDER BY a.created_at DESC, a.id DESC
+    LIMIT #{limit}
+  </select>
   <update id="updateAppointmentStatus">
     UPDATE crm_appointment SET status=#{toStatus},version=version+1
     WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{expectedVersion} AND status=#{expectedStatus}
@@ -160,6 +191,38 @@
     <if test="customerId != null">AND r.customer_id=#{customerId}</if>
     <if test="institutionId != null">AND r.institution_id=#{institutionId}</if>
     <if test="status != null and status != ''">AND r.status=#{status}</if>
+  </select>
+  <select id="selectTimelineRedemptions" resultType="com.whale.crm.fulfillment.domain.Redemption">
+    SELECT <include refid="aliasedRedemptionColumns"/>
+    FROM crm_redemption r
+    INNER JOIN crm_customer c ON c.tenant_id=r.tenant_id AND c.id=r.customer_id
+    WHERE r.tenant_id=#{tenantId}
+    <if test="scope.scopeType != 'INSTITUTION'">AND c.deleted=0</if>
+    <choose>
+      <when test="scope.scopeType == 'INSTITUTION'">
+        <choose>
+          <when test="scope.institutionIds != null and scope.institutionIds.size() > 0">AND r.institution_id IN <foreach collection="scope.institutionIds" item="institutionId" open="(" separator="," close=")">#{institutionId}</foreach></when>
+          <otherwise>AND 1=0</otherwise>
+        </choose>
+      </when>
+      <otherwise><include refid="nonInstitutionScopeCondition"/></otherwise>
+    </choose>
+      AND r.customer_id=#{customerId}
+    <choose>
+      <when test="cursorMode == 'LE'">
+        AND COALESCE(r.posted_at, r.created_at) &lt;= #{cursorOccurredAt}
+      </when>
+      <when test="cursorMode == 'EQ'">
+        AND (COALESCE(r.posted_at, r.created_at) &lt; #{cursorOccurredAt}
+             OR (COALESCE(r.posted_at, r.created_at) = #{cursorOccurredAt} AND r.id &lt; #{cursorSourceId}))
+      </when>
+      <when test="cursorMode == 'LT'">
+        AND COALESCE(r.posted_at, r.created_at) &lt; #{cursorOccurredAt}
+      </when>
+      <otherwise></otherwise>
+    </choose>
+    ORDER BY COALESCE(r.posted_at, r.created_at) DESC, r.id DESC
+    LIMIT #{limit}
   </select>
   <insert id="insertRedemptionLine">
     INSERT INTO crm_redemption_line (tenant_id,redemption_id,appointment_item_id,entitlement_id,project_id,count)

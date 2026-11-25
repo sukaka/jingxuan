@@ -84,29 +84,25 @@ public class AppointmentApplicationService {
 
     @Transactional(readOnly = true)
     public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
-                                                        CustomerTimelineCursor cursor) {
+                                                        CustomerTimelineCursor cursor, int limit) {
         scopeSupport.requireVisible(tenantId, customerId, user);
-        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
-        int page = 1;
-        long total;
-        do {
-            PageResponse<Appointment> result = search(tenantId, user, customerId, null, null, page, 100);
-            total = result.total();
-            for (Appointment appointment : result.items()) {
-                Map<String, Object> details = new java.util.LinkedHashMap<>();
-                details.put("status", appointment.status());
-                details.put("scheduledAt", appointment.scheduledAt());
-                details.put("institutionId", appointment.institutionId());
-                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("APPOINTMENT", appointment.id(),
-                        "APPOINTMENT", appointment.createdAt(), "预约 " + appointment.appointmentNo(), appointment.remark(),
-                        details, appointment.createdBy());
-                if (cursor == null || cursor.allows(event)) {
-                    events.add(event);
-                }
-            }
-            page++;
-        } while ((long) (page - 1) * 100 < total);
-        return events;
+        int safeLimit = Math.max(1, limit);
+        FulfillmentScope scope = support.scope(tenantId, user);
+        CustomerTimelineCursor.SqlCursor sqlCursor = CustomerTimelineCursor.sqlCursor(cursor, "APPOINTMENT");
+        return repository.findTimelineAppointments(tenantId, scope, customerId,
+                        sqlCursor.modeName(), sqlCursor.occurredAt(), sqlCursor.sourceId(), safeLimit).stream()
+                .map(appointment -> {
+                    Map<String, Object> details = new java.util.LinkedHashMap<>();
+                    details.put("status", appointment.status());
+                    details.put("scheduledAt", appointment.scheduledAt());
+                    details.put("institutionId", appointment.institutionId());
+                    return CustomerTimelineItemResponse.of("APPOINTMENT", appointment.id(),
+                            "APPOINTMENT", appointment.createdAt(), "预约 " + appointment.appointmentNo(),
+                            appointment.remark(), details, appointment.createdBy());
+                })
+                .filter(event -> cursor == null || cursor.allows(event))
+                .limit(safeLimit)
+                .toList();
     }
 
     @Transactional(readOnly = true)

@@ -7,8 +7,8 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.hasItem;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -310,5 +310,87 @@ class CustomerApiIT extends AbstractMysqlIT {
         }
         assertThat(actualTagged).hasSize(25).containsExactlyElementsOf(expectedSorted);
         assertThat(actualEmpty).isNotNull().isEmpty();
+    }
+
+    @Test
+    void followupDueBeforeUsesMaintainedNextFollowupAtAndExcludesRescheduledHistory() throws Exception {
+        AuthCookies manager1 = login("manager1");
+        String prefix = "ITP0A4-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String c1Body = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-C1\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long c1 = objectMapper.readTree(c1Body).at("/data/id").asLong();
+
+        // C1 先有一条 2026-01-15 的跟进，命中 followupDueBefore=2026-06-01
+        mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "p0a4-c1-f1-" + java.util.UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + c1 + ",\"channelCode\":\"WECOM\","
+                                + "\"summary\":\"旧约\",\"nextFollowupAt\":\"2026-01-15T00:00:00Z\"}"))
+                .andExpect(status().isCreated());
+        mockMvc.perform(get("/api/v1/customers?keyword=" + prefix + "-C1&followupDueBefore=2026-06-01T00:00:00Z")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1));
+
+        // C1 改约到 2026-12-15 -> 不再误命中 followupDueBefore=2026-06-01
+        mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "p0a4-c1-f2-" + java.util.UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + c1 + ",\"channelCode\":\"WECOM\","
+                                + "\"summary\":\"改约\",\"nextFollowupAt\":\"2026-12-15T00:00:00Z\"}"))
+                .andExpect(status().isCreated());
+        mockMvc.perform(get("/api/v1/customers?keyword=" + prefix + "-C1&followupDueBefore=2026-06-01T00:00:00Z")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+
+        // C2: 创建 -> PATCH 延后 -> 软删除
+        String c2Body = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-C2\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long c2 = objectMapper.readTree(c2Body).at("/data/id").asLong();
+        String f3Body = mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "p0a4-c2-f3-" + java.util.UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + c2 + ",\"channelCode\":\"PHONE\","
+                                + "\"summary\":\"首跟\",\"nextFollowupAt\":\"2026-01-15T00:00:00Z\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long f3 = objectMapper.readTree(f3Body).at("/data/id").asLong();
+        mockMvc.perform(get("/api/v1/customers?keyword=" + prefix + "-C2&followupDueBefore=2026-06-01T00:00:00Z")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1));
+
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/followups/" + f3))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nextFollowupAt\":\"2026-12-15T00:00:00Z\",\"version\":0}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/customers?keyword=" + prefix + "-C2&followupDueBefore=2026-06-01T00:00:00Z")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+        mockMvc.perform(get("/api/v1/customers?keyword=" + prefix + "-C2&followupDueBefore=2026-12-31T00:00:00Z")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].nextFollowupAt").value("2026-12-15T00:00:00Z"));
+
+        mockMvc.perform(manager1.withAuth(delete("/api/v1/followups/" + f3).param("version", "1")))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/customers?keyword=" + prefix + "-C2&followupDueBefore=2099-01-01T00:00:00Z")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+        mockMvc.perform(get("/api/v1/customers?keyword=" + prefix + "-C2")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].nextFollowupAt").doesNotExist());
     }
 }

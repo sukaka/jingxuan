@@ -5,6 +5,7 @@ import com.whale.crm.customer.domain.CustomerOwnerHistoryRepository;
 import com.whale.crm.customer.infrastructure.mapper.CustomerOwnerHistoryMapper;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.List;
 
 @Repository
@@ -29,5 +30,13 @@ public class MybatisCustomerOwnerHistoryRepository implements CustomerOwnerHisto
     @Override
     public List<OwnerHistoryRow> findRowsByCustomerId(long tenantId, long customerId) {
         return mapper.selectRowsByCustomerId(tenantId, customerId);
+    }
+
+    @Override
+    public List<OwnerHistoryRow> findTimelineRowsByCustomerId(long tenantId, long customerId, String cursorMode,
+                                                              Instant cursorOccurredAt, Long cursorSourceId,
+                                                              int limit) {
+        return mapper.selectTimelineRowsByCustomerId(tenantId, customerId, cursorMode, cursorOccurredAt,
+                cursorSourceId, limit);
     }
 }

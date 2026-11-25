@@ -5,6 +5,7 @@ import com.whale.crm.customer.domain.FollowupRepository;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.time.Instant;
 import java.util.List;
 
 @Mapper
@@ -20,6 +21,19 @@ public interface FollowupMapper {
     long countSearch(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
                      @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
                      @Param("customerId") Long customerId);
+
+    List<FollowupRepository.FollowupTimelineRow> selectTimelineEvents(@Param("tenantId") long tenantId,
+                                                                      @Param("scopeType") String scopeType,
+                                                                      @Param("teamIds") List<Long> teamIds,
+                                                                      @Param("selfId") long selfId,
+                                                                      @Param("customerId") long customerId,
+                                                                      @Param("nextFollowupMode") String nextFollowupMode,
+                                                                      @Param("intentMode") String intentMode,
+                                                                      @Param("followupMode") String followupMode,
+                                                                      @Param("blockerMode") String blockerMode,
+                                                                      @Param("cursorOccurredAt") Instant cursorOccurredAt,
+                                                                      @Param("cursorSourceId") Long cursorSourceId,
+                                                                      @Param("limit") int limit);
 
     Followup selectById(@Param("tenantId") long tenantId, @Param("id") long id);
 

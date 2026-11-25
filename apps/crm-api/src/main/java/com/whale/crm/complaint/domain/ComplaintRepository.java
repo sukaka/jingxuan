@@ -58,6 +58,8 @@ public interface ComplaintRepository {
 
     long countCases(ComplaintCaseQuery query);
 
+    List<ComplaintCase> findTimelineCases(ComplaintTimelineQuery query);
+
     void insertCase(ComplaintCase complaintCase);
 
     int updateCaseStatus(long tenantId, long id, long version, String expectedStatus, String targetStatus,

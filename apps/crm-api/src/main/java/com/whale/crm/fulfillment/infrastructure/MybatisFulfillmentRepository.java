@@ -37,6 +37,12 @@ public class MybatisFulfillmentRepository implements FulfillmentRepository {
     public long countAppointments(long tenantId, FulfillmentScope scope, Long customerId, Long institutionId, String status) {
         return mapper.countAppointments(tenantId, scope, customerId, institutionId, status);
     }
+    public List<Appointment> findTimelineAppointments(long tenantId, FulfillmentScope scope, long customerId,
+                                                      String cursorMode, Instant cursorOccurredAt,
+                                                      Long cursorSourceId, int limit) {
+        return mapper.selectTimelineAppointments(tenantId, scope, customerId, cursorMode,
+                cursorOccurredAt, cursorSourceId, limit);
+    }
     public int updateAppointmentStatus(long tenantId, long id, long version, String from, String to) {
         return mapper.updateAppointmentStatus(tenantId, id, version, from, to);
     }
@@ -57,6 +63,12 @@ public class MybatisFulfillmentRepository implements FulfillmentRepository {
     public long countRedemptions(long tenantId, FulfillmentScope scope, Long customerId, Long institutionId,
                                  Long projectId, String status) {
         return mapper.countRedemptions(tenantId, scope, customerId, institutionId, projectId, status);
+    }
+    public List<Redemption> findTimelineRedemptions(long tenantId, FulfillmentScope scope, long customerId,
+                                                    String cursorMode, Instant cursorOccurredAt,
+                                                    Long cursorSourceId, int limit) {
+        return mapper.selectTimelineRedemptions(tenantId, scope, customerId, cursorMode,
+                cursorOccurredAt, cursorSourceId, limit);
     }
     public void insertRedemptionLine(long tenantId, RedemptionLine entity) { mapper.insertRedemptionLine(tenantId, entity); }
     public List<RedemptionLine> findRedemptionLines(long tenantId, long id) { return mapper.selectRedemptionLines(tenantId, id); }

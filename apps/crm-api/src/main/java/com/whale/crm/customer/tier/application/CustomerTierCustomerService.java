@@ -82,16 +82,24 @@ public class CustomerTierCustomerService {
 
     @Transactional(readOnly = true)
     public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
-                                                        CustomerTimelineCursor cursor) {
-        return history(tenantId, user, customerId, Integer.MAX_VALUE).stream().map(item -> {
-            Map<String, Object> details = new java.util.LinkedHashMap<>();
-            details.put("fromTierCode", item.fromTierCode());
-            details.put("toTierCode", item.toTierCode());
-            details.put("changeType", item.changeType());
-            Instant occurredAt = item.effectiveAt() != null ? item.effectiveAt() : item.createdAt();
-            return CustomerTimelineItemResponse.of("TIER", item.id(), "TIER", occurredAt,
-                    "客户等级变更", item.reason(), details, item.actorUserId());
-        }).filter(item -> cursor == null || cursor.allows(item)).toList();
+                                                        CustomerTimelineCursor cursor, int limit) {
+        scopeSupport.requireVisible(tenantId, customerId, user);
+        int safeLimit = Math.max(1, limit);
+        CustomerTimelineCursor.SqlCursor sqlCursor = CustomerTimelineCursor.sqlCursor(cursor, "TIER");
+        return repository.findTimelineHistory(tenantId, customerId, sqlCursor.modeName(),
+                        sqlCursor.occurredAt(), sqlCursor.sourceId(), safeLimit).stream()
+                .map(item -> {
+                    Map<String, Object> details = new java.util.LinkedHashMap<>();
+                    details.put("fromTierCode", item.fromTierCode());
+                    details.put("toTierCode", item.toTierCode());
+                    details.put("changeType", item.changeType());
+                    Instant occurredAt = item.effectiveAt() != null ? item.effectiveAt() : item.createdAt();
+                    return CustomerTimelineItemResponse.of("TIER", item.id(), "TIER", occurredAt,
+                            "客户等级变更", item.reason(), details, item.actorUserId());
+                })
+                .filter(item -> cursor == null || cursor.allows(item))
+                .limit(safeLimit)
+                .toList();
     }
 
     @Transactional

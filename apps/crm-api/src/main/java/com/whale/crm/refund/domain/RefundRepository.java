@@ -12,6 +12,8 @@ public interface RefundRepository {
     Optional<Refund> findScopedById(long tenantId, long id, String scopeType, List<Long> teamIds, long selfId);
     List<Refund> search(long tenantId, Long orderId, Long customerId, String status, String scopeType, List<Long> teamIds, long selfId, int offset, int size);
     long countSearch(long tenantId, Long orderId, Long customerId, String status, String scopeType, List<Long> teamIds, long selfId);
+    List<Refund> findTimelineRefunds(long tenantId, long customerId, String scopeType, List<Long> teamIds, long selfId,
+                                     String cursorMode, Instant cursorOccurredAt, Long cursorSourceId, int limit);
     int updateStatus(long tenantId, long id, long version, String fromStatus, String toStatus,
                      Long approvedFen, Long succeededFen, Long approvedBy, Long executedBy, Instant succeededAt);
     void insertItem(long tenantId, RefundItem entity);

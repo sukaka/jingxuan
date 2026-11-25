@@ -275,6 +275,8 @@ public class MergeApplicationService {
                 secondaryId, primaryId);
         long pointsBalance = pointsLedgerRepository.sumDelta(tenantId, primaryId);
         customerRepository.refreshPointsCached(tenantId, primaryId, Math.toIntExact(pointsBalance));
+        customerRepository.refreshNextFollowupAt(tenantId, primaryId);
+        customerRepository.refreshNextFollowupAt(tenantId, secondaryId);
 
         int deleted = customerRepository.softDelete(tenantId, secondaryId, secondary.getVersion());
         if (deleted == 0) {

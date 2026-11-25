@@ -209,6 +209,8 @@ public class MergeReversalApplicationService {
             migrateSnapshot(user.tenantId(), mergeCase, snapshots);
             refreshPoints(user.tenantId(), primaryId);
             refreshPoints(user.tenantId(), secondaryId);
+            customerRepository.refreshNextFollowupAt(user.tenantId(), primaryId);
+            customerRepository.refreshNextFollowupAt(user.tenantId(), secondaryId);
             transition(mergeCase, user.userId());
             String warning = "合并时去重删除的身份和标签无法自动恢复，请人工复核是否需要补建。";
             update(reversal, "EXECUTED", request.reason(), user.userId(), now, now, warning, null);

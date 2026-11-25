@@ -5,6 +5,7 @@
   <sql id="keywordColumns">id,tenant_id AS tenantId,keyword,status,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt,version</sql>
   <sql id="hitColumns">id,tenant_id AS tenantId,customer_id AS customerId,owner_staff_id_snapshot AS ownerStaffIdSnapshot,team_id_snapshot AS teamIdSnapshot,source_type AS sourceType,source_id AS sourceId,keyword_id AS keywordId,keyword_snapshot AS keywordSnapshot,evidence_masked AS evidenceMasked,status,routing_status AS routingStatus,routing_error AS routingError,recipient_user_id_snapshot AS recipientUserIdSnapshot,recipient_source_snapshot AS recipientSourceSnapshot,policy_version_snapshot AS policyVersionSnapshot,complaint_case_id AS complaintCaseId,review_reason_masked AS reviewReasonMasked,reviewed_by AS reviewedBy,reviewed_at AS reviewedAt,created_at AS createdAt,updated_at AS updatedAt,version</sql>
   <sql id="caseColumns">id,tenant_id AS tenantId,complaint_case_no AS complaintCaseNo,complaint_hit_id AS complaintHitId,customer_id AS customerId,owner_staff_id_snapshot AS ownerStaffIdSnapshot,team_id_snapshot AS teamIdSnapshot,recipient_user_id_snapshot AS recipientUserIdSnapshot,recipient_source_snapshot AS recipientSourceSnapshot,status,assignee_user_id AS assigneeUserId,resolution_masked AS resolutionMasked,resolved_at AS resolvedAt,closed_at AS closedAt,dismiss_reason_masked AS dismissReasonMasked,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt,version</sql>
+  <sql id="aliasedCaseColumns">cc.id,cc.tenant_id AS tenantId,cc.complaint_case_no AS complaintCaseNo,cc.complaint_hit_id AS complaintHitId,cc.customer_id AS customerId,cc.owner_staff_id_snapshot AS ownerStaffIdSnapshot,cc.team_id_snapshot AS teamIdSnapshot,cc.recipient_user_id_snapshot AS recipientUserIdSnapshot,cc.recipient_source_snapshot AS recipientSourceSnapshot,cc.status,cc.assignee_user_id AS assigneeUserId,cc.resolution_masked AS resolutionMasked,cc.resolved_at AS resolvedAt,cc.closed_at AS closedAt,cc.dismiss_reason_masked AS dismissReasonMasked,cc.created_by AS createdBy,cc.created_at AS createdAt,cc.updated_at AS updatedAt,cc.version</sql>
   <sql id="scope">
     <choose>
       <when test="q.scopeType == 'ALL'">1=1</when>
@@ -152,6 +153,29 @@
       AND (cc.complaint_case_no LIKE CONCAT('%',#{q.keyword},'%') OR h.keyword_snapshot LIKE CONCAT('%',#{q.keyword},'%')
         OR cc.resolution_masked LIKE CONCAT('%',#{q.keyword},'%') OR c.customer_no LIKE CONCAT('%',#{q.keyword},'%'))
     </if>
+  </select>
+  <select id="findTimelineCases" resultType="com.whale.crm.complaint.domain.ComplaintCase">
+    SELECT <include refid="aliasedCaseColumns"/>
+    FROM crm_complaint_case cc
+    JOIN crm_customer c ON c.tenant_id=cc.tenant_id AND c.id=cc.customer_id AND c.deleted=0
+    WHERE cc.tenant_id=#{q.tenantId}
+      AND cc.customer_id=#{q.customerId}
+      AND <include refid="scope"/>
+      <choose>
+        <when test="q.cursorMode == 'LE'">
+          AND cc.created_at &lt;= #{q.cursorOccurredAt}
+        </when>
+        <when test="q.cursorMode == 'EQ'">
+          AND (cc.created_at &lt; #{q.cursorOccurredAt}
+               OR (cc.created_at = #{q.cursorOccurredAt} AND cc.id &lt; #{q.cursorSourceId}))
+        </when>
+        <when test="q.cursorMode == 'LT'">
+          AND cc.created_at &lt; #{q.cursorOccurredAt}
+        </when>
+        <otherwise></otherwise>
+      </choose>
+    ORDER BY cc.created_at DESC, cc.id DESC
+    LIMIT #{q.limit}
   </select>
   <insert id="insertCase">
     INSERT INTO crm_complaint_case (tenant_id,complaint_case_no,complaint_hit_id,customer_id,owner_staff_id_snapshot,

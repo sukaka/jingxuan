@@ -205,6 +205,13 @@ class FollowupApiIT extends AbstractMysqlIT {
                 .andReturn().getResponse().getContentAsString();
         long followupId = objectMapper.readTree(created).at("/data/id").asLong();
 
+        AuthCookies admin = login("admin");
+        String beforeAuditBody = mockMvc.perform(get("/api/v1/audit-logs?actionCode=FOLLOWUP_DELETE&targetType=FOLLOWUP")
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        long deleteAuditBefore = objectMapper.readTree(beforeAuditBody).at("/data/total").asLong();
+
         mockMvc.perform(manager2.withAuth(delete("/api/v1/followups/" + followupId).param("version", "0")))
                 .andExpect(status().isNotFound());
         mockMvc.perform(manager1.withAuth(delete("/api/v1/followups/" + followupId).param("version", "0")))
@@ -219,9 +226,10 @@ class FollowupApiIT extends AbstractMysqlIT {
         mockMvc.perform(manager1.withAuth(delete("/api/v1/followups/" + followupId).param("version", "1")))
                 .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/v1/audit-logs?actionCode=FOLLOWUP_DELETE&targetType=FOLLOWUP")
-                        .cookie(login("admin").cookies()))
+                        .cookie(admin.cookies()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.total").value(1));
+                .andExpect(jsonPath("$.data.total").value(deleteAuditBefore + 1))
+                .andExpect(jsonPath("$.data.items[0].targetId").value(Long.toString(followupId)));
     }
 
     @Test
@@ -257,6 +265,119 @@ class FollowupApiIT extends AbstractMysqlIT {
 
         mockMvc.perform(get("/api/v1/followups?customerId=" + deletedCustomerId).cookie(manager1.cookies()))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createUpdateDeleteMaintainCustomerNextFollowupAtWithoutBumpingVersion() throws Exception {
+        AuthCookies manager1 = login("manager1");
+        long customerId = createCustomer(manager1, "ITF-nextFollowup维护");
+
+        org.assertj.core.api.Assertions.assertThat(queryCustomerNextFollowupAt(customerId)).isNull();
+        org.assertj.core.api.Assertions.assertThat(queryCustomerVersion(customerId)).isZero();
+
+        long f1 = createFollowupWithNextAt(manager1, customerId, "跟进1", "2026-06-10T00:00:00Z");
+        org.assertj.core.api.Assertions.assertThat(queryCustomerNextFollowupAt(customerId))
+                .isEqualTo(java.time.Instant.parse("2026-06-10T00:00:00Z"));
+        org.assertj.core.api.Assertions.assertThat(queryCustomerVersion(customerId)).isZero();
+
+        long f2 = createFollowupWithNextAt(manager1, customerId, "跟进2", "2026-12-10T00:00:00Z");
+        org.assertj.core.api.Assertions.assertThat(queryCustomerNextFollowupAt(customerId))
+                .isEqualTo(java.time.Instant.parse("2026-12-10T00:00:00Z"));
+        org.assertj.core.api.Assertions.assertThat(queryCustomerVersion(customerId)).isZero();
+
+        // 将 f2 改早到 2026-05-01 -> 客户 next_followup_at 回落到 f1 (2026-06-10)
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/followups/" + f2))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nextFollowupAt\":\"2026-05-01T00:00:00Z\",\"version\":0}"))
+                .andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(queryCustomerNextFollowupAt(customerId))
+                .isEqualTo(java.time.Instant.parse("2026-06-10T00:00:00Z"));
+        org.assertj.core.api.Assertions.assertThat(queryCustomerVersion(customerId)).isZero();
+
+        // 软删除 f1 -> 客户 next_followup_at 回落到 f2 (2026-05-01)
+        mockMvc.perform(manager1.withAuth(delete("/api/v1/followups/" + f1).param("version", "0")))
+                .andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(queryCustomerNextFollowupAt(customerId))
+                .isEqualTo(java.time.Instant.parse("2026-05-01T00:00:00Z"));
+        org.assertj.core.api.Assertions.assertThat(queryCustomerVersion(customerId)).isZero();
+
+        // 软删除 f2 -> 客户 next_followup_at 清空为 NULL
+        mockMvc.perform(manager1.withAuth(delete("/api/v1/followups/" + f2).param("version", "1")))
+                .andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(queryCustomerNextFollowupAt(customerId)).isNull();
+        org.assertj.core.api.Assertions.assertThat(queryCustomerVersion(customerId)).isZero();
+    }
+
+    @Test
+    void concurrentFollowupCreateAndDeleteMaintainExactMaxNextFollowupAt() throws Exception {
+        AuthCookies manager1 = login("manager1");
+        for (int round = 0; round < 5; round++) {
+            long customerId = createCustomer(manager1, "ITF-并发-" + round);
+            long f1 = createFollowupWithNextAt(manager1, customerId, "初始跟进-" + round, "2026-06-10T00:00:00Z");
+
+            java.util.concurrent.CountDownLatch ready = new java.util.concurrent.CountDownLatch(2);
+            java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+            try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+                java.util.concurrent.Future<Integer> createFuture = executor.submit(() -> {
+                    ready.countDown();
+                    org.assertj.core.api.Assertions.assertThat(start.await(15, java.util.concurrent.TimeUnit.SECONDS))
+                            .isTrue();
+                    return mockMvc.perform(manager1.withAuth(post("/api/v1/followups"))
+                                    .header("Idempotency-Key", "itf-race-create-" + java.util.UUID.randomUUID())
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\","
+                                            + "\"summary\":\"并发新增\",\"nextFollowupAt\":\"2026-12-10T00:00:00Z\"}"))
+                            .andReturn().getResponse().getStatus();
+                });
+                java.util.concurrent.Future<Integer> deleteFuture = executor.submit(() -> {
+                    ready.countDown();
+                    org.assertj.core.api.Assertions.assertThat(start.await(15, java.util.concurrent.TimeUnit.SECONDS))
+                            .isTrue();
+                    return mockMvc.perform(manager1.withAuth(delete("/api/v1/followups/" + f1)
+                                    .param("version", "0")))
+                            .andReturn().getResponse().getStatus();
+                });
+                org.assertj.core.api.Assertions.assertThat(ready.await(15, java.util.concurrent.TimeUnit.SECONDS))
+                        .isTrue();
+                start.countDown();
+                org.assertj.core.api.Assertions.assertThat(
+                        createFuture.get(20, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(201);
+                org.assertj.core.api.Assertions.assertThat(
+                        deleteFuture.get(20, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(200);
+            }
+
+            java.sql.Timestamp expectedMax = jdbcTemplate.queryForObject(
+                    "SELECT MAX(next_followup_at) FROM crm_followup WHERE tenant_id=1 AND customer_id=? AND deleted=0",
+                    java.sql.Timestamp.class, customerId);
+            java.time.Instant expectedInstant = expectedMax == null ? null : expectedMax.toInstant();
+            org.assertj.core.api.Assertions.assertThat(queryCustomerNextFollowupAt(customerId))
+                    .isEqualTo(java.time.Instant.parse("2026-12-10T00:00:00Z"))
+                    .isEqualTo(expectedInstant);
+        }
+    }
+
+    private long createFollowupWithNextAt(AuthCookies actor, long customerId, String summary, String nextFollowupAt)
+            throws Exception {
+        String response = mockMvc.perform(actor.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "itf-create-" + java.util.UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\",\"summary\":\""
+                                + summary + "\",\"nextFollowupAt\":\"" + nextFollowupAt + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(response).at("/data/id").asLong();
+    }
+
+    private java.time.Instant queryCustomerNextFollowupAt(long customerId) {
+        java.sql.Timestamp ts = jdbcTemplate.queryForObject(
+                "SELECT next_followup_at FROM crm_customer WHERE tenant_id=1 AND id=?",
+                java.sql.Timestamp.class, customerId);
+        return ts == null ? null : ts.toInstant();
+    }
+
+    private long queryCustomerVersion(long customerId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT version FROM crm_customer WHERE tenant_id=1 AND id=?", Long.class, customerId);
     }
 
     private void createFollowup(AuthCookies actor, long customerId, String summary) throws Exception {

@@ -46,6 +46,8 @@ public interface CustomerRepository {
 
     int updateLastFollowupAt(long tenantId, long id, java.time.Instant lastFollowupAt);
 
+    int refreshNextFollowupAt(long tenantId, long id);
+
     int markFirstOrderIfNull(long tenantId, long id, java.time.Instant paidAt);
 
     int refreshPointsCached(long tenantId, long id, int newBalance);

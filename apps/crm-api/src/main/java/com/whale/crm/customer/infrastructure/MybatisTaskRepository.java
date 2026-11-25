@@ -33,6 +33,14 @@ public class MybatisTaskRepository implements TaskRepository {
     }
 
     @Override
+    public List<CrmTask> findTimeline(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                      long customerId, String cursorMode, Instant cursorOccurredAt,
+                                      Long cursorSourceId, int limit) {
+        return taskMapper.selectTimeline(tenantId, scopeType, teamIds, selfId, customerId, cursorMode,
+                cursorOccurredAt, cursorSourceId, limit);
+    }
+
+    @Override
     public TaskDutySummary dutySummary(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                                        Instant now, Instant dayEndExclusive) {
         return taskMapper.dutySummary(tenantId, scopeType, teamIds, selfId, now, dayEndExclusive);

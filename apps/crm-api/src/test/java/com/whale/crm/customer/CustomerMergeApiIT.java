@@ -228,6 +228,59 @@ class CustomerMergeApiIT extends AbstractMysqlIT {
     }
 
     @Test
+    void confirmRefreshesNextFollowupAtOnPrimaryAndClearsSecondaryWithoutBumpingPrimaryVersion() throws Exception {
+        AuthCookies admin = login("admin");
+        String prefix = "ITNFM-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        long primary = createCustomer(admin, prefix + "-主", "13988881111");
+        long secondary = createCustomer(admin, prefix + "-从", "13988881111");
+
+        createFollowupWithNextAt(admin, primary, "主客户跟进", "2026-07-01T00:00:00Z");
+        createFollowupWithNextAt(admin, secondary, "从客户跟进", "2026-11-01T00:00:00Z");
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM crm_customer WHERE id=?", Long.class, primary))
+                .isZero();
+
+        String created = mockMvc.perform(admin.withAuth(post("/api/v1/customer-merges"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"primaryCustomerId\":" + primary + ",\"secondaryCustomerId\":" + secondary
+                                + ",\"reason\":\"P0-A4合并测试\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long caseId = objectMapper.readTree(created).at("/data/id").asLong();
+
+        mockMvc.perform(admin.withAuth(post("/api/v1/customer-merges/" + caseId + "/review"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":0}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(admin.withAuth(post("/api/v1/customer-merges/" + caseId + "/confirm"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"version\":1,\"reason\":\"确认合并\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT next_followup_at FROM crm_customer WHERE id=?", java.sql.Timestamp.class, primary)
+                .toInstant()).isEqualTo(java.time.Instant.parse("2026-11-01T00:00:00Z"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT next_followup_at FROM crm_customer WHERE id=?", java.sql.Timestamp.class, secondary))
+                .isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM crm_customer WHERE id=?", Long.class, primary))
+                .isZero();
+        mockMvc.perform(get("/api/v1/customers?keyword=" + prefix).cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(primary))
+                .andExpect(jsonPath("$.data.items[0].nextFollowupAt").value("2026-11-01T00:00:00Z"));
+    }
+
+    private void createFollowupWithNextAt(AuthCookies actor, long customerId, String summary, String nextFollowupAt)
+            throws Exception {
+        mockMvc.perform(actor.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "it-merge-followup-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\",\"summary\":\""
+                                + summary + "\",\"nextFollowupAt\":\"" + nextFollowupAt + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     void confirm_outOfScopeCaseIs404() throws Exception {
         AuthCookies admin = login("admin");
         // 二组客户 → lead1（TEAM 1）不可见

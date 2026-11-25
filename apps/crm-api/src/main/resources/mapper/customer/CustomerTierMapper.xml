@@ -289,6 +289,30 @@
     WHERE tenant_id = #{tenantId} AND customer_id = #{customerId} ORDER BY id DESC LIMIT #{limit}
   </select>
 
+  <select id="selectTimelineHistory" resultType="com.whale.crm.customer.tier.domain.CustomerTierHistory">
+    SELECT id, tenant_id AS tenantId, customer_id AS customerId, rule_id AS ruleId, snapshot_id AS snapshotId,
+           review_id AS reviewId, from_tier_code AS fromTierCode, to_tier_code AS toTierCode,
+           change_type AS changeType, actor_user_id AS actorUserId, reason, effective_at AS effectiveAt,
+           created_at AS createdAt
+    FROM crm_customer_tier_history
+    WHERE tenant_id = #{tenantId} AND customer_id = #{customerId}
+    <choose>
+      <when test="cursorMode == 'LE'">
+        AND COALESCE(effective_at, created_at) &lt;= #{cursorOccurredAt}
+      </when>
+      <when test="cursorMode == 'EQ'">
+        AND (COALESCE(effective_at, created_at) &lt; #{cursorOccurredAt}
+             OR (COALESCE(effective_at, created_at) = #{cursorOccurredAt} AND id &lt; #{cursorSourceId}))
+      </when>
+      <when test="cursorMode == 'LT'">
+        AND COALESCE(effective_at, created_at) &lt; #{cursorOccurredAt}
+      </when>
+      <otherwise></otherwise>
+    </choose>
+    ORDER BY COALESCE(effective_at, created_at) DESC, id DESC
+    LIMIT #{limit}
+  </select>
+
   <update id="updateTier">
     UPDATE crm_customer
     SET tier_code = #{tierCode}, tier_locked = #{locked}, tier_lock_reason = #{lockReason}, version = version + 1

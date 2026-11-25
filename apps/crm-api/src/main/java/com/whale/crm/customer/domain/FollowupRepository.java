@@ -1,5 +1,6 @@
 package com.whale.crm.customer.domain;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -12,6 +13,11 @@ public interface FollowupRepository {
                                  Long customerId, int offset, int size);
 
     long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId, Long customerId);
+
+    List<FollowupTimelineRow> findTimelineEvents(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                                 long customerId, String nextFollowupMode, String intentMode,
+                                                 String followupMode, String blockerMode, Instant cursorOccurredAt,
+                                                 Long cursorSourceId, int limit);
 
     Optional<Followup> findById(long tenantId, long id);
 
@@ -32,5 +38,10 @@ public interface FollowupRepository {
                            String ownerStaffName, String channelCode, java.time.Instant contactAt, String summary,
                            String intentProject, Long estimatedAmountFen, java.time.Instant nextFollowupAt,
                            String blockerNote, Long createdBy, java.time.Instant createdAt, Long version) {
+    }
+
+    record FollowupTimelineRow(String eventType, Long id, String channelCode, Instant contactAt, String summary,
+                               String intentProject, Long estimatedAmountFen, Instant nextFollowupAt,
+                               String blockerNote, Long createdBy, Instant createdAt, Instant occurredAt) {
     }
 }

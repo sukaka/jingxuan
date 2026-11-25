@@ -30,6 +30,7 @@
     <result property="firstAddedAt" column="first_added_at"/>
     <result property="firstOrderAt" column="first_order_at"/>
     <result property="lastFollowupAt" column="last_followup_at"/>
+    <result property="nextFollowupAt" column="next_followup_at"/>
     <result property="deleted" column="deleted"/>
     <result property="createdAt" column="created_at"/>
     <result property="updatedAt" column="updated_at"/>
@@ -66,7 +67,7 @@
     mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status, tier_code,
     tier_locked, tier_lock_reason, intent_level, spending_level, birthday, points_cached, attention_projects,
     blocker_note, remark,
-    first_added_at, first_order_at, last_followup_at, deleted, created_at, updated_at, version
+    first_added_at, first_order_at, last_followup_at, next_followup_at, deleted, created_at, updated_at, version
   </sql>
 
   <!-- 数据范围（双保险：Service 已对 NONE/INSTITUTION 短路；此处仍兜底 1=0）。
@@ -118,9 +119,7 @@
       AND c.tier_code = #{tierCode}
     </if>
     <if test="followupDueBefore != null">
-      AND EXISTS (SELECT 1 FROM crm_followup f
-                  WHERE f.tenant_id = c.tenant_id AND f.customer_id = c.id AND f.deleted = 0
-                    AND f.next_followup_at IS NOT NULL AND f.next_followup_at &lt;= #{followupDueBefore})
+      AND c.next_followup_at IS NOT NULL AND c.next_followup_at &lt;= #{followupDueBefore}
     </if>
   </sql>
 
@@ -129,7 +128,7 @@
            c.display_name, c.nickname, c.mobile_cipher, c.city_code, c.customer_status, c.tier_code,
            c.intent_level, c.points_cached, c.last_followup_at, c.created_at, c.version,
            c.source_code, c.channel_code, c.spending_level, c.birthday,
-           (SELECT MAX(f.next_followup_at) FROM crm_followup f WHERE f.tenant_id=c.tenant_id AND f.customer_id=c.id AND f.deleted=0) AS next_followup_at
+           c.next_followup_at
     FROM crm_customer c
     LEFT JOIN sys_user o ON o.tenant_id = c.tenant_id AND o.id = c.owner_staff_id
     <include refid="scopedWhere"/>
@@ -197,6 +196,16 @@
     SET last_followup_at = #{lastFollowupAt}
     WHERE tenant_id = #{tenantId} AND id = #{id} AND deleted = 0
       AND (last_followup_at IS NULL OR last_followup_at &lt; #{lastFollowupAt})
+  </update>
+
+  <update id="refreshNextFollowupAt">
+    UPDATE crm_customer
+    SET next_followup_at = (
+      SELECT MAX(f.next_followup_at)
+      FROM crm_followup f
+      WHERE f.tenant_id = #{tenantId} AND f.customer_id = #{id} AND f.deleted = 0
+    )
+    WHERE tenant_id = #{tenantId} AND id = #{id}
   </update>
 
   <update id="markFirstOrderIfNull">

@@ -141,6 +141,34 @@ class MergeReversalApplicationServiceTest {
         verify(mergeCaseRepository, never()).findById(anyLong(), anyLong());
         verify(customerRepository, never()).findById(anyLong(), anyLong());
         verify(customerOrderOperations).reassignSpecific(1L, List.of(300L), List.of(), 100L, 200L);
+        verify(customerRepository).refreshNextFollowupAt(1L, 100L);
+        verify(customerRepository).refreshNextFollowupAt(1L, 200L);
+    }
+
+    @Test
+    void approveWithEmptySnapshotsTransitionsToManualReviewWithoutRefreshingNextFollowupAt() {
+        MergeReversal requested = reversal(10L, 20L, "REQUESTED", 3L, 4L, 0L);
+        MergeReversal manualReview = reversal(10L, 20L, "MANUAL_REVIEW", 3L, 4L, 1L);
+        MergeCase mergeCase = mergeCase(20L, 100L, 200L, MergeCase.STATUS_CONFIRMED, 2L);
+        Customer primary = customer(100L, 2L, 1L, 3L, false);
+        Customer secondary = customer(200L, 2L, 1L, 4L, true);
+
+        when(reversalRepository.findForUpdate(1L, 10L)).thenReturn(Optional.of(requested));
+        when(mergeCaseRepository.findByIdForUpdate(1L, 20L)).thenReturn(Optional.of(mergeCase));
+        when(customerRepository.findByIdForUpdate(1L, 100L)).thenReturn(Optional.of(primary));
+        when(customerRepository.findByIdForUpdate(1L, 200L)).thenReturn(Optional.of(secondary));
+        when(customerRepository.restore(1L, 200L, 4L)).thenReturn(1);
+        when(snapshotRepository.findByMergeCaseId(1L, 20L)).thenReturn(List.of());
+        when(reversalRepository.updateStatus(eq(1L), eq(10L), eq(0L), eq("MANUAL_REVIEW"), eq("旧合并无快照"),
+                eq(1L), any(), isNull(), anyString(), isNull())).thenReturn(1);
+        when(reversalRepository.findById(1L, 10L)).thenReturn(Optional.of(manualReview));
+
+        MergeReversalResponse response = service.approve(
+                ADMIN, 10L, new MergeReversalActionRequest("旧合并无快照", 0L), "k-manual-review");
+
+        assertThat(response.status()).isEqualTo("MANUAL_REVIEW");
+        verify(customerRepository, never()).refreshNextFollowupAt(anyLong(), anyLong());
+        verify(customerRepository, never()).refreshPointsCached(anyLong(), anyLong(), anyInt());
     }
 
     @Test
@@ -193,6 +221,7 @@ class MergeReversalApplicationServiceTest {
                 .isEqualTo(ErrorCode.NOT_FOUND);
 
         verify(customerRepository, never()).restore(anyLong(), anyLong(), anyLong());
+        verify(customerRepository, never()).refreshNextFollowupAt(anyLong(), anyLong());
         verify(reversalRepository, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyString(),
                 any(), anyLong(), any(), any(), any(), any());
     }
@@ -220,6 +249,7 @@ class MergeReversalApplicationServiceTest {
         verify(reversalRepository, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyString(),
                 any(), anyLong(), any(), any(), any(), any());
         verify(customerRepository, never()).refreshPointsCached(anyLong(), anyLong(), anyInt());
+        verify(customerRepository, never()).refreshNextFollowupAt(anyLong(), anyLong());
     }
 
     private static MergeReversal reversal(long id, long caseId, String status, long primaryVersion,

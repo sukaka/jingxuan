@@ -389,17 +389,25 @@ public class CustomerApplicationService {
 
     @Transactional(readOnly = true)
     public List<CustomerTimelineItemResponse> timelineOwnership(long tenantId, CurrentUser user, long customerId,
-                                                                 CustomerTimelineCursor cursor) {
-        return ownershipHistory(tenantId, user, customerId).stream().map(item -> {
-            Map<String, Object> details = new LinkedHashMap<>();
-            details.put("oldOwnerId", item.oldOwnerId());
-            details.put("oldOwnerName", item.oldOwnerName());
-            details.put("newOwnerId", item.newOwnerId());
-            details.put("newOwnerName", item.newOwnerName());
-            Instant occurredAt = item.effectiveAt() != null ? item.effectiveAt() : item.createdAt();
-            return CustomerTimelineItemResponse.of("OWNERSHIP", item.id(), "OWNERSHIP", occurredAt,
-                    "客户归属变更", item.reason(), details, item.changedBy());
-        }).filter(item -> cursor == null || cursor.allows(item)).toList();
+                                                                 CustomerTimelineCursor cursor, int limit) {
+        scopeSupport.requireVisible(tenantId, customerId, user);
+        int safeLimit = Math.max(1, limit);
+        CustomerTimelineCursor.SqlCursor sqlCursor = CustomerTimelineCursor.sqlCursor(cursor, "OWNERSHIP");
+        return ownerHistoryRepository.findTimelineRowsByCustomerId(tenantId, customerId,
+                        sqlCursor.modeName(), sqlCursor.occurredAt(), sqlCursor.sourceId(), safeLimit).stream()
+                .map(row -> {
+                    Map<String, Object> details = new LinkedHashMap<>();
+                    details.put("oldOwnerId", row.oldOwnerId());
+                    details.put("oldOwnerName", row.oldOwnerName());
+                    details.put("newOwnerId", row.newOwnerId());
+                    details.put("newOwnerName", row.newOwnerName());
+                    Instant occurredAt = row.effectiveAt() != null ? row.effectiveAt() : row.createdAt();
+                    return CustomerTimelineItemResponse.of("OWNERSHIP", row.id(), "OWNERSHIP", occurredAt,
+                            "客户归属变更", row.reason(), details, row.changedBy());
+                })
+                .filter(item -> cursor == null || cursor.allows(item))
+                .limit(safeLimit)
+                .toList();
     }
 
     // ========== 内部 ==========

@@ -5,6 +5,7 @@ import com.whale.crm.customer.domain.FollowupRepository;
 import com.whale.crm.customer.infrastructure.mapper.FollowupMapper;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -26,6 +27,15 @@ public class MybatisFollowupRepository implements FollowupRepository {
     @Override
     public long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId, Long customerId) {
         return followupMapper.countSearch(tenantId, scopeType, teamIds, selfId, customerId);
+    }
+
+    @Override
+    public List<FollowupTimelineRow> findTimelineEvents(long tenantId, String scopeType, List<Long> teamIds,
+                                                        long selfId, long customerId, String nextFollowupMode,
+                                                        String intentMode, String followupMode, String blockerMode,
+                                                        Instant cursorOccurredAt, Long cursorSourceId, int limit) {
+        return followupMapper.selectTimelineEvents(tenantId, scopeType, teamIds, selfId, customerId,
+                nextFollowupMode, intentMode, followupMode, blockerMode, cursorOccurredAt, cursorSourceId, limit);
     }
 
     @Override

@@ -15,6 +15,10 @@ public interface TaskRepository {
     long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                      Long assigneeId, String status, Long customerId);
 
+    List<CrmTask> findTimeline(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                               long customerId, String cursorMode, Instant cursorOccurredAt,
+                               Long cursorSourceId, int limit);
+
     TaskDutySummary dutySummary(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                                 Instant now, Instant dayEndExclusive);
 

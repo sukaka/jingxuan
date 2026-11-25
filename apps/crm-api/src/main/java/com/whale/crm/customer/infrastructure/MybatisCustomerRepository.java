@@ -91,6 +91,11 @@ public class MybatisCustomerRepository implements CustomerRepository {
     }
 
     @Override
+    public int refreshNextFollowupAt(long tenantId, long id) {
+        return customerMapper.refreshNextFollowupAt(tenantId, id);
+    }
+
+    @Override
     public int markFirstOrderIfNull(long tenantId, long id, Instant paidAt) {
         return customerMapper.markFirstOrderIfNull(tenantId, id, paidAt);
     }

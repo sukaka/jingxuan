@@ -22,6 +22,12 @@ public interface TaskMapper {
                      @Param("assigneeId") Long assigneeId, @Param("status") String status,
                      @Param("customerId") Long customerId);
 
+    List<CrmTask> selectTimeline(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
+                                 @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
+                                 @Param("customerId") long customerId, @Param("cursorMode") String cursorMode,
+                                 @Param("cursorOccurredAt") Instant cursorOccurredAt,
+                                 @Param("cursorSourceId") Long cursorSourceId, @Param("limit") int limit);
+
     TaskDutySummary dutySummary(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
                                 @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
                                 @Param("now") Instant now, @Param("dayEndExclusive") Instant dayEndExclusive);

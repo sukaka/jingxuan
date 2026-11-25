@@ -58,29 +58,30 @@ public class CustomerTimelineApplicationService {
                                                   String encodedCursor, int size) {
         scopeSupport.requireVisible(tenantId, customerId, user);
         CustomerTimelineCursor cursor = cursorCodec.decode(encodedCursor, customerId);
+        int fetchLimit = size >= Integer.MAX_VALUE ? Integer.MAX_VALUE : Math.max(1, size) + 1;
         List<CustomerTimelineItemResponse> events = new ArrayList<>();
-        events.addAll(customerService.timelineOwnership(tenantId, user, customerId, cursor));
+        events.addAll(customerService.timelineOwnership(tenantId, user, customerId, cursor, fetchLimit));
         if (user.permissions().contains("followup:read")) {
-            events.addAll(followupService.timeline(tenantId, user, customerId, cursor));
+            events.addAll(followupService.timeline(tenantId, user, customerId, cursor, fetchLimit));
         }
         if (user.permissions().contains("task:read")) {
-            events.addAll(taskService.timeline(tenantId, user, customerId, cursor));
+            events.addAll(taskService.timeline(tenantId, user, customerId, cursor, fetchLimit));
         }
         if (user.permissions().contains("order:read")) {
-            events.addAll(orderService.timeline(tenantId, user, customerId, cursor));
+            events.addAll(orderService.timeline(tenantId, user, customerId, cursor, fetchLimit));
         }
         if (user.permissions().contains("appointment:read")) {
-            events.addAll(appointmentService.timeline(tenantId, user, customerId, cursor));
+            events.addAll(appointmentService.timeline(tenantId, user, customerId, cursor, fetchLimit));
         }
         if (user.permissions().contains("redemption:read")) {
-            events.addAll(redemptionService.timeline(tenantId, user, customerId, cursor));
+            events.addAll(redemptionService.timeline(tenantId, user, customerId, cursor, fetchLimit));
         }
         if (user.permissions().contains("refund:read")) {
-            events.addAll(refundService.timeline(tenantId, user, customerId, cursor));
+            events.addAll(refundService.timeline(tenantId, user, customerId, cursor, fetchLimit));
         }
-        events.addAll(tierCustomerService.timeline(tenantId, user, customerId, cursor));
+        events.addAll(tierCustomerService.timeline(tenantId, user, customerId, cursor, fetchLimit));
         if (user.permissions().contains("complaint:read")) {
-            events.addAll(complaintService.timeline(user, customerId, cursor));
+            events.addAll(complaintService.timeline(user, customerId, cursor, fetchLimit));
         }
         List<CustomerTimelineItemResponse> ordered = events.stream().sorted(CustomerTimelineCursor.ORDER).toList();
         List<CustomerTimelineItemResponse> items = ordered.stream().limit(size).toList();

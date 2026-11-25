@@ -107,31 +107,31 @@ public class OrderApplicationService {
 
     @Transactional(readOnly = true)
     public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
-                                                        CustomerTimelineCursor cursor) {
+                                                        CustomerTimelineCursor cursor, int limit) {
         scopeSupport.requireVisible(tenantId, customerId, user);
-        List<CustomerTimelineItemResponse> events = new ArrayList<>();
-        int page = 1;
-        long total;
-        do {
-            PageResponse<Order> result = search(tenantId, user, customerId, null, page, 100);
-            total = result.total();
-            for (Order order : result.items()) {
-                Map<String, Object> details = new LinkedHashMap<>();
-                details.put("status", order.status());
-                details.put("payableFen", order.payableFen());
-                details.put("paidFen", order.paidFen());
-                details.put("refundedFen", order.refundedFen());
-                Instant occurredAt = order.createdAt() != null ? order.createdAt() : order.orderedAt();
-                CustomerTimelineItemResponse event = CustomerTimelineItemResponse.of("ORDER", order.id(), "ORDER",
-                        occurredAt, "订单 " + order.orderNo(), "订单状态：" + orderStatusLabel(order.status()), details,
-                        order.soldByUserId());
-                if (cursor == null || cursor.allows(event)) {
-                    events.add(event);
-                }
-            }
-            page++;
-        } while ((long) (page - 1) * 100 < total);
-        return events;
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return List.of();
+        }
+        int safeLimit = Math.max(1, limit);
+        CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
+        CustomerTimelineCursor.SqlCursor sqlCursor = CustomerTimelineCursor.sqlCursor(cursor, "ORDER");
+        return repository.findTimelineOrders(tenantId, query.scopeType(), query.teamIds(), query.selfId(),
+                        customerId, sqlCursor.modeName(), sqlCursor.occurredAt(), sqlCursor.sourceId(), safeLimit).stream()
+                .map(order -> {
+                    Map<String, Object> details = new LinkedHashMap<>();
+                    details.put("status", order.status());
+                    details.put("payableFen", order.payableFen());
+                    details.put("paidFen", order.paidFen());
+                    details.put("refundedFen", order.refundedFen());
+                    Instant occurredAt = order.createdAt() != null ? order.createdAt() : order.orderedAt();
+                    return CustomerTimelineItemResponse.of("ORDER", order.id(), "ORDER",
+                            occurredAt, "订单 " + order.orderNo(), "订单状态：" + orderStatusLabel(order.status()), details,
+                            order.soldByUserId());
+                })
+                .filter(event -> cursor == null || cursor.allows(event))
+                .limit(safeLimit)
+                .toList();
     }
 
     private static String orderStatusLabel(String status) {

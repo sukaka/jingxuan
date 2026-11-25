@@ -50,6 +50,13 @@ public class MybatisTradingRepository implements TradingRepository {
         return mapper.countOrders(tenantId, scopeType, teamIds, selfId, customerId, status);
     }
 
+    public List<Order> findTimelineOrders(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                          long customerId, String cursorMode, Instant cursorOccurredAt,
+                                          Long cursorSourceId, int limit) {
+        return mapper.selectTimelineOrders(tenantId, scopeType, teamIds, selfId, customerId, cursorMode,
+                cursorOccurredAt, cursorSourceId, limit);
+    }
+
     public void insertOrderItem(long tenantId, OrderItem item) {
         mapper.insertOrderItem(tenantId, item);
     }

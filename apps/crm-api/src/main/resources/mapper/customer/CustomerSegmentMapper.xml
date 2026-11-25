@@ -110,8 +110,7 @@
     c.id,c.tenant_id,c.owner_staff_id,o.display_name AS owner_name,c.team_id,c.customer_no,
     c.display_name,c.nickname,c.mobile_cipher,c.city_code,c.customer_status,c.tier_code,c.intent_level,
     c.points_cached,c.last_followup_at,c.created_at,c.version,c.source_code,c.channel_code,c.spending_level,c.birthday,
-    (SELECT MAX(f.next_followup_at) FROM crm_followup f
-     WHERE f.tenant_id=c.tenant_id AND f.customer_id=c.id AND f.deleted=0) AS next_followup_at
+    c.next_followup_at
   </sql>
   <select id="searchMembers" resultMap="MemberMap">
     SELECT <include refid="memberColumns"/> <include refid="memberWhere"/>

@@ -1051,6 +1051,66 @@ class CustomerMergeReversalApiIT extends AbstractMysqlIT {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_audit_log WHERE action_code='MERGE_REVERSAL_ERROR' AND target_id=?", Integer.class, Long.toString(reversalId))).isEqualTo(1);
     }
 
+    @Test
+    void reversalApproveRestoresNextFollowupAtAndSucceedsEvenAfterPostRequestFollowup() throws Exception {
+        AuthCookies admin = login("admin");
+        // Case A: 主客户原有跟进，申请更正后主客户又新增跟进，审批仍应成功（主客户 version 未变）并正确恢复各自 next_followup_at
+        long primaryA = createCustomer(admin, "更正跟进主A");
+        long secondaryA = createCustomer(admin, "更正跟进从A");
+        createFollowupWithNextAt(admin, primaryA, "主A旧跟进", "2026-07-01T00:00:00Z");
+        createFollowupWithNextAt(admin, secondaryA, "从A跟进", "2026-11-01T00:00:00Z");
+        long caseA = createCase(admin, primaryA, secondaryA);
+        confirmCase(admin, caseA);
+        assertThat(nextFollowupOf(primaryA)).isEqualTo(Instant.parse("2026-11-01T00:00:00Z"));
+        assertThat(nextFollowupOf(secondaryA)).isNull();
+
+        long reversalA = requestReversal(admin, caseA, "it-nf-rev-req-a-" + UUID.randomUUID(), "误合并");
+        createFollowupWithNextAt(admin, primaryA, "主A申请后新跟进", "2026-09-01T00:00:00Z");
+
+        mockMvc.perform(admin.withAuth(post("/api/v1/customer-merge-reversals/" + reversalA + "/approve"))
+                        .header("Idempotency-Key", "it-nf-rev-app-a-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0,\"reason\":\"同意更正\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("EXECUTED"));
+        assertThat(nextFollowupOf(primaryA)).isEqualTo(Instant.parse("2026-09-01T00:00:00Z"));
+        assertThat(nextFollowupOf(secondaryA)).isEqualTo(Instant.parse("2026-11-01T00:00:00Z"));
+
+        // Case B: 主客户自身无跟进，更正后主客户 next_followup_at 归零为 NULL
+        long primaryB = createCustomer(admin, "更正跟进主B");
+        long secondaryB = createCustomer(admin, "更正跟进从B");
+        createFollowupWithNextAt(admin, secondaryB, "从B跟进", "2026-11-01T00:00:00Z");
+        long caseB = createCase(admin, primaryB, secondaryB);
+        confirmCase(admin, caseB);
+        assertThat(nextFollowupOf(primaryB)).isEqualTo(Instant.parse("2026-11-01T00:00:00Z"));
+
+        long reversalB = requestReversal(admin, caseB, "it-nf-rev-req-b-" + UUID.randomUUID(), "误合并B");
+        mockMvc.perform(admin.withAuth(post("/api/v1/customer-merge-reversals/" + reversalB + "/approve"))
+                        .header("Idempotency-Key", "it-nf-rev-app-b-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0,\"reason\":\"同意更正B\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("EXECUTED"));
+        assertThat(nextFollowupOf(primaryB)).isNull();
+        assertThat(nextFollowupOf(secondaryB)).isEqualTo(Instant.parse("2026-11-01T00:00:00Z"));
+    }
+
+    private void createFollowupWithNextAt(AuthCookies actor, long customerId, String summary, String nextFollowupAt)
+            throws Exception {
+        mockMvc.perform(actor.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", "it-reversal-nf-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":" + customerId + ",\"channelCode\":\"WECOM\",\"summary\":\""
+                                + summary + "\",\"nextFollowupAt\":\"" + nextFollowupAt + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    private Instant nextFollowupOf(long customerId) {
+        java.sql.Timestamp ts = jdbcTemplate.queryForObject(
+                "SELECT next_followup_at FROM crm_customer WHERE id=?", java.sql.Timestamp.class, customerId);
+        return ts == null ? null : ts.toInstant();
+    }
+
     private long createCustomer(AuthCookies actor, String nickname) throws Exception {
         return createCustomer(actor, nickname, 2);
     }

@@ -9,6 +9,7 @@ import com.whale.crm.complaint.domain.ComplaintHitQuery;
 import com.whale.crm.complaint.domain.ComplaintKeyword;
 import com.whale.crm.complaint.domain.ComplaintPolicy;
 import com.whale.crm.complaint.domain.ComplaintRepository;
+import com.whale.crm.complaint.domain.ComplaintTimelineQuery;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -103,6 +104,9 @@ public interface ComplaintMapper extends ComplaintRepository {
 
     @Override
     long countCases(@Param("q") ComplaintCaseQuery query);
+
+    @Override
+    List<ComplaintCase> findTimelineCases(@Param("q") ComplaintTimelineQuery query);
 
     @Override
     void insertCase(@Param("e") ComplaintCase complaintCase);

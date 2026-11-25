@@ -264,6 +264,81 @@ class CustomerSegmentApiIT extends AbstractMysqlIT {
         assertSegmentTags(membersJson, taggedCustomerId, emptyCustomerId, expectedSorted);
     }
 
+    @Test
+    void segmentPreviewAndMembersReflectMaintainedNextFollowupAt() throws Exception {
+        AuthCookies admin = login("admin");
+        String cityCode = "SGN" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        long c1 = customer(admin, "SEG-NF-1-" + cityCode);
+        long c2 = customer(admin, "SEG-NF-2-" + cityCode);
+        jdbcTemplate.update("UPDATE crm_customer SET city_code=? WHERE tenant_id=1 AND id IN (?,?)",
+                cityCode, c1, c2);
+
+        mockMvc.perform(admin.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", key("nf-f1"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("customerId", c1, "channelCode", "WECOM", "summary", "早跟进",
+                                "nextFollowupAt", "2026-08-01T00:00:00Z"))))
+                .andExpect(status().isCreated());
+        String f2Resp = mockMvc.perform(admin.withAuth(post("/api/v1/followups"))
+                        .header("Idempotency-Key", key("nf-f2"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("customerId", c1, "channelCode", "WECOM", "summary", "晚跟进",
+                                "nextFollowupAt", "2026-09-15T00:00:00Z"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long f2Id = objectMapper.readTree(f2Resp).at("/data/id").asLong();
+
+        Map<String, Object> filters = Map.of("cityCodes", List.of(cityCode));
+        String previewJson = mockMvc.perform(admin.withAuth(post("/api/v1/customer-segments/preview"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("filters", filters, "page", 1, "size", 20))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andReturn().getResponse().getContentAsString();
+        assertMemberNextFollowupAt(previewJson, c1, "2026-09-15T00:00:00Z", c2);
+
+        String created = createSegment(admin, "SEG-NF-" + cityCode, filters, key("seg-nf"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long segmentId = objectMapper.readTree(created).at("/data/id").asLong();
+
+        String membersJson = mockMvc.perform(get("/api/v1/customer-segments/{id}/members?page=1&size=20", segmentId)
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andReturn().getResponse().getContentAsString();
+        assertMemberNextFollowupAt(membersJson, c1, "2026-09-15T00:00:00Z", c2);
+
+        mockMvc.perform(admin.withAuth(delete("/api/v1/followups/{id}?version=0", f2Id)))
+                .andExpect(status().isOk());
+        String afterDeleteJson = mockMvc.perform(
+                        get("/api/v1/customer-segments/{id}/members?page=1&size=20", segmentId)
+                                .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertMemberNextFollowupAt(afterDeleteJson, c1, "2026-08-01T00:00:00Z", c2);
+    }
+
+    private void assertMemberNextFollowupAt(String responseJson, long c1, String expectedC1Next, long c2)
+            throws Exception {
+        var items = objectMapper.readTree(responseJson).at("/data/items");
+        String actualC1 = null;
+        boolean foundC2 = false;
+        boolean c2HasNext = true;
+        for (var item : items) {
+            long id = item.get("id").asLong();
+            if (id == c1) {
+                actualC1 = item.get("nextFollowupAt").isNull() ? null : item.get("nextFollowupAt").asText();
+            } else if (id == c2) {
+                foundC2 = true;
+                c2HasNext = !item.get("nextFollowupAt").isNull();
+            }
+        }
+        assertThat(actualC1).isEqualTo(expectedC1Next);
+        assertThat(foundC2).isTrue();
+        assertThat(c2HasNext).isFalse();
+    }
+
     private void assertSegmentTags(String responseJson, long taggedCustomerId, long emptyCustomerId,
                                    List<String> expectedSorted) throws Exception {
         var items = objectMapper.readTree(responseJson).at("/data/items");

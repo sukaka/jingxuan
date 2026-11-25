@@ -194,6 +194,13 @@ public class MybatisCustomerTierRepository implements CustomerTierRepository {
     }
 
     @Override
+    public List<CustomerTierHistory> findTimelineHistory(long tenantId, long customerId, String cursorMode,
+                                                         Instant cursorOccurredAt, Long cursorSourceId, int limit) {
+        return mapper.selectTimelineHistory(tenantId, customerId, cursorMode, cursorOccurredAt,
+                cursorSourceId, limit);
+    }
+
+    @Override
     public int updateTier(long tenantId, long customerId, long expectedVersion, String tierCode,
                           boolean locked, String lockReason) {
         return mapper.updateTier(tenantId, customerId, expectedVersion, tierCode, locked, lockReason);

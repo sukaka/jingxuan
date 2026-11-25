@@ -92,6 +92,27 @@
     <if test="customerId != null">AND o.customer_id=#{customerId}</if>
     <if test="status != null and status != ''">AND o.status=#{status}</if>
   </select>
+  <select id="selectTimelineOrders" resultType="com.whale.crm.trading.domain.Order">
+    SELECT <include refid="orderColumns"/> FROM crm_order o INNER JOIN crm_customer c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id AND c.deleted=0
+    WHERE o.tenant_id=#{tenantId}
+    <include refid="scopeCondition"/>
+      AND o.customer_id=#{customerId}
+    <choose>
+      <when test="cursorMode == 'LE'">
+        AND COALESCE(o.created_at, o.ordered_at) &lt;= #{cursorOccurredAt}
+      </when>
+      <when test="cursorMode == 'EQ'">
+        AND (COALESCE(o.created_at, o.ordered_at) &lt; #{cursorOccurredAt}
+             OR (COALESCE(o.created_at, o.ordered_at) = #{cursorOccurredAt} AND o.id &lt; #{cursorSourceId}))
+      </when>
+      <when test="cursorMode == 'LT'">
+        AND COALESCE(o.created_at, o.ordered_at) &lt; #{cursorOccurredAt}
+      </when>
+      <otherwise></otherwise>
+    </choose>
+    ORDER BY COALESCE(o.created_at, o.ordered_at) DESC, o.id DESC
+    LIMIT #{limit}
+  </select>
 
   <insert id="insertOrderItem">
     INSERT INTO crm_order_item (tenant_id,order_id,sku_id,package_version_id,sku_code_snapshot,sku_name_snapshot,purchase_quantity,list_amount_fen,paid_allocated_fen,entitlement_snapshot)

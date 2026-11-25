@@ -20,7 +20,9 @@ import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
 import com.whale.crm.trading.application.OutboxService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -48,6 +50,7 @@ public class FollowupApplicationService {
     private final OutboxService outboxService;
     private final IdempotencyService idempotencyService;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactions;
 
     public FollowupApplicationService(FollowupRepository followupRepository,
                                       CustomerRepository customerRepository,
@@ -57,7 +60,8 @@ public class FollowupApplicationService {
                                       FollowupPolicyService policyService,
                                       OutboxService outboxService,
                                       IdempotencyService idempotencyService,
-                                      ObjectMapper objectMapper) {
+                                      ObjectMapper objectMapper,
+                                      PlatformTransactionManager transactionManager) {
         this.followupRepository = followupRepository;
         this.customerRepository = customerRepository;
         this.scopeSupport = scopeSupport;
@@ -67,6 +71,7 @@ public class FollowupApplicationService {
         this.outboxService = outboxService;
         this.idempotencyService = idempotencyService;
         this.objectMapper = objectMapper;
+        this.transactions = new TransactionTemplate(transactionManager);
     }
 
     @Transactional(readOnly = true)
@@ -92,47 +97,56 @@ public class FollowupApplicationService {
 
     @Transactional(readOnly = true)
     public List<CustomerTimelineItemResponse> timeline(long tenantId, CurrentUser user, long customerId,
-                                                        CustomerTimelineCursor cursor) {
+                                                        CustomerTimelineCursor cursor, int limit) {
         scopeSupport.requireVisible(tenantId, customerId, user);
-        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
-        int page = 1;
-        long total;
-        do {
-            PageResponse<FollowupItemResponse> result = search(tenantId, user, customerId, page, 100);
-            total = result.total();
-            result.items().stream().flatMap(item -> followupTimelineEvents(item).stream())
-                    .filter(item -> cursor == null || cursor.allows(item)).forEach(events::add);
-            page++;
-        } while ((long) (page - 1) * 100 < total);
-        return events;
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return List.of();
+        }
+        int safeLimit = Math.max(1, limit);
+        CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
+        CustomerTimelineCursor.SqlCursor nextFollowupCursor = CustomerTimelineCursor.sqlCursor(cursor, "NEXT_FOLLOWUP");
+        CustomerTimelineCursor.SqlCursor intentCursor = CustomerTimelineCursor.sqlCursor(cursor, "INTENT");
+        CustomerTimelineCursor.SqlCursor followupCursor = CustomerTimelineCursor.sqlCursor(cursor, "FOLLOWUP");
+        CustomerTimelineCursor.SqlCursor blockerCursor = CustomerTimelineCursor.sqlCursor(cursor, "BLOCKER");
+        Instant cursorOccurredAt = cursor == null ? null : cursor.occurredAt();
+        Long cursorSourceId = cursor == null ? null : cursor.sourceId();
+        return followupRepository.findTimelineEvents(tenantId, query.scopeType(), query.teamIds(), query.selfId(),
+                        customerId, nextFollowupCursor.modeName(), intentCursor.modeName(),
+                        followupCursor.modeName(), blockerCursor.modeName(),
+                        cursorOccurredAt, cursorSourceId, safeLimit).stream()
+                .map(this::toTimelineItem)
+                .filter(Objects::nonNull)
+                .filter(item -> cursor == null || cursor.allows(item))
+                .limit(safeLimit)
+                .toList();
     }
 
-    private List<CustomerTimelineItemResponse> followupTimelineEvents(FollowupItemResponse item) {
-        Instant occurredAt = item.contactAt() != null ? item.contactAt() : item.createdAt();
-        List<CustomerTimelineItemResponse> events = new java.util.ArrayList<>();
-        events.add(CustomerTimelineItemResponse.of("FOLLOWUP", item.id(), "FOLLOWUP", occurredAt,
-                "跟进记录", item.summary(), Map.of("channelCode", item.channelCode()), item.createdBy()));
-        if (item.intentProject() != null && !item.intentProject().isBlank()) {
-            events.add(CustomerTimelineItemResponse.of("INTENT", item.id(), "INTENT", occurredAt,
-                    "意向项目", item.intentProject(), Map.of("estimatedAmountFen", item.estimatedAmountFen()),
-                    item.createdBy()));
-        }
-        if (item.blockerNote() != null && !item.blockerNote().isBlank()) {
-            events.add(CustomerTimelineItemResponse.of("BLOCKER", item.id(), "BLOCKER", occurredAt,
-                    "跟进卡点", item.blockerNote(), Map.of("followupId", item.id()), item.createdBy()));
-        }
-        if (item.nextFollowupAt() != null) {
-            events.add(CustomerTimelineItemResponse.of("NEXT_FOLLOWUP", item.id(), "NEXT_FOLLOWUP", occurredAt,
-                    "下一步跟进", "计划于 " + item.nextFollowupAt() + " 跟进",
-                    Map.of("nextFollowupAt", item.nextFollowupAt()), item.createdBy()));
-        }
-        return events;
+    private CustomerTimelineItemResponse toTimelineItem(FollowupRepository.FollowupTimelineRow row) {
+        Instant occurredAt = row.occurredAt() != null ? row.occurredAt()
+                : (row.contactAt() != null ? row.contactAt() : row.createdAt());
+        return switch (row.eventType()) {
+            case "FOLLOWUP" -> CustomerTimelineItemResponse.of("FOLLOWUP", row.id(), "FOLLOWUP", occurredAt,
+                    "跟进记录", row.summary(), Map.of("channelCode", row.channelCode()), row.createdBy());
+            case "INTENT" -> (row.intentProject() == null || row.intentProject().isBlank()) ? null
+                    : CustomerTimelineItemResponse.of("INTENT", row.id(), "INTENT", occurredAt,
+                            "意向项目", row.intentProject(), Map.of("estimatedAmountFen", row.estimatedAmountFen()),
+                            row.createdBy());
+            case "BLOCKER" -> (row.blockerNote() == null || row.blockerNote().isBlank()) ? null
+                    : CustomerTimelineItemResponse.of("BLOCKER", row.id(), "BLOCKER", occurredAt,
+                            "跟进卡点", row.blockerNote(), Map.of("followupId", row.id()), row.createdBy());
+            case "NEXT_FOLLOWUP" -> row.nextFollowupAt() == null ? null
+                    : CustomerTimelineItemResponse.of("NEXT_FOLLOWUP", row.id(), "NEXT_FOLLOWUP", occurredAt,
+                            "下一步跟进", "计划于 " + row.nextFollowupAt() + " 跟进",
+                            Map.of("nextFollowupAt", row.nextFollowupAt()), row.createdBy());
+            default -> throw new IllegalStateException("未知跟进时间线事件类型: " + row.eventType());
+        };
     }
 
     @Transactional
     public FollowupItemResponse create(long tenantId, CurrentUser user, CreateFollowupRequest request,
                                        String idempotencyKey) {
-        Customer customer = scopeSupport.requireVisible(tenantId, request.customerId(), user);
+        Customer customer = scopeSupport.requireVisibleForUpdate(tenantId, request.customerId(), user);
         String key = requireKey(idempotencyKey);
         String payload = canonical(request);
         IdempotencyRecord replay = idempotencyService.lookup(tenantId, IDEMPOTENCY_SCOPE, key, payload).orElse(null);
@@ -162,6 +176,7 @@ public class FollowupApplicationService {
         followup.setCreatedBy(user.userId());
         followupRepository.insert(followup);
         customerRepository.updateLastFollowupAt(tenantId, customer.getId(), contactAt);
+        customerRepository.refreshNextFollowupAt(tenantId, customer.getId());
 
         Followup persisted = followupRepository.findById(tenantId, followup.getId()).orElseThrow();
         auditService.record(tenantId, user.userId(), AuditService.ACTION_FOLLOWUP_CREATE, "FOLLOWUP",
@@ -177,69 +192,83 @@ public class FollowupApplicationService {
         return toResponse(persisted, null);
     }
 
-    @Transactional
     public FollowupItemResponse update(long tenantId, CurrentUser user, long followupId,
                                        UpdateFollowupRequest request) {
-        Followup existing = followupRepository.findById(tenantId, followupId)
+        Followup initial = followupRepository.findById(tenantId, followupId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见"));
-        if (existing.isDeleted()) {
+        if (initial.isDeleted()) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见");
         }
-        Customer customer = customerRepository.findById(tenantId, existing.getCustomerId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见"));
-        if (!scopeSupport.isVisible(scopeSupport.scope(user), user, customer)) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见");
-        }
-        requireEditable(user, existing, customer);
-        if (!Objects.equals(existing.getVersion(), request.version())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
-        }
+        return Objects.requireNonNull(transactions.execute(status -> {
+            Customer customer = scopeSupport.requireVisibleForUpdate(tenantId, initial.getCustomerId(), user);
+            Followup existing = followupRepository.findById(tenantId, followupId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见"));
+            if (existing.isDeleted()) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见");
+            }
+            if (!Objects.equals(existing.getCustomerId(), customer.getId())) {
+                throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+            }
+            requireEditable(user, existing, customer);
+            if (!Objects.equals(existing.getVersion(), request.version())) {
+                throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+            }
 
-        Instant previousNextFollowupAt = existing.getNextFollowupAt();
-        Map<String, Object> beforeSnapshot = followupSnapshot(existing);
-        existing.setChannelCode(request.channelCode() != null ? request.channelCode() : existing.getChannelCode());
-        existing.setContactAt(request.contactAt() != null ? request.contactAt() : existing.getContactAt());
-        existing.setSummary(request.summary() != null ? blankToNull(request.summary()) : existing.getSummary());
-        existing.setIntentProject(request.intentProject() != null ? blankToNull(request.intentProject()) : existing.getIntentProject());
-        existing.setEstimatedAmountFen(request.estimatedAmountFen() != null ? request.estimatedAmountFen() : existing.getEstimatedAmountFen());
-        existing.setNextFollowupAt(request.nextFollowupAt() != null ? request.nextFollowupAt() : existing.getNextFollowupAt());
-        existing.setBlockerNote(request.blockerNote() != null ? blankToNull(request.blockerNote()) : existing.getBlockerNote());
-        int rows = followupRepository.update(existing);
-        if (rows == 0) {
-            throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
-        }
-        Followup after = followupRepository.findById(tenantId, followupId).orElseThrow();
-        auditService.record(tenantId, user.userId(), AuditService.ACTION_FOLLOWUP_UPDATE, "FOLLOWUP",
-                Long.toString(followupId), beforeSnapshot, followupSnapshot(after), null);
-        if (!Objects.equals(previousNextFollowupAt, after.getNextFollowupAt())) {
-            taskService.syncFromFollowup(tenantId, user, after, customer);
-        }
-        return toResponse(after, null);
+            Instant previousNextFollowupAt = existing.getNextFollowupAt();
+            Map<String, Object> beforeSnapshot = followupSnapshot(existing);
+            existing.setChannelCode(request.channelCode() != null ? request.channelCode() : existing.getChannelCode());
+            existing.setContactAt(request.contactAt() != null ? request.contactAt() : existing.getContactAt());
+            existing.setSummary(request.summary() != null ? blankToNull(request.summary()) : existing.getSummary());
+            existing.setIntentProject(request.intentProject() != null ? blankToNull(request.intentProject()) : existing.getIntentProject());
+            existing.setEstimatedAmountFen(request.estimatedAmountFen() != null ? request.estimatedAmountFen() : existing.getEstimatedAmountFen());
+            existing.setNextFollowupAt(request.nextFollowupAt() != null ? request.nextFollowupAt() : existing.getNextFollowupAt());
+            existing.setBlockerNote(request.blockerNote() != null ? blankToNull(request.blockerNote()) : existing.getBlockerNote());
+            int rows = followupRepository.update(existing);
+            if (rows == 0) {
+                throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+            }
+            Followup after = followupRepository.findById(tenantId, followupId).orElseThrow();
+            if (!Objects.equals(previousNextFollowupAt, after.getNextFollowupAt())) {
+                customerRepository.refreshNextFollowupAt(tenantId, customer.getId());
+            }
+            auditService.record(tenantId, user.userId(), AuditService.ACTION_FOLLOWUP_UPDATE, "FOLLOWUP",
+                    Long.toString(followupId), beforeSnapshot, followupSnapshot(after), null);
+            if (!Objects.equals(previousNextFollowupAt, after.getNextFollowupAt())) {
+                taskService.syncFromFollowup(tenantId, user, after, customer);
+            }
+            return toResponse(after, null);
+        }));
     }
 
-    @Transactional
     public void delete(long tenantId, CurrentUser user, long followupId, long version) {
-        Followup existing = followupRepository.findById(tenantId, followupId)
+        Followup initial = followupRepository.findById(tenantId, followupId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见"));
-        if (existing.isDeleted()) {
+        if (initial.isDeleted()) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见");
         }
-        Customer customer = customerRepository.findById(tenantId, existing.getCustomerId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见"));
-        if (!scopeSupport.isVisible(scopeSupport.scope(user), user, customer)) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见");
-        }
-        requireEditable(user, existing, customer);
-        if (existing.getVersion() != version) {
-            throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
-        }
-        Map<String, Object> beforeSnapshot = followupSnapshot(existing);
-        existing.setDeleted(true);
-        if (followupRepository.update(existing) == 0) {
-            throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
-        }
-        auditService.record(tenantId, user.userId(), "FOLLOWUP_DELETE", "FOLLOWUP",
-                Long.toString(followupId), beforeSnapshot, followupSnapshot(existing), "误录记录软删除");
+        transactions.executeWithoutResult(status -> {
+            Customer customer = scopeSupport.requireVisibleForUpdate(tenantId, initial.getCustomerId(), user);
+            Followup existing = followupRepository.findById(tenantId, followupId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见"));
+            if (existing.isDeleted()) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "跟进记录不存在或不可见");
+            }
+            if (!Objects.equals(existing.getCustomerId(), customer.getId())) {
+                throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+            }
+            requireEditable(user, existing, customer);
+            if (existing.getVersion() != version) {
+                throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+            }
+            Map<String, Object> beforeSnapshot = followupSnapshot(existing);
+            existing.setDeleted(true);
+            if (followupRepository.update(existing) == 0) {
+                throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+            }
+            customerRepository.refreshNextFollowupAt(tenantId, customer.getId());
+            auditService.record(tenantId, user.userId(), "FOLLOWUP_DELETE", "FOLLOWUP",
+                    Long.toString(followupId), beforeSnapshot, followupSnapshot(existing), "误录记录软删除");
+        });
     }
 
     /**

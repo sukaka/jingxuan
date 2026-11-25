@@ -35,6 +35,12 @@ public interface TradingMapper {
                      @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
                      @Param("customerId") Long customerId, @Param("status") String status);
 
+    List<Order> selectTimelineOrders(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
+                                     @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
+                                     @Param("customerId") long customerId, @Param("cursorMode") String cursorMode,
+                                     @Param("cursorOccurredAt") Instant cursorOccurredAt,
+                                     @Param("cursorSourceId") Long cursorSourceId, @Param("limit") int limit);
+
     void insertOrderItem(@Param("tenantId") long tenantId, @Param("entity") OrderItem item);
     void insertOrderItemSelection(@Param("tenantId") long tenantId,
                                   @Param("entity") com.whale.crm.trading.domain.OrderItemSelection selection);

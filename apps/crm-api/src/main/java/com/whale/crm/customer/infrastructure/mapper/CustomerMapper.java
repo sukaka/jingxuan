@@ -45,6 +45,8 @@ public interface CustomerMapper {
     int updateLastFollowupAt(@Param("tenantId") long tenantId, @Param("id") long id,
                              @Param("lastFollowupAt") Instant lastFollowupAt);
 
+    int refreshNextFollowupAt(@Param("tenantId") long tenantId, @Param("id") long id);
+
     int markFirstOrderIfNull(@Param("tenantId") long tenantId, @Param("id") long id, @Param("paidAt") Instant paidAt);
 
     int refreshPointsCached(@Param("tenantId") long tenantId, @Param("id") long id,

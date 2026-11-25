@@ -37,6 +37,7 @@ public class Customer {
     private Instant firstAddedAt;
     private Instant firstOrderAt;
     private Instant lastFollowupAt;
+    private Instant nextFollowupAt;
     private boolean deleted;
     private Instant createdAt;
     private Instant updatedAt;
@@ -256,6 +257,14 @@ public class Customer {
 
     public void setLastFollowupAt(Instant lastFollowupAt) {
         this.lastFollowupAt = lastFollowupAt;
+    }
+
+    public Instant getNextFollowupAt() {
+        return nextFollowupAt;
+    }
+
+    public void setNextFollowupAt(Instant nextFollowupAt) {
+        this.nextFollowupAt = nextFollowupAt;
     }
 
     public boolean isDeleted() {

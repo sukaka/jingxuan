@@ -18,6 +18,10 @@ public interface TradingRepository {
                              Long customerId, String status, int offset, int size);
     long countOrders(long tenantId, String scopeType, List<Long> teamIds, long selfId, Long customerId, String status);
 
+    List<Order> findTimelineOrders(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                   long customerId, String cursorMode, Instant cursorOccurredAt,
+                                   Long cursorSourceId, int limit);
+
     void insertOrderItem(long tenantId, OrderItem item);
     void insertOrderItemSelection(long tenantId, OrderItemSelection selection);
     Optional<OrderItem> findOrderItem(long tenantId, long id);

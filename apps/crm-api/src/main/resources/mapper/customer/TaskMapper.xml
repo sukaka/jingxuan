@@ -93,6 +93,29 @@
     <include refid="scopedWhere"/>
   </select>
 
+  <select id="selectTimeline" resultMap="TaskMap">
+    SELECT <include refid="taskColumns"/>
+    FROM crm_task t
+    WHERE t.tenant_id = #{tenantId}
+    <include refid="scopeRestrictions"/>
+      AND t.customer_id = #{customerId}
+    <choose>
+      <when test="cursorMode == 'LE'">
+        AND t.created_at &lt;= #{cursorOccurredAt}
+      </when>
+      <when test="cursorMode == 'EQ'">
+        AND (t.created_at &lt; #{cursorOccurredAt}
+             OR (t.created_at = #{cursorOccurredAt} AND t.id &lt; #{cursorSourceId}))
+      </when>
+      <when test="cursorMode == 'LT'">
+        AND t.created_at &lt; #{cursorOccurredAt}
+      </when>
+      <otherwise></otherwise>
+    </choose>
+    ORDER BY t.created_at DESC, t.id DESC
+    LIMIT #{limit}
+  </select>
+
   <select id="dutySummary" resultType="com.whale.crm.customer.domain.TaskDutySummary">
     SELECT COUNT(*) AS pendingTaskCount,
            COALESCE(SUM(CASE WHEN t.task_type = 'FOLLOWUP' AND t.due_at IS NOT NULL
