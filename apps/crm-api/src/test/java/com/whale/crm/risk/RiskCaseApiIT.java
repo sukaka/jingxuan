@@ -15,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -519,6 +520,118 @@ class RiskCaseApiIT extends AbstractMysqlIT {
         assertThat(entCase.orderId()).isEqualTo(orderId);
         assertThat(redCase.customerId()).isEqualTo(customerId);
         assertThat(redCase.orderId()).isNull();
+    }
+
+    @Test
+    void closedYouzanRiskCaseIsImmutableAgainstUpsertCustomerLink() throws Exception {
+        String suffix = suffix();
+        String shopId = "IT-RISK-CLD-LNK-SHOP-" + suffix;
+        String extCustomerId = "IT-RISK-CLD-LNK-CUST-" + suffix;
+        String extOrderNo = "IT-RISK-CLD-LNK-ORD-" + suffix;
+        String extSkuId = "IT-RISK-CLD-LNK-SKU-" + suffix;
+        long customerId = newCustomer(1L, "IT-RISK-CLD-LNK-CNO-" + suffix, "关闭风控映射不变客户");
+        jdbcTemplate.update("INSERT INTO crm_youzan_sku_map (tenant_id,shop_id,external_sku_id,crm_sku_id,status) "
+                + "VALUES (1,?,?,301,'ACTIVE')", shopId, extSkuId);
+
+        Instant now = Instant.now();
+        YouzanOrderEvent yzEvent = new YouzanOrderEvent("IT-RISK-CLD-LNK-EV-" + suffix, "WAIT_PAY", shopId,
+                extOrderNo, extCustomerId, null, "WAIT_PAY", 181100L, null, now, "REGULAR", null, null,
+                "PLATFORM", LocalDate.parse("2027-12-31"), List.of(new YouzanOrderLine(extSkuId, 1)));
+        var ingested = youzanEventService.ingest(1L, yzEvent, "WEBHOOK", json(yzEvent));
+        youzanEventService.process(1L, ingested.id());
+        long issueId = queryLong("SELECT id FROM crm_youzan_sync_issue WHERE tenant_id=1 AND event_id=?", ingested.id());
+
+        syncRisks(admin, key());
+        long riskId = queryLong("SELECT id FROM crm_risk_case WHERE tenant_id=1 AND source_type='YOUZAN_SYNC_ISSUE' "
+                + "AND source_ref=?", Long.toString(issueId));
+        data(admin.withAuth(post("/api/v1/risks/" + riskId + "/claim")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("version", 0, "reason", "核查关闭"))));
+        data(admin.withAuth(post("/api/v1/risks/" + riskId + "/resolve")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("version", 1, "resolution", "确认关闭"))));
+        data(admin.withAuth(post("/api/v1/risks/" + riskId + "/close")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("version", 2, "reason", "关闭后不可变更"))));
+
+        Timestamp beforeUpdatedAt = jdbcTemplate.queryForObject(
+                "SELECT updated_at FROM crm_risk_case WHERE tenant_id=1 AND id=?", Timestamp.class, riskId);
+        assertThat(beforeUpdatedAt).isNotNull();
+        Thread.sleep(15);
+
+        data(admin.withAuth(post("/api/v1/integrations/youzan/customer-links"))
+                .header("Idempotency-Key", key())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("shopId", shopId, "externalCustomerId", extCustomerId,
+                        "customerId", customerId, "reason", "关闭后绑定不应回写"))));
+
+        assertThat(queryString("SELECT status FROM crm_risk_case WHERE tenant_id=1 AND id=?", riskId))
+                .isEqualTo("CLOSED");
+        assertThat(queryLong("SELECT version FROM crm_risk_case WHERE tenant_id=1 AND id=?", riskId))
+                .isEqualTo(3L);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT customer_id FROM crm_risk_case WHERE tenant_id=1 AND id=?", Long.class, riskId)).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT order_id FROM crm_risk_case WHERE tenant_id=1 AND id=?", Long.class, riskId)).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT updated_at FROM crm_risk_case WHERE tenant_id=1 AND id=?", Timestamp.class, riskId))
+                .isEqualTo(beforeUpdatedAt);
+    }
+
+    @Test
+    void closedMappingFailedRiskCaseIsImmutableAgainstReplacePayloadAndComplete() throws Exception {
+        String suffix = suffix();
+        String shopId = "IT-RISK-CLD-CMP-SHOP-" + suffix;
+        String extCustomerId = "IT-RISK-CLD-CMP-CUST-" + suffix;
+        String extOrderNo = "IT-RISK-CLD-CMP-ORD-" + suffix;
+        String validSkuId = "IT-RISK-CLD-CMP-SKU-OK-" + suffix;
+        String missingSkuId = "IT-RISK-CLD-CMP-SKU-MISS-" + suffix;
+        long customerId = newCustomer(1L, "IT-RISK-CLD-CMP-CNO-" + suffix, "关闭风控完成不变客户");
+        jdbcTemplate.update("INSERT INTO crm_youzan_sku_map (tenant_id,shop_id,external_sku_id,crm_sku_id,status) "
+                + "VALUES (1,?,?,301,'ACTIVE')", shopId, validSkuId);
+        jdbcTemplate.update("INSERT INTO crm_youzan_customer_link (tenant_id,shop_id,external_customer_id,"
+                + "customer_id,link_type,confidence,created_by) VALUES (1,?,?,?,'MANUAL','HIGH',1)",
+                shopId, extCustomerId, customerId);
+
+        Instant now = Instant.now();
+        YouzanOrderEvent initialMissingSku = new YouzanOrderEvent("IT-RISK-CLD-CMP-EV-" + suffix, "ORDER_PAID",
+                shopId, extOrderNo, null, "TR-INIT-" + suffix, "PAID", 181100L, now, now, "REGULAR", null, null,
+                "PLATFORM", LocalDate.parse("2027-12-31"), List.of(new YouzanOrderLine(missingSkuId, 1)));
+        var ingested = youzanEventService.ingest(1L, initialMissingSku, "OFFICIAL_WEBHOOK", json(initialMissingSku));
+        youzanEventService.process(1L, ingested.id());
+        long issueId = queryLong("SELECT id FROM crm_youzan_sync_issue WHERE tenant_id=1 AND event_id=?", ingested.id());
+
+        syncRisks(admin, key());
+        long riskId = queryLong("SELECT id FROM crm_risk_case WHERE tenant_id=1 AND source_type='YOUZAN_SYNC_ISSUE' "
+                + "AND source_ref=?", Long.toString(issueId));
+        data(admin.withAuth(post("/api/v1/risks/" + riskId + "/claim")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("version", 0, "reason", "核查关闭"))));
+        data(admin.withAuth(post("/api/v1/risks/" + riskId + "/resolve")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("version", 1, "resolution", "确认关闭"))));
+        data(admin.withAuth(post("/api/v1/risks/" + riskId + "/close")).contentType(MediaType.APPLICATION_JSON)
+                .content(json(Map.of("version", 2, "reason", "关闭后完成订单不可回写"))));
+
+        Timestamp beforeUpdatedAt = jdbcTemplate.queryForObject(
+                "SELECT updated_at FROM crm_risk_case WHERE tenant_id=1 AND id=?", Timestamp.class, riskId);
+        assertThat(beforeUpdatedAt).isNotNull();
+        Thread.sleep(15);
+
+        YouzanOrderEvent fixedEvent = new YouzanOrderEvent(initialMissingSku.eventId(), "ORDER_PAID", shopId,
+                extOrderNo, extCustomerId, "TR-FIX-" + suffix, "PAID", 181100L, now, now.plusSeconds(10),
+                "REGULAR", null, null, "PLATFORM", LocalDate.parse("2027-12-31"),
+                List.of(new YouzanOrderLine(validSkuId, 1)));
+        var completed = youzanEventService.replacePayloadAndProcess(1L, ingested.id(), fixedEvent, json(fixedEvent));
+        assertThat(completed.processStatus()).isEqualTo("PROCESSED");
+        assertThat(completed.orderId()).isNotNull();
+
+        assertThat(queryString("SELECT status FROM crm_risk_case WHERE tenant_id=1 AND id=?", riskId))
+                .isEqualTo("CLOSED");
+        assertThat(queryLong("SELECT version FROM crm_risk_case WHERE tenant_id=1 AND id=?", riskId))
+                .isEqualTo(3L);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT customer_id FROM crm_risk_case WHERE tenant_id=1 AND id=?", Long.class, riskId)).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT order_id FROM crm_risk_case WHERE tenant_id=1 AND id=?", Long.class, riskId)).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT updated_at FROM crm_risk_case WHERE tenant_id=1 AND id=?", Timestamp.class, riskId))
+                .isEqualTo(beforeUpdatedAt);
     }
 
     private JsonNode syncRisks(AuthCookies actor, String idempotencyKey) throws Exception {

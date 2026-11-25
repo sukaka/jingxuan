@@ -31,7 +31,8 @@ public interface YouzanMapper {
                                          @Param("externalOrderNo") String externalOrderNo);
     int setOrderLatest(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                        @Param("externalOrderNo") String externalOrderNo,
-                       @Param("latestEventId") long latestEventId);
+                       @Param("latestEventId") long latestEventId,
+                       @Param("expectedEventId") long expectedEventId);
     int deleteOrderLatest(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                           @Param("externalOrderNo") String externalOrderNo,
                           @Param("expectedEventId") long expectedEventId);

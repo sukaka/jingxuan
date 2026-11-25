@@ -41,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
@@ -448,6 +449,65 @@ class YouzanEventServiceBehaviorTest {
         YouzanEventResponse response = service.process(TENANT_ID, 209L);
         assertThat(response.processStatus()).isEqualTo("PROCESSED");
         verify(riskLinkOperations).linkOrderToYouzanIssues(TENANT_ID, List.of("801", "802"), 909L, 1010L);
+    }
+
+    @Test
+    void replacePayloadAndProcessPassesExpectedEventIdCasGuardWhenExternalOrderNoChanges() throws Exception {
+        YouzanRepository repository = mock(YouzanRepository.class);
+        AesGcmCipher cipher = mock(AesGcmCipher.class);
+        when(cipher.encrypt(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        YouzanEventService service = new YouzanEventService(repository, mapper, cipher,
+                mock(OrderApplicationService.class), mock(PaymentApplicationService.class),
+                mock(CustomerScopeSupport.class), mock(CurrentUserService.class), mock(AuditService.class),
+                mock(OutboxService.class), txManager(), mock(TaskExecutor.class), YouzanRiskLinkOperations.NOOP);
+
+        Instant now = Instant.parse("2026-10-24T12:00:00Z");
+
+        // 1. Old order still has prior event 605 -> setOrderLatest receives expectedEventId=610L CAS guard
+        YouzanEvent rawWithRemaining = new YouzanEvent(610L, SHOP, "EV-CAS-1", "ORDER_PAID", "ORD-OLD-1",
+                null, null, "{}", "cipher", true, "OFFICIAL_WEBHOOK", "RECEIVED", 0, null, null,
+                now, null, null, "{}", "pc", 2L);
+        YouzanEvent doneWithRemaining = new YouzanEvent(610L, SHOP, "EV-CAS-1", "ORDER_PAID", "ORD-NEW-1",
+                "yz-cust-1", null, "{}", "cipher", true, "OFFICIAL_WEBHOOK", "PROCESSED", 1, null, null,
+                now, now, 910L, "{}", "pc", 3L);
+        when(repository.findEventForUpdate(TENANT_ID, 610L))
+                .thenReturn(Optional.of(rawWithRemaining), Optional.of(doneWithRemaining));
+        when(repository.updateEventPayload(eq(TENANT_ID), eq(610L), eq(2L), eq("ORD-NEW-1"), eq("yz-cust-1"),
+                any(), eq("ORDER_PAID"), anyString(), anyString(), anyString(), anyString())).thenReturn(1);
+        when(repository.findMaxEventIdByExternalOrder(TENANT_ID, SHOP, "ORD-OLD-1")).thenReturn(605L);
+        when(repository.setOrderLatest(TENANT_ID, SHOP, "ORD-OLD-1", 605L, 610L)).thenReturn(1);
+
+        YouzanOrderEvent detail1 = new YouzanOrderEvent("EV-CAS-1", "ORDER_PAID", SHOP, "ORD-NEW-1",
+                "yz-cust-1", "TR-CAS-1", "PAID", 1000L, now, now, "REGULAR", null, null,
+                "PLATFORM", null, List.of(new YouzanOrderLine("SKU-1", 1)));
+        service.replacePayloadAndProcess(TENANT_ID, 610L, detail1, "{}");
+
+        verify(repository).upsertOrderLatest(TENANT_ID, SHOP, "ORD-NEW-1", 610L);
+        verify(repository).setOrderLatest(TENANT_ID, SHOP, "ORD-OLD-1", 605L, 610L);
+        verify(repository, never()).deleteOrderLatest(eq(TENANT_ID), eq(SHOP), eq("ORD-OLD-1"), anyLong());
+
+        // 2. Old order has no remaining events -> deleteOrderLatest receives expectedEventId=611L CAS guard
+        YouzanEvent rawNoRemaining = new YouzanEvent(611L, SHOP, "EV-CAS-2", "ORDER_PAID", "ORD-OLD-2",
+                null, null, "{}", "cipher", true, "OFFICIAL_WEBHOOK", "RECEIVED", 0, null, null,
+                now, null, null, "{}", "pc", 2L);
+        YouzanEvent doneNoRemaining = new YouzanEvent(611L, SHOP, "EV-CAS-2", "ORDER_PAID", "ORD-NEW-2",
+                "yz-cust-2", null, "{}", "cipher", true, "OFFICIAL_WEBHOOK", "PROCESSED", 1, null, null,
+                now, now, 911L, "{}", "pc", 3L);
+        when(repository.findEventForUpdate(TENANT_ID, 611L))
+                .thenReturn(Optional.of(rawNoRemaining), Optional.of(doneNoRemaining));
+        when(repository.updateEventPayload(eq(TENANT_ID), eq(611L), eq(2L), eq("ORD-NEW-2"), eq("yz-cust-2"),
+                any(), eq("ORDER_PAID"), anyString(), anyString(), anyString(), anyString())).thenReturn(1);
+        when(repository.findMaxEventIdByExternalOrder(TENANT_ID, SHOP, "ORD-OLD-2")).thenReturn(null);
+        when(repository.deleteOrderLatest(TENANT_ID, SHOP, "ORD-OLD-2", 611L)).thenReturn(1);
+
+        YouzanOrderEvent detail2 = new YouzanOrderEvent("EV-CAS-2", "ORDER_PAID", SHOP, "ORD-NEW-2",
+                "yz-cust-2", "TR-CAS-2", "PAID", 1000L, now, now, "REGULAR", null, null,
+                "PLATFORM", null, List.of(new YouzanOrderLine("SKU-1", 1)));
+        service.replacePayloadAndProcess(TENANT_ID, 611L, detail2, "{}");
+
+        verify(repository).upsertOrderLatest(TENANT_ID, SHOP, "ORD-NEW-2", 611L);
+        verify(repository).deleteOrderLatest(TENANT_ID, SHOP, "ORD-OLD-2", 611L);
+        verify(repository, never()).setOrderLatest(eq(TENANT_ID), eq(SHOP), eq("ORD-OLD-2"), anyLong(), anyLong());
     }
 
     private static Order order(long id, long customerId, String status, long payableFen, long paidFen, long version) {

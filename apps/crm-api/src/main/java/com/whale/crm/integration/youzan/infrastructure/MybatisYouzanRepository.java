@@ -36,8 +36,9 @@ public class MybatisYouzanRepository implements YouzanRepository {
     public Long findMaxEventIdByExternalOrder(long tenantId, String shopId, String externalOrderNo) {
         return mapper.selectMaxEventIdByExternalOrder(tenantId, shopId, externalOrderNo);
     }
-    public int setOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId) {
-        return mapper.setOrderLatest(tenantId, shopId, externalOrderNo, latestEventId);
+    public int setOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId,
+                              long expectedEventId) {
+        return mapper.setOrderLatest(tenantId, shopId, externalOrderNo, latestEventId, expectedEventId);
     }
     public int deleteOrderLatest(long tenantId, String shopId, String externalOrderNo, long expectedEventId) {
         return mapper.deleteOrderLatest(tenantId, shopId, externalOrderNo, expectedEventId);

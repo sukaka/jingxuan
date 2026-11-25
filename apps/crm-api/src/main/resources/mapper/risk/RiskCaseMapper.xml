@@ -151,14 +151,16 @@
   </update>
   <update id="linkCustomerToYouzanIssues">
     UPDATE crm_risk_case
-    SET customer_id=#{customerId}
+    SET customer_id=#{customerId},updated_at=updated_at
     WHERE tenant_id=#{tenantId} AND source_type='YOUZAN_SYNC_ISSUE' AND order_id IS NULL
+      AND status &lt;&gt; 'CLOSED'
       AND source_ref IN <foreach collection="sourceRefs" item="ref" open="(" separator="," close=")">#{ref}</foreach>
   </update>
   <update id="linkOrderToYouzanIssues">
     UPDATE crm_risk_case
-    SET order_id=#{orderId},customer_id=#{customerId}
+    SET order_id=#{orderId},customer_id=#{customerId},updated_at=updated_at
     WHERE tenant_id=#{tenantId} AND source_type='YOUZAN_SYNC_ISSUE'
+      AND status &lt;&gt; 'CLOSED'
       AND source_ref IN <foreach collection="sourceRefs" item="ref" open="(" separator="," close=")">#{ref}</foreach>
   </update>
   <select id="findIdsByCustomerId" resultType="long">

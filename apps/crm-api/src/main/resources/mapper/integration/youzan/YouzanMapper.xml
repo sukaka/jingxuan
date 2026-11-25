@@ -94,6 +94,7 @@
   <update id="setOrderLatest">
     UPDATE crm_youzan_order_latest SET latest_event_id=#{latestEventId}
     WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND external_order_no=#{externalOrderNo}
+      AND latest_event_id=#{expectedEventId}
   </update>
   <delete id="deleteOrderLatest">
     DELETE FROM crm_youzan_order_latest

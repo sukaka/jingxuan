@@ -13,7 +13,7 @@ public interface YouzanRepository {
                            String masked, String encrypted, String providerMasked, String providerEncrypted);
     void upsertOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId);
     Long findMaxEventIdByExternalOrder(long tenantId, String shopId, String externalOrderNo);
-    int setOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId);
+    int setOrderLatest(long tenantId, String shopId, String externalOrderNo, long latestEventId, long expectedEventId);
     int deleteOrderLatest(long tenantId, String shopId, String externalOrderNo, long expectedEventId);
     Optional<YouzanEvent> findEventByKey(long tenantId, String shopId, String eventId);
     Optional<YouzanEvent> findEvent(long tenantId, long id);

@@ -158,7 +158,7 @@ public class YouzanEventService {
                 Long oldLatest = repository.findMaxEventIdByExternalOrder(tenantId, raw.shopId(),
                         raw.externalOrderNo());
                 if (oldLatest != null) {
-                    repository.setOrderLatest(tenantId, raw.shopId(), raw.externalOrderNo(), oldLatest);
+                    repository.setOrderLatest(tenantId, raw.shopId(), raw.externalOrderNo(), oldLatest, eventId);
                 } else {
                     repository.deleteOrderLatest(tenantId, raw.shopId(), raw.externalOrderNo(), eventId);
                 }

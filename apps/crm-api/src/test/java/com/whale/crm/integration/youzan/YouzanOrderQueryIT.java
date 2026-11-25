@@ -498,6 +498,41 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
                 new CustomerScopeSupport.ScopeQuery("SELF", List.of(), m1Id))).isEqualTo(2L);
     }
 
+    @Test
+    void orderLatestCasGuardPreventsStaleRecomputeRegressionWhenConcurrentIngestAdvances() throws Exception {
+        String shop = shop("cas-guard");
+        String ord = "IT-YZ-CAS-ORD-" + suffix();
+        Instant t0 = Instant.parse("2026-10-25T12:00:00Z");
+
+        long ev1 = insertRaw(1L, shop, event(shop, "IT-YZ-CAS-E1-" + suffix(), ord, "CUST-CAS",
+                null, "YZ-SKU-MISSING", 100L, t0), "MAPPING_FAILED", "err");
+        long ev2 = insertRaw(1L, shop, event(shop, "IT-YZ-CAS-E2-" + suffix(), ord, "CUST-CAS",
+                null, "YZ-SKU-MISSING", 100L, t0.plusSeconds(10)), "MAPPING_FAILED", "err");
+        long ev3 = insertRaw(1L, shop, event(shop, "IT-YZ-CAS-E3-" + suffix(), ord, "CUST-CAS",
+                null, "YZ-SKU-MISSING", 100L, t0.plusSeconds(20)), "MAPPING_FAILED", "err");
+
+        assertThat(queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shop, ord)).isEqualTo(ev3);
+
+        // Stale expectedEventId (ev2 instead of ev3) must NOT regress latest_event_id or delete row
+        assertThat(youzanRepository.setOrderLatest(1L, shop, ord, ev1, ev2)).isZero();
+        assertThat(queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shop, ord)).isEqualTo(ev3);
+
+        assertThat(youzanRepository.deleteOrderLatest(1L, shop, ord, ev2)).isZero();
+        assertThat(queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shop, ord)).isEqualTo(ev3);
+
+        // Matching expectedEventId succeeds
+        assertThat(youzanRepository.setOrderLatest(1L, shop, ord, ev1, ev3)).isEqualTo(1);
+        assertThat(queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shop, ord)).isEqualTo(ev1);
+
+        assertThat(youzanRepository.deleteOrderLatest(1L, shop, ord, ev1)).isEqualTo(1);
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shop, ord)).isZero();
+    }
+
     private long insertRawAt(long tenantId, String shop, YouzanOrderEvent event, Instant receivedAtUtc) throws Exception {
         String raw = json(event);
         String receivedAtSql = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
