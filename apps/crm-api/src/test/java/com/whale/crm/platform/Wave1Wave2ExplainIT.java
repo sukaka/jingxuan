@@ -2,6 +2,7 @@ package com.whale.crm.platform;
 
 import com.mysql.cj.jdbc.MysqlDataSource;
 import com.whale.crm.complaint.domain.ComplaintTimelineQuery;
+import com.whale.crm.customer.api.dto.CustomerSegmentCriteria;
 import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.exporting.domain.ExportDataQuery;
 import com.whale.crm.exporting.domain.ExportFilter;
@@ -184,12 +185,21 @@ class Wave1Wave2ExplainIT {
                     "com.whale.crm.reporting.infrastructure.mapper.ReportingMapper.performance",
                     params("query", reportQuery, "performanceRole", "MANAGER"));
 
-            assertNoFullTableScans(
+            List<Map<String, Object>> campaignRows = assertNoFullTableScans(
                     conn, "ReportingMapper.campaigns",
                     "com.whale.crm.reporting.infrastructure.mapper.ReportingMapper.campaigns",
                     params("query", reportQuery));
+            List<String> campAptKeys = campaignRows.stream()
+                    .filter(r -> "a".equals(r.get("table")))
+                    .map(r -> String.valueOf(r.get("key")))
+                    .toList();
+            assertThat(campAptKeys).containsExactlyInAnyOrder(
+                    "idx_appointment_confirmed_at",
+                    "idx_appointment_checked_in_at");
+            assertThat(campaignRows.stream().map(r -> String.valueOf(r.get("table"))))
+                    .noneMatch(t -> t.contains("appointment_history"));
 
-            // 5. WecomMapper#selectMessages (unfiltered ALL + conversationId filtered)
+            // 5. WecomMapper#selectMessages (unfiltered ALL + conversationId filtered + TEAM)
             Map<String, Object> msgAllParams = params(
                     "tenantId", 1L, "customerId", null, "conversationId", null, "corpId", null,
                     "scopeType", "ALL", "teamIds", List.of(), "selfId", 10L, "offset", 0, "size", 20);
@@ -208,31 +218,56 @@ class Wave1Wave2ExplainIT {
                     msgConvParams);
             assertThat(rowForTable(msgConvRows, "m").get("key")).isEqualTo("idx_wecom_message_conv_id");
 
-            // 6. ExportDataMapper#page keyset cursor across all 4 ExportTypes
+            Map<String, Object> msgTeamParams = params(
+                    "tenantId", 1L, "customerId", null, "conversationId", null, "corpId", null,
+                    "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L, "offset", 0, "size", 20);
+            List<Map<String, Object>> msgTeamRows = assertNoFullTableScans(
+                    conn, "WecomMapper.selectMessages(TEAM)",
+                    "com.whale.crm.integration.wecom.infrastructure.mapper.WecomMapper.selectMessages",
+                    msgTeamParams);
+            assertThat(rowForTable(msgTeamRows, "m").get("key")).isEqualTo("idx_wecom_message_sent_id");
+
+            // 6. ExportDataMapper#page keyset cursor across all 4 ExportTypes (ALL 0/mid/tail + TEAM 0)
             ExportScope exportAll = new ExportScope(ExportScope.Kind.ALL, Set.of(), 10L, Set.of());
+            ExportScope exportTeam = new ExportScope(ExportScope.Kind.TEAM, Set.of(10L, 11L), 10L, Set.of());
+            record ExportCase(String label, ExportScope scope, long afterId) {}
             for (ExportType exportType : ExportType.values()) {
+                long midAfterId = switch (exportType) {
+                    case CUSTOMER -> 1500L;
+                    case ORDER -> 2500L;
+                    case REDEMPTION -> 4500L;
+                    case FOLLOWUP -> 500L;
+                };
                 long tailAfterId = switch (exportType) {
                     case CUSTOMER -> 1950L;
                     case ORDER -> 2950L;
                     case REDEMPTION -> 4950L;
                     case FOLLOWUP -> 950L;
                 };
-                ExportDataQuery eqTail = new ExportDataQuery(
-                        1L, exportType, exportAll, ExportRestriction.none(), ExportFilter.empty(), tailAfterId, 50);
-                List<Map<String, Object>> expRows = assertNoFullTableScans(
-                        conn, "ExportDataMapper.page(" + exportType + ", afterId=" + tailAfterId + ")",
-                        "com.whale.crm.exporting.infrastructure.mapper.ExportDataMapper.page",
-                        params("q", eqTail));
                 String driverAlias = switch (exportType) {
                     case CUSTOMER -> "c";
                     case ORDER -> "o";
                     case REDEMPTION -> "r";
                     case FOLLOWUP -> "f";
                 };
-                Map<String, Object> driverRow = rowForTable(expRows, driverAlias);
-                assertThat(driverRow.get("key")).isEqualTo("PRIMARY");
-                assertThat(String.valueOf(driverRow.get("type"))).isEqualTo("range");
-                assertThat(String.valueOf(driverRow.get("Extra"))).doesNotContain("Using filesort");
+                List<ExportCase> cases = List.of(
+                        new ExportCase("ALL, afterId=0", exportAll, 0L),
+                        new ExportCase("ALL, afterId=" + midAfterId, exportAll, midAfterId),
+                        new ExportCase("ALL, afterId=" + tailAfterId, exportAll, tailAfterId),
+                        new ExportCase("TEAM, afterId=0", exportTeam, 0L));
+                for (ExportCase ec : cases) {
+                    ExportDataQuery eq = new ExportDataQuery(
+                            1L, exportType, ec.scope(), ExportRestriction.none(), ExportFilter.empty(), ec.afterId(), 50);
+                    List<Map<String, Object>> expRows = assertNoFullTableScans(
+                            conn, "ExportDataMapper.page(" + exportType + ", " + ec.label() + ")",
+                            "com.whale.crm.exporting.infrastructure.mapper.ExportDataMapper.page",
+                            params("q", eq));
+                    Map<String, Object> driverRow = rowForTable(expRows, driverAlias);
+                    assertThat(driverRow.get("key")).isEqualTo("PRIMARY");
+                    assertThat(String.valueOf(driverRow.get("type"))).isEqualTo("range");
+                    assertThat(expRows)
+                            .allSatisfy(r -> assertThat(String.valueOf(r.get("Extra"))).doesNotContain("Using filesort"));
+                }
             }
 
             // 7. YouzanMapper#countTodayEvents & countScopedTodayEvents
@@ -512,6 +547,42 @@ class Wave1Wave2ExplainIT {
                         params("q", cq));
                 assertThat(rowForTable(tl9, "cc").get("key")).isEqualTo("idx_complaint_case_customer");
             }
+
+            // 5. CustomerSegmentMapper#searchMembers & countMembers
+            CustomerSegmentCriteria purchasedCriteria = new CustomerSegmentCriteria(
+                    null, null, null, List.of(701L), null, null);
+            List<Map<String, Object>> segPurchasedRows = assertNoFullTableScans(
+                    conn, "CustomerSegmentMapper.searchMembers(purchasedProjectIds)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.searchMembers",
+                    params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L,
+                            "filters", purchasedCriteria, "offset", 0, "size", 20));
+            assertThat(rowForTable(segPurchasedRows, "pe").get("key")).isNotNull();
+            assertThat(rowForTable(segPurchasedRows, "pl").get("key")).isEqualTo("idx_entitlement_ledg_1");
+
+            CustomerSegmentCriteria attentionCriteria = new CustomerSegmentCriteria(
+                    null, null, List.of(701L), null, null, null);
+            List<Map<String, Object>> segAttentionRows = assertNoFullTableScans(
+                    conn, "CustomerSegmentMapper.searchMembers(attentionProjectIds)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.searchMembers",
+                    params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L,
+                            "filters", attentionCriteria, "offset", 0, "size", 20));
+            assertThat(rowForTable(segAttentionRows, "ap").get("key")).isEqualTo("idx_customer_attention_project_filter");
+
+            CustomerSegmentCriteria redeemedCriteria = new CustomerSegmentCriteria(
+                    null, null, null, null, List.of(701L), 1);
+            List<Map<String, Object>> segRedeemedRows = assertNoFullTableScans(
+                    conn, "CustomerSegmentMapper.searchMembers(redeemedProjectIds)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.searchMembers",
+                    params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L,
+                            "filters", redeemedCriteria, "offset", 0, "size", 20));
+            assertThat(String.valueOf(rowForTable(segRedeemedRows, "rl").get("key")))
+                    .isIn("idx_entitlement_ledg_1", "fk_entitlement_ledg_entitlement_id");
+
+            assertNoFullTableScans(
+                    conn, "CustomerSegmentMapper.countMembers(purchasedProjectIds)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.countMembers",
+                    params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L,
+                            "filters", purchasedCriteria));
         }
     }
 
@@ -549,21 +620,40 @@ class Wave1Wave2ExplainIT {
                     "com.whale.crm.integration.wecom.infrastructure.mapper.WecomMapper.selectContacts",
                     params("tenantId", 1L, "scopeType", "SELF", "teamIds", List.of(), "selfId", 10L));
             assertThat(rowForTable(contactSelfRows, "c", "PRIMARY").get("key")).isEqualTo("PRIMARY");
+            assertThat(rowForTable(contactSelfRows, "c", "DERIVED").get("key")).isEqualTo("idx_wecom_contact_1");
+            assertThat(rowForTable(contactSelfRows, "cu").get("key")).isEqualTo("idx_customer_1");
 
             List<Map<String, Object>> contactTeamEmptyRows = assertNoFullTableScans(
                     conn, "WecomMapper.selectContacts(TEAM, teamIds=[])",
                     "com.whale.crm.integration.wecom.infrastructure.mapper.WecomMapper.selectContacts",
                     params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(), "selfId", 10L));
             assertThat(rowForTable(contactTeamEmptyRows, "c", "PRIMARY").get("key")).isEqualTo("PRIMARY");
+            assertThat(rowForTable(contactTeamEmptyRows, "c", "DERIVED").get("key")).isEqualTo("idx_wecom_contact_1");
+            assertThat(rowForTable(contactTeamEmptyRows, "cu").get("key")).isEqualTo("idx_customer_1");
 
-            List<Map<String, Object>> contactTeamRows = explainBoundSql(
-                    conn,
-                    "com.whale.crm.integration.wecom.infrastructure.mapper.WecomMapper.selectContacts",
-                    params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L));
-            LOG.info("EXPLAIN [WecomMapper.selectContacts(TEAM, teamIds=[10, 11])] -> {}", contactTeamRows);
-            assertThat(rowForTable(contactTeamRows, "c", "PRIMARY").get("key")).isEqualTo("PRIMARY");
-            assertThat(String.valueOf(rowForTable(contactTeamRows, "c", "DERIVED").get("key")))
-                    .isIn("idx_wecom_contact_1", "idx_wecom_contact_unlinked");
+            for (List<Long> teamIds : List.of(List.of(10L, 11L), List.of(11L))) {
+                List<Map<String, Object>> contactTeamRows = assertNoFullTableScans(
+                        conn, "WecomMapper.selectContacts(TEAM, teamIds=" + teamIds + ")",
+                        "com.whale.crm.integration.wecom.infrastructure.mapper.WecomMapper.selectContacts",
+                        params("tenantId", 1L, "scopeType", "TEAM", "teamIds", teamIds, "selfId", 10L));
+                assertThat(rowForTable(contactTeamRows, "c", "PRIMARY").get("key")).isEqualTo("PRIMARY");
+                List<Map<String, Object>> cuRows = contactTeamRows.stream()
+                        .filter(r -> "cu".equals(String.valueOf(r.get("table"))))
+                        .toList();
+                assertThat(cuRows).hasSize(2);
+                assertThat(cuRows).allSatisfy(r -> {
+                    assertThat(String.valueOf(r.get("type"))).isNotEqualToIgnoringCase("ALL");
+                    assertThat(String.valueOf(r.get("key"))).isIn("idx_customer_1", "idx_customer_team");
+                });
+                List<Map<String, Object>> innerCRows = contactTeamRows.stream()
+                        .filter(r -> "c".equals(String.valueOf(r.get("table")))
+                                && Set.of("DERIVED", "UNION")
+                                        .contains(String.valueOf(r.get("select_type")).toUpperCase()))
+                        .toList();
+                assertThat(innerCRows).hasSize(2);
+                assertThat(innerCRows).allSatisfy(r ->
+                        assertThat(r.get("key")).isEqualTo("idx_wecom_contact_1"));
+            }
 
             // 3. MaterialMapper#search (no keyword + keyword="synthetic") & count (institution scoped)
             MaterialScopeQuery matScope = new MaterialScopeQuery("ALL", List.of(), 10L, true, true, true);
@@ -632,6 +722,20 @@ class Wave1Wave2ExplainIT {
             logExplainAnalyze(conn, "WecomMapper.selectContacts(ALL)",
                     "com.whale.crm.integration.wecom.infrastructure.mapper.WecomMapper.selectContacts",
                     params("tenantId", 1L, "scopeType", "ALL", "teamIds", List.of(), "selfId", 10L));
+            logExplainAnalyze(conn, "WecomMapper.selectContacts(TEAM, teamIds=[10, 11])",
+                    "com.whale.crm.integration.wecom.infrastructure.mapper.WecomMapper.selectContacts",
+                    params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L));
+            ExportScope exportAllScope = new ExportScope(ExportScope.Kind.ALL, Set.of(), 10L, Set.of());
+            logExplainAnalyze(conn, "ExportDataMapper.page(ORDER, afterId=0)",
+                    "com.whale.crm.exporting.infrastructure.mapper.ExportDataMapper.page",
+                    params("q", new ExportDataQuery(
+                            1L, ExportType.ORDER, exportAllScope, ExportRestriction.none(),
+                            ExportFilter.empty(), 0L, 50)));
+            logExplainAnalyze(conn, "ExportDataMapper.page(REDEMPTION, afterId=0)",
+                    "com.whale.crm.exporting.infrastructure.mapper.ExportDataMapper.page",
+                    params("q", new ExportDataQuery(
+                            1L, ExportType.REDEMPTION, exportAllScope, ExportRestriction.none(),
+                            ExportFilter.empty(), 0L, 50)));
             logExplainAnalyze(conn, "MaterialMapper.search(keyword=synthetic)",
                     "com.whale.crm.material.infrastructure.mapper.MaterialMapper.search",
                     params("tenantId", 1L, "scope", matScope,
@@ -646,6 +750,7 @@ class Wave1Wave2ExplainIT {
         cfg.addMapper(WecomMapper.class);
         List<String> xmls = List.of(
                 "mapper/customer/CustomerMapper.xml",
+                "mapper/customer/CustomerSegmentMapper.xml",
                 "mapper/customer/CustomerTagMapper.xml",
                 "mapper/customer/CustomerOwnerHistoryMapper.xml",
                 "mapper/customer/FollowupMapper.xml",
@@ -798,10 +903,11 @@ class Wave1Wave2ExplainIT {
         List<String> tables = List.of(
                 "sys_org", "sys_team", "sys_user", "crm_file_object", "crm_project", "crm_package",
                 "crm_package_version", "crm_sku", "crm_institution",
-                "crm_customer", "crm_customer_tag", "crm_customer_identity", "crm_customer_owner_history",
+                "crm_customer", "crm_customer_attention_project", "crm_customer_tag", "crm_customer_identity",
+                "crm_customer_owner_history",
                 "crm_followup", "crm_task",
                 "crm_order", "crm_order_item", "crm_payment_txn",
-                "crm_entitlement", "crm_appointment", "crm_appointment_item",
+                "crm_entitlement", "crm_entitlement_ledger", "crm_appointment", "crm_appointment_item",
                 "crm_redemption", "crm_redemption_line", "crm_refund", "crm_refund_payment",
                 "crm_customer_tier_history", "crm_complaint_keyword", "crm_complaint_hit", "crm_complaint_case",
                 "crm_youzan_event", "crm_youzan_order_map", "crm_youzan_customer_link",
@@ -871,6 +977,7 @@ class Wave1Wave2ExplainIT {
 
         List<Object[]> institutions = new ArrayList<>(SEED_ROWS);
         List<Object[]> customers = new ArrayList<>(SEED_ROWS);
+        List<Object[]> attentionProjects = new ArrayList<>(SEED_ROWS);
         List<Object[]> customerTags = new ArrayList<>(SEED_ROWS + 3);
         List<Object[]> identities = new ArrayList<>(SEED_ROWS);
         List<Object[]> ownerHistories = new ArrayList<>(SEED_ROWS);
@@ -880,6 +987,7 @@ class Wave1Wave2ExplainIT {
         List<Object[]> orderItems = new ArrayList<>(SEED_ROWS);
         List<Object[]> payments = new ArrayList<>(SEED_ROWS);
         List<Object[]> entitlements = new ArrayList<>(SEED_ROWS);
+        List<Object[]> entitlementLedgers = new ArrayList<>(SEED_ROWS + 500);
         List<Object[]> appointments = new ArrayList<>(SEED_ROWS);
         List<Object[]> appointmentItems = new ArrayList<>(SEED_ROWS);
         List<Object[]> redemptions = new ArrayList<>(SEED_ROWS);
@@ -929,6 +1037,7 @@ class Wave1Wave2ExplainIT {
             customers.add(new Object[]{
                     custId, ownerStaffId, teamId, "EXP-C-" + code, "客户" + code, followDueDt, spreadDt
             });
+            attentionProjects.add(new Object[]{custId, 701L + (i % 5)});
             customerTags.add(new Object[]{custId, String.format("TAG_%02d", (i % 20) + 1)});
             if (i <= 3) {
                 customerTags.add(new Object[]{1001L, "EXTRA_TAG_" + i});
@@ -953,6 +1062,12 @@ class Wave1Wave2ExplainIT {
 
             long entId = 5000L + i;
             entitlements.add(new Object[]{entId, tlCustId, orderItemId, 701L + (i % 5)});
+            entitlementLedgers.add(new Object[]{entId, "GRANT", 2, "ORDER", "ORD-" + code, "ENT-GRANT-" + code});
+            if (i <= 500) {
+                entitlementLedgers.add(new Object[]{
+                        entId, "REDEEM", -1, "REDEMPTION", "RED-" + code, "ENT-REDEEM-" + code
+                });
+            }
 
             long aptId = 7000L + i;
             appointments.add(new Object[]{
@@ -1050,6 +1165,8 @@ class Wave1Wave2ExplainIT {
                 + "archived) VALUES (?,1,?,?,?,'MONTHLY',?)", institutions);
         jdbc.batchUpdate("INSERT INTO crm_customer (id,tenant_id,owner_staff_id,team_id,customer_no,display_name,"
                 + "next_followup_at,deleted,created_at) VALUES (?,1,?,?,?,?,?,0,?)", customers);
+        jdbc.batchUpdate("INSERT INTO crm_customer_attention_project (tenant_id,customer_id,project_id,created_by) "
+                + "VALUES (1,?,?,10)", attentionProjects);
         jdbc.batchUpdate("INSERT INTO crm_customer_tag (tenant_id,customer_id,tag_code) VALUES (1,?,?)", customerTags);
         jdbc.batchUpdate("INSERT INTO crm_customer_identity (tenant_id,customer_id,identity_type,source_app,"
                 + "external_id,status) VALUES (1,?,'WECOM','ww-exp',?,'LINKED')", identities);
@@ -1073,6 +1190,9 @@ class Wave1Wave2ExplainIT {
                 + "VALUES (1,?,'BANK','PLATFORM',?,10000,?,?)", payments);
         jdbc.batchUpdate("INSERT INTO crm_entitlement (id,tenant_id,customer_id,order_item_id,project_id,granted_count,"
                 + "available_count,status) VALUES (?,1,?,?,?,2,2,'AVAILABLE')", entitlements);
+        jdbc.batchUpdate("INSERT INTO crm_entitlement_ledger (tenant_id,entitlement_id,txn_type,delta_count,"
+                + "source_type,source_ref,idempotency_key,actor_user_id) VALUES (1,?,?,?,?,?,?,10)",
+                entitlementLedgers);
         jdbc.batchUpdate("INSERT INTO crm_appointment (id,tenant_id,appointment_no,customer_id,institution_id,"
                 + "owner_staff_id,team_id,scheduled_at,status,confirmed_at,checked_in_at,"
                 + "service_done_at,created_by,created_at) "

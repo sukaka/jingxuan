@@ -59,8 +59,7 @@
     </if>
   </sql>
 
-  <sql id="customerWhere">
-    FROM crm_customer c LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
+  <sql id="customerConditions">
     WHERE c.tenant_id=#{q.tenantId} AND c.deleted=0
     <include refid="customerScope"/><include refid="customerRestriction"/>
     <if test="q.filter.customerId != null">AND c.id=#{q.filter.customerId}</if>
@@ -71,8 +70,11 @@
     <if test="q.filter.from != null">AND c.created_at&gt;=#{q.filter.from}</if>
     <if test="q.filter.to != null">AND c.created_at&lt;=#{q.filter.to}</if>
   </sql>
-  <sql id="orderWhere">
-    FROM crm_order o INNER JOIN crm_customer c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id AND c.deleted=0
+  <sql id="customerWhere">
+    FROM crm_customer c LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
+    <include refid="customerConditions"/>
+  </sql>
+  <sql id="orderConditions">
     WHERE o.tenant_id=#{q.tenantId}
     <include refid="customerScope"/><include refid="customerRestriction"/>
     <if test="q.filter.customerId != null">AND o.customer_id=#{q.filter.customerId}</if>
@@ -81,8 +83,11 @@
     <if test="q.filter.from != null">AND o.ordered_at&gt;=#{q.filter.from}</if>
     <if test="q.filter.to != null">AND o.ordered_at&lt;=#{q.filter.to}</if>
   </sql>
-  <sql id="redemptionWhere">
-    FROM crm_redemption r INNER JOIN crm_customer c ON c.tenant_id=r.tenant_id AND c.id=r.customer_id
+  <sql id="orderWhere">
+    FROM crm_order o INNER JOIN crm_customer c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id AND c.deleted=0
+    <include refid="orderConditions"/>
+  </sql>
+  <sql id="redemptionConditions">
     WHERE r.tenant_id=#{q.tenantId}
     <if test="q.scope.kind.name() != 'INSTITUTION'">AND c.deleted=0</if>
     <include refid="redemptionScope"/><include refid="redemptionRestriction"/>
@@ -91,15 +96,22 @@
     <if test="q.filter.from != null">AND r.service_at&gt;=#{q.filter.from}</if>
     <if test="q.filter.to != null">AND r.service_at&lt;=#{q.filter.to}</if>
   </sql>
-  <sql id="followupWhere">
-    FROM crm_followup f INNER JOIN crm_customer c ON c.tenant_id=f.tenant_id AND c.id=f.customer_id AND c.deleted=0
-    LEFT JOIN sys_user o ON o.tenant_id=f.tenant_id AND o.id=f.owner_staff_id
+  <sql id="redemptionWhere">
+    FROM crm_redemption r INNER JOIN crm_customer c ON c.tenant_id=r.tenant_id AND c.id=r.customer_id
+    <include refid="redemptionConditions"/>
+  </sql>
+  <sql id="followupConditions">
     WHERE f.tenant_id=#{q.tenantId} AND f.deleted=0
     <include refid="followupScope"/><include refid="followupRestriction"/>
     <if test="q.filter.customerId != null">AND f.customer_id=#{q.filter.customerId}</if>
     <if test="q.filter.channelCode != null and q.filter.channelCode != ''">AND f.channel_code=#{q.filter.channelCode}</if>
     <if test="q.filter.from != null">AND f.contact_at&gt;=#{q.filter.from}</if>
     <if test="q.filter.to != null">AND f.contact_at&lt;=#{q.filter.to}</if>
+  </sql>
+  <sql id="followupWhere">
+    FROM crm_followup f INNER JOIN crm_customer c ON c.tenant_id=f.tenant_id AND c.id=f.customer_id AND c.deleted=0
+    LEFT JOIN sys_user o ON o.tenant_id=f.tenant_id AND o.id=f.owner_staff_id
+    <include refid="followupConditions"/>
   </sql>
 
   <select id="count" resultType="long">
@@ -123,7 +135,9 @@
           c.attention_projects AS attentionProjects,c.blocker_note AS blockerNote,c.remark AS remark,
           c.owner_staff_id AS ownerStaffId,o.display_name AS ownerName,c.team_id AS teamId,
           c.first_added_at AS firstAddedAt,c.first_order_at AS firstOrderAt,c.last_followup_at AS lastFollowupAt,c.created_at AS createdAt
-        <include refid="customerWhere"/> AND c.id &gt; #{q.afterId} ORDER BY c.id ASC LIMIT #{q.size}
+        FROM crm_customer c <if test="q.filter.customerId == null and q.filter.status == null and q.filter.cityCode == null">FORCE INDEX (PRIMARY)</if>
+        LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
+        <include refid="customerConditions"/> AND c.id &gt; #{q.afterId} ORDER BY c.id ASC LIMIT #{q.size}
       </when>
       <when test="q.exportType.name() == 'ORDER'">
         SELECT o.id AS rowId,o.order_no AS orderNo,c.customer_no AS customerNo,
@@ -133,14 +147,18 @@
           o.status,o.receiver_type AS receiverType,o.list_amount_fen AS listAmountFen,
           o.discount_amount_fen AS discountAmountFen,o.payable_fen AS payableFen,o.paid_fen AS paidFen,
           o.refunded_fen AS refundedFen,o.ordered_at AS orderedAt,o.paid_at AS paidAt,o.created_at AS createdAt
-        <include refid="orderWhere"/> AND o.id &gt; #{q.afterId} ORDER BY o.id ASC LIMIT #{q.size}
+        FROM crm_order o <if test="q.filter.customerId == null">FORCE INDEX (PRIMARY)</if>
+        STRAIGHT_JOIN crm_customer c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id AND c.deleted=0
+        <include refid="orderConditions"/> AND o.id &gt; #{q.afterId} ORDER BY o.id ASC LIMIT #{q.size}
       </when>
       <when test="q.exportType.name() == 'REDEMPTION'">
         SELECT r.id AS rowId,r.id AS redemptionId,r.appointment_id AS appointmentId,c.customer_no AS customerNo,
           COALESCE(c.display_name,c.nickname,c.customer_no) AS customerName,r.institution_id AS institutionId,
           r.owner_staff_id AS ownerStaffId,r.team_id AS teamId,r.service_at AS serviceAt,r.status,
           r.settlement_status AS settlementStatus,r.posted_by AS postedBy,r.posted_at AS postedAt,r.created_at AS createdAt
-        <include refid="redemptionWhere"/> AND r.id &gt; #{q.afterId} ORDER BY r.id ASC LIMIT #{q.size}
+        FROM crm_redemption r <if test="q.filter.customerId == null">FORCE INDEX (PRIMARY)</if>
+        STRAIGHT_JOIN crm_customer c ON c.tenant_id=r.tenant_id AND c.id=r.customer_id
+        <include refid="redemptionConditions"/> AND r.id &gt; #{q.afterId} ORDER BY r.id ASC LIMIT #{q.size}
       </when>
       <when test="q.exportType.name() == 'FOLLOWUP'">
         SELECT f.id AS rowId,f.id AS followupId,c.customer_no AS customerNo,
@@ -148,7 +166,10 @@
           o.display_name AS ownerName,f.channel_code AS channelCode,f.contact_at AS contactAt,f.summary AS summary,
           f.intent_project AS intentProject,f.estimated_amount_fen AS estimatedAmountFen,
           f.next_followup_at AS nextFollowupAt,f.blocker_note AS blockerNote,f.created_by AS createdBy,f.created_at AS createdAt
-        <include refid="followupWhere"/> AND f.id &gt; #{q.afterId} ORDER BY f.id ASC LIMIT #{q.size}
+        FROM crm_followup f <if test="q.filter.customerId == null">FORCE INDEX (PRIMARY)</if>
+        STRAIGHT_JOIN crm_customer c ON c.tenant_id=f.tenant_id AND c.id=f.customer_id AND c.deleted=0
+        LEFT JOIN sys_user o ON o.tenant_id=f.tenant_id AND o.id=f.owner_staff_id
+        <include refid="followupConditions"/> AND f.id &gt; #{q.afterId} ORDER BY f.id ASC LIMIT #{q.size}
       </when>
       <otherwise>SELECT NULL AS rowId FROM crm_export_job j WHERE 1=0</otherwise>
     </choose>
