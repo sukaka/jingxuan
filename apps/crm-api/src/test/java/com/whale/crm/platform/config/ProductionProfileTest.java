@@ -35,12 +35,14 @@ class ProductionProfileTest {
     @Test
     void productionIncludesRequiredReferenceDataWithoutDevelopmentFixtures() throws IOException {
         String seed = resource("db/prod/R__seed_reference_prod.sql");
-        assertThat(seed).contains("'cities'", "'orderTypes'", "'REGULAR'", "'FLASH'", "'PROMOTION'",
+        assertThat(seed).contains("'cities'", "'BJ'", "'SH'", "'GZ'", "'SZ'", "'HZ'", "'CD'", "'QD'",
+                "'orderTypes'", "'REGULAR'", "'FLASH'", "'PROMOTION'",
                 "'institutionBusinessTypes'", "'MED_AESTHETIC'", "'institutionOwnerships'", "'PRIVATE'",
                 "'merchantGrades'", "'settlementTypes'", "'MONTHLY'", "'PER_REDEMPTION'",
                 "'customerStatuses'", "'customerSources'", "'customerChannels'",
                 "'communicationChannels'", "'taskTypes'", "'refundReasons'",
                 "'materialTypes'", "'customerTiers'", "'customerTags'");
+        assertThat(seed).doesNotContain("dict_code='customerStatuses'");
         assertThat(seed).doesNotContain("Dev@12345", "INSERT INTO sys_user", "password_hash");
     }
 

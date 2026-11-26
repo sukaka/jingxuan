@@ -2,10 +2,13 @@ package com.whale.crm.platform.user.application;
 
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.auth.domain.LoginSessionRepository;
+import com.whale.crm.platform.security.DataScopeService;
 import com.whale.crm.platform.user.api.dto.AssignRolesRequest;
 import com.whale.crm.platform.user.api.dto.CreateUserRequest;
 import com.whale.crm.platform.user.api.dto.UpdateUserRequest;
 import com.whale.crm.platform.user.api.dto.UserSummaryResponse;
+import com.whale.crm.platform.user.domain.DataScopeGrant;
+import com.whale.crm.platform.user.domain.DataScopeRepository;
 import com.whale.crm.platform.user.domain.RoleRepository;
 import com.whale.crm.platform.user.domain.SysRole;
 import com.whale.crm.platform.user.domain.SysUser;
@@ -24,6 +27,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -36,17 +40,20 @@ public class UserApplicationService {
 
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final DataScopeRepository dataScopeRepository;
     private final LoginSessionRepository loginSessionRepository;
     private final AuditService auditService;
     private final PasswordEncoder passwordEncoder;
 
     public UserApplicationService(UserRepository userRepository,
                                   RoleRepository roleRepository,
+                                  DataScopeRepository dataScopeRepository,
                                   LoginSessionRepository loginSessionRepository,
                                   AuditService auditService,
                                   PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
+        this.dataScopeRepository = dataScopeRepository;
         this.loginSessionRepository = loginSessionRepository;
         this.auditService = auditService;
         this.passwordEncoder = passwordEncoder;
@@ -99,11 +106,14 @@ public class UserApplicationService {
             roleRepository.replaceUserRoles(tenantId, user.getId(), roleIds);
         }
 
+        List<String> assignedRoles = roleRepository.findActiveRoleCodes(tenantId, user.getId());
+        syncDataScopesOnCreate(tenantId, user, assignedRoles);
+
         auditService.record(tenantId, actorUserId, AuditService.ACTION_USER_CREATE, "USER",
-                Long.toString(user.getId()), null, userSnapshot(user, roleRepository.findActiveRoleCodes(tenantId, user.getId())),
+                Long.toString(user.getId()), null, userSnapshot(user, assignedRoles),
                 null);
         SysUser persisted = userRepository.findById(tenantId, user.getId()).orElseThrow();
-        return toSummary(persisted, null, roleRepository.findActiveRoleCodes(tenantId, user.getId()));
+        return toSummary(persisted, null, assignedRoles);
     }
 
     @Transactional
@@ -131,6 +141,7 @@ public class UserApplicationService {
 
         SysUser after = userRepository.findById(tenantId, userId).orElseThrow();
         List<String> roles = roleRepository.findActiveRoleCodes(tenantId, userId);
+        syncDataScopesOnTeamChange(tenantId, existing, after, roles);
         Map<String, Object> beforeSnapshot = userSnapshot(existing, roles);
         Map<String, Object> afterSnapshot = userSnapshot(after, roles);
         if (newPasswordHash != null) {
@@ -155,6 +166,7 @@ public class UserApplicationService {
 
         roleRepository.replaceUserRoles(tenantId, userId, roleIds);
         List<String> afterRoles = roleRepository.findActiveRoleCodes(tenantId, userId);
+        syncDataScopesOnRoleChange(tenantId, existing, beforeRoles, afterRoles);
 
         auditService.record(tenantId, actorUserId, AuditService.ACTION_USER_ROLE_ASSIGN, "USER",
                 Long.toString(userId), Map.of("roles", beforeRoles), Map.of("roles", afterRoles), null);
@@ -181,6 +193,44 @@ public class UserApplicationService {
                 Map.of("status", SysUser.STATUS_DISABLED), null);
         SysUser after = userRepository.findById(tenantId, userId).orElseThrow();
         return toSummary(after, null, targetRoles);
+    }
+
+    private void syncDataScopesOnCreate(long tenantId, SysUser user, List<String> activeRoles) {
+        List<DataScopeGrant> defaults = DefaultDataScopePolicy.resolveDefaults(
+                user.getUserType(), user.getTeamId(), activeRoles);
+        if (!defaults.isEmpty()) {
+            dataScopeRepository.replaceResourceScopes(
+                    tenantId, user.getId(), DefaultDataScopePolicy.MANAGED_RESOURCES, defaults);
+        }
+    }
+
+    private void syncDataScopesOnRoleChange(long tenantId, SysUser user,
+                                            List<String> beforeRoles, List<String> afterRoles) {
+        if (!"EMPLOYEE".equals(user.getUserType())) {
+            return;
+        }
+        if (!DefaultDataScopePolicy.hasManagedRole(beforeRoles)
+                && !DefaultDataScopePolicy.hasManagedRole(afterRoles)
+                && !afterRoles.isEmpty()) {
+            return;
+        }
+        List<DataScopeGrant> defaults = DefaultDataScopePolicy.resolveDefaults(
+                user.getUserType(), user.getTeamId(), afterRoles);
+        dataScopeRepository.replaceResourceScopes(
+                tenantId, user.getId(), DefaultDataScopePolicy.MANAGED_RESOURCES, defaults);
+    }
+
+    private void syncDataScopesOnTeamChange(long tenantId, SysUser before, SysUser after, List<String> roles) {
+        if (!"EMPLOYEE".equals(after.getUserType())
+                || Objects.equals(before.getTeamId(), after.getTeamId())
+                || !roles.contains("MANAGER_LEAD")
+                || DefaultDataScopePolicy.hasCustomerAllRole(roles)) {
+            return;
+        }
+        DataScopeGrant customerGrant = DefaultDataScopePolicy.resolveCustomerGrant(after.getTeamId(), roles);
+        List<DataScopeGrant> grants = customerGrant == null ? List.of() : List.of(customerGrant);
+        dataScopeRepository.replaceResourceScopes(
+                tenantId, after.getId(), List.of(DataScopeService.RESOURCE_CUSTOMER), grants);
     }
 
     private void validateTeam(long tenantId, Long teamId) {

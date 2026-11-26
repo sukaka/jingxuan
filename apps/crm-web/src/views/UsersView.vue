@@ -18,6 +18,13 @@ import PageHeader from '../components/prototype/PageHeader.vue'
 import PageCard from '../components/prototype/PageCard.vue'
 import ShellIcon from '../components/shell/ShellIcon.vue'
 import { roleTone, userStatusTone } from '../utils/tagTone'
+import {
+  extractApiFieldErrors,
+  formatApiError,
+  validateCreateUserInput,
+  validateEditUserInput,
+} from '../utils/userValidation'
+import type { CreateUserField, CreateUserFieldErrors, EditUserField, EditUserFieldErrors } from '../utils/userValidation'
 
 const auth = useAuthStore()
 
@@ -64,11 +71,11 @@ function formatDateTime(value: string | null): string {
 }
 
 function errorText(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 409) return '该记录已被他人修改，请刷新列表后重试'
-    return error.message
-  }
-  return error instanceof Error ? error.message : '未知错误'
+  return formatApiError(error, '未知错误')
+}
+
+function showErrorToast(message: string) {
+  ElMessage.error({ message, grouping: true })
 }
 
 async function load(page = query.page) {
@@ -113,6 +120,7 @@ function resetQuery() {
 // ---- 新建用户 ----
 const createDialogVisible = ref(false)
 const createSubmitting = ref(false)
+const createSubmitError = ref('')
 const createForm = reactive({
   username: '',
   displayName: '',
@@ -121,6 +129,39 @@ const createForm = reactive({
   teamId: undefined as number | undefined,
   roleIds: [] as number[],
 })
+const createFieldErrors = reactive<CreateUserFieldErrors>({})
+
+const CREATE_USER_FIELDS: readonly CreateUserField[] = [
+  'username', 'displayName', 'password', 'userType', 'teamId', 'roleIds',
+]
+
+function clearCreateErrors() {
+  createSubmitError.value = ''
+  for (const field of CREATE_USER_FIELDS) {
+    createFieldErrors[field] = undefined
+  }
+}
+
+function clearCreateFieldError(field: CreateUserField) {
+  createFieldErrors[field] = undefined
+  if (createSubmitError.value) createSubmitError.value = ''
+}
+
+function applyCreateServerErrors(error: ApiError): boolean {
+  const details = extractApiFieldErrors(error)
+  let matched = false
+  for (const field of CREATE_USER_FIELDS) {
+    if (details[field]) {
+      createFieldErrors[field] = details[field]
+      matched = true
+    }
+  }
+  if (!matched && error.status === 409 && error.message.includes('登录名')) {
+    createFieldErrors.username = error.message
+    matched = true
+  }
+  return matched
+}
 
 function openCreateDialog() {
   createForm.username = ''
@@ -129,19 +170,28 @@ function openCreateDialog() {
   createForm.userType = 'EMPLOYEE'
   createForm.teamId = undefined
   createForm.roleIds = []
+  clearCreateErrors()
   createDialogVisible.value = true
 }
 
 async function submitCreate() {
-  if (!createForm.username || !createForm.displayName || !createForm.password) {
-    ElMessage.warning('用户名、姓名、初始密码为必填项')
+  if (createSubmitting.value) return
+  clearCreateErrors()
+  const validation = validateCreateUserInput({
+    username: createForm.username,
+    displayName: createForm.displayName,
+    password: createForm.password,
+    userType: createForm.userType,
+  })
+  if (!validation.valid) {
+    Object.assign(createFieldErrors, validation.fieldErrors)
     return
   }
   createSubmitting.value = true
   try {
     await createUser({
       username: createForm.username,
-      displayName: createForm.displayName,
+      displayName: createForm.displayName.trim(),
       password: createForm.password,
       userType: createForm.userType,
       teamId: createForm.teamId ?? null,
@@ -151,7 +201,14 @@ async function submitCreate() {
     createDialogVisible.value = false
     await load()
   } catch (error) {
-    ElMessage.error(errorText(error))
+    if (error instanceof ApiError) {
+      const matched = applyCreateServerErrors(error)
+      if (!matched) {
+        createSubmitError.value = errorText(error)
+      }
+    } else {
+      createSubmitError.value = errorText(error)
+    }
   } finally {
     createSubmitting.value = false
   }
@@ -160,26 +217,50 @@ async function submitCreate() {
 // ---- 编辑用户(乐观锁) ----
 const editDialogVisible = ref(false)
 const editSubmitting = ref(false)
+const editSubmitError = ref('')
 const editForm = reactive({
   id: 0,
   displayName: '',
   teamId: undefined as number | undefined,
   version: 0,
 })
+const editFieldErrors = reactive<EditUserFieldErrors>({})
+
+const EDIT_USER_FIELDS: readonly EditUserField[] = ['displayName', 'teamId']
+
+function clearEditErrors() {
+  editSubmitError.value = ''
+  for (const field of EDIT_USER_FIELDS) {
+    editFieldErrors[field] = undefined
+  }
+}
+
+function clearEditFieldError(field: EditUserField) {
+  editFieldErrors[field] = undefined
+  if (editSubmitError.value) editSubmitError.value = ''
+}
 
 function openEditDialog(user: ManagedUser) {
   editForm.id = user.id
   editForm.displayName = user.displayName
   editForm.teamId = user.teamId ?? undefined
   editForm.version = user.version
+  clearEditErrors()
   editDialogVisible.value = true
 }
 
 async function submitEdit() {
+  if (editSubmitting.value) return
+  clearEditErrors()
+  const validation = validateEditUserInput({ displayName: editForm.displayName })
+  if (!validation.valid) {
+    Object.assign(editFieldErrors, validation.fieldErrors)
+    return
+  }
   editSubmitting.value = true
   try {
     await updateUser(editForm.id, {
-      displayName: editForm.displayName,
+      displayName: editForm.displayName.trim(),
       teamId: editForm.teamId ?? null,
       version: editForm.version,
     })
@@ -187,7 +268,21 @@ async function submitEdit() {
     editDialogVisible.value = false
     await load()
   } catch (error) {
-    ElMessage.error(errorText(error))
+    if (error instanceof ApiError) {
+      const details = extractApiFieldErrors(error)
+      let matched = false
+      for (const field of EDIT_USER_FIELDS) {
+        if (details[field]) {
+          editFieldErrors[field] = details[field]
+          matched = true
+        }
+      }
+      if (!matched) {
+        editSubmitError.value = errorText(error)
+      }
+    } else {
+      editSubmitError.value = errorText(error)
+    }
   } finally {
     editSubmitting.value = false
   }
@@ -212,6 +307,7 @@ function openRoleDialog(user: ManagedUser) {
 }
 
 async function submitRoles() {
+  if (roleSubmitting.value) return
   roleSubmitting.value = true
   try {
     await updateUserRoles(roleForm.id, roleForm.roleIds)
@@ -219,7 +315,7 @@ async function submitRoles() {
     roleDialogVisible.value = false
     await load()
   } catch (error) {
-    ElMessage.error(errorText(error))
+    showErrorToast(errorText(error))
   } finally {
     roleSubmitting.value = false
   }
@@ -241,7 +337,7 @@ async function handleDisable(user: ManagedUser) {
     ElMessage.success('已停用')
     await load()
   } catch (error) {
-    ElMessage.error(errorText(error))
+    showErrorToast(errorText(error))
   }
 }
 
@@ -370,51 +466,132 @@ onMounted(async () => {
       />
     </PageCard>
 
-    <el-dialog v-model="createDialogVisible" title="新建用户" width="480px">
-      <el-form label-width="90px">
-        <el-form-item label="用户名" required>
-          <el-input v-model="createForm.username" placeholder="登录账号，创建后不可修改" />
+    <el-dialog
+      v-model="createDialogVisible"
+      title="新建用户"
+      width="500px"
+      :close-on-click-modal="false"
+      @closed="clearCreateErrors"
+    >
+      <el-alert
+        v-if="createSubmitError"
+        type="error"
+        :closable="false"
+        :title="createSubmitError"
+        class="dialog-alert"
+        data-testid="create-user-submit-error"
+      />
+      <el-form label-width="90px" @submit.prevent="submitCreate">
+        <el-form-item label="用户名" required :class="{ 'is-error': Boolean(createFieldErrors.username) }">
+          <el-input
+            v-model="createForm.username"
+            maxlength="32"
+            placeholder="3-32 位字母、数字或 ._-（创建后不可修改）"
+            data-testid="create-username-input"
+            @input="clearCreateFieldError('username')"
+          />
+          <p v-if="createFieldErrors.username" class="field-error" role="alert" data-testid="create-username-error">
+            {{ createFieldErrors.username }}
+          </p>
+          <p v-else class="field-hint">仅支持 3-32 位英文字母、数字及 . _ -，不支持中文和空格</p>
         </el-form-item>
-        <el-form-item label="姓名" required>
-          <el-input v-model="createForm.displayName" />
+        <el-form-item label="姓名" required :class="{ 'is-error': Boolean(createFieldErrors.displayName) }">
+          <el-input
+            v-model="createForm.displayName"
+            maxlength="64"
+            placeholder="请输入显示姓名（最多 64 字）"
+            data-testid="create-display-name-input"
+            @input="clearCreateFieldError('displayName')"
+          />
+          <p v-if="createFieldErrors.displayName" class="field-error" role="alert" data-testid="create-display-name-error">
+            {{ createFieldErrors.displayName }}
+          </p>
         </el-form-item>
-        <el-form-item label="初始密码" required>
-          <el-input v-model="createForm.password" type="password" show-password />
+        <el-form-item label="初始密码" required :class="{ 'is-error': Boolean(createFieldErrors.password) }">
+          <el-input
+            v-model="createForm.password"
+            type="password"
+            maxlength="64"
+            show-password
+            autocomplete="new-password"
+            placeholder="请输入 8-64 位初始密码"
+            data-testid="create-password-input"
+            @input="clearCreateFieldError('password')"
+          />
+          <p v-if="createFieldErrors.password" class="field-error" role="alert" data-testid="create-password-error">
+            {{ createFieldErrors.password }}
+          </p>
+          <p v-else class="field-hint">密码长度须为 8-64 位，不能全为空格</p>
         </el-form-item>
-        <el-form-item label="用户类型" required>
-          <el-select v-model="createForm.userType">
+        <el-form-item label="用户类型" required :class="{ 'is-error': Boolean(createFieldErrors.userType) }">
+          <el-select v-model="createForm.userType" @change="clearCreateFieldError('userType')">
             <el-option label="员工" value="EMPLOYEE" />
             <el-option label="机构用户" value="INSTITUTION" />
           </el-select>
+          <p v-if="createFieldErrors.userType" class="field-error" role="alert">
+            {{ createFieldErrors.userType }}
+          </p>
         </el-form-item>
-        <el-form-item label="所属团队">
-          <el-select v-model="createForm.teamId" clearable placeholder="不分配团队">
+        <el-form-item label="所属团队" :class="{ 'is-error': Boolean(createFieldErrors.teamId) }">
+          <el-select v-model="createForm.teamId" clearable placeholder="不分配团队" @change="clearCreateFieldError('teamId')">
             <el-option v-for="team in allTeams" :key="team.id" :label="team.teamName" :value="team.id" />
           </el-select>
+          <p v-if="createFieldErrors.teamId" class="field-error" role="alert" data-testid="create-team-error">
+            {{ createFieldErrors.teamId }}
+          </p>
         </el-form-item>
-        <el-form-item label="角色">
-          <el-checkbox-group v-model="createForm.roleIds">
+        <el-form-item label="角色" :class="{ 'is-error': Boolean(createFieldErrors.roleIds) }">
+          <el-checkbox-group v-model="createForm.roleIds" @change="clearCreateFieldError('roleIds')">
             <el-checkbox v-for="role in allRoles" :key="role.id" :value="role.id">
               {{ role.roleName }}
             </el-checkbox>
           </el-checkbox-group>
+          <p v-if="createFieldErrors.roleIds" class="field-error" role="alert" data-testid="create-role-error">
+            {{ createFieldErrors.roleIds }}
+          </p>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="createSubmitting" @click="submitCreate">创建</el-button>
+        <el-button type="primary" :loading="createSubmitting" data-testid="create-user-submit" @click="submitCreate">创建</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialogVisible" title="编辑用户" width="480px">
-      <el-form label-width="90px">
-        <el-form-item label="姓名" required>
-          <el-input v-model="editForm.displayName" />
+    <el-dialog
+      v-model="editDialogVisible"
+      title="编辑用户"
+      width="480px"
+      :close-on-click-modal="false"
+      @closed="clearEditErrors"
+    >
+      <el-alert
+        v-if="editSubmitError"
+        type="error"
+        :closable="false"
+        :title="editSubmitError"
+        class="dialog-alert"
+        data-testid="edit-user-submit-error"
+      />
+      <el-form label-width="90px" @submit.prevent="submitEdit">
+        <el-form-item label="姓名" required :class="{ 'is-error': Boolean(editFieldErrors.displayName) }">
+          <el-input
+            v-model="editForm.displayName"
+            maxlength="64"
+            placeholder="请输入显示姓名（最多 64 字）"
+            data-testid="edit-display-name-input"
+            @input="clearEditFieldError('displayName')"
+          />
+          <p v-if="editFieldErrors.displayName" class="field-error" role="alert" data-testid="edit-display-name-error">
+            {{ editFieldErrors.displayName }}
+          </p>
         </el-form-item>
-        <el-form-item label="所属团队">
-          <el-select v-model="editForm.teamId" clearable placeholder="不分配团队">
+        <el-form-item label="所属团队" :class="{ 'is-error': Boolean(editFieldErrors.teamId) }">
+          <el-select v-model="editForm.teamId" clearable placeholder="不分配团队" @change="clearEditFieldError('teamId')">
             <el-option v-for="team in allTeams" :key="team.id" :label="team.teamName" :value="team.id" />
           </el-select>
+          <p v-if="editFieldErrors.teamId" class="field-error" role="alert" data-testid="edit-team-error">
+            {{ editFieldErrors.teamId }}
+          </p>
         </el-form-item>
         <el-form-item label="数据版本">
           <span class="muted">第 {{ editForm.version }} 版（多人同时编辑时将提示刷新）</span>
@@ -422,7 +599,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="editDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editSubmitting" @click="submitEdit">保存</el-button>
+        <el-button type="primary" :loading="editSubmitting" data-testid="edit-user-submit" @click="submitEdit">保存</el-button>
       </template>
     </el-dialog>
 
@@ -547,6 +724,27 @@ onMounted(async () => {
 
 .table-alert {
   margin: 12px 20px 4px;
+}
+
+.dialog-alert {
+  margin-bottom: 14px;
+}
+
+.field-hint,
+.field-error {
+  flex-basis: 100%;
+  width: 100%;
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.field-hint {
+  color: var(--el-text-color-secondary);
+}
+
+.field-error {
+  color: var(--el-color-danger);
 }
 
 .role-tag {

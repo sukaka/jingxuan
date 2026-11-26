@@ -100,8 +100,9 @@ class CustomerApiIT extends AbstractMysqlIT {
     @Test
     void listMapsSourceChannelTagsAndFollowupFieldsFromDatabase() throws Exception {
         AuthCookies manager1 = login("manager1");
-        mockMvc.perform(get("/api/v1/customers?page=1&size=1").cookie(manager1.cookies()))
+        mockMvc.perform(get("/api/v1/customers?keyword=C0000001001&page=1&size=1").cookie(manager1.cookies()))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].customerNo").value("C0000001001"))
                 .andExpect(jsonPath("$.data.items[0].sourceCode").value("EXTERNAL_CONTENT"))
                 .andExpect(jsonPath("$.data.items[0].channelCode").value("XHS"))
                 .andExpect(jsonPath("$.data.items[0].spendingLevel").value("HIGH"))
@@ -110,6 +111,72 @@ class CustomerApiIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.data.items[0].tagCodes", hasItem("VIP")))
                 .andExpect(jsonPath("$.data.items[0].tagCodes", hasItem("HIGH_INTENT")))
                 .andExpect(jsonPath("$.data.items[0].nextFollowupAt").isNotEmpty());
+    }
+
+    @Test
+    void listOrdersNewestCreatedCustomerFirst() throws Exception {
+        AuthCookies manager1 = login("manager1");
+        String prefix = "ITORD-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String firstBody = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-1\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long firstId = objectMapper.readTree(firstBody).at("/data/id").asLong();
+
+        String secondBody = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-2\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long secondId = objectMapper.readTree(secondBody).at("/data/id").asLong();
+
+        mockMvc.perform(get("/api/v1/customers?page=1&size=2").cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(secondId))
+                .andExpect(jsonPath("$.data.items[1].id").value(firstId));
+    }
+
+    @Test
+    void newlyCreatedManagerViaUserApi_seesOwnCreatedCustomerImmediately_whileRemainingIsolated() throws Exception {
+        AuthCookies admin = login("admin");
+        String username = "it_mgr_scope_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        String userBody = mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"" + username + "\",\"displayName\":\"新建管家\","
+                                + "\"password\":\"" + DEV_PASSWORD + "\",\"userType\":\"EMPLOYEE\","
+                                + "\"teamId\":1,\"roleIds\":[4]}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long newManagerId = objectMapper.readTree(userBody).at("/data/id").asLong();
+
+        AuthCookies newManager = login(username);
+        String createdBody = mockMvc.perform(newManager.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"新管家客户\",\"nickname\":\"新管家自建\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.ownerStaffId").value(newManagerId))
+                .andReturn().getResponse().getContentAsString();
+        long customerId = objectMapper.readTree(createdBody).at("/data/id").asLong();
+
+        // 新管家自己立即可见，且不暴露其他管家客户
+        mockMvc.perform(get("/api/v1/customers?page=1&size=20").cookie(newManager.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(customerId));
+        mockMvc.perform(get("/api/v1/customers/" + customerId).cookie(newManager.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(customerId));
+
+        // 管理员在列表首位可见；其他管家依然不可见（C03 隔离）
+        mockMvc.perform(get("/api/v1/customers?page=1&size=20").cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(customerId));
+        AuthCookies manager1 = login("manager1");
+        mockMvc.perform(get("/api/v1/customers/" + customerId).cookie(manager1.cookies()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/customers/1001").cookie(newManager.cookies()))
+                .andExpect(status().isNotFound());
     }
 
     // ---------- C03 数据隔离 ----------

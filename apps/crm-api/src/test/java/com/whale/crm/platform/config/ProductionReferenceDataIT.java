@@ -35,7 +35,7 @@ class ProductionReferenceDataIT {
     }
 
     @Test
-    void cleanProductionHasCoreReferenceDataAndRepeatSeedPreservesOperationsChanges() {
+    void cleanProductionHasCoreReferenceDataAndRepeatSeedPreservesOperationsChanges() throws Exception {
         MysqlDataSource dataSource = dataSourceFor("medical_crm");
         productionFlyway(dataSource).migrate();
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
@@ -52,9 +52,16 @@ class ProductionReferenceDataIT {
         List<String> options = jdbc.queryForList("SELECT CONCAT(t.dict_code,':',i.option_code) "
                 + "FROM sys_dictionary_item i JOIN sys_dictionary_type t ON t.id=i.dict_type_id "
                 + "AND t.tenant_id=i.tenant_id WHERE i.tenant_id=1 AND i.status='ACTIVE'", String.class);
-        assertThat(options).contains("orderTypes:REGULAR", "orderTypes:FLASH", "orderTypes:PROMOTION",
+        assertThat(options).contains(
+                "cities:BJ", "cities:SH", "cities:GZ", "cities:SZ", "cities:HZ", "cities:CD",
+                "cities:CQ", "cities:NJ", "cities:WH", "cities:SUZ", "cities:TJ", "cities:XA", "cities:QD",
+                "cities:CS", "cities:ZZ", "cities:XM", "cities:KM",
+                "orderTypes:REGULAR", "orderTypes:FLASH", "orderTypes:PROMOTION",
                 "institutionBusinessTypes:MED_AESTHETIC", "institutionOwnerships:PRIVATE", "merchantGrades:B",
                 "settlementTypes:MONTHLY", "settlementTypes:PER_REDEMPTION");
+        List<String> cityOptions = options.stream().filter(item -> item.startsWith("cities:")).toList();
+        assertThat(cityOptions).hasSize(49).doesNotHaveDuplicates();
+        assertThat(options).noneMatch(item -> item.startsWith("customerStatuses:"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_user", Long.class)).isZero();
 
         List<String> newPermissions = jdbc.queryForList(
@@ -100,13 +107,25 @@ class ProductionReferenceDataIT {
         jdbc.update("UPDATE sys_dictionary_type SET dict_name='运营自定义城市',status='INACTIVE' "
                 + "WHERE tenant_id=1 AND dict_code='cities'");
         jdbc.update("UPDATE sys_dictionary_item i JOIN sys_dictionary_type t ON t.id=i.dict_type_id "
+                + "SET i.option_label='运营自定义北京',i.sort_no=99,i.status='INACTIVE' "
+                + "WHERE i.tenant_id=1 AND t.tenant_id=1 AND t.dict_code='cities' AND i.option_code='BJ'");
+        jdbc.update("UPDATE sys_dictionary_item i JOIN sys_dictionary_type t ON t.id=i.dict_type_id "
                 + "SET i.option_label='运营自定义订单',i.sort_no=88,i.status='INACTIVE' "
                 + "WHERE i.tenant_id=1 AND t.tenant_id=1 AND t.dict_code='orderTypes' AND i.option_code='REGULAR'");
         productionFlyway(dataSource).migrate();
+        try (Connection conn = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(conn, new ClassPathResource("db/prod/R__seed_reference_prod.sql"));
+        }
 
         Map<String, Object> customizedType = jdbc.queryForMap(
                 "SELECT dict_name,status FROM sys_dictionary_type WHERE tenant_id=1 AND dict_code='cities'");
         assertThat(customizedType).containsEntry("dict_name", "运营自定义城市").containsEntry("status", "INACTIVE");
+
+        Map<String, Object> customizedCity = jdbc.queryForMap("SELECT i.option_label,i.sort_no,i.status "
+                + "FROM sys_dictionary_item i JOIN sys_dictionary_type t ON t.id=i.dict_type_id "
+                + "WHERE i.tenant_id=1 AND t.tenant_id=1 AND t.dict_code='cities' AND i.option_code='BJ'");
+        assertThat(customizedCity).containsEntry("option_label", "运营自定义北京")
+                .containsEntry("sort_no", 99).containsEntry("status", "INACTIVE");
 
         Map<String, Object> customized = jdbc.queryForMap("SELECT i.option_label,i.sort_no,i.status "
                 + "FROM sys_dictionary_item i JOIN sys_dictionary_type t ON t.id=i.dict_type_id "

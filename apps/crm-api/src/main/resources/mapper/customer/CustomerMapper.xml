@@ -136,7 +136,7 @@
     FROM crm_customer c
     LEFT JOIN sys_user o ON o.tenant_id = c.tenant_id AND o.id = c.owner_staff_id
     <include refid="scopedWhere"/>
-    ORDER BY c.id ASC
+    ORDER BY c.id DESC
     LIMIT #{size} OFFSET #{offset}
   </select>
 

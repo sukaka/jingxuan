@@ -57,6 +57,18 @@ async function loadSummary() {
   summary.merge = mergeRes.status === 'fulfilled' ? (mergeRes.value?.total ?? 0) : 0
 }
 function reload() { void load(); void loadSummary() }
+function onFormSaved() {
+  if (formMode.value === 'create') {
+    query.keyword = ''
+    query.tierCode = ''
+    query.needsAttention = false
+    query.page = 1
+    void load(1)
+    void loadSummary()
+    return
+  }
+  reload()
+}
 function openCreate() { formMode.value = 'create'; formCustomerId.value = null; formVisible.value = true }
 function openEdit(id: number) { formMode.value = 'edit'; formCustomerId.value = id; formVisible.value = true }
 function openDetail(row: CustomerListItem, tab = 'overview') { detailCustomerId.value = row.id; detailTab.value = tab; detailVisible.value = true }
@@ -103,7 +115,7 @@ onMounted(() => {
       <el-pagination v-model:current-page="query.page" v-model:page-size="query.size" :total="total" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="load(1)" />
     </PageCard>
     <footer class="proto-footer">客户编号独立于手机号和昵称；客户等级与消费能力分开管理</footer>
-    <CustomerFormDrawer v-model="formVisible" :mode="formMode" :customer-id="formCustomerId" @saved="reload" />
+    <CustomerFormDrawer v-model="formVisible" :mode="formMode" :customer-id="formCustomerId" @saved="onFormSaved" />
     <CustomerDetailDrawer v-model="detailVisible" :customer-id="detailCustomerId" :initial-tab="detailTab" @edit="openEdit" @changed="reload" />
   </div>
 </template>

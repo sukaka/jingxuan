@@ -12,4 +12,11 @@ public interface DataScopeMapper {
 
     List<DataScopeRow> selectActiveScopes(@Param("tenantId") long tenantId, @Param("userId") long userId,
                                           @Param("resource") String resource, @Param("now") Instant now);
+
+    void deleteByUserAndResources(@Param("tenantId") long tenantId, @Param("userId") long userId,
+                                  @Param("resources") List<String> resources);
+
+    void insertScope(@Param("tenantId") long tenantId, @Param("userId") long userId,
+                     @Param("resource") String resource, @Param("scopeType") String scopeType,
+                     @Param("scopeRefId") Long scopeRefId);
 }

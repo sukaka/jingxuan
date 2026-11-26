@@ -2,6 +2,29 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [USER-DATASCOPE-CUSTOMER-LIST-FIX] 修复新建管家建档后列表不可见、客户列表倒序与建档后筛选重置 — 2026-11-26
+- **用户生命周期自动同步默认 `sys_data_scope`（保持 `sys_data_scope` 为行级权限唯一事实来源）**：
+  - 新增 `DataScopeGrant`、`DefaultDataScopePolicy`，并在 `DataScopeRepository` / `MybatisDataScopeRepository` / `DataScopeMapper` / `DataScopeMapper.xml` 新增显式 `tenant_id` 隔离的 `replaceResourceScopes`（先按资源清理再写入）。
+  - `UserApplicationService` 在创建员工（`create`）、变更角色（`assignRoles`）及管家主管调整团队（`update` 且 `teamId` 变更）时按既定角色矩阵同步 `customer` / `institution` 默认数据范围：`ADMIN`/`OWNER`/`OPERATION`/`OPERATION_LEAD`/`FINANCE` 授予 `customer=ALL`、`institution=ALL`；`MANAGER_LEAD` 授予 `customer=TEAM(teamId)`（未分团队降级 `SELF`）、`institution=ALL`；`MANAGER` 授予 `customer=SELF`、`institution=ALL`；`BUSINESS` 仅授予 `institution=ALL`（客户保持 `NONE`）；角色降权/清空或主管调组时自动收回旧范围防止权限残留；机构账号（`INSTITUTION`）不写 `sys_data_scope`。
+- **存量数据范围回填迁移（`V58`）**：
+  - 新增 `apps/crm-api/src/main/resources/db/migration/V58__backfill_user_default_data_scopes.sql` 与回滚脚本 `apps/crm-api/src/main/resources/db/rollback/V58__backfill_user_default_data_scopes_rollback.sql`，仅对缺失对应资源记录的存量内部员工幂等补齐默认 `customer`/`institution` 数据范围，不覆盖既有授权，不触碰机构账号。
+- **客户列表排序、建档刷新与用户管理表单校验**：
+  - `CustomerMapper.xml#search` 由 `ORDER BY c.id ASC` 调整为 `ORDER BY c.id DESC`，新建客户置顶显示。
+  - `apps/crm-web/src/views/CustomersView.vue` 新增 `onFormSaved`：新建客户保存后清空关键词/等级/需跟进筛选并回到第 1 页刷新；编辑客户保存保留原筛选条件与页码。
+  - 新增 `apps/crm-web/src/utils/userValidation.ts` 并在 `apps/crm-web/src/views/UsersView.vue`（配套 `apps/crm-web/tests/users-view.test.ts`）补齐新建/编辑用户前端字段校验与后端字段级 `ApiResponse.ErrorDetail` 错误内联映射。
+- **验证证据（无 REST API / Kafka 契约变更）**：
+  - 后端单元 + 真实 MySQL 8.4 集成测试 + 静态门禁：
+    - `./mvnw -B -pl apps/crm-api -Dtest='DefaultDataScopePolicyTest,UserApplicationServiceTest,DataScopeServiceTest,Customer*Test' -Dit.test='CustomerApiIT,CustomerCompletionApiIT,UserAdminApiIT,DataScopeServiceIT,TaskApiIT,ExportApiIT,V58BackfillDataScopeMigrationIT,Wave1Wave2ExplainIT' -DfailIfNoTests=false verify`：Surefire `32/32 passed`；Failsafe 中 `DataScopeServiceIT`（5/5）、`Wave1Wave2ExplainIT`（3/3，含 `ORDER BY c.id DESC` EXPLAIN 门禁）、`UserAdminApiIT`（15/15）、`ExportApiIT`（9/9）、`CustomerApiIT`（12/12）、`TaskApiIT`（4/4）、`CustomerCompletionApiIT`（6/6）共 `54/54 passed`；随后修正 `V58BackfillDataScopeMigrationIT` 建库连接账号并执行 `./mvnw -B -pl apps/crm-api -Dtest='DefaultDataScopePolicyTest,UserApplicationServiceTest' -Dit.test='V58BackfillDataScopeMigrationIT' -DfailIfNoTests=false verify`，Surefire `15/15 passed`、`V58BackfillDataScopeMigrationIT` `1/1 passed`；Checkstyle `0 violations`、SpotBugs `0 bugs / 0 errors`、Spotless `1298 files clean`。
+  - 前端全量验证：`npm --prefix apps/crm-web run typecheck && npm --prefix apps/crm-web run lint && npm --prefix apps/crm-web run test -- --maxWorkers=2 && npm --prefix apps/crm-web run build` 全部通过（`typecheck` 通过、`eslint` 0 警告、`vitest` `155/155` 文件 `730/730` 用例通过、`vite build` 成功）。
+  - 未运行项：非本次涉及领域的其他后端 `*IT`、Kafka 集成测试与浏览器 E2E 未重跑。
+
+## [PROD-REF-CITIES] 生产参考种子补齐常用城市字典项 — 2026-11-26
+- **参考数据补齐（0 API / 前端 / 表结构 / 权限契约变更）**：
+  - 在 `apps/crm-api/src/main/resources/db/prod/R__seed_reference_prod.sql` 中为 `cities`（城市）字典补齐 49 个国内常用城市（前 13 个编码 `BJ`–`QD` 与开发环境种子完全一致，补齐其余省会/直辖市及主要一二线城市与港澳台），使用 `ON DUPLICATE KEY UPDATE option_code=VALUES(option_code)` 保证 Flyway 可重复迁移幂等且不覆盖运营已维护的名称、排序或启停状态；`customerStatuses`（客户状态）保持空项由业务方自行在后台维护。
+  - 更新 `ProductionProfileTest` 与 `ProductionReferenceDataIT`，验证生产种子包含 49 个唯一启用城市项、不包含 `customerStatuses` 预设项，且重复执行种子脚本不覆盖运营对城市项的自定义修改。
+- **验证命令与实际结果**：
+  - `./mvnw -B -pl apps/crm-api -Dtest=ProductionProfileTest -Dit.test=ProductionReferenceDataIT -DfailIfNoTests=false verify`：通过（Surefire `3/3`、Failsafe MySQL 8.4.8 Testcontainer `4/4`、Checkstyle 0 违规、SpotBugs 0 缺陷/0 错误、Spotless 1296 文件洁净）。
+
 ## [QUERY-PERF-V56-V57] Wave 1 / Wave 2 / Phase 2 SQL 与索引性能优化及 EXPLAIN 回归闭环 — 2026-11-26
 - **补充优化与 2.0.4 增量发布**：
   - `CustomerMapper#countSearch(TEAM)` 与 `CustomerSegmentMapper#countMembers(TEAM)` 将 `TEAM` 范围计数重构为两路 `UNION`（走 `idx_customer_1` + `idx_customer_team`），`ExportDataMapper` 的 `customerWhere` / `followupWhere` 移除冗余 `LEFT JOIN sys_user`，并补充 `Wave1Wave2ExplainIT` 回归与 `EXPLAIN ANALYZE` 断言；同步收录独立零依赖演示目录 `demos/year-end-h5/`（含纸雕灯影交互、文案引擎与本地 `localStorage` 访问埋点监控面板，仅用合成示例客户）。

@@ -19,4 +19,16 @@
       AND (expires_at IS NULL OR expires_at &gt; #{now})
   </select>
 
+  <delete id="deleteByUserAndResources">
+    DELETE FROM sys_data_scope
+    WHERE tenant_id = #{tenantId} AND user_id = #{userId}
+      AND resource IN
+      <foreach collection="resources" item="res" open="(" separator="," close=")">#{res}</foreach>
+  </delete>
+
+  <insert id="insertScope">
+    INSERT INTO sys_data_scope (tenant_id, user_id, resource, scope_type, scope_ref_id)
+    VALUES (#{tenantId}, #{userId}, #{resource}, #{scopeType}, #{scopeRefId})
+  </insert>
+
 </mapper>

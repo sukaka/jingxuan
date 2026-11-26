@@ -2,8 +2,14 @@ package com.whale.crm.platform.user;
 
 import com.whale.crm.platform.support.AbstractMysqlIT;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -16,6 +22,61 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 用户管理端到端：分页/筛选、创建、乐观锁 409、角色分配、停用、越权 403、未认证 401。
  */
 class UserAdminApiIT extends AbstractMysqlIT {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Test
+    void userLifecycle_syncsUpdatesAndRevokesDefaultDataScopes() throws Exception {
+        AuthCookies admin = login("admin");
+        long leadRoleId = roleIdByCode(admin, "MANAGER_LEAD");
+        long businessRoleId = roleIdByCode(admin, "BUSINESS");
+        String username = "it_scope_life_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+
+        String created = mockMvc.perform(admin.withAuth(post("/api/v1/users"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"" + username + "\",\"displayName\":\"范围同步测试\","
+                                + "\"password\":\"" + DEV_PASSWORD + "\",\"userType\":\"EMPLOYEE\","
+                                + "\"teamId\":1,\"roleIds\":[" + leadRoleId + "]}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long userId = objectMapper.readTree(created).at("/data/id").asLong();
+
+        assertThat(scopesOf(userId)).containsExactlyInAnyOrder(
+                "customer:TEAM:1", "institution:ALL:null");
+
+        // 调组 1 -> 2：customer 团队范围同步切换，不残留原组
+        long version = currentVersion(admin, username);
+        mockMvc.perform(admin.withAuth(patch("/api/v1/users/" + userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"范围同步测试\",\"teamId\":2,\"version\":" + version + "}"))
+                .andExpect(status().isOk());
+        assertThat(scopesOf(userId)).containsExactlyInAnyOrder(
+                "customer:TEAM:2", "institution:ALL:null");
+
+        // 角色切换为 BUSINESS：收回 customer 范围，保留 institution=ALL
+        mockMvc.perform(admin.withAuth(put("/api/v1/users/" + userId + "/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleIds\":[" + businessRoleId + "]}"))
+                .andExpect(status().isOk());
+        assertThat(scopesOf(userId)).containsExactly("institution:ALL:null");
+
+        // 清空角色：回收全部默认数据范围
+        mockMvc.perform(admin.withAuth(put("/api/v1/users/" + userId + "/roles"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleIds\":[]}"))
+                .andExpect(status().isOk());
+        assertThat(scopesOf(userId)).isEmpty();
+    }
+
+    private List<String> scopesOf(long userId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT resource, scope_type, scope_ref_id FROM sys_data_scope WHERE tenant_id=1 AND user_id=?",
+                userId);
+        return rows.stream()
+                .map(row -> row.get("resource") + ":" + row.get("scope_type") + ":" + row.get("scope_ref_id"))
+                .toList();
+    }
 
     @Test
     void listUsers_paginatesAndFilters() throws Exception {

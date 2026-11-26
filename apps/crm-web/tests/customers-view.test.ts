@@ -264,4 +264,61 @@ describe('CustomersView 客户中心', () => {
     expect(wrapper.text()).toContain('2026-10-26')
     expect(wrapper.text()).toContain('已到期')
   })
+
+  it('新建客户保存后清空筛选并回到第 1 页；编辑客户保存保留当前筛选与页码', async () => {
+    vi.mocked(listCustomers).mockImplementation(async (query) => ({
+      items: samplePage.items,
+      total: 40,
+      page: query.page,
+      size: query.size,
+    }))
+    const wrapper = mountView(managerUser)
+    await flushPromises()
+
+    // 设置关键词、客户等级并翻到第 2 页
+    await wrapper.find('input').setValue('旧关键词')
+    const tierSelect = wrapper.findComponent({ name: 'ElSelect' })
+    await tierSelect.vm.$emit('change', 'S')
+    await flushPromises()
+    const pagination = wrapper.findComponent({ name: 'ElPagination' })
+    await pagination.vm.$emit('current-change', 2)
+    await flushPromises()
+
+    // 点击“＋ 新建客户”并触发保存
+    vi.mocked(listCustomers).mockClear()
+    const createBtn = wrapper.findAll('button').find((b) => b.text().includes('新建客户'))
+    expect(createBtn).toBeDefined()
+    await createBtn?.trigger('click')
+    const formDrawer = wrapper.findComponent({ name: 'CustomerFormDrawer' })
+    await formDrawer.vm.$emit('saved')
+    await flushPromises()
+
+    expect(listCustomers).toHaveBeenCalledWith({
+      page: 1,
+      size: 20,
+      keyword: '',
+      tierCode: undefined,
+      followupDueBefore: undefined,
+    })
+
+    // 再次设置关键词与第 2 页后，点击“运营信息”编辑保存应保留原筛选和页码
+    await wrapper.find('input').setValue('陈女士')
+    await pagination.vm.$emit('current-change', 2)
+    await flushPromises()
+    vi.mocked(listCustomers).mockClear()
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '运营信息')
+    expect(editBtn).toBeDefined()
+    await editBtn?.trigger('click')
+    await formDrawer.vm.$emit('saved')
+    await flushPromises()
+
+    expect(listCustomers).toHaveBeenCalledWith({
+      page: 2,
+      size: 20,
+      keyword: '陈女士',
+      tierCode: undefined,
+      followupDueBefore: undefined,
+    })
+  })
 })

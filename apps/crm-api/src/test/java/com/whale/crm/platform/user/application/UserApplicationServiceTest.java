@@ -5,6 +5,8 @@ import com.whale.crm.platform.auth.domain.LoginSessionRepository;
 import com.whale.crm.platform.user.api.dto.AssignRolesRequest;
 import com.whale.crm.platform.user.api.dto.CreateUserRequest;
 import com.whale.crm.platform.user.api.dto.UpdateUserRequest;
+import com.whale.crm.platform.user.domain.DataScopeGrant;
+import com.whale.crm.platform.user.domain.DataScopeRepository;
 import com.whale.crm.platform.user.domain.RoleRepository;
 import com.whale.crm.platform.user.domain.SysRole;
 import com.whale.crm.platform.user.domain.SysUser;
@@ -42,6 +44,8 @@ class UserApplicationServiceTest {
     @Mock
     private RoleRepository roleRepository;
     @Mock
+    private DataScopeRepository dataScopeRepository;
+    @Mock
     private LoginSessionRepository loginSessionRepository;
     @Mock
     private AuditService auditService;
@@ -53,8 +57,8 @@ class UserApplicationServiceTest {
     @BeforeEach
     void setUp() {
         passwordEncoder = new BCryptPasswordEncoder();
-        service = new UserApplicationService(userRepository, roleRepository, loginSessionRepository,
-                auditService, passwordEncoder);
+        service = new UserApplicationService(userRepository, roleRepository, dataScopeRepository,
+                loginSessionRepository, auditService, passwordEncoder);
         validator = Validation.buildDefaultValidatorFactory().getValidator();
     }
 
@@ -141,6 +145,95 @@ class UserApplicationServiceTest {
     }
 
     @Test
+    void createManager_syncsDefaultSelfCustomerAndAllInstitutionScope() {
+        when(userRepository.existsByUsername(1L, "new_mgr")).thenReturn(false);
+        when(userRepository.findDefaultOrgId(1L)).thenReturn(Optional.of(1L));
+        when(userRepository.teamExists(1L, 1L)).thenReturn(true);
+        when(roleRepository.findExistingRoleIds(1L, List.of(4L))).thenReturn(List.of(4L));
+        when(roleRepository.findActiveRoleCodes(1L, 1L)).thenReturn(List.of("ADMIN"));
+        when(roleRepository.findActiveRoleCodes(1L, 101L)).thenReturn(List.of("MANAGER"));
+        doAnswer(invocation -> {
+            invocation.getArgument(0, SysUser.class).setId(101L);
+            return null;
+        }).when(userRepository).insert(any(SysUser.class));
+        SysUser persisted = user(101L, "new_mgr");
+        persisted.setTeamId(1L);
+        when(userRepository.findById(1L, 101L)).thenReturn(Optional.of(persisted));
+
+        service.create(1L, 1L, new CreateUserRequest("new_mgr", "新管家", "Pass@1234",
+                "EMPLOYEE", 1L, List.of(4L)));
+
+        verify(dataScopeRepository).replaceResourceScopes(
+                eq(1L),
+                eq(101L),
+                eq(List.of("customer", "institution")),
+                eq(List.of(
+                        new DataScopeGrant("customer", "SELF", null),
+                        new DataScopeGrant("institution", "ALL", null))));
+    }
+
+    @Test
+    void assignRoles_downgradeAndClearRevokeStaleDataScopes() {
+        SysUser target = user(88L, "role_switch");
+        target.setTeamId(1L);
+        when(userRepository.findById(1L, 88L)).thenReturn(Optional.of(target));
+        when(roleRepository.findActiveRoleCodes(1L, 1L)).thenReturn(List.of("ADMIN"));
+        when(roleRepository.findActiveRoleCodes(1L, 88L))
+                .thenReturn(List.of("ADMIN"), List.of("BUSINESS"), List.of("BUSINESS"), List.of());
+        when(roleRepository.findExistingRoleIds(1L, List.of(5L))).thenReturn(List.of(5L));
+
+        service.assignRoles(1L, 1L, 88L, new AssignRolesRequest(List.of(5L)));
+        verify(dataScopeRepository).replaceResourceScopes(
+                eq(1L),
+                eq(88L),
+                eq(List.of("customer", "institution")),
+                eq(List.of(new DataScopeGrant("institution", "ALL", null))));
+
+        service.assignRoles(1L, 1L, 88L, new AssignRolesRequest(List.of()));
+        verify(dataScopeRepository).replaceResourceScopes(
+                eq(1L),
+                eq(88L),
+                eq(List.of("customer", "institution")),
+                eq(List.of()));
+    }
+
+    @Test
+    void updateManagerLeadTeam_replacesCustomerTeamScope_andSameTeamDoesNotTouchScopes() {
+        SysUser before = user(77L, "lead_move");
+        before.setTeamId(1L);
+        SysUser afterMoved = user(77L, "lead_move");
+        afterMoved.setTeamId(2L);
+        afterMoved.setVersion(1L);
+        SysUser afterRenamed = user(77L, "lead_move");
+        afterRenamed.setTeamId(2L);
+        afterRenamed.setDisplayName("改名主管");
+        afterRenamed.setVersion(2L);
+
+        when(userRepository.findById(1L, 77L))
+                .thenReturn(Optional.of(before), Optional.of(afterMoved),
+                        Optional.of(afterMoved), Optional.of(afterRenamed));
+        when(roleRepository.findActiveRoleCodes(1L, 1L)).thenReturn(List.of("ADMIN"));
+        when(roleRepository.findActiveRoleCodes(1L, 77L)).thenReturn(List.of("MANAGER_LEAD"));
+        when(userRepository.teamExists(1L, 2L)).thenReturn(true);
+        when(userRepository.updateProfile(eq(1L), eq(77L), eq(0L), eq("主管"), eq(2L), eq(null))).thenReturn(1);
+        when(userRepository.updateProfile(eq(1L), eq(77L), eq(1L), eq("改名主管"), eq(2L), eq(null))).thenReturn(1);
+
+        service.update(1L, 1L, 77L, new UpdateUserRequest("主管", 2L, null, 0L));
+        verify(dataScopeRepository).replaceResourceScopes(
+                eq(1L),
+                eq(77L),
+                eq(List.of("customer")),
+                eq(List.of(new DataScopeGrant("customer", "TEAM", 2L))));
+
+        service.update(1L, 1L, 77L, new UpdateUserRequest("改名主管", 2L, null, 1L));
+        verify(dataScopeRepository).replaceResourceScopes(
+                eq(1L),
+                eq(77L),
+                eq(List.of("customer")),
+                eq(List.of(new DataScopeGrant("customer", "TEAM", 2L))));
+    }
+
+    @Test
     void nonAdminCannotUpdateAssignRolesOrDisableOutOfScopeUser() {
         SysUser financeUser = user(5L, "finance1");
         when(userRepository.findById(1L, 5L)).thenReturn(Optional.of(financeUser));
@@ -199,6 +292,7 @@ class UserApplicationServiceTest {
 
         service.assignRoles(1L, 20L, 30L, new AssignRolesRequest(List.of(12L)));
         verify(roleRepository).replaceUserRoles(eq(1L), eq(30L), eq(List.of(12L)));
+        verify(dataScopeRepository, never()).replaceResourceScopes(anyLong(), anyLong(), any(), any());
 
         var disableRes = service.disable(1L, 20L, 30L);
         assertThat(disableRes.status()).isEqualTo(SysUser.STATUS_DISABLED);
