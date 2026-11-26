@@ -7,6 +7,7 @@
     <result property="tenantId" column="tenant_id"/>
     <result property="orgId" column="org_id"/>
     <result property="teamId" column="team_id"/>
+    <result property="supervisorUserId" column="supervisor_user_id"/>
     <result property="username" column="username"/>
     <result property="displayName" column="display_name"/>
     <result property="passwordHash" column="password_hash"/>
@@ -23,6 +24,7 @@
     <result property="tenantId" column="tenant_id"/>
     <result property="orgId" column="org_id"/>
     <result property="teamId" column="team_id"/>
+    <result property="supervisorUserId" column="supervisor_user_id"/>
     <result property="username" column="username"/>
     <result property="displayName" column="display_name"/>
     <result property="userType" column="user_type"/>
@@ -32,10 +34,11 @@
     <result property="updatedAt" column="updated_at"/>
     <result property="version" column="version"/>
     <result property="teamName" column="team_name"/>
+    <result property="supervisorName" column="supervisor_name"/>
   </resultMap>
 
   <sql id="userColumns">
-    id, tenant_id, org_id, team_id, username, display_name, password_hash, user_type, status,
+    id, tenant_id, org_id, team_id, supervisor_user_id, username, display_name, password_hash, user_type, status,
     last_login_at, created_at, updated_at, version
   </sql>
 
@@ -112,11 +115,12 @@
   </sql>
 
   <select id="search" resultMap="UserListRowMap">
-    SELECT u.id, u.tenant_id, u.org_id, u.team_id, u.username, u.display_name,
+    SELECT u.id, u.tenant_id, u.org_id, u.team_id, u.supervisor_user_id, u.username, u.display_name,
            u.user_type, u.status, u.last_login_at, u.created_at, u.updated_at, u.version,
-           t.team_name
+           t.team_name, sup.display_name AS supervisor_name
     FROM sys_user u
     LEFT JOIN sys_team t ON t.tenant_id = u.tenant_id AND t.id = u.team_id
+    LEFT JOIN sys_user sup ON sup.tenant_id = u.tenant_id AND sup.id = u.supervisor_user_id
     WHERE u.tenant_id = #{tenantId}
     <include refid="searchFilters"/>
     ORDER BY u.id ASC
@@ -132,6 +136,55 @@
     FROM sys_team
     WHERE tenant_id = #{tenantId} AND status = 'ACTIVE'
     ORDER BY team_name, id
+  </select>
+
+  <select id="selectActiveTeamLeaderId" resultType="long">
+    SELECT t.leader_user_id
+    FROM sys_team t
+    INNER JOIN sys_user u ON u.tenant_id = t.tenant_id AND u.id = t.leader_user_id
+    WHERE t.tenant_id = #{tenantId}
+      AND t.id = #{teamId}
+      AND t.status = 'ACTIVE'
+      AND u.status = 'ACTIVE'
+      AND u.user_type = 'EMPLOYEE'
+    LIMIT 1
+  </select>
+
+  <select id="selectActiveEmployeeOptions"
+          resultType="com.whale.crm.platform.user.domain.UserRepository$SupervisorOptionRow">
+    SELECT u.id, u.username, u.display_name AS displayName, u.team_id AS teamId, t.team_name AS teamName
+    FROM sys_user u
+    LEFT JOIN sys_team t ON t.tenant_id = u.tenant_id AND t.id = u.team_id
+    WHERE u.tenant_id = #{tenantId}
+      AND u.status = 'ACTIVE'
+      AND u.user_type = 'EMPLOYEE'
+    ORDER BY u.id ASC
+  </select>
+
+  <select id="selectActiveEmployeeIdsByPermission" resultType="long">
+    SELECT DISTINCT u.id
+    FROM sys_user u
+    INNER JOIN sys_user_role ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
+    INNER JOIN sys_role r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id AND r.status = 'ACTIVE'
+    INNER JOIN sys_role_permission rp ON rp.tenant_id = r.tenant_id AND rp.role_id = r.id
+    INNER JOIN sys_permission p ON p.tenant_id = rp.tenant_id AND p.id = rp.permission_id
+    WHERE u.tenant_id = #{tenantId}
+      AND u.status = 'ACTIVE'
+      AND u.user_type = 'EMPLOYEE'
+      AND p.permission_code = #{permissionCode}
+    ORDER BY u.id ASC
+  </select>
+
+  <select id="selectActiveEmployeeIdsByRole" resultType="long">
+    SELECT DISTINCT u.id
+    FROM sys_user u
+    INNER JOIN sys_user_role ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
+    INNER JOIN sys_role r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id AND r.status = 'ACTIVE'
+    WHERE u.tenant_id = #{tenantId}
+      AND u.status = 'ACTIVE'
+      AND u.user_type = 'EMPLOYEE'
+      AND r.role_code = #{roleCode}
+    ORDER BY u.id ASC
   </select>
 
   <select id="selectStewardOptions"
@@ -173,14 +226,15 @@
 
   <insert id="insertUser" parameterType="com.whale.crm.platform.user.domain.SysUser"
           useGeneratedKeys="true" keyProperty="id">
-    INSERT INTO sys_user (tenant_id, org_id, team_id, username, display_name, password_hash, user_type, status)
-    VALUES (#{tenantId}, #{orgId}, #{teamId}, #{username}, #{displayName}, #{passwordHash}, #{userType}, #{status})
+    INSERT INTO sys_user (tenant_id, org_id, team_id, supervisor_user_id, username, display_name, password_hash, user_type, status)
+    VALUES (#{tenantId}, #{orgId}, #{teamId}, #{supervisorUserId}, #{username}, #{displayName}, #{passwordHash}, #{userType}, #{status})
   </insert>
 
   <update id="updateProfile">
     UPDATE sys_user
     SET display_name = #{displayName},
         team_id = #{teamId},
+        supervisor_user_id = #{supervisorUserId},
         <if test="passwordHash != null">
           password_hash = #{passwordHash},
         </if>

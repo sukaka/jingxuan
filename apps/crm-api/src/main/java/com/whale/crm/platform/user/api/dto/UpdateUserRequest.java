@@ -20,5 +20,11 @@ public record UpdateUserRequest(
         @Pattern(regexp = "(?s).*\\S.*", message = "密码不能为空白字符")
         String password,
 
-        @NotNull(message = "数据版本号必填") @Min(value = 0, message = "数据版本号无效") Long version) {
+        @NotNull(message = "数据版本号必填") @Min(value = 0, message = "数据版本号无效") Long version,
+
+        @Positive(message = "所选直属上级无效") Long supervisorUserId) {
+
+    public UpdateUserRequest(String displayName, Long teamId, String password, Long version) {
+        this(displayName, teamId, password, version, null);
+    }
 }

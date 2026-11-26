@@ -5,11 +5,14 @@ import { http } from './http'
 export interface AuditLogItem {
   id: number
   actorUserId: number | null
+  actorUsername?: string | null
   actionCode: string
   targetType: string
   targetId: string
-  beforeJson: unknown
-  afterJson: unknown
+  before?: unknown
+  after?: unknown
+  beforeJson?: unknown
+  afterJson?: unknown
   traceId: string | null
   clientIp: string | null
   reason: string | null

@@ -7,7 +7,16 @@ import { fenToYuan } from '../../utils/money'
 import { formatDateTime } from '../customer/shared'
 import StatusPill from '../customer/StatusPill.vue'
 import { orderSourceLabel, orderStatusLabel } from '../trading/tradingUi'
-import { mappingStatusLabel, mappingStatusTone, verificationMethodLabel } from './youzanUi'
+import {
+  mappingStatusLabel,
+  mappingStatusTone,
+  resolveYouzanOrderItems,
+  verificationMethodLabel,
+  youzanOrderItemMappingLabel,
+  youzanOrderItemQuantityText,
+  youzanOrderItemsTotalQuantity,
+  youzanOrderItemTitle,
+} from './youzanUi'
 
 const props = defineProps<{
   modelValue: boolean
@@ -18,6 +27,14 @@ const auth = useAuthStore()
 const canViewRaw = computed(() => auth.hasPermission('integration:youzan:manage'))
 const rawExpanded = ref(false)
 const hasRaw = computed(() => Boolean(props.order?.payloadMaskedJson?.trim()))
+const orderItems = computed(() => resolveYouzanOrderItems(props.order))
+const itemsSummaryLabel = computed(() => {
+  const count = orderItems.value.length
+  if (count === 0) return '共 0 项'
+  const hasAnyQuantity = orderItems.value.some((item) => item.quantity != null)
+  if (!hasAnyQuantity) return `共 ${count} 项`
+  return `共 ${count} 项 · 合计 ${youzanOrderItemsTotalQuantity(orderItems.value)} 件`
+})
 const formattedRaw = computed(() => {
   const raw = props.order?.payloadMaskedJson
   if (!raw) return ''
@@ -84,6 +101,56 @@ async function copyRaw() {
             <dd><StatusPill :text="order.orderStatus ? orderStatusLabel(order.orderStatus) : '尚未生成'" tone="info" /></dd>
           </div>
         </dl>
+      </section>
+
+      <section class="detail-section" aria-labelledby="youzan-order-items" data-testid="youzan-order-items">
+        <div class="section-header">
+          <div>
+            <h3 id="youzan-order-items">购买商品明细</h3>
+            <p>展示有赞订单商品、规格、价格与 CRM SKU 映射状态</p>
+          </div>
+          <span class="items-summary-badge" data-testid="youzan-order-items-summary">{{ itemsSummaryLabel }}</span>
+        </div>
+        <ul v-if="orderItems.length > 0" class="order-items-list">
+          <li
+            v-for="(item, index) in orderItems"
+            :key="`${item.externalSkuId || 'item'}-${index}`"
+            class="order-item-card"
+            data-testid="youzan-order-item"
+          >
+            <div class="order-item-main">
+              <div class="order-item-heading">
+                <strong class="order-item-title">{{ youzanOrderItemTitle(item, 'drawer') }}</strong>
+                <span v-if="item.skuSpec" class="order-item-spec">{{ item.skuSpec }}</span>
+              </div>
+              <div class="order-item-pricing">
+                <span class="order-item-qty">× {{ youzanOrderItemQuantityText(item.quantity) }}</span>
+                <span v-if="item.priceFen != null" class="order-item-price">单价 ¥{{ fenToYuan(item.priceFen) }}</span>
+                <span v-if="item.paymentFen != null" class="order-item-payment">小计 ¥{{ fenToYuan(item.paymentFen) }}</span>
+              </div>
+            </div>
+            <div class="order-item-meta">
+              <div class="order-item-codes">
+                <span class="order-item-code-item">
+                  <span class="order-item-code-label">外部 SKU</span>
+                  <code class="detail-identifier order-item-code">{{ item.externalSkuId || '—' }}</code>
+                </span>
+                <span v-if="item.outerSkuCode" class="order-item-code-item">
+                  <span class="order-item-code-label">商家编码</span>
+                  <code class="detail-identifier order-item-code">{{ item.outerSkuCode }}</code>
+                </span>
+              </div>
+              <span
+                class="item-mapping-pill"
+                :class="item.crmSkuId != null ? 'is-mapped' : 'is-unmapped'"
+                data-testid="youzan-item-mapping-pill"
+              >
+                {{ youzanOrderItemMappingLabel(item) }}
+              </span>
+            </div>
+          </li>
+        </ul>
+        <div v-else class="items-empty" data-testid="youzan-order-items-empty">当前订单暂无商品明细</div>
       </section>
 
       <section class="detail-section" aria-labelledby="youzan-order-payment">
@@ -203,6 +270,26 @@ async function copyRaw() {
 .detail-item dd { margin: 0; color: #263f3a; font-size: 13px; font-weight: 600; line-height: 1.65; overflow-wrap: anywhere; word-break: break-word; }
 .detail-identifier { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500 !important; }
 .detail-item-wide { grid-column: 1 / -1; }
+.items-summary-badge { display: inline-flex; align-items: center; flex-shrink: 0; padding: 4px 10px; border: 1px solid #cce0db; border-radius: 999px; background: #eef7f5; color: #175c55; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.order-items-list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.order-item-card { min-width: 0; padding: 13px 14px; border: 1px solid #e3ece8; border-radius: 10px; background: #fafcfa; }
+.order-item-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.order-item-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; flex: 1; }
+.order-item-title { color: #173f3a; font-size: 14px; font-weight: 700; line-height: 1.5; overflow-wrap: anywhere; word-break: break-word; }
+.order-item-spec { display: inline-flex; max-width: 100%; padding: 2px 8px; border: 1px solid #d9e6e2; border-radius: 6px; background: #f1f7f5; color: #476862; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
+.order-item-pricing { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.order-item-qty { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; background: #e8f4f1; color: #175c55; font-size: 12px; font-weight: 700; }
+.order-item-price { color: #5d746e; font-size: 12px; line-height: 1.5; }
+.order-item-payment { color: #173f3a; font-size: 13px; font-weight: 700; line-height: 1.5; }
+.order-item-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e2ebe7; }
+.order-item-codes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; }
+.order-item-code-item { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; font-size: 12px; }
+.order-item-code-label { color: #7c908b; flex-shrink: 0; }
+.order-item-code { color: #2c4a44; font-size: 12px; overflow-wrap: anywhere; word-break: break-word; }
+.item-mapping-pill { display: inline-flex; align-items: center; max-width: 100%; padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 700; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
+.item-mapping-pill.is-mapped { border: 1px solid #c3e2d8; background: #e7f6f1; color: #175c55; }
+.item-mapping-pill.is-unmapped { border: 1px solid #dfe5e8; background: #f0f4f5; color: #647882; }
+.items-empty { padding: 14px; border: 1px dashed #d6e3df; border-radius: 9px; background: #fafcfa; color: #7a8e89; font-size: 13px; text-align: center; }
 .amount-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .amount-card { min-width: 0; padding: 15px 16px; border: 1px solid; border-radius: 11px; }
 .amount-card > span { display: block; margin-bottom: 8px; color: #6f817c; font-size: 12px; }
@@ -221,8 +308,36 @@ async function copyRaw() {
 .raw-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .admin-badge { padding: 2px 7px; border: 1px solid #e4d2ad; border-radius: 5px; background: #fff8e9; color: #936726; font-size: 11px; }
 .raw-header { align-items: center; margin-bottom: 0; }
-.proto-page .raw-header :deep(.raw-toggle) { color: #fff; }
-.proto-page .raw-header :deep(.raw-toggle:hover), .proto-page .raw-header :deep(.raw-toggle:focus-visible), .proto-page .raw-header :deep(.raw-toggle:active) { color: #fff; }
+.youzan-order-detail .raw-header :deep(.raw-toggle.el-button) {
+  --el-button-text-color: #175c55;
+  --el-button-hover-text-color: #0f443f;
+  --el-button-active-text-color: #0b3632;
+  --el-button-bg-color: #f2f8f7;
+  --el-button-hover-bg-color: #eaf4f2;
+  --el-button-active-bg-color: #dceee9;
+  --el-button-border-color: #c5ddd8;
+  --el-button-hover-border-color: #96c2ba;
+  --el-button-active-border-color: #77aea4;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid #c5ddd8;
+  border-radius: 8px;
+  background-color: #f2f8f7;
+  color: #175c55;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.youzan-order-detail .raw-header :deep(.raw-toggle.el-button:hover),
+.youzan-order-detail .raw-header :deep(.raw-toggle.el-button:focus-visible) {
+  border-color: #96c2ba;
+  background-color: #eaf4f2;
+  color: #0f443f;
+}
+.youzan-order-detail .raw-header :deep(.raw-toggle.el-button:active) {
+  border-color: #77aea4;
+  background-color: #dceee9;
+  color: #0b3632;
+}
 .raw-content { min-width: 0; margin-top: 14px; }
 .raw-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; color: #81928e; font-size: 11px; }
 .youzan-raw { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; max-height: 360px; overflow-x: hidden; overflow-y: auto; margin: 0; padding: 14px; border-radius: 10px; background: #142f2c; color: #e2eeea; font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
@@ -233,6 +348,9 @@ async function copyRaw() {
   .detail-item-wide { grid-column: auto; }
   .section-header, .raw-header { flex-direction: column; }
   .raw-header :deep(.el-button) { align-self: flex-start; margin-left: 0; }
+  .order-item-main { flex-direction: column; }
+  .order-item-pricing { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px 10px; text-align: left; }
+  .order-item-meta { align-items: flex-start; flex-direction: column; }
   .payment-verification, .raw-toolbar { align-items: flex-start; flex-direction: column; }
   .payment-verification strong { text-align: left; }
   .amount-value { font-size: 23px; }

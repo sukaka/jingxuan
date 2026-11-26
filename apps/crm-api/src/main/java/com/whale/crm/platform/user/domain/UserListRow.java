@@ -12,6 +12,7 @@ public class UserListRow {
     private Long tenantId;
     private Long orgId;
     private Long teamId;
+    private Long supervisorUserId;
     private String username;
     private String displayName;
     private String userType;
@@ -21,6 +22,7 @@ public class UserListRow {
     private Instant updatedAt;
     private Long version;
     private String teamName;
+    private String supervisorName;
 
     public Long getId() {
         return id;
@@ -124,5 +126,21 @@ public class UserListRow {
 
     public void setTeamName(String teamName) {
         this.teamName = teamName;
+    }
+
+    public Long getSupervisorUserId() {
+        return supervisorUserId;
+    }
+
+    public void setSupervisorUserId(Long supervisorUserId) {
+        this.supervisorUserId = supervisorUserId;
+    }
+
+    public String getSupervisorName() {
+        return supervisorName;
+    }
+
+    public void setSupervisorName(String supervisorName) {
+        this.supervisorName = supervisorName;
     }
 }

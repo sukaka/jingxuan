@@ -4,6 +4,13 @@ import { http } from './http'
 export interface YouzanOrderLineItem {
   external_sku_id: string
   quantity: number
+  itemTitle?: string | null
+  skuSpec?: string | null
+  priceFen?: number | null
+  paymentFen?: number | null
+  outerSkuCode?: string | null
+  crmSkuId?: number | null
+  crmSkuName?: string | null
 }
 
 export interface YouzanOrderView {

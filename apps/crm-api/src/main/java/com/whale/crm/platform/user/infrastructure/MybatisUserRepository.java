@@ -72,6 +72,26 @@ public class MybatisUserRepository implements UserRepository {
     }
 
     @Override
+    public Optional<Long> findActiveTeamLeaderId(long tenantId, long teamId) {
+        return Optional.ofNullable(userMapper.selectActiveTeamLeaderId(tenantId, teamId));
+    }
+
+    @Override
+    public List<SupervisorOptionRow> findActiveEmployeeOptions(long tenantId) {
+        return userMapper.selectActiveEmployeeOptions(tenantId);
+    }
+
+    @Override
+    public List<Long> findActiveEmployeeIdsByPermission(long tenantId, String permissionCode) {
+        return userMapper.selectActiveEmployeeIdsByPermission(tenantId, permissionCode);
+    }
+
+    @Override
+    public List<Long> findActiveEmployeeIdsByRole(long tenantId, String roleCode) {
+        return userMapper.selectActiveEmployeeIdsByRole(tenantId, roleCode);
+    }
+
+    @Override
     public List<StewardOptionRow> findStewardOptions(long tenantId, java.util.Collection<String> roleCodes,
                                                      Long teamIdEq, Long userIdEq) {
         return userMapper.selectStewardOptions(tenantId, roleCodes, teamIdEq, userIdEq);
@@ -101,8 +121,9 @@ public class MybatisUserRepository implements UserRepository {
     }
 
     @Override
-    public int updateProfile(long tenantId, long id, long version, String displayName, Long teamId, String passwordHash) {
-        return userMapper.updateProfile(tenantId, id, version, displayName, teamId, passwordHash);
+    public int updateProfile(long tenantId, long id, long version, String displayName, Long teamId,
+                             Long supervisorUserId, String passwordHash) {
+        return userMapper.updateProfile(tenantId, id, version, displayName, teamId, supervisorUserId, passwordHash);
     }
 
     @Override

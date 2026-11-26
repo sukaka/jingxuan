@@ -2,6 +2,7 @@ package com.whale.crm.exporting.application;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.whale.crm.customer.application.CustomerPrivacyFieldSupport;
 import com.whale.crm.customer.application.MobileSupport;
 import com.whale.crm.exporting.domain.ExportAccessLog;
 import com.whale.crm.exporting.domain.ExportColumn;
@@ -50,6 +51,7 @@ public class ExportExecutionService {
     private final ExportFileService fileService;
     private final CurrentUserService currentUserService;
     private final MobileSupport mobileSupport;
+    private final CustomerPrivacyFieldSupport privacyFieldSupport;
     private final ObjectMapper objectMapper;
     private final ExportProperties properties;
     private final TransactionTemplate transactions;
@@ -59,6 +61,19 @@ public class ExportExecutionService {
                                   ExportScopeService scopeService, ExportColumnPolicy columnPolicy,
                                   CsvEncoder csvEncoder, ExportFileService fileService,
                                   CurrentUserService currentUserService, MobileSupport mobileSupport,
+                                  ObjectMapper objectMapper, ExportProperties properties,
+                                  PlatformTransactionManager transactionManager,
+                                  long leaseSeconds) {
+        this(repository, dataRepository, scopeService, columnPolicy, csvEncoder, fileService,
+                currentUserService, mobileSupport, null, objectMapper, properties, transactionManager, leaseSeconds);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ExportExecutionService(ExportJobRepository repository, ExportDataRepository dataRepository,
+                                  ExportScopeService scopeService, ExportColumnPolicy columnPolicy,
+                                  CsvEncoder csvEncoder, ExportFileService fileService,
+                                  CurrentUserService currentUserService, MobileSupport mobileSupport,
+                                  CustomerPrivacyFieldSupport privacyFieldSupport,
                                   ObjectMapper objectMapper, ExportProperties properties,
                                   PlatformTransactionManager transactionManager,
                                   @org.springframework.beans.factory.annotation.Value(
@@ -71,6 +86,7 @@ public class ExportExecutionService {
         this.fileService = fileService;
         this.currentUserService = currentUserService;
         this.mobileSupport = mobileSupport;
+        this.privacyFieldSupport = privacyFieldSupport;
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.transactions = new TransactionTemplate(transactionManager);
@@ -181,8 +197,17 @@ public class ExportExecutionService {
         Map<String, Object> safe = new HashMap<>(row);
         safe.remove("rowId");
         if (type == ExportType.CUSTOMER) {
-            Object cipher = safe.remove("mobileCipher");
-            safe.put("mobile", cipher == null ? null : mobileSupport.maskFromCipher(cipher.toString()));
+            Object mobileCipher = safe.remove("mobileCipher");
+            Object idCardCipher = safe.remove("idCardCipher");
+            Object emailCipher = safe.remove("emailCipher");
+            Object wechatIdCipher = safe.remove("wechatIdCipher");
+            safe.put("mobile", mobileCipher == null ? null : mobileSupport.maskFromCipher(mobileCipher.toString()));
+            safe.put("idCard", idCardCipher == null || privacyFieldSupport == null
+                    ? null : privacyFieldSupport.maskIdCardFromCipher(idCardCipher.toString()));
+            safe.put("email", emailCipher == null || privacyFieldSupport == null
+                    ? null : privacyFieldSupport.maskEmailFromCipher(emailCipher.toString()));
+            safe.put("wechatId", wechatIdCipher == null || privacyFieldSupport == null
+                    ? null : privacyFieldSupport.maskWechatIdFromCipher(wechatIdCipher.toString()));
         }
         return safe;
     }

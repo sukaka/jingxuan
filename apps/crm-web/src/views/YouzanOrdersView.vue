@@ -32,7 +32,17 @@ import YouzanSkuMappingPanel from './youzan/YouzanSkuMappingPanel.vue'
 import YouzanSyncIssuePanel from './youzan/YouzanSyncIssuePanel.vue'
 import YouzanSyncJobPanel from './youzan/YouzanSyncJobPanel.vue'
 import YouzanSyncPolicyPanel from './youzan/YouzanSyncPolicyPanel.vue'
-import { createYouzanKey, extractUnmappedExternalSkuId, isMappingSuccess, mappingStatusLabel, mappingStatusTone } from './youzan/youzanUi'
+import {
+  createYouzanKey,
+  extractUnmappedExternalSkuId,
+  isMappingSuccess,
+  mappingStatusLabel,
+  mappingStatusTone,
+  resolveYouzanOrderItems,
+  youzanOrderItemQuantityText,
+  youzanOrderItemsTotalQuantity,
+  youzanOrderItemTitle,
+} from './youzan/youzanUi'
 import { orderTypeLabel, tradingErrorText } from './trading/tradingUi'
 import { orderTypeTone } from '../utils/tagTone'
 import { fenToYuan } from '../utils/money'
@@ -201,14 +211,33 @@ function buyerSubline(row: YouzanOrderView): string {
   if (data.nickname != null && data.nickname !== '') return extId || '—'
   return extId ? '有赞外部客户' : '—'
 }
-function orderItemsOf(row: YouzanOrderView): Array<{ external_sku_id?: unknown; quantity?: unknown }> {
-  if (Array.isArray(row.items) && row.items.length > 0) return row.items
-  const items = raw(row).items
-  return Array.isArray(items) ? (items as Array<{ external_sku_id?: unknown; quantity?: unknown }>) : []
+function goodsPrimary(row: YouzanOrderView): string {
+  const items = resolveYouzanOrderItems(row)
+  if (items.length === 0) return '—'
+  const first = items[0]
+  return `${youzanOrderItemTitle(first, 'table')} × ${youzanOrderItemQuantityText(first.quantity)}`
 }
-function goods(row: YouzanOrderView) {
-  const items = orderItemsOf(row)
-  return items.length > 0 ? items.map((line) => `${text(line.external_sku_id)} × ${text(line.quantity)}`).join('、') : '—'
+function goodsCountBadge(row: YouzanOrderView): string | null {
+  const items = resolveYouzanOrderItems(row)
+  return items.length > 1 ? `共 ${items.length} 项` : null
+}
+function goodsSubline(row: YouzanOrderView): string | null {
+  const items = resolveYouzanOrderItems(row)
+  if (items.length === 0) return null
+  const first = items[0]
+  const parts: string[] = []
+  if (first.skuSpec) parts.push(first.skuSpec)
+  const hasReadableTitle = Boolean(first.itemTitle || first.crmSkuName)
+  if (hasReadableTitle && first.externalSkuId) parts.push(`SKU ${first.externalSkuId}`)
+  if (items.length > 1) {
+    const totalQty = youzanOrderItemsTotalQuantity(items)
+    if (totalQty > 0) parts.push(`合计 ${totalQty} 件`)
+    const second = items[1]
+    const secondTitle = youzanOrderItemTitle(second, 'table')
+    const secondQty = youzanOrderItemQuantityText(second.quantity)
+    parts.push(items.length === 2 ? `另含 ${secondTitle} × ${secondQty}` : `另含 ${secondTitle} 等 ${items.length - 1} 项`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 function orderTypeOf(row: YouzanOrderView) {
   return text(row.orderTypeCode ?? raw(row).order_type_code)
@@ -250,9 +279,9 @@ function matchAndSync(row: YouzanOrderView) {
     return
   }
   const activeMapped = new Set(mappings.value.filter((item) => item.status === 'ACTIVE').map((item) => item.externalSkuId))
-  const items = orderItemsOf(row)
-  const missing = items.find((line) => typeof line.external_sku_id === 'string' && !activeMapped.has(line.external_sku_id))
-  const skuId = missing?.external_sku_id ?? items[0]?.external_sku_id ?? extractUnmappedExternalSkuId(row.errorReason)
+  const items = resolveYouzanOrderItems(row)
+  const missing = items.find((line) => line.externalSkuId && !activeMapped.has(line.externalSkuId))
+  const skuId = missing?.externalSkuId || items[0]?.externalSkuId || extractUnmappedExternalSkuId(row.errorReason)
   if (typeof skuId === 'string' && skuId.trim()) {
     openSkuMappingWithPrefill(skuId)
     return
@@ -687,7 +716,7 @@ onMounted(() => {
       <div class="proto-stat-grid"><StatCard label="今日拉取" :value="`${report?.todayEvents ?? 0} 单`" sub="按实际接收时间" icon="bag" /><StatCard label="待匹配" :value="`${pendingMatches} 单`" sub="需要确认 CRM 客户" icon="users" /><StatCard label="同步异常" :value="`${syncErrors} 单`" sub="商品映射或支付核验异常" icon="shield" /><StatCard label="活动订单" :value="`${report?.campaignOrders ?? 0} 单`" sub="保留活动与批次归属" icon="activity" /></div>
       <div class="proto-toolbar shop-card">
         <div class="proto-toolbar-left">
-          <el-input v-model="shopId" placeholder="请输入有赞店铺编号（kdt_id）" data-testid="youzan-shop-id" @keyup.enter="search" />
+          <el-input v-model="shopId" placeholder="请输入有赞店铺编号（kdt_id）" class="shop-input" data-testid="youzan-shop-id" @keyup.enter="search" />
           <el-button @click="search">查询</el-button>
           <div v-if="shops.length > 0" class="youzan-quick-shops" data-testid="youzan-quick-shops">
             <span class="youzan-quick-shops__label">已配置店铺：</span>
@@ -726,7 +755,17 @@ onMounted(() => {
             <app-table v-loading="orderLoading" :data="orders" :row-key="orderRowKey">
               <el-table-column prop="externalOrderNo" label="有赞订单号" min-width="160" />
               <el-table-column label="客户昵称 / 手机" min-width="135"><template #default="{row}">{{ buyerHeadline(row) }}<div class="proto-subcell">{{ buyerSubline(row) }}</div></template></el-table-column>
-              <el-table-column label="商品" min-width="155"><template #default="{row}">{{ goods(row) }}</template></el-table-column>
+              <el-table-column label="商品" min-width="210">
+                <template #default="{row}">
+                  <div class="youzan-goods-cell" data-testid="youzan-order-goods">
+                    <div class="youzan-goods-head">
+                      <span class="youzan-goods-title">{{ goodsPrimary(row) }}</span>
+                      <span v-if="goodsCountBadge(row)" class="youzan-goods-count">{{ goodsCountBadge(row) }}</span>
+                    </div>
+                    <div v-if="goodsSubline(row)" class="proto-subcell youzan-goods-sub">{{ goodsSubline(row) }}</div>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column label="实付" width="95" align="right"><template #default="{row}">{{ fenToYuan(row.externalAmountFen) }}</template></el-table-column>
               <el-table-column label="订单类型" width="110"><template #default="{row}"><span class="proto-pill" :class="orderTypeTone(orderTypeOf(row))">{{ orderTypeLabel(orderTypeOf(row)) }}</span></template></el-table-column>
               <el-table-column label="活动 / 批次" min-width="110"><template #default="{row}">活动 #{{ campaignIdOf(row) }}<div class="proto-subcell">批次 #{{ campaignBatchIdOf(row) }}</div></template></el-table-column>
@@ -840,4 +879,9 @@ onMounted(() => {
 .youzan-real-banner strong { display: block; margin-bottom: 6px; color: #173f3a; font-size: 14px; }
 .youzan-real-banner p { margin: 0; color: #4c6d67; font-size: 12px; line-height: 1.75; }
 .youzan-real-badge { display: inline-flex; margin-bottom: 8px; padding: 3px 8px; border-radius: 6px; background: #1e6b63; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .5px; }
+.youzan-goods-cell { min-width: 0; }
+.youzan-goods-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.youzan-goods-title { color: #1f3c47; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.youzan-goods-count { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid #cce0db; border-radius: 999px; background: #eef7f5; color: #175c55; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.youzan-goods-sub { line-height: 1.5; overflow-wrap: anywhere; }
 </style>

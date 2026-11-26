@@ -80,6 +80,7 @@ public class CustomerApplicationService {
     private final UserRepository userRepository;
     private final CustomerScopeSupport scopeSupport;
     private final MobileSupport mobileSupport;
+    private final CustomerPrivacyFieldSupport privacyFieldSupport;
     private final AuditService auditService;
     private final DictionaryApplicationService dictionaryService;
     private final IdempotencyService idempotencyService;
@@ -136,7 +137,6 @@ public class CustomerApplicationService {
                 uniquenessService, null);
     }
 
-    @Autowired
     public CustomerApplicationService(CustomerRepository customerRepository,
                                       CustomerIdentityRepository identityRepository,
                                       CustomerTagRepository tagRepository,
@@ -155,6 +155,32 @@ public class CustomerApplicationService {
                                       CustomerProjectSupport projectSupport,
                                       CustomerUniquenessService uniquenessService,
                                       ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider) {
+        this(customerRepository, identityRepository, tagRepository, ownerHistoryRepository, pointsLedgerRepository,
+                userRepository, scopeSupport, mobileSupport, null, auditService, dictionaryService, idempotencyService,
+                objectMapper, stewardDirectory, tierReviewService, attentionProjectRepository, projectSupport,
+                uniquenessService, tagSyncPortProvider);
+    }
+
+    @Autowired
+    public CustomerApplicationService(CustomerRepository customerRepository,
+                                      CustomerIdentityRepository identityRepository,
+                                      CustomerTagRepository tagRepository,
+                                      CustomerOwnerHistoryRepository ownerHistoryRepository,
+                                      PointsLedgerRepository pointsLedgerRepository,
+                                      UserRepository userRepository,
+                                      CustomerScopeSupport scopeSupport,
+                                      MobileSupport mobileSupport,
+                                      CustomerPrivacyFieldSupport privacyFieldSupport,
+                                      AuditService auditService,
+                                      DictionaryApplicationService dictionaryService,
+                                      IdempotencyService idempotencyService,
+                                      ObjectMapper objectMapper,
+                                      StewardDirectory stewardDirectory,
+                                      CustomerTierReviewService tierReviewService,
+                                      CustomerAttentionProjectRepository attentionProjectRepository,
+                                      CustomerProjectSupport projectSupport,
+                                      CustomerUniquenessService uniquenessService,
+                                      ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider) {
         this.customerRepository = customerRepository;
         this.identityRepository = identityRepository;
         this.tagRepository = tagRepository;
@@ -163,6 +189,7 @@ public class CustomerApplicationService {
         this.userRepository = userRepository;
         this.scopeSupport = scopeSupport;
         this.mobileSupport = mobileSupport;
+        this.privacyFieldSupport = privacyFieldSupport;
         this.auditService = auditService;
         this.dictionaryService = dictionaryService;
         this.idempotencyService = idempotencyService;
@@ -196,12 +223,16 @@ public class CustomerApplicationService {
         if (scopeSupport.isEmptyScope(scope)) {
             return new PageResponse<>(List.of(), 0, page, size);
         }
-        String mobileHashKeyword = mobileSupport.looksLikeMobile(keyword)
-                ? mobileSupport.hash(mobileSupport.normalize(keyword)) : null;
+        CustomerPrivacyFieldSupport.PrivacySearchHashes hashes = privacyFieldSupport != null
+                ? privacyFieldSupport.extractSearchHashes(keyword)
+                : new CustomerPrivacyFieldSupport.PrivacySearchHashes(
+                        mobileSupport.looksLikeMobile(keyword) ? mobileSupport.hash(mobileSupport.normalize(keyword)) : null,
+                        null, null, null);
         CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
         int offset = (page - 1) * size;
         List<CustomerListRow> rows = customerRepository.search(tenantId, query.scopeType(), query.teamIds(),
-                query.selfId(), keyword, mobileHashKeyword, status, cityCode, sourceCode, channelCode, tierCode,
+                query.selfId(), keyword, hashes.mobileHash(), hashes.idCardHash(), hashes.emailHash(),
+                hashes.wechatIdHash(), status, cityCode, sourceCode, channelCode, tierCode,
                 ownerId, followupDueBefore, normalizedTagCodes, normalizedTagMatchMode, offset, size);
         Map<Long, CustomerStewardSummaryResponse> stewardSummaries = Map.of();
         if (uniquenessService != null && uniquenessService.canView(user) && !rows.isEmpty()) {
@@ -214,7 +245,8 @@ public class CustomerApplicationService {
                 .map(row -> toListItem(row, finalSummaries.get(row.getId())))
                 .toList();
         long total = customerRepository.countSearch(tenantId, query.scopeType(), query.teamIds(), query.selfId(),
-                keyword, mobileHashKeyword, status, cityCode, sourceCode, channelCode, tierCode, ownerId,
+                keyword, hashes.mobileHash(), hashes.idCardHash(), hashes.emailHash(), hashes.wechatIdHash(),
+                status, cityCode, sourceCode, channelCode, tierCode, ownerId,
                 followupDueBefore, normalizedTagCodes, normalizedTagMatchMode);
         return new PageResponse<>(items, total, page, size);
     }
@@ -238,7 +270,12 @@ public class CustomerApplicationService {
         if (!hasNickname && !hasDisplayName) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "昵称与客户称呼至少填写一项");
         }
-        String mobile = mobileSupport.normalize(request.mobile());
+        String mobile = privacyFieldSupport != null
+                ? privacyFieldSupport.normalizeMobile(request.mobile())
+                : mobileSupport.normalize(request.mobile());
+        String idCard = privacyFieldSupport != null ? privacyFieldSupport.normalizeIdCard(request.idCard()) : null;
+        String email = privacyFieldSupport != null ? privacyFieldSupport.normalizeEmail(request.email()) : null;
+        String wechatId = privacyFieldSupport != null ? privacyFieldSupport.normalizeWechatId(request.wechatId()) : null;
         boolean canDefaultToSelf = user.roles().contains("MANAGER") || user.roles().contains("MANAGER_LEAD");
         if (request.ownerStaffId() == null && !canDefaultToSelf) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请选择所属管家");
@@ -270,6 +307,14 @@ public class CustomerApplicationService {
         customer.setRemarkName(blankToNull(request.remarkName()));
         customer.setMobileCipher(mobileSupport.encrypt(mobile));
         customer.setMobileHash(mobileSupport.hash(mobile));
+        if (privacyFieldSupport != null) {
+            customer.setIdCardCipher(privacyFieldSupport.encrypt(idCard));
+            customer.setIdCardHash(privacyFieldSupport.hashIdCard(idCard));
+            customer.setEmailCipher(privacyFieldSupport.encrypt(email));
+            customer.setEmailHash(privacyFieldSupport.hashEmail(email));
+            customer.setWechatIdCipher(privacyFieldSupport.encrypt(wechatId));
+            customer.setWechatIdHash(privacyFieldSupport.hashWechatId(wechatId));
+        }
         customer.setCityCode(blankToNull(request.cityCode()));
         customer.setSourceCode(blankToNull(request.sourceCode()));
         customer.setChannelCode(blankToNull(request.channelCode()));
@@ -351,13 +396,40 @@ public class CustomerApplicationService {
         updated.setNickname(request.nickname() != null ? blankToNull(request.nickname()) : existing.getNickname());
         updated.setRemarkName(request.remarkName() != null ? blankToNull(request.remarkName()) : existing.getRemarkName());
         if (request.mobile() != null) {
-            // 空字符串 = 清除手机号；否则归一化后重新加密+盲索引
-            String mobile = request.mobile().isBlank() ? null : mobileSupport.normalize(request.mobile());
+            // 空字符串 = 清除手机号；否则归一化后重新加密+盲索引（拒绝含 * 脱敏占位符）
+            String mobile = request.mobile().isBlank() ? null
+                    : (privacyFieldSupport != null ? privacyFieldSupport.normalizeMobile(request.mobile())
+                            : mobileSupport.normalize(request.mobile()));
             updated.setMobileCipher(mobileSupport.encrypt(mobile));
             updated.setMobileHash(mobileSupport.hash(mobile));
         } else {
             updated.setMobileCipher(existing.getMobileCipher());
             updated.setMobileHash(existing.getMobileHash());
+        }
+        if (request.idCard() != null && privacyFieldSupport != null) {
+            String idCard = request.idCard().isBlank() ? null : privacyFieldSupport.normalizeIdCard(request.idCard());
+            updated.setIdCardCipher(privacyFieldSupport.encrypt(idCard));
+            updated.setIdCardHash(privacyFieldSupport.hashIdCard(idCard));
+        } else {
+            updated.setIdCardCipher(existing.getIdCardCipher());
+            updated.setIdCardHash(existing.getIdCardHash());
+        }
+        if (request.email() != null && privacyFieldSupport != null) {
+            String email = request.email().isBlank() ? null : privacyFieldSupport.normalizeEmail(request.email());
+            updated.setEmailCipher(privacyFieldSupport.encrypt(email));
+            updated.setEmailHash(privacyFieldSupport.hashEmail(email));
+        } else {
+            updated.setEmailCipher(existing.getEmailCipher());
+            updated.setEmailHash(existing.getEmailHash());
+        }
+        if (request.wechatId() != null && privacyFieldSupport != null) {
+            String wechatId = request.wechatId().isBlank() ? null
+                    : privacyFieldSupport.normalizeWechatId(request.wechatId());
+            updated.setWechatIdCipher(privacyFieldSupport.encrypt(wechatId));
+            updated.setWechatIdHash(privacyFieldSupport.hashWechatId(wechatId));
+        } else {
+            updated.setWechatIdCipher(existing.getWechatIdCipher());
+            updated.setWechatIdHash(existing.getWechatIdHash());
         }
         updated.setCityCode(request.cityCode() != null ? blankToNull(request.cityCode()) : existing.getCityCode());
         updated.setSourceCode(request.sourceCode() != null ? blankToNull(request.sourceCode()) : existing.getSourceCode());
@@ -655,7 +727,11 @@ public class CustomerApplicationService {
                 ? stewardSummary.stewards().stream().map(CustomerStewardRelationItemResponse::staffName).toList()
                 : null;
         return new CustomerListItemResponse(row.getId(), row.getCustomerNo(), row.getDisplayName(),
-                row.getNickname(), mobileSupport.maskFromCipher(row.getMobileCipher()), row.getCityCode(),
+                row.getNickname(), mobileSupport.maskFromCipher(row.getMobileCipher()),
+                privacyFieldSupport == null ? null : privacyFieldSupport.maskIdCardFromCipher(row.getIdCardCipher()),
+                privacyFieldSupport == null ? null : privacyFieldSupport.maskEmailFromCipher(row.getEmailCipher()),
+                privacyFieldSupport == null ? null : privacyFieldSupport.maskWechatIdFromCipher(row.getWechatIdCipher()),
+                row.getCityCode(),
                 row.getCustomerStatus(), row.getTierCode(), row.getIntentLevel(), row.getOwnerStaffId(),
                 row.getOwnerName(), row.getTeamId(), row.getPointsCached(), row.getLastFollowupAt(),
                 row.getCreatedAt(), row.getVersion(), row.getSourceCode(), row.getChannelCode(), row.getSpendingLevel(),
@@ -681,6 +757,9 @@ public class CustomerApplicationService {
                 ? stewardSummary.stewards() : null;
         return new CustomerDetailResponse(customer.getId(), customer.getCustomerNo(), customer.getDisplayName(),
                 customer.getNickname(), mobileSupport.maskFromCipher(customer.getMobileCipher()),
+                privacyFieldSupport == null ? null : privacyFieldSupport.maskIdCardFromCipher(customer.getIdCardCipher()),
+                privacyFieldSupport == null ? null : privacyFieldSupport.maskEmailFromCipher(customer.getEmailCipher()),
+                privacyFieldSupport == null ? null : privacyFieldSupport.maskWechatIdFromCipher(customer.getWechatIdCipher()),
                 customer.getCityCode(), customer.getCustomerStatus(), customer.getTierCode(),
                 customer.getIntentLevel(), customer.getOwnerStaffId(), ownerName, customer.getTeamId(),
                 customer.getPointsCached(), customer.getLastFollowupAt(), customer.getCreatedAt(),
@@ -694,7 +773,7 @@ public class CustomerApplicationService {
     }
 
     /**
-     * 审计快照（白名单字段）：绝不包含手机号明文/密文/哈希。
+     * 审计快照（白名单字段）：绝不包含手机号、身份证号、邮箱、微信号明文/密文/哈希。
      */
     Map<String, Object> customerSnapshot(Customer customer) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
@@ -705,6 +784,15 @@ public class CustomerApplicationService {
         snapshot.put("remarkName", customer.getRemarkName());
         snapshot.put("hasMobile", customer.getMobileCipher() != null);
         snapshot.put("mobileMasked", mobileSupport.maskFromCipher(customer.getMobileCipher()));
+        snapshot.put("hasIdCard", customer.getIdCardCipher() != null);
+        snapshot.put("idCardMasked", privacyFieldSupport == null ? null
+                : privacyFieldSupport.maskIdCardFromCipher(customer.getIdCardCipher()));
+        snapshot.put("hasEmail", customer.getEmailCipher() != null);
+        snapshot.put("emailMasked", privacyFieldSupport == null ? null
+                : privacyFieldSupport.maskEmailFromCipher(customer.getEmailCipher()));
+        snapshot.put("hasWechatId", customer.getWechatIdCipher() != null);
+        snapshot.put("wechatIdMasked", privacyFieldSupport == null ? null
+                : privacyFieldSupport.maskWechatIdFromCipher(customer.getWechatIdCipher()));
         snapshot.put("cityCode", customer.getCityCode());
         snapshot.put("sourceCode", customer.getSourceCode());
         snapshot.put("channelCode", customer.getChannelCode());

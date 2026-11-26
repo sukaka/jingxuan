@@ -66,6 +66,14 @@ public class AuditService {
     public static final String ACTION_WECOM_CUSTOMER_TAG_PUSH = "WECOM_CUSTOMER_TAG_PUSH";
     public static final String ACTION_YOUZAN_CUSTOMER_SYNC = "YOUZAN_CUSTOMER_SYNC";
     public static final String ACTION_YOUZAN_CUSTOMER_CURSOR_RESET = "YOUZAN_CUSTOMER_CURSOR_RESET";
+    public static final String ACTION_CUSTOMER_PRIVACY_REQUEST = "CUSTOMER_PRIVACY_REQUEST";
+    public static final String ACTION_CUSTOMER_PRIVACY_CANCEL = "CUSTOMER_PRIVACY_CANCEL";
+    public static final String ACTION_CUSTOMER_PRIVACY_APPROVE = "CUSTOMER_PRIVACY_APPROVE";
+    public static final String ACTION_CUSTOMER_PRIVACY_REJECT = "CUSTOMER_PRIVACY_REJECT";
+    public static final String ACTION_CUSTOMER_PRIVACY_REVOKE = "CUSTOMER_PRIVACY_REVOKE";
+    public static final String ACTION_CUSTOMER_PRIVACY_REVEAL = "CUSTOMER_PRIVACY_REVEAL";
+    public static final String ACTION_CUSTOMER_PRIVACY_ADMIN_REVEAL = "CUSTOMER_PRIVACY_ADMIN_REVEAL";
+    public static final String ACTION_CUSTOMER_PRIVACY_REVEAL_DENIED = "CUSTOMER_PRIVACY_REVEAL_DENIED";
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 

@@ -182,14 +182,34 @@ public class LegacyProfileApplicationService {
                 availability = PENDING_DOMAIN;
             }
         }
-        // legacy 扩展已有原值（原 23 字段原文）时优先展示
+        // legacy 扩展已有原值（原 23 字段原文）时优先展示；涉及隐私字段强制脱敏，绝不透传明文
         if (legacyValue != null && (value == null || PENDING_IMPORT.equals(availability))) {
-            value = legacyValue;
+            value = maskLegacyValueIfSensitive(mapping.getFieldKey(), legacyValue);
             availability = AVAILABLE;
         }
         return new LegacyProfileItemResponse(mapping.getFieldKey(), mapping.getOriginalName(),
                 mapping.getOriginalTable(), mapping.getTargetField(), mapping.getSourceFormula(),
                 value, availability);
+    }
+
+    private String maskLegacyValueIfSensitive(String fieldKey, String legacyValue) {
+        if (legacyValue == null || legacyValue.isBlank() || fieldKey == null) {
+            return legacyValue;
+        }
+        String key = fieldKey.toUpperCase(java.util.Locale.ROOT);
+        if (key.contains("MOBILE") || key.contains("PHONE") || key.contains("TEL")) {
+            return CustomerPrivacyFieldSupport.maskRawLegacyMobile(legacyValue);
+        }
+        if (key.contains("ID_CARD") || key.contains("IDCARD") || key.contains("IDENTITY_NO")) {
+            return CustomerPrivacyFieldSupport.maskIdCard(legacyValue);
+        }
+        if (key.contains("EMAIL")) {
+            return CustomerPrivacyFieldSupport.maskEmail(legacyValue);
+        }
+        if (key.contains("WECHAT") || key.contains("WEIXIN")) {
+            return CustomerPrivacyFieldSupport.maskWechatId(legacyValue);
+        }
+        return legacyValue;
     }
 
     /**

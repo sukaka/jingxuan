@@ -19,6 +19,9 @@ public class CustomerListRow {
     private String displayName;
     private String nickname;
     private String mobileCipher;
+    private String idCardCipher;
+    private String emailCipher;
+    private String wechatIdCipher;
     private String cityCode;
     private String customerStatus;
     private String tierCode;
@@ -104,6 +107,30 @@ public class CustomerListRow {
 
     public void setMobileCipher(String mobileCipher) {
         this.mobileCipher = mobileCipher;
+    }
+
+    public String getIdCardCipher() {
+        return idCardCipher;
+    }
+
+    public void setIdCardCipher(String idCardCipher) {
+        this.idCardCipher = idCardCipher;
+    }
+
+    public String getEmailCipher() {
+        return emailCipher;
+    }
+
+    public void setEmailCipher(String emailCipher) {
+        this.emailCipher = emailCipher;
+    }
+
+    public String getWechatIdCipher() {
+        return wechatIdCipher;
+    }
+
+    public void setWechatIdCipher(String wechatIdCipher) {
+        this.wechatIdCipher = wechatIdCipher;
     }
 
     public String getCityCode() {

@@ -215,8 +215,8 @@ class UserApplicationServiceTest {
         when(roleRepository.findActiveRoleCodes(1L, 1L)).thenReturn(List.of("ADMIN"));
         when(roleRepository.findActiveRoleCodes(1L, 77L)).thenReturn(List.of("MANAGER_LEAD"));
         when(userRepository.teamExists(1L, 2L)).thenReturn(true);
-        when(userRepository.updateProfile(eq(1L), eq(77L), eq(0L), eq("主管"), eq(2L), eq(null))).thenReturn(1);
-        when(userRepository.updateProfile(eq(1L), eq(77L), eq(1L), eq("改名主管"), eq(2L), eq(null))).thenReturn(1);
+        when(userRepository.updateProfile(eq(1L), eq(77L), eq(0L), eq("主管"), eq(2L), eq(null), eq(null))).thenReturn(1);
+        when(userRepository.updateProfile(eq(1L), eq(77L), eq(1L), eq("改名主管"), eq(2L), eq(null), eq(null))).thenReturn(1);
 
         service.update(1L, 1L, 77L, new UpdateUserRequest("主管", 2L, null, 0L));
         verify(dataScopeRepository).replaceResourceScopes(
@@ -248,7 +248,7 @@ class UserApplicationServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(ex -> ((BusinessException) ex).errorCode())
                 .isEqualTo(ErrorCode.FORBIDDEN);
-        verify(userRepository, never()).updateProfile(anyLong(), anyLong(), anyLong(), any(), any(), any());
+        verify(userRepository, never()).updateProfile(anyLong(), anyLong(), anyLong(), any(), any(), any(), any());
 
         assertThatThrownBy(() -> service.assignRoles(1L, 20L, 5L, new AssignRolesRequest(List.of())))
                 .isInstanceOf(BusinessException.class)
@@ -280,7 +280,7 @@ class UserApplicationServiceTest {
         when(roleRepository.findActiveRoleCodes(1L, 30L)).thenReturn(List.of("CUSTOM_READER"));
         when(roleRepository.findActivePermissionCodes(1L, 20L)).thenReturn(List.of("user:read", "user:write"));
         when(roleRepository.findActivePermissionCodes(1L, 30L)).thenReturn(List.of("user:read"));
-        when(userRepository.updateProfile(eq(1L), eq(30L), eq(0L), eq("已更新"), eq(null), any()))
+        when(userRepository.updateProfile(eq(1L), eq(30L), eq(0L), eq("已更新"), eq(null), eq(null), any()))
                 .thenReturn(1);
         when(roleRepository.findExistingRoleIds(1L, List.of(12L))).thenReturn(List.of(12L));
         when(roleRepository.findAllRoles(1L)).thenReturn(List.of(readerRole));
@@ -297,6 +297,40 @@ class UserApplicationServiceTest {
         var disableRes = service.disable(1L, 20L, 30L);
         assertThat(disableRes.status()).isEqualTo(SysUser.STATUS_DISABLED);
         verify(userRepository).updateStatus(1L, 30L, SysUser.STATUS_DISABLED);
+    }
+
+    @Test
+    void updateSupervisor_rejectsSelfAndCycleAndInstitutionUser() {
+        SysUser userA = user(10L, "emp_a");
+        SysUser userB = user(11L, "emp_b");
+        userB.setSupervisorUserId(10L);
+        SysUser instUser = user(12L, "inst_u");
+        instUser.setUserType("INSTITUTION");
+
+        when(roleRepository.findActiveRoleCodes(1L, 1L)).thenReturn(List.of("ADMIN"));
+        when(roleRepository.findActiveRoleCodes(1L, 10L)).thenReturn(List.of("MANAGER"));
+        when(roleRepository.findActiveRoleCodes(1L, 12L)).thenReturn(List.of("INSTITUTION_STAFF"));
+        when(userRepository.findById(1L, 10L)).thenReturn(Optional.of(userA));
+        when(userRepository.findById(1L, 11L)).thenReturn(Optional.of(userB));
+        when(userRepository.findById(1L, 12L)).thenReturn(Optional.of(instUser));
+
+        assertThatThrownBy(() -> service.update(1L, 1L, 10L,
+                new UpdateUserRequest("员工A", null, null, 0L, 10L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode())
+                .isEqualTo(ErrorCode.VALIDATION_FAILED);
+
+        assertThatThrownBy(() -> service.update(1L, 1L, 10L,
+                new UpdateUserRequest("员工A", null, null, 0L, 11L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode())
+                .isEqualTo(ErrorCode.CONFLICT);
+
+        assertThatThrownBy(() -> service.update(1L, 1L, 12L,
+                new UpdateUserRequest("机构账号", null, null, 0L, 10L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).errorCode())
+                .isEqualTo(ErrorCode.VALIDATION_FAILED);
     }
 
     private SysRole role(long id, String code) {

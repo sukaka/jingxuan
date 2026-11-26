@@ -128,7 +128,8 @@
     <choose>
       <when test="q.exportType.name() == 'CUSTOMER'">
         SELECT c.id AS rowId,c.customer_no AS customerNo,c.display_name AS displayName,c.nickname AS nickname,
-          c.remark_name AS remarkName,c.mobile_cipher AS mobileCipher,c.city_code AS cityCode,c.source_code AS sourceCode,
+          c.remark_name AS remarkName,c.mobile_cipher AS mobileCipher,c.id_card_cipher AS idCardCipher,
+          c.email_cipher AS emailCipher,c.wechat_id_cipher AS wechatIdCipher,c.city_code AS cityCode,c.source_code AS sourceCode,
           c.channel_code AS channelCode,c.customer_status AS customerStatus,c.tier_code AS tierCode,
           c.intent_level AS intentLevel,c.spending_level AS spendingLevel,c.birthday AS birthday,c.points_cached AS points,
           c.attention_projects AS attentionProjects,c.blocker_note AS blockerNote,c.remark AS remark,

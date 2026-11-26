@@ -48,7 +48,18 @@ public interface UserRepository {
 
     List<TeamOptionRow> listTeams(long tenantId);
 
+    Optional<Long> findActiveTeamLeaderId(long tenantId, long teamId);
+
+    List<SupervisorOptionRow> findActiveEmployeeOptions(long tenantId);
+
+    List<Long> findActiveEmployeeIdsByPermission(long tenantId, String permissionCode);
+
+    List<Long> findActiveEmployeeIdsByRole(long tenantId, String roleCode);
+
     record TeamOptionRow(Long id, String teamName) {
+    }
+
+    record SupervisorOptionRow(Long id, String username, String displayName, Long teamId, String teamName) {
     }
 
     /**
@@ -71,7 +82,13 @@ public interface UserRepository {
     /**
      * 乐观锁更新：WHERE tenant_id/id/version 全匹配才更新；返回受影响行数（0 = 冲突或不存在）。
      */
-    int updateProfile(long tenantId, long id, long version, String displayName, Long teamId, String passwordHash);
+    default int updateProfile(long tenantId, long id, long version, String displayName, Long teamId,
+                              String passwordHash) {
+        return updateProfile(tenantId, id, version, displayName, teamId, null, passwordHash);
+    }
+
+    int updateProfile(long tenantId, long id, long version, String displayName, Long teamId,
+                      Long supervisorUserId, String passwordHash);
 
     /**
      * 个人账号修改密码：显式校验 tenant_id、id、version 与 ACTIVE 状态。

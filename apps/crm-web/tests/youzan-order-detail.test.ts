@@ -75,14 +75,17 @@ afterEach(() => {
 })
 
 describe('YouzanOrderDetailDrawer 业务信息与脱敏原始详情', () => {
-  it('管理员看到四个清晰分区，Raw 默认折叠并在展开后格式化', async () => {
+  it('管理员看到完整业务分区（含购买商品明细），Raw 默认折叠并在展开后格式化', async () => {
     mountDrawer(['order:read', 'integration:youzan:manage'])
     await settle()
 
     expect(document.body.textContent).toContain('订单与同步状态')
+    expect(document.body.textContent).toContain('购买商品明细')
     expect(document.body.textContent).toContain('金额与支付核验')
     expect(document.body.textContent).toContain('来源与时间')
     expect(document.body.textContent).toContain('异常信息')
+    const headings = Array.from(document.body.querySelectorAll('.detail-section h3')).map((el) => el.textContent?.trim())
+    expect(headings.slice(0, 5)).toEqual(['订单与同步状态', '购买商品明细', '金额与支付核验', '来源与时间', '异常信息'])
     expect(document.body.textContent).toContain('3622.00')
     expect(document.body.textContent).toContain('供应商支付回调')
     expect(document.body.textContent).toContain('处理完成')
@@ -96,6 +99,135 @@ describe('YouzanOrderDetailDrawer 业务信息与脱敏原始详情', () => {
 
     await click('youzan-raw-toggle')
     expect(rawElement()).toBeNull()
+  })
+
+  it('购买商品明细展示标题、规格、数量、单价、小计、外部 SKU、商家编码与 CRM 映射状态', async () => {
+    mountDrawer(['order:read', 'integration:youzan:manage'], {
+      ...order,
+      items: [
+        {
+          external_sku_id: '5505085839:26076889518',
+          quantity: 2,
+          itemTitle: '鲸选光子嫩肤尊享卡',
+          skuSpec: '3次卡 / 全国通用',
+          priceFen: 150000,
+          paymentFen: 298000,
+          outerSkuCode: 'OUTER-GZ-3',
+          crmSkuId: 301,
+          crmSkuName: '光子嫩肤尊享套卡',
+        },
+        {
+          external_sku_id: '5505085839:990001',
+          quantity: 1,
+          itemTitle: '水光焕肤体验装',
+          skuSpec: null,
+          priceFen: 64200,
+          paymentFen: null,
+          outerSkuCode: null,
+          crmSkuId: null,
+          crmSkuName: null,
+        },
+        {
+          external_sku_id: '5505085839:990002',
+          quantity: 1,
+          itemTitle: null,
+          skuSpec: null,
+          priceFen: null,
+          paymentFen: null,
+          outerSkuCode: null,
+          crmSkuId: 302,
+          crmSkuName: null,
+        },
+      ],
+    })
+    await settle()
+
+    const section = document.body.querySelector('[data-testid="youzan-order-items"]')
+    expect(section).not.toBeNull()
+    expect(document.body.querySelector('[data-testid="youzan-order-items-summary"]')?.textContent).toBe('共 3 项 · 合计 4 件')
+
+    const cards = Array.from(document.body.querySelectorAll('[data-testid="youzan-order-item"]'))
+    expect(cards).toHaveLength(3)
+
+    expect(cards[0]?.textContent).toContain('鲸选光子嫩肤尊享卡')
+    expect(cards[0]?.textContent).toContain('3次卡 / 全国通用')
+    expect(cards[0]?.textContent).toContain('× 2')
+    expect(cards[0]?.textContent).toContain('单价 ¥1500.00')
+    expect(cards[0]?.textContent).toContain('小计 ¥2980.00')
+    expect(cards[0]?.textContent).toContain('5505085839:26076889518')
+    expect(cards[0]?.textContent).toContain('OUTER-GZ-3')
+    expect(cards[0]?.textContent).toContain('已映射 CRM：光子嫩肤尊享套卡 #301')
+
+    expect(cards[1]?.textContent).toContain('水光焕肤体验装')
+    expect(cards[1]?.textContent).toContain('× 1')
+    expect(cards[1]?.textContent).toContain('单价 ¥642.00')
+    expect(cards[1]?.textContent).not.toContain('小计 ¥')
+    expect(cards[1]?.textContent).toContain('5505085839:990001')
+    expect(cards[1]?.textContent).toContain('未映射 CRM SKU')
+
+    expect(cards[2]?.textContent).toContain('外部 SKU 5505085839:990002')
+    expect(cards[2]?.textContent).toContain('已映射 CRM SKU #302')
+  })
+
+  it('itemTitle 缺失时依次回退 crmSkuName 与外部 SKU 标题，且仅在 order.items 缺失时回退 raw.items', async () => {
+    mountDrawer(['integration:youzan:manage'], {
+      ...order,
+      items: [
+        {
+          external_sku_id: 'YZ-SKU-FALLBACK-1',
+          quantity: 1,
+          itemTitle: null,
+          crmSkuId: 401,
+          crmSkuName: '热玛吉面部标准版',
+        },
+        {
+          external_sku_id: 'YZ-SKU-FALLBACK-2',
+          quantity: 3,
+          itemTitle: null,
+          crmSkuId: null,
+          crmSkuName: null,
+        },
+      ],
+      payloadMaskedJson: '{"items":[{"external_sku_id":"RAW-IGNORED","quantity":9}]}',
+    })
+    await settle()
+
+    const cards = Array.from(document.body.querySelectorAll('[data-testid="youzan-order-item"]'))
+    expect(cards).toHaveLength(2)
+    expect(cards[0]?.textContent).toContain('热玛吉面部标准版')
+    expect(cards[1]?.textContent).toContain('外部 SKU YZ-SKU-FALLBACK-2')
+    expect(document.body.textContent).not.toContain('RAW-IGNORED')
+
+    while (wrappers.length) wrappers.pop()?.unmount()
+    document.body.innerHTML = ''
+
+    mountDrawer(['integration:youzan:manage'], {
+      ...order,
+      items: [],
+      payloadMaskedJson: '{"items":[{"external_sku_id":"RAW-SKU-001","quantity":2,"item_title":"历史回退商品","sku_spec":"双次卡","price_fen":88000}]}',
+    })
+    await settle()
+
+    const fallbackCards = Array.from(document.body.querySelectorAll('[data-testid="youzan-order-item"]'))
+    expect(fallbackCards).toHaveLength(1)
+    expect(fallbackCards[0]?.textContent).toContain('历史回退商品')
+    expect(fallbackCards[0]?.textContent).toContain('双次卡')
+    expect(fallbackCards[0]?.textContent).toContain('× 2')
+    expect(fallbackCards[0]?.textContent).toContain('单价 ¥880.00')
+    expect(fallbackCards[0]?.textContent).toContain('RAW-SKU-001')
+  })
+
+  it('无商品明细时展示空状态与 0 项汇总', async () => {
+    mountDrawer(['order:read'], {
+      ...order,
+      items: [],
+      payloadMaskedJson: null,
+    })
+    await settle()
+
+    expect(document.body.querySelector('[data-testid="youzan-order-items-summary"]')?.textContent).toBe('共 0 项')
+    expect(document.body.querySelector('[data-testid="youzan-order-items-empty"]')?.textContent).toContain('当前订单暂无商品明细')
+    expect(document.body.querySelectorAll('[data-testid="youzan-order-item"]')).toHaveLength(0)
   })
 
   it('管理员复制格式化后的 Raw 并收到成功反馈', async () => {
@@ -125,10 +257,32 @@ describe('YouzanOrderDetailDrawer 业务信息与脱敏原始详情', () => {
     expect(rawElement()?.textContent).toBe(formattedPayload)
   })
 
-  it('普通管家不渲染 Raw、展开入口或复制按钮，但可看到非敏感外部客户标识', async () => {
-    mountDrawer(['order:read'], { ...order, externalCustomerId: 'yz-open-detail-1' })
+  it('普通管家不渲染 Raw、展开入口或复制按钮，但可看到结构化商品明细与非敏感外部客户标识', async () => {
+    mountDrawer(['order:read'], {
+      ...order,
+      payloadMaskedJson: null,
+      externalCustomerId: 'yz-open-detail-1',
+      items: [
+        {
+          external_sku_id: '5505085839:112233',
+          quantity: 1,
+          itemTitle: '舒敏修复护理',
+          skuSpec: '单次体验',
+          priceFen: 59900,
+          paymentFen: 59900,
+          crmSkuId: 301,
+          crmSkuName: '舒敏修复单次卡',
+        },
+      ],
+    })
     await settle()
 
+    const itemsSection = document.body.querySelector('[data-testid="youzan-order-items"]')
+    expect(itemsSection?.textContent).toContain('舒敏修复护理')
+    expect(itemsSection?.textContent).toContain('单次体验')
+    expect(itemsSection?.textContent).toContain('单价 ¥599.00')
+    expect(itemsSection?.textContent).toContain('小计 ¥599.00')
+    expect(itemsSection?.textContent).toContain('已映射 CRM：舒敏修复单次卡 #301')
     expect(document.body.querySelector('[data-testid="youzan-detail-external-customer"]')?.textContent).toBe('yz-open-detail-1')
     expect(document.body.querySelector('[data-testid="youzan-raw-section"]')).toBeNull()
     expect(document.body.querySelector('[data-testid="youzan-raw-toggle"]')).toBeNull()
@@ -164,5 +318,18 @@ describe('YouzanOrderDetailDrawer 业务信息与脱敏原始详情', () => {
     expect(drawerSource).toContain('white-space: pre-wrap')
     expect(drawerSource).toContain('overflow-wrap: anywhere')
     expect(drawerSource).toContain('word-break: break-word')
+    expect(drawerSource).not.toContain('v-html')
+  })
+
+  it('展开原始数据按钮在浅色卡片上使用深青高对比文字而非白色文字', () => {
+    const rawToggleBlocks = drawerSource.match(/[^}]*\.raw-toggle[^}]*\{[^}]*\}/g) ?? []
+    expect(rawToggleBlocks.length).toBeGreaterThanOrEqual(3)
+    for (const block of rawToggleBlocks) {
+      expect(block).not.toMatch(/color\s*:\s*(?:#fff(?:fff)?|white)\b/i)
+    }
+    expect(drawerSource).not.toContain('.proto-page .raw-header :deep(.raw-toggle) { color: #fff; }')
+    expect(drawerSource).toContain('color: #175c55;')
+    expect(drawerSource).toContain('color: #0f443f;')
+    expect(drawerSource).toContain('background-color: #eaf4f2;')
   })
 })

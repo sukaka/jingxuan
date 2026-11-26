@@ -731,6 +731,141 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
         assertThat(adminAfterBatch.at("/0/mapped").asBoolean()).isFalse();
     }
 
+    @Test
+    void structuredProductItemDetailsAreReturnedWithCrmSkuAndSafePermissionBoundaries() throws Exception {
+        String shop = shop("prod-items");
+        String linkedCustomer = "IT-YZ-PROD-LINKED-" + suffix();
+        String unlinkedCustomer = "IT-YZ-PROD-UNLINKED-" + suffix();
+        linkCustomer(shop, linkedCustomer, 1010L);
+        jdbcTemplate.update("INSERT INTO crm_youzan_sku_map (tenant_id,shop_id,external_sku_id,crm_sku_id,status) "
+                + "VALUES (1,?,'5505:301',301,'ACTIVE')", shop);
+        Instant t0 = Instant.parse("2026-11-26T09:00:00Z");
+
+        String rawMobile = "13900009876";
+        String rawNickname = "FICTIONAL-ITEM-BUYER";
+        String paidProviderJson = """
+                {"full_order_info":{"order_info":{"tid":"%s"},"buyer_info":{"buyer_phone":"%s","fans_nickname":"%s"},
+                "orders":[{"item_id":5505,"sku_id":301,"num":1,"title":"黄金超光子嫩肤套餐",
+                "sku_properties_name":"[{\\"k\\":\\"疗程\\",\\"v\\":\\"3次卡\\"},{\\"k\\":\\"门店\\",\\"v\\":\\"通用\\"}]",
+                "price":"1811.00","payment":"1811.00","outer_sku_id":"OUT-OPT-301"}]}}
+                """;
+        String pendingProviderJson = """
+                {"success":true,"code":200,"data":{"full_order_info":{"order_info":{"tid":"%s"},
+                "buyer_info":{"buyer_phone":"%s","fans_nickname":"%s"},
+                "orders":[{"item_id":5505,"sku_id":301,"num":2,"item_title":"光子水光组合",
+                "sku_spec":"双倍疗程","price":"1811.00","total_fee":"3622.00","outer_item_id":"OUT-ITEM-301"}]}}}
+                """;
+        String unmappedProviderJson = """
+                {"full_order_info":{"order_info":{"tid":"%s"},"buyer_info":{"buyer_phone":"%s","fans_nickname":"%s"},
+                "orders":[{"item_id":5505,"sku_id":999,"num":1,"goods_title":"未映射水光单次",
+                "sku_properties_name":"单次","discount_price":"599.50","payment":"599.50","outer_sku_id":"OUT-UNMAPPED"}]}}
+                """;
+
+        // 1. Processed internal order -> crmSkuId + crmSkuName from frozen internal OrderItem snapshot
+        String ordPaid = "IT-YZ-PROD-PAID-" + suffix();
+        YouzanOrderEvent evPaid = event(shop, "IT-YZ-PROD-EV1-" + suffix(), ordPaid, linkedCustomer,
+                "IT-YZ-PROD-TR1-" + suffix(), "5505:301", 181100L, t0);
+        long evPaidId = ingestAndProcess(1L, evPaid, paidProviderJson.formatted(ordPaid, rawMobile, rawNickname), "PROCESSED");
+
+        // 2. Unlinked customer (no internal order yet), mapped active SKU -> crmSkuId + crmSkuName via catalog batch lookup
+        String ordUnlinked = "IT-YZ-PROD-UNLINK-" + suffix();
+        YouzanOrderEvent evUnlinked = new YouzanOrderEvent("IT-YZ-PROD-EV2-" + suffix(), "ORDER_PAID", shop, ordUnlinked,
+                unlinkedCustomer, "IT-YZ-PROD-TR2-" + suffix(), "PAID", 362200L, t0.plusSeconds(10), t0.plusSeconds(10),
+                "REGULAR", 1L, 1L, "PLATFORM", LocalDate.parse("2027-12-31"),
+                List.of(new YouzanOrderLine("5505:301", 2)));
+        long evUnlinkedId = ingestAndProcess(1L, evUnlinked,
+                pendingProviderJson.formatted(ordUnlinked, rawMobile, rawNickname), "CUSTOMER_UNRESOLVED");
+
+        // 3. Unmapped SKU (linked customer, visible to manager1) -> metadata still present, crmSkuId/Name null
+        String ordUnmapped = "IT-YZ-PROD-UNMAP-" + suffix();
+        YouzanOrderEvent evUnmapped = event(shop, "IT-YZ-PROD-EV3-" + suffix(), ordUnmapped, linkedCustomer,
+                "IT-YZ-PROD-TR3-" + suffix(), "5505:999", 59950L, t0.plusSeconds(20));
+        long evUnmappedId = ingestAndProcess(1L, evUnmapped,
+                unmappedProviderJson.formatted(ordUnmapped, rawMobile, rawNickname), "MAPPING_FAILED");
+
+        // 4. Legacy/mock payload lacking product metadata -> external_sku_id + quantity preserved, metadata null
+        String ordLegacy = "IT-YZ-PROD-LEGACY-" + suffix();
+        YouzanOrderEvent evLegacy = event(shop, "IT-YZ-PROD-EV4-" + suffix(), ordLegacy, linkedCustomer,
+                "IT-YZ-PROD-TR4-" + suffix(), "LEGACY-SKU-1", 10000L, t0.plusSeconds(30));
+        insertRaw(1L, shop, evLegacy, "MAPPING_FAILED", "legacy");
+
+        // Admin sees structured items + payloadMaskedJson without unmasked PII
+        JsonNode adminPage = orders(admin, shop, 1, 20, null);
+        assertThat(adminPage.at("/total").asLong()).isEqualTo(4L);
+        assertThat(adminPage.toString()).doesNotContain(rawMobile, rawNickname);
+
+        JsonNode paidItem = item(adminPage, ordPaid).at("/items/0");
+        assertThat(paidItem.at("/external_sku_id").asText()).isEqualTo("5505:301");
+        assertThat(paidItem.at("/quantity").asInt()).isEqualTo(1);
+        assertThat(paidItem.at("/itemTitle").asText()).isEqualTo("黄金超光子嫩肤套餐");
+        assertThat(paidItem.at("/skuSpec").asText()).isEqualTo("疗程：3次卡 / 门店：通用");
+        assertThat(paidItem.at("/priceFen").asLong()).isEqualTo(181100L);
+        assertThat(paidItem.at("/paymentFen").asLong()).isEqualTo(181100L);
+        assertThat(paidItem.at("/outerSkuCode").asText()).isEqualTo("OUT-OPT-301");
+        assertThat(paidItem.at("/crmSkuId").asLong()).isEqualTo(301L);
+        assertThat(paidItem.at("/crmSkuName").asText()).isEqualTo("光子水光囤货卡｜3次");
+        assertThat(item(adminPage, ordPaid).at("/payloadMaskedJson").isTextual()).isTrue();
+
+        JsonNode unlinkedItem = item(adminPage, ordUnlinked).at("/items/0");
+        assertThat(unlinkedItem.at("/external_sku_id").asText()).isEqualTo("5505:301");
+        assertThat(unlinkedItem.at("/quantity").asInt()).isEqualTo(2);
+        assertThat(unlinkedItem.at("/itemTitle").asText()).isEqualTo("光子水光组合");
+        assertThat(unlinkedItem.at("/skuSpec").asText()).isEqualTo("双倍疗程");
+        assertThat(unlinkedItem.at("/priceFen").asLong()).isEqualTo(181100L);
+        assertThat(unlinkedItem.at("/paymentFen").asLong()).isEqualTo(362200L);
+        assertThat(unlinkedItem.at("/outerSkuCode").asText()).isEqualTo("OUT-ITEM-301");
+        assertThat(unlinkedItem.at("/crmSkuId").asLong()).isEqualTo(301L);
+        assertThat(unlinkedItem.at("/crmSkuName").asText()).isEqualTo("光子水光囤货卡｜3次");
+
+        JsonNode unmappedItem = item(adminPage, ordUnmapped).at("/items/0");
+        assertThat(unmappedItem.at("/external_sku_id").asText()).isEqualTo("5505:999");
+        assertThat(unmappedItem.at("/itemTitle").asText()).isEqualTo("未映射水光单次");
+        assertThat(unmappedItem.at("/skuSpec").asText()).isEqualTo("单次");
+        assertThat(unmappedItem.at("/priceFen").asLong()).isEqualTo(59950L);
+        assertThat(unmappedItem.at("/paymentFen").asLong()).isEqualTo(59950L);
+        assertThat(unmappedItem.at("/outerSkuCode").asText()).isEqualTo("OUT-UNMAPPED");
+        assertThat(unmappedItem.at("/crmSkuId").isNull()).isTrue();
+        assertThat(unmappedItem.at("/crmSkuName").isNull()).isTrue();
+
+        JsonNode legacyItem = item(adminPage, ordLegacy).at("/items/0");
+        assertThat(legacyItem.at("/external_sku_id").asText()).isEqualTo("LEGACY-SKU-1");
+        assertThat(legacyItem.at("/quantity").asInt()).isEqualTo(1);
+        assertThat(legacyItem.at("/itemTitle").isNull()).isTrue();
+        assertThat(legacyItem.at("/skuSpec").isNull()).isTrue();
+        assertThat(legacyItem.at("/priceFen").isNull()).isTrue();
+        assertThat(legacyItem.at("/paymentFen").isNull()).isTrue();
+        assertThat(legacyItem.at("/outerSkuCode").isNull()).isTrue();
+        assertThat(legacyItem.at("/crmSkuId").isNull()).isTrue();
+        assertThat(legacyItem.at("/crmSkuName").isNull()).isTrue();
+
+        // manager1 (order:read, SELF scope, no integration:youzan:manage): sees structured items while payloadMaskedJson is null
+        JsonNode m1Page = orders(manager1, shop, 1, 20, null);
+        assertThat(m1Page.at("/total").asLong()).isEqualTo(3L);
+        assertThat(item(m1Page, ordPaid).at("/payloadMaskedJson").isNull()).isTrue();
+        assertThat(item(m1Page, ordPaid).at("/items/0/itemTitle").asText()).isEqualTo("黄金超光子嫩肤套餐");
+        assertThat(item(m1Page, ordPaid).at("/items/0/crmSkuName").asText()).isEqualTo("光子水光囤货卡｜3次");
+        JsonNode m1Detail = data(manager1.withAuth(get("/api/v1/integrations/youzan/orders/{id}", evUnmappedId)));
+        assertThat(m1Detail.at("/payloadMaskedJson").isNull()).isTrue();
+        assertThat(m1Detail.at("/items/0/itemTitle").asText()).isEqualTo("未映射水光单次");
+        assertThat(m1Detail.toString()).doesNotContain(rawMobile, rawNickname);
+
+        // finance1 (order:read, ALL scope, NO product:read, NO integration:youzan:manage): no 403/500, sees structured items & CRM SKU names
+        AuthCookies finance1 = login("finance1");
+        JsonNode financePage = orders(finance1, shop, 1, 20, null);
+        assertThat(financePage.at("/total").asLong()).isEqualTo(4L);
+        assertThat(item(financePage, ordUnlinked).at("/payloadMaskedJson").isNull()).isTrue();
+        assertThat(item(financePage, ordUnlinked).at("/items/0/itemTitle").asText()).isEqualTo("光子水光组合");
+        assertThat(item(financePage, ordUnlinked).at("/items/0/crmSkuId").asLong()).isEqualTo(301L);
+        assertThat(item(financePage, ordUnlinked).at("/items/0/crmSkuName").asText()).isEqualTo("光子水光囤货卡｜3次");
+        JsonNode financeDetail = data(finance1.withAuth(get("/api/v1/integrations/youzan/orders/{id}", evUnlinkedId)));
+        assertThat(financeDetail.at("/payloadMaskedJson").isNull()).isTrue();
+        assertThat(financeDetail.at("/items/0/crmSkuName").asText()).isEqualTo("光子水光囤货卡｜3次");
+
+        JsonNode paidDetail = data(admin.withAuth(get("/api/v1/integrations/youzan/orders/{id}", evPaidId)));
+        assertThat(paidDetail.at("/items/0/paymentFen").asLong()).isEqualTo(181100L);
+        assertThat(paidDetail.at("/items/0/crmSkuName").asText()).isEqualTo("光子水光囤货卡｜3次");
+    }
+
     private long ingestAndProcess(long tenantId, YouzanOrderEvent event, String providerRaw, String expectedStatus) {
         var ingested = youzanEventService.ingest(tenantId, event, "PULL", providerRaw);
         var processed = youzanEventService.process(tenantId, ingested.id());

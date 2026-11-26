@@ -17,11 +17,20 @@ public record UserSummaryResponse(
         String status,
         Long teamId,
         String teamName,
+        Long supervisorUserId,
+        String supervisorName,
         List<String> roles,
         Instant lastLoginAt,
         Instant createdAt,
         Long version) {
     public UserSummaryResponse {
         roles = roles == null ? null : List.copyOf(roles);
+    }
+
+    public UserSummaryResponse(Long id, String username, String displayName, String userType, String status,
+                               Long teamId, String teamName, List<String> roles, Instant lastLoginAt,
+                               Instant createdAt, Long version) {
+        this(id, username, displayName, userType, status, teamId, teamName, null, null, roles, lastLoginAt,
+                createdAt, version);
     }
 }

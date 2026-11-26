@@ -40,19 +40,19 @@ class OfficialYouzanCustomerPullClientTest {
         tokenService = mock(YouzanTokenService.class);
         remoteClient = mock(YouzanRemoteClient.class);
         when(tokenService.accessToken(TENANT_ID, SHOP_ID)).thenReturn(TOKEN);
-        client = new OfficialYouzanCustomerPullClient(tokenService, remoteClient, "3.1.2", "4.0.2", 0L);
+        client = new OfficialYouzanCustomerPullClient(tokenService, remoteClient, "1.0.0", "4.0.2", 0L);
     }
 
     @Test
-    void pullScrmPage_fallsBackTo311On4005AndStripsCiphertext() throws Exception {
-        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.search"), eq("3.1.2"), anyMap()))
-                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "有赞网关返回错误: 4005"));
+    void pullScrmPage_callsCustomerList100WithPageNoStripsCiphertextAndSkipsMobileShowName() throws Exception {
         JsonNode okResp = objectMapper.readTree("""
                 {
                   "success": true,
                   "code": 200,
                   "data": {
                     "total": 25,
+                    "page_no": 1,
+                    "page_size": 20,
                     "record_list": [
                       {
                         "yz_open_id": "YZ-OPEN-001",
@@ -77,12 +77,20 @@ class OfficialYouzanCustomerPullClientTest {
                         "fans_type": 1,
                         "fans_id": 88002,
                         "remark": "$cipherRemark$1$"
+                      },
+                      {
+                        "yz_open_id": "YZ-OPEN-003",
+                        "name": "",
+                        "show_name": "13800138003",
+                        "mobile": "13800138003",
+                        "gender": 0,
+                        "created_at": 1780280500
                       }
                     ]
                   }
                 }
                 """);
-        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.search"), eq("3.1.1"), anyMap()))
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.list"), eq("1.0.0"), anyMap()))
                 .thenReturn(okResp);
 
         Instant start = Instant.parse("2026-06-01T00:00:00Z");
@@ -91,7 +99,7 @@ class OfficialYouzanCustomerPullClientTest {
 
         assertThat(page.totalResults()).isEqualTo(25L);
         assertThat(page.hasMore()).isTrue();
-        assertThat(page.items()).hasSize(2);
+        assertThat(page.items()).hasSize(3);
 
         YouzanCustomerPullClient.YouzanPulledCustomer first = page.items().get(0);
         assertThat(first.yzOpenId()).isEqualTo("YZ-OPEN-001");
@@ -114,51 +122,63 @@ class OfficialYouzanCustomerPullClientTest {
         assertThat(second.birthday()).isNull();
         assertThat(second.remark()).isNull();
 
+        YouzanCustomerPullClient.YouzanPulledCustomer third = page.items().get(2);
+        assertThat(third.yzOpenId()).isEqualTo("YZ-OPEN-003");
+        assertThat(third.name()).isNull();
+        assertThat(third.nickname()).isNull();
+        assertThat(third.mobile()).isEqualTo("13800138003");
+
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> bodyCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(remoteClient).callApi(eq(TOKEN), eq("youzan.scrm.customer.search"), eq("3.1.1"), bodyCaptor.capture());
+        verify(remoteClient).callApi(eq(TOKEN), eq("youzan.scrm.customer.list"), eq("1.0.0"), bodyCaptor.capture());
         assertThat(bodyCaptor.getValue())
-                .containsEntry("page", 1)
+                .containsEntry("page_no", 1)
                 .containsEntry("page_size", 20)
                 .containsEntry("created_at_start", start.getEpochSecond())
-                .containsEntry("created_at_end", end.getEpochSecond());
+                .containsEntry("created_at_end", end.getEpochSecond())
+                .doesNotContainKey("page");
     }
 
     @Test
-    void pullScrmPage_throwsWindowTooLargeWhenTotalExceedsMaxPages() throws Exception {
-        JsonNode oversized = objectMapper.readTree("""
+    void pullScrmPage_throwsWindowTooLargeWhenTotalHitsCapOrApiReturns142710032() throws Exception {
+        JsonNode capped = objectMapper.readTree("""
                 {
                   "success": true,
                   "code": 200,
                   "data": {
-                    "total": 10001,
+                    "total": 10000,
                     "record_list": []
                   }
                 }
                 """);
-        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.search"), eq("3.1.2"), anyMap()))
-                .thenReturn(oversized);
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.list"), eq("1.0.0"), anyMap()))
+                .thenReturn(capped);
 
         assertThatThrownBy(() -> client.pullScrmPage(TENANT_ID, SHOP_ID, null, Instant.parse("2026-06-30T00:00:00Z"), 1, 20))
                 .isInstanceOf(YouzanCustomerWindowTooLargeException.class)
-                .satisfies(ex -> assertThat(((YouzanCustomerWindowTooLargeException) ex).totalResults()).isEqualTo(10001L));
+                .satisfies(ex -> assertThat(((YouzanCustomerWindowTooLargeException) ex).totalResults()).isEqualTo(10000L));
+
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.list"), eq("1.0.0"), anyMap()))
+                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "有赞接口返回业务失败: 142710032"));
+
+        assertThatThrownBy(() -> client.pullScrmPage(TENANT_ID, SHOP_ID, null, Instant.parse("2026-06-30T00:00:00Z"), 500, 20))
+                .isInstanceOf(YouzanCustomerWindowTooLargeException.class);
     }
 
     @Test
-    void pullScrmPage_throwsFriendlyPendingBusinessRuleWhenAllVersionsReturn4005() {
-        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.search"), eq("3.1.2"), anyMap()))
-                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "有赞网关返回错误: 4005"));
-        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.search"), eq("3.1.1"), anyMap()))
-                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "有赞网关返回错误: 4005"));
-        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.search"), eq("3.1.0"), anyMap()))
-                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "有赞网关返回错误: 4005"));
+    void pullScrmPage_throwsFriendlyPendingBusinessRuleOn4204PermissionError() {
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.list"), eq("1.0.0"), anyMap()))
+                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "有赞网关返回错误: 4204"));
 
         assertThatThrownBy(() -> client.pullScrmPage(TENANT_ID, SHOP_ID, null, null, 1, 20))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> {
                     BusinessException be = (BusinessException) ex;
                     assertThat(be.errorCode()).isEqualTo(ErrorCode.PENDING_BUSINESS_RULE);
-                    assertThat(be.getMessage()).contains("youzan.scrm.customer.search");
+                    assertThat(be.getMessage())
+                            .contains("youzan.scrm.customer.list/1.0.0")
+                            .contains("店铺客户信息同步")
+                            .contains("4204");
                 });
     }
 

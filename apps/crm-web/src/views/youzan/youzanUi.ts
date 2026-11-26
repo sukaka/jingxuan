@@ -1,4 +1,18 @@
+import type { YouzanOrderView } from '../../api/youzan'
+
 export type YouzanTone = 'success' | 'warning' | 'info' | 'dark' | 'danger'
+
+export interface NormalizedYouzanOrderItem {
+  externalSkuId: string
+  quantity: number | null
+  itemTitle: string | null
+  skuSpec: string | null
+  priceFen: number | null
+  paymentFen: number | null
+  outerSkuCode: string | null
+  crmSkuId: number | null
+  crmSkuName: string | null
+}
 
 const PROCESS_LABELS: Record<string, string> = {
   RECEIVED: '已接收待处理',
@@ -67,4 +81,100 @@ export function createYouzanKey(scope: string): string {
     ? globalThis.crypto.randomUUID()
     : Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('')
   return `${scope}:${suffix}`
+}
+
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+function nonNegativeInt(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 0 ? value : null
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!/^\d+$/.test(trimmed)) return null
+    const parsed = Number(trimmed)
+    return Number.isSafeInteger(parsed) ? parsed : null
+  }
+  return null
+}
+
+function normalizeOrderItem(entry: unknown): NormalizedYouzanOrderItem | null {
+  if (!entry || typeof entry !== 'object') return null
+  const record = entry as Record<string, unknown>
+  const externalSkuId = nonEmptyString(record.external_sku_id) ?? nonEmptyString(record.externalSkuId) ?? ''
+  const quantity = nonNegativeInt(record.quantity)
+  const itemTitle = nonEmptyString(record.itemTitle)
+    ?? nonEmptyString(record.item_title)
+    ?? nonEmptyString(record.title)
+    ?? nonEmptyString(record.goods_title)
+  const skuSpec = nonEmptyString(record.skuSpec) ?? nonEmptyString(record.sku_spec)
+  const priceFen = nonNegativeInt(record.priceFen) ?? nonNegativeInt(record.price_fen)
+  const paymentFen = nonNegativeInt(record.paymentFen) ?? nonNegativeInt(record.payment_fen)
+  const outerSkuCode = nonEmptyString(record.outerSkuCode)
+    ?? nonEmptyString(record.outer_sku_code)
+    ?? nonEmptyString(record.outer_sku_id)
+    ?? nonEmptyString(record.outer_item_id)
+  const crmSkuId = nonNegativeInt(record.crmSkuId) ?? nonNegativeInt(record.crm_sku_id)
+  const crmSkuName = nonEmptyString(record.crmSkuName) ?? nonEmptyString(record.crm_sku_name)
+
+  if (!externalSkuId && !itemTitle && !crmSkuName && quantity == null) return null
+
+  return {
+    externalSkuId,
+    quantity,
+    itemTitle,
+    skuSpec,
+    priceFen,
+    paymentFen,
+    outerSkuCode,
+    crmSkuId,
+    crmSkuName,
+  }
+}
+
+export function resolveYouzanOrderItems(order: Pick<YouzanOrderView, 'items' | 'payloadMaskedJson'> | null | undefined): NormalizedYouzanOrderItem[] {
+  if (!order) return []
+  let source: unknown[] = []
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    source = order.items
+  } else if (order.payloadMaskedJson) {
+    try {
+      const parsed = JSON.parse(order.payloadMaskedJson) as Record<string, unknown>
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
+        source = parsed.items
+      }
+    } catch {
+      source = []
+    }
+  }
+  return source
+    .map((entry) => normalizeOrderItem(entry))
+    .filter((item): item is NormalizedYouzanOrderItem => item !== null)
+}
+
+export function youzanOrderItemTitle(item: NormalizedYouzanOrderItem, mode: 'drawer' | 'table' = 'drawer'): string {
+  if (item.itemTitle) return item.itemTitle
+  if (item.crmSkuName) return item.crmSkuName
+  if (mode === 'drawer') {
+    return item.externalSkuId ? `外部 SKU ${item.externalSkuId}` : '未命名商品'
+  }
+  return item.externalSkuId || '—'
+}
+
+export function youzanOrderItemQuantityText(quantity: number | null): string {
+  return quantity == null ? '—' : String(quantity)
+}
+
+export function youzanOrderItemsTotalQuantity(items: NormalizedYouzanOrderItem[]): number {
+  return items.reduce((sum, item) => sum + (item.quantity != null && item.quantity > 0 ? item.quantity : 0), 0)
+}
+
+export function youzanOrderItemMappingLabel(item: NormalizedYouzanOrderItem): string {
+  if (item.crmSkuId == null) return '未映射 CRM SKU'
+  if (item.crmSkuName) return `已映射 CRM：${item.crmSkuName} #${item.crmSkuId}`
+  return `已映射 CRM SKU #${item.crmSkuId}`
 }

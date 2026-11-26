@@ -51,6 +51,9 @@ interface FormState {
   nickname: string
   remarkName: string
   mobile: string
+  idCard: string
+  email: string
+  wechatId: string
   cityCode: string
   sourceCode: string
   channelCode: string
@@ -71,6 +74,9 @@ function emptyForm(): FormState {
     nickname: '',
     remarkName: '',
     mobile: '',
+    idCard: '',
+    email: '',
+    wechatId: '',
     cityCode: '',
     sourceCode: '',
     channelCode: '',
@@ -87,6 +93,18 @@ function emptyForm(): FormState {
 }
 
 const form = reactive<FormState>(emptyForm())
+const currentPrivacyMasked = reactive({
+  mobile: '' as string,
+  idCard: '' as string,
+  email: '' as string,
+  wechatId: '' as string,
+})
+const clearPrivacy = reactive({
+  mobile: false,
+  idCard: false,
+  email: false,
+  wechatId: false,
+})
 const tagSelectOptions = computed(() => dicts.optionsWithHistoryList('customerTags', form.tagCodes))
 const loading = ref(false)
 const submitting = ref(false)
@@ -134,6 +152,8 @@ watch(
     void loadProjectOptions()
     if (props.mode === 'create') {
       Object.assign(form, emptyForm())
+      Object.assign(currentPrivacyMasked, { mobile: '', idCard: '', email: '', wechatId: '' })
+      Object.assign(clearPrivacy, { mobile: false, idCard: false, email: false, wechatId: false })
       legacyAttentionProjects.value = ''
       idempotencyKey = crypto.randomUUID()
       formOwnerId.value = isAdmin ? undefined : (auth.user?.userId ?? undefined)
@@ -154,11 +174,21 @@ watch(
       const detail = await getCustomer(props.customerId)
       version.value = detail.version
       legacyAttentionProjects.value = detail.attentionProjects ?? ''
+      Object.assign(currentPrivacyMasked, {
+        mobile: detail.mobileMasked ?? '',
+        idCard: detail.idCardMasked ?? '',
+        email: detail.emailMasked ?? '',
+        wechatId: detail.wechatIdMasked ?? '',
+      })
+      Object.assign(clearPrivacy, { mobile: false, idCard: false, email: false, wechatId: false })
       Object.assign(form, {
         displayName: detail.displayName ?? '',
         nickname: detail.nickname ?? '',
         remarkName: detail.remarkName ?? '',
         mobile: '',
+        idCard: '',
+        email: '',
+        wechatId: '',
         cityCode: detail.cityCode ?? '',
         sourceCode: detail.sourceCode ?? '',
         channelCode: detail.channelCode ?? '',
@@ -181,11 +211,21 @@ watch(
   },
 )
 
-/** 空字符串不上送,可空列保持 NULL(尤其 mobile 不能写成空串) */
+/** 空字符串不上送,可空列保持 NULL;编辑模式下勾选清空才上送空串通知后端清除隐私字段 */
 function buildPayload(): CreateCustomerRequest {
   const payload: Record<string, string | number | number[] | string[]> = {}
+  const privacyKeys = new Set(['mobile', 'idCard', 'email', 'wechatId'])
   for (const [key, value] of Object.entries(form)) {
     if (key === 'projectIds' || key === 'tagCodes') continue
+    if (privacyKeys.has(key)) {
+      const k = key as 'mobile' | 'idCard' | 'email' | 'wechatId'
+      if (props.mode === 'edit' && clearPrivacy[k]) {
+        payload[key] = ''
+      } else if (typeof value === 'string' && value.trim()) {
+        payload[key] = value.trim()
+      }
+      continue
+    }
     if (value) payload[key] = value as string
   }
   payload.projectIds = [...form.projectIds]
@@ -199,6 +239,18 @@ async function submit() {
   if (!form.displayName && !form.nickname) {
     ElMessage.warning('昵称与称呼至少填写其一')
     return
+  }
+  const privacyChecks: Array<[string, string]> = [
+    ['手机号', form.mobile],
+    ['身份证号', form.idCard],
+    ['邮箱', form.email],
+    ['微信号', form.wechatId],
+  ]
+  for (const [label, value] of privacyChecks) {
+    if (value && value.includes('*')) {
+      ElMessage.warning(`${label}不能包含脱敏占位符 *，请输入完整新值或留空`)
+      return
+    }
   }
   if (props.mode === 'create' && isAdmin && formOwnerId.value === undefined) {
     ElMessage.warning(
@@ -270,10 +322,84 @@ async function submit() {
             <el-input v-model="form.nickname" placeholder="与真实姓名区分" />
           </el-form-item>
           <el-form-item label="手机号">
-            <el-input
-              v-model="form.mobile"
-              :placeholder="mode === 'edit' ? '留空则不修改，页面仅脱敏展示' : '选填；系统加密保存，页面仅脱敏展示'"
-            />
+            <div class="tag-field-wrap">
+              <el-input
+                v-model="form.mobile"
+                :disabled="mode === 'edit' && clearPrivacy.mobile"
+                :placeholder="mode === 'edit'
+                  ? (currentPrivacyMasked.mobile ? `当前 ${currentPrivacyMasked.mobile}，留空则不修改` : '选填；加密保存，页面仅脱敏展示')
+                  : '选填；系统加密保存，页面仅脱敏展示'"
+                data-testid="customer-mobile-input"
+              />
+              <el-checkbox
+                v-if="mode === 'edit' && currentPrivacyMasked.mobile"
+                v-model="clearPrivacy.mobile"
+                size="small"
+                @change="(checked: boolean) => { if (checked) form.mobile = '' }"
+              >
+                清空已存手机号
+              </el-checkbox>
+            </div>
+          </el-form-item>
+          <el-form-item label="身份证号">
+            <div class="tag-field-wrap">
+              <el-input
+                v-model="form.idCard"
+                :disabled="mode === 'edit' && clearPrivacy.idCard"
+                :placeholder="mode === 'edit'
+                  ? (currentPrivacyMasked.idCard ? `当前 ${currentPrivacyMasked.idCard}，留空则不修改` : '选填 18 位身份证号，加密保存')
+                  : '选填 18 位身份证号，加密保存'"
+                data-testid="customer-idcard-input"
+              />
+              <el-checkbox
+                v-if="mode === 'edit' && currentPrivacyMasked.idCard"
+                v-model="clearPrivacy.idCard"
+                size="small"
+                @change="(checked: boolean) => { if (checked) form.idCard = '' }"
+              >
+                清空已存身份证号
+              </el-checkbox>
+            </div>
+          </el-form-item>
+          <el-form-item label="邮箱">
+            <div class="tag-field-wrap">
+              <el-input
+                v-model="form.email"
+                :disabled="mode === 'edit' && clearPrivacy.email"
+                :placeholder="mode === 'edit'
+                  ? (currentPrivacyMasked.email ? `当前 ${currentPrivacyMasked.email}，留空则不修改` : '选填；加密保存，默认脱敏展示')
+                  : '选填；加密保存，默认脱敏展示'"
+                data-testid="customer-email-input"
+              />
+              <el-checkbox
+                v-if="mode === 'edit' && currentPrivacyMasked.email"
+                v-model="clearPrivacy.email"
+                size="small"
+                @change="(checked: boolean) => { if (checked) form.email = '' }"
+              >
+                清空已存邮箱
+              </el-checkbox>
+            </div>
+          </el-form-item>
+          <el-form-item label="微信号">
+            <div class="tag-field-wrap">
+              <el-input
+                v-model="form.wechatId"
+                :disabled="mode === 'edit' && clearPrivacy.wechatId"
+                :placeholder="mode === 'edit'
+                  ? (currentPrivacyMasked.wechatId ? `当前 ${currentPrivacyMasked.wechatId}，留空则不修改` : '选填；加密保存，默认脱敏展示')
+                  : '选填；加密保存，默认脱敏展示'"
+                data-testid="customer-wechat-input"
+              />
+              <el-checkbox
+                v-if="mode === 'edit' && currentPrivacyMasked.wechatId"
+                v-model="clearPrivacy.wechatId"
+                size="small"
+                @change="(checked: boolean) => { if (checked) form.wechatId = '' }"
+              >
+                清空已存微信号
+              </el-checkbox>
+            </div>
           </el-form-item>
           <el-form-item label="备注名">
             <el-input v-model="form.remarkName" />

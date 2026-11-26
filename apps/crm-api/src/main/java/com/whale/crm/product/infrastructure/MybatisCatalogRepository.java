@@ -102,6 +102,9 @@ public class MybatisCatalogRepository implements CatalogRepository {
         return mapper.countSkus(tenantId, keyword, status, packageId, institutionIds);
     }
     public List<Sku> findSkusByVersion(long tenantId, long packageVersionId) { return mapper.selectSkusByVersion(tenantId, packageVersionId); }
+    public List<Sku> findSkusByIds(long tenantId, Set<Long> ids, Set<Long> institutionIds) {
+        return mapper.selectSkusByIds(tenantId, ids, institutionIds);
+    }
     public Optional<Sku> findSku(long tenantId, long id) { return Optional.ofNullable(mapper.selectSku(tenantId, id)); }
     public Optional<Sku> findSkuByCode(long tenantId, String code) { return Optional.ofNullable(mapper.selectSkuByCode(tenantId, code)); }
     public void insertSku(long tenantId, Sku sku) {

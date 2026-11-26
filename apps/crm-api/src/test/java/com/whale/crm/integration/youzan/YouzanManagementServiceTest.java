@@ -9,6 +9,7 @@ import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryResponse;
 import com.whale.crm.integration.youzan.api.dto.YouzanCustomerLinkRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanEventResponse;
+import com.whale.crm.integration.youzan.api.dto.YouzanOrderItemView;
 import com.whale.crm.integration.youzan.api.dto.YouzanOrderView;
 import com.whale.crm.integration.youzan.api.dto.YouzanReconcileReport;
 import com.whale.crm.integration.youzan.api.dto.YouzanSkuCandidateView;
@@ -33,13 +34,16 @@ import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
 import com.whale.crm.product.application.CatalogApplicationService;
 import com.whale.crm.product.domain.PackageVersionSnapshot;
+import com.whale.crm.product.domain.Sku;
 import com.whale.crm.trading.application.OrderApplicationService;
 import com.whale.crm.trading.application.OutboxService;
 import com.whale.crm.trading.domain.Order;
 import com.whale.crm.trading.domain.OrderDetail;
 import com.whale.crm.trading.domain.OrderFulfillmentView;
+import com.whale.crm.trading.domain.OrderItem;
 import com.whale.crm.trading.domain.PaymentTxn;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -720,6 +724,209 @@ class YouzanManagementServiceTest {
         verify(repository).findOpenMappingIssueEvents(TENANT_ID, SHOP, teamQuery, 500);
         verify(eventService).process(TENANT_ID, 610L);
         verify(eventService, never()).process(TENANT_ID, 611L);
+    }
+
+    @Test
+    void orderViewsExtractFullProductMetadataEnrichCrmSkusAndRespectOrderReadMasking() throws Exception {
+        CurrentUser reader = user(2L, "order:read");
+        String longTitle = "超光子嫩肤套餐" + "A".repeat(230);
+        String longOuterCode = "OUT-" + "X".repeat(140);
+        String providerMasked = """
+                {"full_order_info":{"order_info":{"tid":"ext-full-1"},
+                "buyer_info":{"buyer_phone":"***","fans_nickname":"***"},
+                "orders":[
+                  {"item_id":5505,"sku_id":101,"num":2,"title":"%s",
+                   "sku_properties_name":"[{\\"k\\":\\"疗程\\",\\"v\\":\\"3次卡\\"},{\\"k\\":\\"门店\\",\\"v\\":\\"通用\\"}]",
+                   "price":"1811.00","payment":"3622.00","outer_sku_id":"%s"},
+                  {"item_id":5505,"sku_id":101,"num":1,"item_title":"赠品超光子",
+                   "sku_spec":"单次体验","discount_price":"199.95","payment":"0.00","outer_item_id":"GIFT-101"},
+                  {"item_id":5505,"sku_id":202,"num":1,"goods_title":"未映射项目",
+                   "sku_properties_name":"单次","price":"599.50","total_fee":"599.50"}
+                ]}}
+                """.formatted(longTitle, longOuterCode);
+        YouzanEvent raw = new YouzanEvent(701L, SHOP, "ev-full-1", "ORDER_PAID", "ext-full-1",
+                maskedPayload(), "cipher-full-1", true, "PULL", "CUSTOMER_UNRESOLVED", 1, "待链接客户", null,
+                Instant.parse("2026-11-26T08:00:00Z"), null, null, providerMasked, "provider-cipher-secret", 0L);
+
+        when(scopeSupport.scope(reader)).thenReturn(DataScope.all());
+        when(repository.findEvent(TENANT_ID, 701L)).thenReturn(Optional.of(raw));
+        when(repository.findOrderMap(TENANT_ID, SHOP, "ext-full-1")).thenReturn(Optional.empty());
+        when(cipher.decrypt("cipher-full-1")).thenReturn(plainPayloadWithItems("ev-full-1", "ext-full-1",
+                "{\"external_sku_id\":\"5505:101\",\"quantity\":2},"
+                        + "{\"external_sku_id\":\"5505:101\",\"quantity\":1},"
+                        + "{\"external_sku_id\":\"5505:202\",\"quantity\":1}"));
+        when(repository.findSkuMappings(TENANT_ID, SHOP)).thenReturn(List.of(
+                new YouzanSkuMapping(1L, SHOP, "5505:101", 301L, "ACTIVE", Instant.now(), 0L),
+                new YouzanSkuMapping(2L, SHOP, "5505:202", 302L, "INACTIVE", Instant.now(), 0L)
+        ));
+        when(catalogService.skusByIds(TENANT_ID, reader, Set.of(301L))).thenReturn(List.of(
+                new Sku(301L, "SKU-WG-001-03", 301L, 201L, "光子水光囤货卡", 1, "FIXED", "3次",
+                        181100L, "ACTIVE", null, null, null, 0L)
+        ));
+
+        YouzanOrderView view = service.order(TENANT_ID, reader, 701L);
+
+        assertThat(view.payloadMaskedJson()).isNull();
+        assertThat(view.items()).hasSize(3);
+
+        YouzanOrderItemView first = view.items().get(0);
+        assertThat(first.externalSkuId()).isEqualTo("5505:101");
+        assertThat(first.quantity()).isEqualTo(2);
+        assertThat(first.itemTitle()).hasSize(200).startsWith("超光子嫩肤套餐");
+        assertThat(first.skuSpec()).isEqualTo("疗程：3次卡 / 门店：通用");
+        assertThat(first.priceFen()).isEqualTo(181100L);
+        assertThat(first.paymentFen()).isEqualTo(362200L);
+        assertThat(first.outerSkuCode()).hasSize(128).startsWith("OUT-X");
+        assertThat(first.crmSkuId()).isEqualTo(301L);
+        assertThat(first.crmSkuName()).isEqualTo("光子水光囤货卡｜3次");
+
+        // Second line shares external_sku_id but keeps its own line-level 0.00 payment and discount_price
+        YouzanOrderItemView second = view.items().get(1);
+        assertThat(second.externalSkuId()).isEqualTo("5505:101");
+        assertThat(second.quantity()).isEqualTo(1);
+        assertThat(second.itemTitle()).isEqualTo("赠品超光子");
+        assertThat(second.skuSpec()).isEqualTo("单次体验");
+        assertThat(second.priceFen()).isEqualTo(19995L);
+        assertThat(second.paymentFen()).isZero();
+        assertThat(second.outerSkuCode()).isEqualTo("GIFT-101");
+        assertThat(second.crmSkuId()).isEqualTo(301L);
+        assertThat(second.crmSkuName()).isEqualTo("光子水光囤货卡｜3次");
+
+        // INACTIVE mapping is ignored; total_fee populates paymentFen
+        YouzanOrderItemView third = view.items().get(2);
+        assertThat(third.externalSkuId()).isEqualTo("5505:202");
+        assertThat(third.quantity()).isEqualTo(1);
+        assertThat(third.itemTitle()).isEqualTo("未映射项目");
+        assertThat(third.skuSpec()).isEqualTo("单次");
+        assertThat(third.priceFen()).isEqualTo(59950L);
+        assertThat(third.paymentFen()).isEqualTo(59950L);
+        assertThat(third.outerSkuCode()).isNull();
+        assertThat(third.crmSkuId()).isNull();
+        assertThat(third.crmSkuName()).isNull();
+
+        String serialized = objectMapper.writeValueAsString(view);
+        assertThat(serialized)
+                .contains("\"external_sku_id\":\"5505:101\"", "\"paymentFen\":362200", "\"crmSkuName\":\"光子水光囤货卡｜3次\"")
+                .doesNotContain("provider-cipher-secret", "cipher-full-1", "13900000000", "raw-nickname", "raw-address");
+        verify(catalogService, times(1)).skusByIds(TENANT_ID, reader, Set.of(301L));
+    }
+
+    @Test
+    void ordersPageBatchesSkuMappingsAndCatalogLookupsOnceAndFallsBackGracefully() {
+        CurrentUser reader = user(5L, "order:read");
+        String payloadFallbackJson = """
+                {"items":[{"external_sku_id":"5505:101","quantity":1,"title":"回退自payloadMaskedJson",
+                "sku_spec":"标准规格","price_fen":8800,"payment_fen":8000,"outer_sku_id":"PF-101"}]}
+                """;
+        String negativeMoneyProvider = """
+                {"full_order_info":{"orders":[{"item_id":5505,"sku_id":102,"num":1,"title":"异常负价保护",
+                "price_fen":-50,"payment":"-10.00"}]}}
+                """;
+        YouzanEvent raw1 = new YouzanEvent(801L, SHOP, "ev-batch-1", "ORDER_PAID", "ext-batch-1",
+                payloadFallbackJson, "c-b1", true, "PULL", "CUSTOMER_UNRESOLVED", 1, null, null,
+                Instant.parse("2026-11-26T09:00:00Z"), null, null, "{}", "pc-b1", 0L);
+        YouzanEvent raw2 = new YouzanEvent(802L, SHOP, "ev-batch-2", "ORDER_PAID", "ext-batch-2",
+                "{}", "c-b2", true, "PULL", "CUSTOMER_UNRESOLVED", 1, null, null,
+                Instant.parse("2026-11-26T09:01:00Z"), null, null, negativeMoneyProvider, "pc-b2", 0L);
+        YouzanEvent raw3Mapped = new YouzanEvent(803L, SHOP, "ev-batch-3", "ORDER_PAID", "ext-batch-3",
+                "{}", "c-b3", true, "PULL", "PROCESSED", 1, null, null,
+                Instant.parse("2026-11-26T09:02:00Z"), null, 901L, null, null, 0L);
+
+        when(scopeSupport.scope(reader)).thenReturn(DataScope.all());
+        when(repository.findLatestOrderEvents(eq(TENANT_ID), eq(SHOP), any(), eq(0), eq(20)))
+                .thenReturn(List.of(raw1, raw2, raw3Mapped));
+        when(repository.countDistinctExternalOrders(eq(TENANT_ID), eq(SHOP), any())).thenReturn(3L);
+        when(repository.findOrderMap(TENANT_ID, SHOP, "ext-batch-1")).thenReturn(Optional.empty());
+        when(repository.findOrderMap(TENANT_ID, SHOP, "ext-batch-2")).thenReturn(Optional.empty());
+        when(repository.findOrderMap(TENANT_ID, SHOP, "ext-batch-3"))
+                .thenReturn(Optional.of(new YouzanOrderMap(99L, SHOP, "ext-batch-3", 901L, Instant.now(), null, 0L)));
+        when(cipher.decrypt("c-b1")).thenReturn(plainPayloadWithSkus("ev-batch-1", "ext-batch-1", List.of("5505:101")));
+        when(cipher.decrypt("c-b2")).thenReturn(plainPayloadWithSkus("ev-batch-2", "ext-batch-2", List.of("5505:102")));
+        when(cipher.decrypt("c-b3")).thenReturn(plainPayloadWithSkus("ev-batch-3", "ext-batch-3", List.of("5505:OLD")));
+
+        OrderFulfillmentView fulfillment = mock(OrderFulfillmentView.class);
+        OrderDetail orderDetail = mock(OrderDetail.class);
+        Order order = mock(Order.class);
+        when(fulfillment.order()).thenReturn(orderDetail);
+        when(orderDetail.order()).thenReturn(order);
+        when(orderDetail.payments()).thenReturn(List.of());
+        when(orderDetail.items()).thenReturn(List.of(
+                new OrderItem(1L, 901L, 399L, 399L, "SKU-HIST", "历史冻结套餐｜1次", 2, 181100L, 181100L, "{}", 0L)
+        ));
+        when(order.status()).thenReturn("PAID");
+        when(order.paidFen()).thenReturn(181100L);
+        when(order.sourceSystem()).thenReturn("YOUZAN");
+        when(order.externalShopId()).thenReturn(SHOP);
+        when(orderService.detail(TENANT_ID, reader, 901L)).thenReturn(fulfillment);
+
+        when(repository.findSkuMappings(TENANT_ID, SHOP)).thenReturn(List.of(
+                new YouzanSkuMapping(1L, SHOP, "5505:101", 301L, "ACTIVE", Instant.now(), 0L),
+                new YouzanSkuMapping(2L, SHOP, "5505:102", 302L, "ACTIVE", Instant.now(), 0L)
+        ));
+        when(catalogService.skusByIds(TENANT_ID, reader, Set.of(301L, 302L))).thenReturn(List.of(
+                new Sku(301L, "SKU-301", 301L, 201L, "光子水光囤货卡", 1, "FIXED", "3次", 181100L, "ACTIVE", null, null, null, 0L),
+                new Sku(302L, "SKU-302", 302L, 201L, "光子水光囤货卡", 2, "FIXED", null, 331100L, "ACTIVE", null, null, null, 0L)
+        ));
+
+        PageResponse<YouzanOrderView> page = service.orders(TENANT_ID, reader, SHOP, 1, 20);
+
+        assertThat(page.items()).hasSize(3);
+        // raw1 fell back to payloadMaskedJson because providerPayloadMaskedJson had no order lines
+        YouzanOrderItemView item1 = page.items().get(0).items().get(0);
+        assertThat(item1.itemTitle()).isEqualTo("回退自payloadMaskedJson");
+        assertThat(item1.priceFen()).isEqualTo(8800L);
+        assertThat(item1.paymentFen()).isEqualTo(8000L);
+        assertThat(item1.outerSkuCode()).isEqualTo("PF-101");
+        assertThat(item1.crmSkuId()).isEqualTo(301L);
+        assertThat(item1.crmSkuName()).isEqualTo("光子水光囤货卡｜3次");
+
+        // raw2 rejected negative prices/payments safely as null while enriching SKU name
+        YouzanOrderItemView item2 = page.items().get(1).items().get(0);
+        assertThat(item2.itemTitle()).isEqualTo("异常负价保护");
+        assertThat(item2.priceFen()).isNull();
+        assertThat(item2.paymentFen()).isNull();
+        assertThat(item2.crmSkuId()).isEqualTo(302L);
+        assertThat(item2.crmSkuName()).isEqualTo("光子水光囤货卡");
+
+        // raw3 preserved historical frozen OrderItem snapshot even without active SKU mapping and did NOT query catalog for 399
+        YouzanOrderItemView item3 = page.items().get(2).items().get(0);
+        assertThat(item3.externalSkuId()).isEqualTo("5505:OLD");
+        assertThat(item3.itemTitle()).isNull();
+        assertThat(item3.crmSkuId()).isEqualTo(399L);
+        assertThat(item3.crmSkuName()).isEqualTo("历史冻结套餐｜1次");
+
+        // Verify page-level batching: 1 findSkuMappings + 1 skusByIds for the whole page (no N+1)
+        verify(repository, times(1)).findSkuMappings(TENANT_ID, SHOP);
+        verify(catalogService, times(1)).skusByIds(TENANT_ID, reader, Set.of(301L, 302L));
+    }
+
+    @Test
+    void catalogLookupFailureDegradesGracefullyWithoutThrowing403Or500() {
+        CurrentUser readerWithoutCatalog = user(6L, "order:read");
+        YouzanEvent raw = new YouzanEvent(810L, SHOP, "ev-nocat-1", "ORDER_PAID", "ext-nocat-1",
+                "{}", "c-nocat", true, "PULL", "CUSTOMER_UNRESOLVED", 1, null, null,
+                Instant.parse("2026-11-26T10:00:00Z"), null, null,
+                "{\"full_order_info\":{\"orders\":[{\"item_id\":5505,\"sku_id\":101,\"num\":1,\"title\":\"水光体验\",\"price\":\"599.00\"}]}}",
+                "pc-nocat", 0L);
+
+        when(scopeSupport.scope(readerWithoutCatalog)).thenReturn(DataScope.all());
+        when(repository.findEvent(TENANT_ID, 810L)).thenReturn(Optional.of(raw));
+        when(repository.findOrderMap(TENANT_ID, SHOP, "ext-nocat-1")).thenReturn(Optional.empty());
+        when(cipher.decrypt("c-nocat")).thenReturn(plainPayloadWithSkus("ev-nocat-1", "ext-nocat-1", List.of("5505:101")));
+        when(repository.findSkuMappings(TENANT_ID, SHOP)).thenReturn(List.of(
+                new YouzanSkuMapping(1L, SHOP, "5505:101", 301L, "ACTIVE", Instant.now(), 0L)
+        ));
+        when(catalogService.skusByIds(TENANT_ID, readerWithoutCatalog, Set.of(301L)))
+                .thenThrow(new AccessDeniedException("no product:read"));
+
+        YouzanOrderView view = service.order(TENANT_ID, readerWithoutCatalog, 810L);
+
+        assertThat(view.payloadMaskedJson()).isNull();
+        assertThat(view.items()).hasSize(1);
+        assertThat(view.items().get(0).itemTitle()).isEqualTo("水光体验");
+        assertThat(view.items().get(0).priceFen()).isEqualTo(59900L);
+        assertThat(view.items().get(0).crmSkuId()).isEqualTo(301L);
+        assertThat(view.items().get(0).crmSkuName()).isNull();
     }
 
     private YouzanManagementService serviceWithClock(Clock clock) {

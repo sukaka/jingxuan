@@ -1464,4 +1464,82 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     expect(wrapper.get('.el-tabs__item.is-active').text()).toBe('人工客户链接')
     expect(wrapper.get('[data-testid="customer-link-suggestion"]').text()).toContain('yz-open-conflict-88')
   })
+
+  it('订单列表商品列展示商品标题、规格、外部 SKU 与多商品汇总，同时兼容仅含外部 SKU 的旧行', async () => {
+    const richSingleOrder: YouzanOrderView = {
+      ...order,
+      eventId: 'YZ-EVENT-GOODS-1',
+      externalOrderNo: 'E202611260501',
+      payloadMaskedJson: null,
+      items: [
+        {
+          external_sku_id: '5505085839:26076889518',
+          quantity: 2,
+          itemTitle: '鲸选光子嫩肤尊享卡',
+          skuSpec: '3次卡 / 全国通用',
+          priceFen: 150000,
+          paymentFen: 298000,
+          outerSkuCode: 'OUTER-GZ-3',
+          crmSkuId: 301,
+          crmSkuName: '测试套餐',
+        },
+      ],
+    }
+    const multiItemOrder: YouzanOrderView = {
+      ...order,
+      eventId: 'YZ-EVENT-GOODS-2',
+      externalOrderNo: 'E202611260502',
+      payloadMaskedJson: null,
+      items: [
+        {
+          external_sku_id: '5505085839:777001',
+          quantity: 1,
+          itemTitle: null,
+          skuSpec: '标准版',
+          crmSkuId: 301,
+          crmSkuName: '热玛吉抗衰套卡',
+        },
+        {
+          external_sku_id: '5505085839:777002',
+          quantity: 2,
+          itemTitle: '胶原修复面膜',
+          skuSpec: '5片装',
+          crmSkuId: null,
+          crmSkuName: null,
+        },
+      ],
+    }
+    const legacyOnlySkuOrder: YouzanOrderView = {
+      ...order,
+      eventId: 'YZ-EVENT-GOODS-3',
+      externalOrderNo: 'E202611260503',
+      payloadMaskedJson: null,
+      items: [{ external_sku_id: 'LEGACY-SKU-9', quantity: 3 }],
+    }
+    vi.mocked(listYouzanOrders).mockResolvedValue({
+      items: [richSingleOrder, multiItemOrder, legacyOnlySkuOrder],
+      total: 3,
+      page: 1,
+      size: 20,
+    })
+
+    const wrapper = mountView(['order:read'])
+    await flushPromises()
+
+    const goodsCells = wrapper.findAll('[data-testid="youzan-order-goods"]')
+    expect(goodsCells).toHaveLength(3)
+
+    expect(goodsCells[0]?.text()).toContain('鲸选光子嫩肤尊享卡 × 2')
+    expect(goodsCells[0]?.find('.proto-subcell').text()).toContain('3次卡 / 全国通用')
+    expect(goodsCells[0]?.find('.proto-subcell').text()).toContain('SKU 5505085839:26076889518')
+
+    expect(goodsCells[1]?.text()).toContain('热玛吉抗衰套卡 × 1')
+    expect(goodsCells[1]?.text()).toContain('共 2 项')
+    expect(goodsCells[1]?.find('.proto-subcell').text()).toContain('标准版')
+    expect(goodsCells[1]?.find('.proto-subcell').text()).toContain('合计 3 件')
+    expect(goodsCells[1]?.find('.proto-subcell').text()).toContain('另含 胶原修复面膜 × 2')
+
+    expect(goodsCells[2]?.text()).toContain('LEGACY-SKU-9 × 3')
+    expect(goodsCells[2]?.find('.proto-subcell').exists()).toBe(false)
+  })
 })

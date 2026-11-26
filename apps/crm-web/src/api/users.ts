@@ -11,6 +11,8 @@ export interface ManagedUser {
   teamId: number | null
   /** 团队名(后端联表 sys_team 返回,可能为空) */
   teamName?: string | null
+  supervisorUserId?: number | null
+  supervisorName?: string | null
   roles: string[]
   lastLoginAt: string | null
   createdAt: string
@@ -32,12 +34,21 @@ export interface TeamOption {
   teamName: string
 }
 
+export interface SupervisorOption {
+  id: number
+  username: string
+  displayName: string
+  teamId: number | null
+  teamName: string | null
+}
+
 export interface CreateUserRequest {
   username: string
   displayName: string
   password: string
   userType: string
   teamId?: number | null
+  supervisorUserId?: number | null
   roleIds?: number[]
 }
 
@@ -45,6 +56,7 @@ export interface CreateUserRequest {
 export interface UpdateUserRequest {
   displayName?: string
   teamId?: number | null
+  supervisorUserId?: number | null
   version: number
 }
 
@@ -67,6 +79,12 @@ export async function listUsers(query: UserListQuery): Promise<PageResult<Manage
 /** GET /users/teams(user:read)：当前租户启用团队选项 */
 export async function listUserTeams(): Promise<TeamOption[]> {
   const res = await http.get<ApiResponse<TeamOption[]>>('/users/teams')
+  return res.data.data
+}
+
+/** GET /users/supervisors(user:read)：当前租户启用内部员工选项（供直属上级选择） */
+export async function listUserSupervisors(): Promise<SupervisorOption[]> {
+  const res = await http.get<ApiResponse<SupervisorOption[]>>('/users/supervisors')
   return res.data.data
 }
 

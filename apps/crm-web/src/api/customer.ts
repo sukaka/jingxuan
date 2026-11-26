@@ -1,7 +1,7 @@
 import type { ApiResponse, PageResult } from '../types/api'
 import { http } from './http'
 
-/** 客户域 API。手机号只以 mobileMasked 脱敏形态返回,前端不持有明文。 */
+/** 客户域 API。手机号、身份证号、邮箱、微信号均只以脱敏形态返回,前端不持有明文。 */
 
 export interface CustomerListItem {
   id: number
@@ -9,6 +9,9 @@ export interface CustomerListItem {
   displayName: string | null
   nickname: string | null
   mobileMasked: string | null
+  idCardMasked?: string | null
+  emailMasked?: string | null
+  wechatIdMasked?: string | null
   cityCode: string | null
   customerStatus: string | null
   tierCode: string | null
@@ -130,6 +133,9 @@ export interface CreateCustomerRequest {
   displayName?: string
   nickname?: string
   mobile?: string
+  idCard?: string
+  email?: string
+  wechatId?: string
   cityCode?: string
   sourceCode?: string
   channelCode?: string
@@ -153,6 +159,9 @@ export interface UpdateCustomerRequest {
   nickname?: string
   remarkName?: string
   mobile?: string
+  idCard?: string
+  email?: string
+  wechatId?: string
   cityCode?: string
   sourceCode?: string
   channelCode?: string

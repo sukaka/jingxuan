@@ -126,6 +126,16 @@ export const routes: RouteRecordRaw[] = [
     meta: { title: '客户归属日志', section: '客户管理', permission: 'customer:read' },
   },
   {
+    path: '/customers/privacy-approvals',
+    name: 'customer-privacy-approvals',
+    component: () => import('../views/CustomerPrivacyApprovalsView.vue'),
+    meta: {
+      title: '隐私查看审批',
+      section: '客户管理',
+      permission: ['customer:privacy:request', 'customer:privacy:approve', 'customer:privacy:audit'],
+    },
+  },
+  {
     path: '/integrations/wecom',
     name: 'wecom-workspace',
     component: () => import('../views/WecomArchiveView.vue'),

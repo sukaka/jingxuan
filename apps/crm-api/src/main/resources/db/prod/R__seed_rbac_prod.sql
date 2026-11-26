@@ -62,7 +62,11 @@ INSERT INTO sys_permission (tenant_id,permission_code,description) VALUES
   (1,'followup:policy:manage','跟进间隔策略管理'),
   (1,'channel:approve_finance','合作渠道财务与佣金变更审批'),
   (1,'customer:tag:manage','客户标签内容维护（新增/修改/停用）'),
-  (1,'customer:source_channel:manage','客户来源与渠道维护（新增/修改/停用/启用）')
+  (1,'customer:source_channel:manage','客户来源与渠道维护（新增/修改/停用/启用）'),
+  (1,'customer:privacy:request','申请查看客户隐私信息与有效期内揭盲'),
+  (1,'customer:privacy:approve','审批下属客户隐私查看申请与撤销授权'),
+  (1,'customer:privacy:admin_reveal','管理员按钮显式揭盲客户隐私（强制审计）'),
+  (1,'customer:privacy:audit','查看客户隐私访问审计日志台账')
   ON DUPLICATE KEY UPDATE description=VALUES(description);
 
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
@@ -150,3 +154,19 @@ WHERE p.permission_code='customer:tag:manage' AND r.role_code IN ('ADMIN','MANAG
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
 SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
 WHERE p.permission_code='customer:source_channel:manage' AND r.role_code IN ('ADMIN','MANAGER_LEAD');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:privacy:request'
+  AND r.role_code IN ('ADMIN','OWNER','MANAGER_LEAD','MANAGER','OPERATION','OPERATION_LEAD','FINANCE','BUSINESS');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:privacy:approve'
+  AND r.role_code IN ('ADMIN','OWNER','MANAGER_LEAD','OPERATION_LEAD');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:privacy:admin_reveal'
+  AND r.role_code='ADMIN';
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:privacy:audit'
+  AND r.role_code IN ('ADMIN','OWNER','MANAGER_LEAD','OPERATION_LEAD');

@@ -47,6 +47,7 @@ const ADMIN_MENU: MenuEntry[] = [
     item('/ai/chat-delegation', 'AI 聊天托管', 'spark', 'ai:read'),
     item('/integrations/wecom/monitor', '会话监管', 'chat', 'wecom:read'),
     item('/customers/ownership-logs', '客户归属日志', 'users', 'customer:read'),
+    item('/customers/privacy-approvals', '隐私查看审批', 'shield', ['customer:privacy:request', 'customer:privacy:approve', 'customer:privacy:audit'], { badgeKey: 'privacyApprovals', excludedUserTypes: ['INSTITUTION'] }),
   ]),
   group('trading', '交易履约', 'bag', [
     item('/entitlements', '会员权益', 'heart', 'entitlement:read'),
@@ -110,6 +111,7 @@ const MANAGER_MENU: MenuEntry[] = [
     item('/customers/annual-reports', '年终盘点 H5', 'spark', 'customer:read', { excludedUserTypes: ['INSTITUTION'] }),
     item('/integrations/wecom', '企微 AI 助手', 'spark', 'wecom:read'),
     item('/ai/chat-delegation', 'AI 聊天托管', 'spark', 'ai:read'),
+    item('/customers/privacy-approvals', '隐私查看申请', 'shield', ['customer:privacy:request', 'customer:privacy:approve', 'customer:privacy:audit'], { excludedUserTypes: ['INSTITUTION'] }),
   ]),
   group('service', '服务履约', 'calendar', [
     item('/appointments', '预约管理', 'calendar', 'appointment:read', { badgeKey: 'appointments' }),

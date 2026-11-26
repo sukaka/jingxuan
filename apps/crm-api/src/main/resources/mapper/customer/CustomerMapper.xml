@@ -13,6 +13,12 @@
     <result property="remarkName" column="remark_name"/>
     <result property="mobileCipher" column="mobile_cipher"/>
     <result property="mobileHash" column="mobile_hash"/>
+    <result property="idCardCipher" column="id_card_cipher"/>
+    <result property="idCardHash" column="id_card_hash"/>
+    <result property="emailCipher" column="email_cipher"/>
+    <result property="emailHash" column="email_hash"/>
+    <result property="wechatIdCipher" column="wechat_id_cipher"/>
+    <result property="wechatIdHash" column="wechat_id_hash"/>
     <result property="cityCode" column="city_code"/>
     <result property="sourceCode" column="source_code"/>
     <result property="channelCode" column="channel_code"/>
@@ -47,6 +53,9 @@
     <result property="displayName" column="display_name"/>
     <result property="nickname" column="nickname"/>
     <result property="mobileCipher" column="mobile_cipher"/>
+    <result property="idCardCipher" column="id_card_cipher"/>
+    <result property="emailCipher" column="email_cipher"/>
+    <result property="wechatIdCipher" column="wechat_id_cipher"/>
     <result property="cityCode" column="city_code"/>
     <result property="customerStatus" column="customer_status"/>
     <result property="tierCode" column="tier_code"/>
@@ -64,7 +73,8 @@
 
   <sql id="customerColumns">
     id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname, remark_name,
-    mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status, tier_code,
+    mobile_cipher, mobile_hash, id_card_cipher, id_card_hash, email_cipher, email_hash,
+    wechat_id_cipher, wechat_id_hash, city_code, source_code, channel_code, customer_status, tier_code,
     tier_locked, tier_lock_reason, intent_level, spending_level, birthday, points_cached, attention_projects,
     blocker_note, remark,
     first_added_at, first_order_at, last_followup_at, next_followup_at, deleted, created_at, updated_at, version
@@ -99,6 +109,15 @@
         OR c.remark_name LIKE CONCAT('%', #{keyword}, '%')
         <if test="mobileHashKeyword != null and mobileHashKeyword != ''">
           OR c.mobile_hash = #{mobileHashKeyword}
+        </if>
+        <if test="idCardHashKeyword != null and idCardHashKeyword != ''">
+          OR c.id_card_hash = #{idCardHashKeyword}
+        </if>
+        <if test="emailHashKeyword != null and emailHashKeyword != ''">
+          OR c.email_hash = #{emailHashKeyword}
+        </if>
+        <if test="wechatIdHashKeyword != null and wechatIdHashKeyword != ''">
+          OR c.wechat_id_hash = #{wechatIdHashKeyword}
         </if>)
     </if>
     <if test="status != null and status != ''">
@@ -148,7 +167,8 @@
 
   <select id="search" resultMap="CustomerListRowMap">
     SELECT c.id, c.tenant_id, c.owner_staff_id, o.display_name AS owner_name, c.team_id, c.customer_no,
-           c.display_name, c.nickname, c.mobile_cipher, c.city_code, c.customer_status, c.tier_code,
+           c.display_name, c.nickname, c.mobile_cipher, c.id_card_cipher, c.email_cipher, c.wechat_id_cipher,
+           c.city_code, c.customer_status, c.tier_code,
            c.intent_level, c.points_cached, c.last_followup_at, c.created_at, c.version,
            c.source_code, c.channel_code, c.spending_level, c.birthday,
            c.next_followup_at
@@ -201,11 +221,15 @@
   <insert id="insertCustomer" parameterType="com.whale.crm.customer.domain.Customer"
           useGeneratedKeys="true" keyProperty="id">
     INSERT INTO crm_customer (tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
-                              remark_name, mobile_cipher, mobile_hash, city_code, source_code, channel_code,
+                              remark_name, mobile_cipher, mobile_hash, id_card_cipher, id_card_hash,
+                              email_cipher, email_hash, wechat_id_cipher, wechat_id_hash,
+                              city_code, source_code, channel_code,
                               customer_status, tier_code, intent_level, spending_level, birthday,
                               attention_projects, blocker_note, remark, first_added_at)
     VALUES (#{tenantId}, #{ownerStaffId}, #{teamId}, #{customerNo}, #{displayName}, #{nickname},
-            #{remarkName}, #{mobileCipher}, #{mobileHash}, #{cityCode}, #{sourceCode}, #{channelCode},
+            #{remarkName}, #{mobileCipher}, #{mobileHash}, #{idCardCipher}, #{idCardHash},
+            #{emailCipher}, #{emailHash}, #{wechatIdCipher}, #{wechatIdHash},
+            #{cityCode}, #{sourceCode}, #{channelCode},
             #{customerStatus}, #{tierCode}, #{intentLevel}, #{spendingLevel}, #{birthday},
             #{attentionProjects}, #{blockerNote}, #{remark}, #{firstAddedAt})
   </insert>
@@ -218,7 +242,11 @@
   <update id="updateProfile" parameterType="com.whale.crm.customer.domain.Customer">
     UPDATE crm_customer
     SET display_name = #{displayName}, nickname = #{nickname}, remark_name = #{remarkName},
-        mobile_cipher = #{mobileCipher}, mobile_hash = #{mobileHash}, city_code = #{cityCode},
+        mobile_cipher = #{mobileCipher}, mobile_hash = #{mobileHash},
+        id_card_cipher = #{idCardCipher}, id_card_hash = #{idCardHash},
+        email_cipher = #{emailCipher}, email_hash = #{emailHash},
+        wechat_id_cipher = #{wechatIdCipher}, wechat_id_hash = #{wechatIdHash},
+        city_code = #{cityCode},
         source_code = #{sourceCode}, channel_code = #{channelCode}, customer_status = #{customerStatus},
         tier_code = #{tierCode}, intent_level = #{intentLevel}, spending_level = #{spendingLevel},
         birthday = #{birthday}, attention_projects = #{attentionProjects}, blocker_note = #{blockerNote},

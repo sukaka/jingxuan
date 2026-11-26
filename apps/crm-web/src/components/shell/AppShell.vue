@@ -7,6 +7,7 @@ import { isMenuGroup, visibleMenuItems } from '../../router/menu'
 import { ApiError } from '../../types/api'
 import { listTasks } from '../../api/task'
 import { listAppointments } from '../../api/fulfillment'
+import { listCustomerPrivacyRequests } from '../../api/customerPrivacy'
 import ShellHeader from './ShellHeader.vue'
 import ShellSidebar from './ShellSidebar.vue'
 import ChangePasswordDialog from './ChangePasswordDialog.vue'
@@ -88,6 +89,11 @@ async function loadBadges() {
     .then((result) => { badgeValues.value.tasks = result.total }).catch(() => { badgeValues.value.tasks = 0 }))
   if (auth.hasPermission('appointment:read')) requests.push(listAppointments({ page: 1, size: 1, status: 'PENDING_INSTITUTION' })
     .then((result) => { badgeValues.value.appointments = result.total }).catch(() => { badgeValues.value.appointments = 0 }))
+  if (auth.hasPermission('customer:privacy:approve')) requests.push(
+    listCustomerPrivacyRequests({ page: 1, size: 1, view: 'PENDING_APPROVAL', status: 'PENDING' })
+      .then((result) => { badgeValues.value.privacyApprovals = result.total })
+      .catch(() => { badgeValues.value.privacyApprovals = 0 }),
+  )
   await Promise.all(requests)
 }
 watch(() => route.fullPath, () => { navigationOpen.value = false; void loadBadges() })

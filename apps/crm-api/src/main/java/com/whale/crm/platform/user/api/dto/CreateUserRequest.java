@@ -26,8 +26,15 @@ public record CreateUserRequest(
 
         @Positive(message = "所选团队无效") Long teamId,
 
-        List<@Positive(message = "所选角色无效") Long> roleIds) {
+        List<@Positive(message = "所选角色无效") Long> roleIds,
+
+        @Positive(message = "所选直属上级无效") Long supervisorUserId) {
     public CreateUserRequest {
         roleIds = roleIds == null ? null : List.copyOf(roleIds);
+    }
+
+    public CreateUserRequest(String username, String displayName, String password, String userType,
+                             Long teamId, List<Long> roleIds) {
+        this(username, displayName, password, userType, teamId, roleIds, null);
     }
 }

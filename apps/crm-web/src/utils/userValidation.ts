@@ -5,8 +5,8 @@ export const DISPLAY_NAME_MAX_LENGTH = 64
 export const INITIAL_PASSWORD_MIN_LENGTH = 8
 export const INITIAL_PASSWORD_MAX_LENGTH = 64
 
-export type CreateUserField = 'username' | 'displayName' | 'password' | 'userType' | 'teamId' | 'roleIds'
-export type EditUserField = 'displayName' | 'teamId'
+export type CreateUserField = 'username' | 'displayName' | 'password' | 'userType' | 'teamId' | 'supervisorUserId' | 'roleIds'
+export type EditUserField = 'displayName' | 'teamId' | 'supervisorUserId'
 
 export type CreateUserFieldErrors = Partial<Record<CreateUserField, string>>
 export type EditUserFieldErrors = Partial<Record<EditUserField, string>>

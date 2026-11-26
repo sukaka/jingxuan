@@ -4,6 +4,7 @@ import com.whale.crm.platform.context.TenantContext;
 import com.whale.crm.platform.security.SecuritySupport;
 import com.whale.crm.platform.user.api.dto.AssignRolesRequest;
 import com.whale.crm.platform.user.api.dto.CreateUserRequest;
+import com.whale.crm.platform.user.api.dto.SupervisorOptionResponse;
 import com.whale.crm.platform.user.api.dto.TeamOptionResponse;
 import com.whale.crm.platform.user.api.dto.UpdateUserRequest;
 import com.whale.crm.platform.user.api.dto.UserSummaryResponse;
@@ -70,6 +71,15 @@ public class UserController {
     public ApiResponse<java.util.List<TeamOptionResponse>> teams(HttpServletRequest request) {
         return ApiResponse.ok(userService.listTeams(TenantContext.currentTenantId()).stream()
                 .map(row -> new TeamOptionResponse(row.id(), row.teamName()))
+                .toList(), requestId(request));
+    }
+
+    @GetMapping("/supervisors")
+    @PreAuthorize("hasAuthority('user:read')")
+    public ApiResponse<java.util.List<SupervisorOptionResponse>> supervisors(HttpServletRequest request) {
+        return ApiResponse.ok(userService.listSupervisorOptions(TenantContext.currentTenantId()).stream()
+                .map(row -> new SupervisorOptionResponse(row.id(), row.username(), row.displayName(),
+                        row.teamId(), row.teamName()))
                 .toList(), requestId(request));
     }
 

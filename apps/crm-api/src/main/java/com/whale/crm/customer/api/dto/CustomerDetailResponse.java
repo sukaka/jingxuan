@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * 客户详情 = 列表字段 + 档案字段 + 标签/身份。deleted=true 表示已被合并归档（只读）。
- * attentionProjects 保留旧文本，attentionProjectIds 才是可用于筛选的正规关注关系。
+ * 手机号、身份证号、邮箱、微信号一律仅返回脱敏形态，严禁被动下发明文。
  */
 public record CustomerDetailResponse(
         Long id,
@@ -14,6 +14,9 @@ public record CustomerDetailResponse(
         String displayName,
         String nickname,
         String mobileMasked,
+        String idCardMasked,
+        String emailMasked,
+        String wechatIdMasked,
         String cityCode,
         String customerStatus,
         String tierCode,
@@ -57,11 +60,29 @@ public record CustomerDetailResponse(
             String attentionProjects, String blockerNote, String remark, String remarkName,
             Instant firstAddedAt, Instant firstOrderAt, List<String> tagCodes,
             List<CustomerIdentityItemResponse> identities, boolean deleted,
+            List<Long> attentionProjectIds, Integer addedStewardCount,
+            List<CustomerStewardRelationItemResponse> addedStewards) {
+        this(id, customerNo, displayName, nickname, mobileMasked, null, null, null,
+                cityCode, customerStatus, tierCode, intentLevel, ownerStaffId, ownerName, teamId,
+                pointsCached, lastFollowupAt, createdAt, version, sourceCode, channelCode, spendingLevel,
+                birthday, attentionProjects, blockerNote, remark, remarkName, firstAddedAt, firstOrderAt,
+                tagCodes, identities, deleted, attentionProjectIds, addedStewardCount, addedStewards);
+    }
+
+    public CustomerDetailResponse(
+            Long id, String customerNo, String displayName, String nickname, String mobileMasked,
+            String cityCode, String customerStatus, String tierCode, String intentLevel,
+            Long ownerStaffId, String ownerName, Long teamId, Integer pointsCached,
+            Instant lastFollowupAt, Instant createdAt, Long version, String sourceCode,
+            String channelCode, String spendingLevel, LocalDate birthday,
+            String attentionProjects, String blockerNote, String remark, String remarkName,
+            Instant firstAddedAt, Instant firstOrderAt, List<String> tagCodes,
+            List<CustomerIdentityItemResponse> identities, boolean deleted,
             List<Long> attentionProjectIds) {
-        this(id, customerNo, displayName, nickname, mobileMasked, cityCode, customerStatus, tierCode,
-                intentLevel, ownerStaffId, ownerName, teamId, pointsCached, lastFollowupAt, createdAt,
-                version, sourceCode, channelCode, spendingLevel, birthday, attentionProjects, blockerNote,
-                remark, remarkName, firstAddedAt, firstOrderAt, tagCodes, identities, deleted,
-                attentionProjectIds, null, null);
+        this(id, customerNo, displayName, nickname, mobileMasked, null, null, null,
+                cityCode, customerStatus, tierCode, intentLevel, ownerStaffId, ownerName, teamId,
+                pointsCached, lastFollowupAt, createdAt, version, sourceCode, channelCode, spendingLevel,
+                birthday, attentionProjects, blockerNote, remark, remarkName, firstAddedAt, firstOrderAt,
+                tagCodes, identities, deleted, attentionProjectIds, null, null);
     }
 }

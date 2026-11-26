@@ -2,6 +2,62 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [V65-CUSTOMER-PRIVACY-GOVERNANCE] 客户隐私全员默认脱敏、上级主管审批限时查看与管理员按钮揭盲审计 — 2026-11-27
+- **数据库迁移、受控回滚与权限种子（`V65`）**：
+  - 新增 `apps/crm-api/src/main/resources/db/migration/V65__customer_privacy_governance.sql` 与受控回滚脚本 `apps/crm-api/src/main/resources/db/rollback/V65__customer_privacy_governance_rollback.sql`，同步更新 `db/dev/R__seed_auth_dev.sql` 与 `db/prod/R__seed_rbac_prod.sql`：
+    - `crm_customer` 新增 `id_card_cipher/hash`、`email_cipher/hash`、`wechat_id_cipher/hash` 密文/盲索引列与 3 个盲索引（`idx_customer_id_card_hash`/`idx_customer_email_hash`/`idx_customer_wechat_hash`），与既有 `mobile_cipher/hash` 构成四类核心隐私加密存储。
+    - `sys_user` 新增 `supervisor_user_id`（`idx_user_supervisor`）支持显式配置直属上级。
+    - 新增 `crm_customer_privacy_request`（申请单与限时授权状态机）与只追加 `crm_customer_privacy_access_log`（揭盲访问日志，配 `trg_privacy_access_log_no_update` / `trg_privacy_access_log_no_delete` 触发器物理防篡改）。
+    - 新增 4 项功能权限 `customer:privacy:request`、`customer:privacy:approve`、`customer:privacy:admin_reveal`（**仅授予 `ADMIN`**）、`customer:privacy:audit`，严禁向任何合作机构角色授予隐私权限。
+- **后端全站脱敏加固、上级路由解析与隐私审批/揭盲接口（`apps/crm-api`）**：
+  - 用户上级体系：扩展 `SysUser` / `UserApplicationService` / `UserController`（新增 `GET /api/v1/users/supervisors`），校验直属上级仅限同租户在职 `EMPLOYEE`，严格拒绝自指与成环，并写入用户审计快照。
+  - 四类隐私加密与脱敏：新增 `CustomerPrivacyField` 与 `CustomerPrivacyFieldSupport`（GB 11643-1999 身份证校验、邮箱/微信号格式校验、禁止回写含 `*` 脱敏占位串、AES-256-GCM 加密与域前缀 HMAC-SHA256 盲索引、精确检索与授权解密）；加固 `CustomerApplicationService`、`LegacyProfileApplicationService`（修复 `legacy_full_json` 兜底值未脱敏风险）与 `ExportExecutionService`/`ExportColumnPolicy`（导出增加脱敏列，永不导出明文）。
+  - 隐私审批与揭盲：`CustomerPrivacyApproverResolver` 按 `DIRECT_SUPERVISOR → TEAM_LEADER → TEAM_MANAGER_LEAD → ROLE_SUPERIOR → ADMIN_FALLBACK` 自动解析上级并严禁自我审批；`CustomerPrivacyApplicationService` + `CustomerPrivacyController` 暴露 9 个端点（`/customers/{customerId}/privacy/{status,requests,reveal}`、`/customer-privacy-requests`、`/{id}/{cancel,approve,reject,revoke}`、`/customer-privacy-access-logs`）；`POST /reveal` 响应头强制 `Cache-Control: no-store, must-revalidate` + `Pragma: no-cache`，ADMIN 模式强制必填原因（1–500 字符），非 ADMIN 模式强制校有效审批授权与获批字段子集，每次揭盲双写只追加访问流水与 `crm_audit_log`（`AuditService` 新增 8 个 `CUSTOMER_PRIVACY_*` 审计常量；越权/自审尝试通过独立事务审计留痕；复用既有站内通知服务，无新增 Kafka 主题/事件）。
+- **前端脱敏展示、显式按钮揭盲、审批与日志中心及契约文档（`apps/crm-web` + `contracts` + `docs`）**：
+  - 新增 `src/api/customerPrivacy.ts`、`src/views/customer/CustomerPrivacyPanel.vue`（嵌入 `CustomerDetailDrawer.vue`：默认全员脱敏；ADMIN 点「查看隐私信息」填原因临时展开明文，支持手动隐藏、120s 自动隐藏与关抽屉/卸载销毁；非 ADMIN 发起申请/撤回/获批后点「打开查看明文」仅展开获批字段）与 `src/views/CustomerPrivacyApprovalsView.vue`（路由 `/customers/privacy-approvals`，含「隐私审批管理」「我的隐私申请」「隐私访问审计日志」三页签，审批支持收窄字段与提前撤销，日志仅展示脱敏快照；侧边栏增加待审角标）。
+  - 扩展 `CustomerFormDrawer.vue`（身份证号/邮箱/微信号加密录入、脱敏占位提示、显式清空开关与 `*` 拦检）、`UsersView.vue`（直属上级列与新建/编辑搜索选择）与 `AuditLogsView.vue`（新增 8 类隐私审计中文标签、`actorUsername`/`reason` 展示及 `before`/`after` 兼容）。
+  - 同步更新 `contracts/openapi/openapi.v1.yaml`（`354 paths`、`630 schemas`）、`docs/01_需求与产品/12_角色权限与数据隔离.md`、`docs/02_架构与技术/23_安全隐私与审计.md` 与 `docs/03_数据模型/31_数据库字段字典.md`。
+- **验证证据**：
+  - 后端单测 + 真实 MySQL 8.4 Testcontainers 集成/回滚 + 静态门禁：`./mvnw -B -pl apps/crm-api -am -Dtest='CustomerPrivacyFieldSupportTest,CustomerPrivacyApproverResolverTest,CustomerPrivacyApplicationServiceTest,UserApplicationServiceTest,CustomerTagBatchLookupTest,ExportExecutionServiceTest' -Dit.test='CustomerPrivacyApiIT,CustomerApiIT,UserAdminApiIT,AuditLogApiIT,ProductionReferenceDataIT' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false verify` **BUILD SUCCESS**（`05:17 min`）：
+    - Surefire 单元测试：**30/30 通过**（`UserApplicationServiceTest` 10/10、`ExportExecutionServiceTest` 7/7、`CustomerTagBatchLookupTest` 4/4、`CustomerPrivacyApplicationServiceTest` 3/3、`CustomerPrivacyApproverResolverTest` 3/3、`CustomerPrivacyFieldSupportTest` 3/3）；
+    - Failsafe 集成测试（MySQL 8.4 Testcontainers）：**38/38 通过**（`UserAdminApiIT` 15/15、`CustomerApiIT` 14/14、`ProductionReferenceDataIT` 4/4、`AuditLogApiIT` 3/3、`CustomerPrivacyApiIT` 2/2 含全链路脱敏/审批/揭盲/触发器防篡改与 V65 迁移+回滚脚本实测）；
+    - 静态门禁：Checkstyle `0 violations`、SpotBugs `0 bugs / 0 errors / 0 warnings`、Spotless `1463 files clean`。
+  - 前端静态检查、全量单测与生产构建：`cd apps/crm-web && npm run typecheck && npm run lint && npm run test -- --maxWorkers=2 && npm run build` 全部通过：`typecheck`（`vue-tsc --noEmit`）0 错误、`lint`（`eslint . --max-warnings 0`）0 错误 / 0 警告、`vitest run --maxWorkers=2` **165/165 测试文件、807/807 用例通过**（`221.10s`，含 `customer-privacy-panel.test.ts` 4/4、`customer-privacy-approvals-view.test.ts` 3/3、`users-view.test.ts` 6/6、`app-shell.test.ts` 10/10、`customer-profile.test.ts` 4/4、`customers-view.test.ts` 11/11）、`build`（`vue-tsc -b && vite build`）`3.51s` 成功。
+  - OpenAPI YAML 校验：Python `yaml.safe_load` + 全量 `$ref` 递归解析通过（OpenAPI `3.0.3`，`354 paths`，`630 schemas`，`2955 refs`）。
+  - 未运行项：与本模块无关的其他领域全量后端单测与 `*IT`、Kafka 消费集成测试（无新增 Kafka 事件）及全站浏览器 E2E 未运行。
+
+## [YOUZAN-SCRM-CUSTOMER-LIST-1-0-0] 有赞全量客户拉取切换至现行接口 `youzan.scrm.customer.list/1.0.0` — 2026-11-27
+- **适配层修正与隐私/超限防护（`apps/crm-api` + `apps/crm-web` + `contracts` + `docs`，无新增数据库表、Flyway 迁移或 Kafka 事件）**：
+  - 将 `OfficialYouzanCustomerPullClient#pullScrmPage` 由已下架的 `youzan.scrm.customer.search/3.1.2`（分页参数 `page`）切换为有赞云现行标准接口 `youzan.scrm.customer.list`（默认 `1.0.0`，可通过 `YOUZAN_SCRM_CUSTOMER_LIST_VERSION` 覆写），分页参数修正为 `page_no` / `page_size`（上限裁剪为 `50`），继续透传秒级时间戳 `created_at_start` / `created_at_end`。
+  - 针对 `youzan.scrm.customer.list/1.0.0` 单窗最多返回 `10,000` 条（`500` 页 × `20` 条）及业务超限码 `142710032` 的约束，当 `data.total >= 10000` 或网关返回 `142710032` 时自动抛出 `YouzanCustomerWindowTooLargeException` 触发时间窗二分切窗，避免触顶静默截断；遇到 `4204`/`4005` 权限错误时返回 `422 PENDING_BUSINESS_RULE` 并明确提示核查「店铺客户信息同步」能力包或切换 `ORDER_BUYERS`。
+  - 针对 `show_name`（官方取值顺序为「手机-姓名-昵称」）增加手机号形态识别过滤：当 `name` 为空且 `show_name` 为明文手机号时不再写入客户姓名/昵称与审计日志，交由 `enrichProfile` 补全真实昵称/姓名或安全兜底。
+  - 保持前端 `YouzanCustomerPullPanel.vue` 默认选中 `SCRM_LIST`（有赞全量客户）并更新权限说明为 `scrm.customer.list`；同步更新 `OfficialYouzanCustomerPullClientTest`、`contracts/openapi/openapi.v1.yaml`、`docs/04_接口与集成/42_有赞订单对接.md` 与 `docs/07_上线与对接指引/有赞云历史订单快照与微信H5自动登录配置指南.md`。
+- **验证证据**：
+  - 后端单测 + 真实 MySQL 8.4 Testcontainers 集成测试 + 静态门禁：`./mvnw -B -pl apps/crm-api -am -Dtest='OfficialYouzanCustomerPullClientTest,YouzanCustomerSyncServiceTest,com.whale.crm.integration.youzan.adapter.*Test' -Dit.test='YouzanCustomerSyncApiIT' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false verify` **BUILD SUCCESS**：
+    - Surefire 单元测试：**34/34 通过**（`OfficialYouzanCustomerPullClientTest` 6/6、`YouzanCustomerSyncServiceTest` 6/6、`RealYouzanAdapterTest` 9/9、`RealYouzanHttpFlowTest` 3/3、`YouzanOfficialAdapterTest` 10/10）；
+    - Failsafe 集成测试（MySQL 8.4 Testcontainers）：`YouzanCustomerSyncApiIT` **5/5 通过**；
+    - 静态门禁：Checkstyle `0 violations`、SpotBugs `0 bugs / 0 errors / 0 warnings`、Spotless `1438 files clean`。
+  - 前端类型检查、Lint、有赞单测与生产构建：
+    - `npm --prefix apps/crm-web run typecheck`（`vue-tsc --noEmit`，0 错误）；
+    - `npm --prefix apps/crm-web run lint`（`eslint . --max-warnings 0`，0 错误 / 0 警告）；
+    - `cd apps/crm-web && npx vitest run --testTimeout=15000 tests/youzan-customer-pull-panel.test.ts tests/youzan-view.test.ts tests/youzan-api.test.ts`（**3/3 测试文件、47/47 用例通过**：`youzan-api.test.ts` 5/5、`youzan-customer-pull-panel.test.ts` 10/10、`youzan-view.test.ts` 32/32）；
+    - `npm --prefix apps/crm-web run build`（`vue-tsc -b && vite build`，`5.76s` 构建成功）。
+  - OpenAPI YAML 校验：`yaml.safe_load` 解析通过（OpenAPI `3.0.3`，`344 paths`，`610 schemas`）。
+  - 未运行项：非有赞域全量后端单测与 `*IT`、Kafka 消费集成测试、全量非有赞前端测试套件、真实有赞云线上凭证端到端拉取与全站浏览器 E2E 未运行。
+
+## [YOUZAN-ORDER-ITEM-DETAILS] 有赞订单结构化商品明细展示与 CRM SKU 关联补全 — 2026-11-26
+- **后端结构化商品明细与批量 SKU 名称补全（`apps/crm-api` + `contracts` + `docs`，无新增数据库表、Flyway 迁移或 Kafka 事件）**：
+  - 保持适配层 `YouzanOrderLine` 契约不变，新增 `YouzanOrderItemView`（`external_sku_id`/`quantity`/`itemTitle`/`skuSpec`/`priceFen`/`paymentFen`/`outerSkuCode`/`crmSkuId`/`crmSkuName`），升级 `YouzanOrderView.items` 为 `List<YouzanOrderItemView>`（默认不可变空列表）。
+  - 复用并泛化 `YouzanManagementService` 商品元数据提取逻辑：仅从脱敏原文 `providerPayloadMaskedJson`（回退 `payloadMaskedJson`）解析商品标题、规格、单价与行实付/小计（`BigDecimal` 精确转非负整数分，禁止 float/double）及商家 SKU 编码，绝不读取未脱敏 PII；缺失元数据的 Mock/历史事件平滑降级为仅保留 `external_sku_id` 与 `quantity`。
+  - 保持权限与安全边界：`payloadMaskedJson` 仍仅向 `integration:youzan:manage` 返回，普通 `order:read` 用户该字段为 `null` 但可正常查看非敏感结构化商品明细；`CatalogApplicationService#skusByIds`（配套 `CatalogRepository`/`CatalogMapper` 按显式 `tenant_id` 与 `institutionIds` 范围批量查询）结合内部订单行快照（`OrderItem.skuNameSnapshot`）与按页预加载 ACTIVE SKU 映射，消除分页 N+1 查询，并在无 `product:read` 权限、目录异常或机构用户场景下优雅降级不抛 403/500。
+  - 同步更新 `contracts/openapi/openapi.v1.yaml`（新增 `YouzanOrderItemView` 并更新 `YouzanOrderView.items`，`344 paths / 610 schemas`）与 `docs/04_接口与集成/42_有赞字段映射与交接.md`。
+- **验证证据（后端）**：
+  - 全量编译 + 单元测试：`./mvnw -B -pl apps/crm-api test -Dtest='com.whale.crm.integration.youzan.**.*Test,com.whale.crm.product.*Test'` **BUILD SUCCESS**（`137/137` 通过，含 `YouzanManagementServiceTest` `17/17`、`CatalogApplicationServiceTest` `1/1`）。
+  - 静态门禁：`./mvnw -B -pl apps/crm-api checkstyle:check spotless:check spotbugs:check` **BUILD SUCCESS**（Checkstyle `0 violations`、Spotless `1438 files clean`、SpotBugs `0 bugs / 0 errors / 0 warnings`）。
+  - MySQL 8.4 Testcontainers 集成测试：`./mvnw -B -pl apps/crm-api -DskipUTs=true -Dtest=NonExistent -DfailIfNoTests=false failsafe:integration-test failsafe:verify -Dit.test='YouzanOrderQueryIT'` **BUILD SUCCESS**（`10/10` 通过，覆盖实测有赞结构化商品解析、`admin`/`manager1`/`finance1` 权限隔离与无 `product:read` 优雅查询、历史订单冻结快照与 Mock 回退）。
+  - OpenAPI YAML 校验：`yaml.safe_load` 及 `YouzanOrderItemView` 9 字段与 `$ref` 校验通过（OpenAPI `3.0.3`，`344 paths`，`610 schemas`）。
+  - 未运行项：非有赞/产品域的其他全量后端单元测试与 `*IT`、Kafka 消费集成测试与真实有赞线上凭证联调未运行。
+
 ## [V64-YOUZAN-CUSTOMER-SYNC] 有赞客户双模式拉取、断点续拉与 CRM 正式建档 — 2026-11-26
 - **数据库迁移与受控回滚（`V64`）**：
   - 新增 `apps/crm-api/src/main/resources/db/migration/V64__youzan_customer_sync.sql` 与受控回滚脚本 `apps/crm-api/src/main/resources/db/rollback/V64__youzan_customer_sync_rollback.sql`，新增 `crm_youzan_customer_sync_cursor`（`(tenant_id, shop_id, source_mode)` 持久化断点游标、增量锚点 `last_anchor_at` 与增量累加的 `total_imported_count`）、`crm_youzan_customer_sync_run`（存储生成列 `running_shop_key` + 唯一键 `uk_yz_cust_run_running` 实现同店铺同模式并发互斥锁与租约超时回收）与 `crm_youzan_customer_sync_item`（逐条脱敏处理结果明细，仅存脱敏称呼/手机号、关联或冲突 CRM 客户 ID/编号，绝不落明文手机号与明文微信 OpenID；回滚仅删除 3 张同步表，不影响已建 CRM 正式客户）。

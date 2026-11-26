@@ -368,6 +368,27 @@ public class CatalogApplicationService {
                 repository.countSkus(tenantId, keyword, status, packageId, scope), page, size);
     }
 
+    @Transactional(readOnly = true)
+    public List<Sku> skusByIds(long tenantId, CurrentUser user, Set<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> targetIds = new LinkedHashSet<>();
+        for (Long id : ids) {
+            if (id != null && id > 0) {
+                targetIds.add(id);
+            }
+        }
+        if (targetIds.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> scope = institutionScope(user);
+        if (scope != null && scope.isEmpty()) {
+            return List.of();
+        }
+        return repository.findSkusByIds(tenantId, targetIds, scope);
+    }
+
     @Transactional
     public Sku createSku(long tenantId, CurrentUser user, CreateSkuRequest request) {
         requireVersion(tenantId, request.packageVersionId());

@@ -113,7 +113,11 @@ INSERT INTO sys_permission (tenant_id,permission_code,description) VALUES
   (1,'followup:policy:manage','跟进间隔策略管理'),
   (1,'channel:approve_finance','合作渠道财务与佣金变更审批'),
   (1,'customer:tag:manage','客户标签内容维护（新增/修改/停用）'),
-  (1,'customer:source_channel:manage','客户来源与渠道维护（新增/修改/停用/启用）')
+  (1,'customer:source_channel:manage','客户来源与渠道维护（新增/修改/停用/启用）'),
+  (1,'customer:privacy:request','申请查看客户隐私信息与有效期内揭盲'),
+  (1,'customer:privacy:approve','审批下属客户隐私查看申请与撤销授权'),
+  (1,'customer:privacy:admin_reveal','管理员按钮显式揭盲客户隐私（强制审计）'),
+  (1,'customer:privacy:audit','查看客户隐私访问审计日志台账')
   ON DUPLICATE KEY UPDATE description=VALUES(description);
 
 -- ========== 角色→权限映射 ==========
@@ -273,3 +277,27 @@ WHERE p.permission_code='customer:tag:manage' AND r.role_code IN ('ADMIN','MANAG
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
 SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
 WHERE p.permission_code='customer:source_channel:manage' AND r.role_code IN ('ADMIN','MANAGER_LEAD');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:privacy:request'
+  AND r.role_code IN ('ADMIN','OWNER','MANAGER_LEAD','MANAGER','OPERATION','OPERATION_LEAD','FINANCE','BUSINESS');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:privacy:approve'
+  AND r.role_code IN ('ADMIN','OWNER','MANAGER_LEAD','OPERATION_LEAD');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:privacy:admin_reveal' AND r.role_code='ADMIN';
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:privacy:audit'
+  AND r.role_code IN ('ADMIN','OWNER','MANAGER_LEAD','OPERATION_LEAD');
+
+-- 开发环境直属上级示例关系（manager1 -> lead1, manager2 -> lead2, lead1/lead2 -> admin, operation1 -> operationlead1）
+UPDATE sys_user SET supervisor_user_id = 4 WHERE tenant_id = 1 AND username = 'manager1' AND supervisor_user_id IS NULL;
+UPDATE sys_user SET supervisor_user_id = 9 WHERE tenant_id = 1 AND username = 'manager2' AND supervisor_user_id IS NULL;
+UPDATE sys_user SET supervisor_user_id = 1 WHERE tenant_id = 1 AND username IN ('lead1','lead2') AND supervisor_user_id IS NULL;
+UPDATE sys_user u
+JOIN sys_user sup ON sup.tenant_id = u.tenant_id AND sup.username = 'operationlead1'
+SET u.supervisor_user_id = sup.id
+WHERE u.tenant_id = 1 AND u.username = 'operation1' AND u.supervisor_user_id IS NULL;

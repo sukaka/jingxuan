@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { extractUnmappedExternalSkuId, issueTypeLabel, mappingStatusLabel, mappingStatusTone } from '../src/views/youzan/youzanUi'
 
@@ -35,5 +37,15 @@ describe('有赞映射状态展示边界', () => {
     expect(extractUnmappedExternalSkuId('')).toBeNull()
     expect(extractUnmappedExternalSkuId(null)).toBeNull()
     expect(extractUnmappedExternalSkuId(undefined)).toBeNull()
+  })
+
+  it('youzan.css 不依赖未挂载的 .crm-ui 祖先类名，确保拉取条数与店铺快捷按钮样式生效', () => {
+    const css = readFileSync(resolve(__dirname, '../src/views/youzan/youzan.css'), 'utf8')
+    expect(css).not.toContain('.crm-ui')
+    expect(css).toContain('.youzan-pull-control')
+    expect(css).toContain('.youzan-pull-preset')
+    expect(css).toContain('.youzan-pull-preset.is-active')
+    expect(css).toContain('.youzan-quick-shop-chip')
+    expect(css).toContain('.youzan-quick-shop-chip.is-active')
   })
 })

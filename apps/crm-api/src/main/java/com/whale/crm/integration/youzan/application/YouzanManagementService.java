@@ -15,6 +15,7 @@ import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryResponse;
 import com.whale.crm.integration.youzan.api.dto.YouzanCustomerLinkRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanEventResponse;
+import com.whale.crm.integration.youzan.api.dto.YouzanOrderItemView;
 import com.whale.crm.integration.youzan.api.dto.YouzanOrderView;
 import com.whale.crm.integration.youzan.api.dto.YouzanReconcileReport;
 import com.whale.crm.integration.youzan.api.dto.YouzanSkuCandidateView;
@@ -43,11 +44,14 @@ import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
 import com.whale.crm.product.application.CatalogApplicationService;
 import com.whale.crm.product.domain.PackageVersionSnapshot;
+import com.whale.crm.product.domain.Sku;
 import com.whale.crm.trading.application.OrderApplicationService;
 import com.whale.crm.trading.application.OutboxService;
 import com.whale.crm.trading.domain.OrderFulfillmentView;
+import com.whale.crm.trading.domain.OrderItem;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -163,8 +167,8 @@ public class YouzanManagementService {
             return new PageResponse<>(List.of(), 0, page, size);
         }
         CustomerScopeSupport.ScopeQuery scopeQuery = scopeQuery(scope, user);
-        List<YouzanOrderView> items = repository.findLatestOrderEvents(tenantId, shopId, scopeQuery, offset, size).stream()
-                .map(raw -> toView(tenantId, user, scope, raw, true)).filter(Objects::nonNull).toList();
+        List<YouzanEvent> rawEvents = repository.findLatestOrderEvents(tenantId, shopId, scopeQuery, offset, size);
+        List<YouzanOrderView> items = toViews(tenantId, user, scope, rawEvents);
         return new PageResponse<>(items, repository.countDistinctExternalOrders(tenantId, shopId, scopeQuery), page, size);
     }
 
@@ -175,11 +179,30 @@ public class YouzanManagementService {
             throw orderNotFound();
         }
         YouzanEvent raw = repository.findEvent(tenantId, eventId).orElseThrow(this::orderNotFound);
-        return toView(tenantId, user, scope, raw, false);
+        PreparedOrderView prepared = prepareOrderView(tenantId, user, scope, raw, false);
+        return enrichOrderViews(tenantId, user, List.of(prepared)).get(0);
     }
 
-    private YouzanOrderView toView(long tenantId, CurrentUser user, DataScope scope, YouzanEvent raw,
-                                   boolean omitUnlinked) {
+    private List<YouzanOrderView> toViews(long tenantId, CurrentUser user, DataScope scope,
+                                          List<YouzanEvent> rawEvents) {
+        if (rawEvents == null || rawEvents.isEmpty()) {
+            return List.of();
+        }
+        List<PreparedOrderView> prepared = new ArrayList<>(rawEvents.size());
+        for (YouzanEvent raw : rawEvents) {
+            PreparedOrderView item = prepareOrderView(tenantId, user, scope, raw, true);
+            if (item != null) {
+                prepared.add(item);
+            }
+        }
+        if (prepared.isEmpty()) {
+            return List.of();
+        }
+        return enrichOrderViews(tenantId, user, prepared);
+    }
+
+    private PreparedOrderView prepareOrderView(long tenantId, CurrentUser user, DataScope scope, YouzanEvent raw,
+                                               boolean omitUnlinked) {
         YouzanOrderMap map = repository.findOrderMap(tenantId, raw.shopId(), raw.externalOrderNo()).orElse(null);
         OrderFulfillmentView detail = null;
         if (map != null) {
@@ -202,6 +225,49 @@ public class YouzanManagementService {
             }
             throw orderNotFound();
         }
+        return new PreparedOrderView(raw, map, detail, event);
+    }
+
+    private List<YouzanOrderView> enrichOrderViews(long tenantId, CurrentUser user,
+                                                   List<PreparedOrderView> preparedOrders) {
+        Map<String, Map<String, YouzanSkuMapping>> mappingsByShop = new HashMap<>();
+        List<List<OrderItemDraft>> draftsByOrder = new ArrayList<>(preparedOrders.size());
+        Set<Long> skuIdsNeedingName = new LinkedHashSet<>();
+        for (PreparedOrderView prepared : preparedOrders) {
+            Map<String, YouzanSkuMapping> activeMappings = Map.of();
+            String rawShopId = prepared.raw().shopId();
+            if (hasOrderLines(prepared.event()) && !user.isInstitutionUser()
+                    && rawShopId != null && !rawShopId.isBlank()) {
+                activeMappings = mappingsByShop.computeIfAbsent(rawShopId,
+                        shop -> activeSkuMappingMap(tenantId, shop));
+            }
+            List<OrderItemDraft> drafts = buildOrderItemDrafts(prepared, activeMappings);
+            draftsByOrder.add(drafts);
+            for (OrderItemDraft draft : drafts) {
+                if (draft.crmSkuId() != null && draft.crmSkuName() == null) {
+                    skuIdsNeedingName.add(draft.crmSkuId());
+                }
+            }
+        }
+        Map<Long, String> catalogSkuNames = resolveCatalogSkuNames(tenantId, user, skuIdsNeedingName);
+        boolean canViewMaskedPayload = user.permissions().contains("integration:youzan:manage");
+        List<YouzanOrderView> views = new ArrayList<>(preparedOrders.size());
+        for (int i = 0; i < preparedOrders.size(); i++) {
+            PreparedOrderView prepared = preparedOrders.get(i);
+            List<YouzanOrderItemView> itemViews = draftsByOrder.get(i).stream()
+                    .map(draft -> draft.toView(catalogSkuNames))
+                    .toList();
+            views.add(buildOrderView(prepared, itemViews, canViewMaskedPayload));
+        }
+        return views;
+    }
+
+    private YouzanOrderView buildOrderView(PreparedOrderView prepared, List<YouzanOrderItemView> itemViews,
+                                           boolean canViewMaskedPayload) {
+        YouzanEvent raw = prepared.raw();
+        YouzanOrderMap map = prepared.map();
+        OrderFulfillmentView detail = prepared.detail();
+        YouzanOrderEvent event = prepared.event();
         String verificationMethod = detail == null ? null : detail.order().payments().stream()
                 .map(payment -> payment.verificationMethod()).filter(method -> method != null).findFirst().orElse(null);
         return new YouzanOrderView(map == null ? null : map.id(), raw.shopId(), raw.externalOrderNo(),
@@ -211,9 +277,149 @@ public class YouzanManagementService {
                 detail == null ? raw.shopId() : detail.order().order().externalShopId(),
                 raw.eventId(), raw.processStatus(), detail == null ? null : detail.order().order().status(),
                 event.externalUpdatedAt(), event.amountFen(), verificationMethod,
-                user.permissions().contains("integration:youzan:manage") ? raw.payloadMaskedJson() : null, raw.lastError(),
+                canViewMaskedPayload ? raw.payloadMaskedJson() : null, raw.lastError(),
                 event.externalCustomerId(), event.paidAt(), event.orderTypeCode(),
-                event.campaignId(), event.campaignBatchId(), event.items());
+                event.campaignId(), event.campaignBatchId(), itemViews);
+    }
+
+    private List<OrderItemDraft> buildOrderItemDrafts(PreparedOrderView prepared,
+                                                      Map<String, YouzanSkuMapping> activeMappings) {
+        List<YouzanOrderLine> rawLines = prepared.event() == null ? null : prepared.event().items();
+        if (rawLines == null || rawLines.isEmpty()) {
+            return List.of();
+        }
+        List<YouzanOrderLine> lines = rawLines.stream().filter(Objects::nonNull).toList();
+        if (lines.isEmpty()) {
+            return List.of();
+        }
+        List<ExtractedLineMeta> extractedLines = extractProductLineMetas(
+                prepared.raw().providerPayloadMaskedJson(), prepared.raw().payloadMaskedJson());
+        boolean[] usedMeta = new boolean[extractedLines.size()];
+        Map<String, ProductLineMeta> mergedMetaBySku = mergeProductLineMetaBySku(extractedLines);
+
+        List<OrderItem> internalItems = extractInternalOrderItems(prepared.detail());
+        boolean[] usedInternal = new boolean[internalItems.size()];
+
+        List<OrderItemDraft> drafts = new ArrayList<>(lines.size());
+        for (int i = 0; i < lines.size(); i++) {
+            YouzanOrderLine line = lines.get(i);
+            String externalSkuId = line.externalSkuId();
+            String normalizedSkuId = externalSkuId == null || externalSkuId.isBlank() ? null : externalSkuId.strip();
+            ProductLineMeta meta = matchLineMeta(i, normalizedSkuId, extractedLines, usedMeta, mergedMetaBySku);
+            YouzanSkuMapping activeMapping = normalizedSkuId == null ? null : activeMappings.get(normalizedSkuId);
+            Long mappedSkuId = activeMapping == null ? null : activeMapping.crmSkuId();
+            OrderItem internalItem = matchInternalOrderItem(i, lines.size(), mappedSkuId, internalItems, usedInternal);
+            Long crmSkuId = internalItem != null && internalItem.skuId() != null ? internalItem.skuId() : mappedSkuId;
+            String crmSkuName = internalItem == null ? null : firstNonBlank(internalItem.skuNameSnapshot());
+            drafts.add(new OrderItemDraft(
+                    externalSkuId,
+                    line.quantity(),
+                    meta == null ? null : meta.itemTitle(),
+                    meta == null ? null : meta.skuSpec(),
+                    meta == null ? null : meta.priceFen(),
+                    meta == null ? null : meta.paymentFen(),
+                    meta == null ? null : meta.outerSkuCode(),
+                    crmSkuId,
+                    crmSkuName
+            ));
+        }
+        return drafts;
+    }
+
+    private Map<Long, String> resolveCatalogSkuNames(long tenantId, CurrentUser user, Set<Long> skuIds) {
+        if (skuIds == null || skuIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            List<Sku> skus = catalogService.skusByIds(tenantId, user, skuIds);
+            if (skus == null || skus.isEmpty()) {
+                return Map.of();
+            }
+            Map<Long, String> result = new HashMap<>();
+            for (Sku sku : skus) {
+                if (sku == null || sku.id() == null) {
+                    continue;
+                }
+                String displayName = formatCrmSkuName(sku);
+                if (displayName != null) {
+                    result.put(sku.id(), displayName);
+                }
+            }
+            return result;
+        } catch (BusinessException | AccessDeniedException ex) {
+            return Map.of();
+        }
+    }
+
+    private static boolean hasOrderLines(YouzanOrderEvent event) {
+        return event != null && event.items() != null && !event.items().isEmpty();
+    }
+
+    private static List<OrderItem> extractInternalOrderItems(OrderFulfillmentView detail) {
+        if (detail == null || detail.order() == null || detail.order().items() == null) {
+            return List.of();
+        }
+        return detail.order().items().stream().filter(Objects::nonNull).toList();
+    }
+
+    private static ProductLineMeta matchLineMeta(int index, String normalizedSkuId,
+                                                 List<ExtractedLineMeta> extractedLines, boolean[] usedMeta,
+                                                 Map<String, ProductLineMeta> mergedMetaBySku) {
+        if (normalizedSkuId == null) {
+            return null;
+        }
+        if (index < extractedLines.size() && !usedMeta[index]
+                && normalizedSkuId.equals(extractedLines.get(index).externalSkuId())) {
+            usedMeta[index] = true;
+            return extractedLines.get(index).meta();
+        }
+        for (int j = 0; j < extractedLines.size(); j++) {
+            if (!usedMeta[j] && normalizedSkuId.equals(extractedLines.get(j).externalSkuId())) {
+                usedMeta[j] = true;
+                return extractedLines.get(j).meta();
+            }
+        }
+        return mergedMetaBySku.get(normalizedSkuId);
+    }
+
+    private static OrderItem matchInternalOrderItem(int index, int totalLines, Long mappedSkuId,
+                                                    List<OrderItem> internalItems, boolean[] usedInternal) {
+        if (internalItems.isEmpty()) {
+            return null;
+        }
+        if (mappedSkuId != null) {
+            if (index < internalItems.size() && !usedInternal[index]
+                    && mappedSkuId.equals(internalItems.get(index).skuId())) {
+                usedInternal[index] = true;
+                return internalItems.get(index);
+            }
+            for (int j = 0; j < internalItems.size(); j++) {
+                if (!usedInternal[j] && mappedSkuId.equals(internalItems.get(j).skuId())) {
+                    usedInternal[j] = true;
+                    return internalItems.get(j);
+                }
+            }
+        }
+        if (internalItems.size() == totalLines && index < internalItems.size() && !usedInternal[index]) {
+            usedInternal[index] = true;
+            return internalItems.get(index);
+        }
+        return null;
+    }
+
+    private static String formatCrmSkuName(Sku sku) {
+        String packageName = firstNonBlank(sku.packageName());
+        String specName = firstNonBlank(sku.specName());
+        if (packageName != null && specName != null) {
+            return packageName + "｜" + specName;
+        }
+        if (packageName != null) {
+            return packageName;
+        }
+        if (specName != null) {
+            return specName;
+        }
+        return firstNonBlank(sku.skuCode());
     }
 
     private boolean rawVisible(long tenantId, CurrentUser user, DataScope scope, YouzanOrderEvent event) {
@@ -421,7 +627,7 @@ public class YouzanManagementService {
                         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
                 YouzanEvent raw = repository.findEvent(tenantId, existing.eventId())
                         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
-                if (toView(tenantId, user, scope, raw, true) == null) {
+                if (prepareOrderView(tenantId, user, scope, raw, true) == null) {
                     throw new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在");
                 }
             }
@@ -624,24 +830,34 @@ public class YouzanManagementService {
     }
 
     private Map<String, ProductLineMeta> extractProductMetadata(YouzanMappingIssueEvent row) {
-        Map<String, ProductLineMeta> parsed = extractProductMetadataFromJson(row.providerPayloadMaskedJson());
-        if (!parsed.isEmpty()) {
-            return parsed;
-        }
-        return extractProductMetadataFromJson(row.payloadMaskedJson());
+        return mergeProductLineMetaBySku(
+                extractProductLineMetas(row.providerPayloadMaskedJson(), row.payloadMaskedJson()));
     }
 
-    private Map<String, ProductLineMeta> extractProductMetadataFromJson(String jsonText) {
+    private List<ExtractedLineMeta> extractProductLineMetas(String providerPayloadMaskedJson,
+                                                            String payloadMaskedJson) {
+        List<ExtractedLineMeta> providerLines = extractProductLinesFromJson(providerPayloadMaskedJson);
+        if (hasAnyLineMetadata(providerLines)) {
+            return providerLines;
+        }
+        List<ExtractedLineMeta> payloadLines = extractProductLinesFromJson(payloadMaskedJson);
+        if (hasAnyLineMetadata(payloadLines)) {
+            return payloadLines;
+        }
+        return !providerLines.isEmpty() ? providerLines : payloadLines;
+    }
+
+    private List<ExtractedLineMeta> extractProductLinesFromJson(String jsonText) {
         if (jsonText == null || jsonText.isBlank()) {
-            return Map.of();
+            return List.of();
         }
         try {
             JsonNode root = objectMapper.readTree(jsonText);
             JsonNode lines = resolveOrderLinesNode(root);
             if (lines == null || !lines.isArray() || lines.isEmpty()) {
-                return Map.of();
+                return List.of();
             }
-            Map<String, ProductLineMeta> result = new HashMap<>();
+            List<ExtractedLineMeta> result = new ArrayList<>();
             for (JsonNode item : lines) {
                 if (item == null || !item.isObject()) {
                     continue;
@@ -654,15 +870,38 @@ public class YouzanManagementService {
                         jsonText(item, "item_title"), jsonText(item, "goods_title")), 200);
                 String skuSpec = truncate(parseSkuSpec(item.path("sku_properties_name"), item.path("sku_spec")), 200);
                 Long priceFen = parsePriceFen(item);
+                Long paymentFen = parsePaymentFen(item);
                 String outerSkuCode = truncate(firstNonBlank(jsonText(item, "outer_sku_id"),
                         jsonText(item, "outer_item_id")), 128);
-                ProductLineMeta meta = new ProductLineMeta(title, skuSpec, priceFen, outerSkuCode);
-                result.merge(externalSkuId, meta, ProductLineMeta::merge);
+                result.add(new ExtractedLineMeta(externalSkuId,
+                        new ProductLineMeta(title, skuSpec, priceFen, paymentFen, outerSkuCode)));
             }
             return result;
         } catch (JsonProcessingException ex) {
+            return List.of();
+        }
+    }
+
+    private static Map<String, ProductLineMeta> mergeProductLineMetaBySku(List<ExtractedLineMeta> lines) {
+        if (lines == null || lines.isEmpty()) {
             return Map.of();
         }
+        Map<String, ProductLineMeta> result = new HashMap<>();
+        for (ExtractedLineMeta line : lines) {
+            if (line != null && line.externalSkuId() != null && line.meta() != null) {
+                result.merge(line.externalSkuId(), line.meta(), ProductLineMeta::merge);
+            }
+        }
+        return result;
+    }
+
+    private static boolean hasAnyLineMetadata(List<ExtractedLineMeta> lines) {
+        for (ExtractedLineMeta line : lines) {
+            if (line != null && line.meta() != null && line.meta().hasAnyMetadata()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static JsonNode resolveOrderLinesNode(JsonNode root) {
@@ -756,6 +995,9 @@ public class YouzanManagementService {
     private static Long parsePriceFen(JsonNode item) {
         JsonNode fenNode = item.path("price_fen");
         if (fenNode.isIntegralNumber()) {
+            if (!fenNode.canConvertToLong()) {
+                return null;
+            }
             long value = fenNode.asLong();
             return value >= 0 ? value : null;
         }
@@ -764,6 +1006,22 @@ public class YouzanManagementService {
             return price;
         }
         return parseYuanToFen(jsonText(item, "discount_price"));
+    }
+
+    private static Long parsePaymentFen(JsonNode item) {
+        JsonNode fenNode = item.path("payment_fen");
+        if (fenNode.isIntegralNumber()) {
+            if (!fenNode.canConvertToLong()) {
+                return null;
+            }
+            long value = fenNode.asLong();
+            return value >= 0 ? value : null;
+        }
+        Long payment = parseYuanToFen(jsonText(item, "payment"));
+        if (payment != null) {
+            return payment;
+        }
+        return parseYuanToFen(jsonText(item, "total_fee"));
     }
 
     private static Long parseYuanToFen(String yuanText) {
@@ -804,6 +1062,24 @@ public class YouzanManagementService {
         return value.substring(0, maxLen);
     }
 
+    private record PreparedOrderView(YouzanEvent raw, YouzanOrderMap map, OrderFulfillmentView detail,
+                                     YouzanOrderEvent event) {
+    }
+
+    private record OrderItemDraft(String externalSkuId, Integer quantity, String itemTitle, String skuSpec,
+                                  Long priceFen, Long paymentFen, String outerSkuCode, Long crmSkuId,
+                                  String crmSkuName) {
+        private YouzanOrderItemView toView(Map<Long, String> catalogSkuNames) {
+            String resolvedName = crmSkuName != null ? crmSkuName
+                    : (crmSkuId == null ? null : catalogSkuNames.get(crmSkuId));
+            return new YouzanOrderItemView(externalSkuId, quantity, itemTitle, skuSpec, priceFen, paymentFen,
+                    outerSkuCode, crmSkuId, resolvedName);
+        }
+    }
+
+    private record ExtractedLineMeta(String externalSkuId, ProductLineMeta meta) {
+    }
+
     private record EventSkuInspection(List<String> validExternalSkuIds, boolean hasInvalidLine) {
         private static final EventSkuInspection INVALID = new EventSkuInspection(List.of(), true);
 
@@ -813,7 +1089,13 @@ public class YouzanManagementService {
         }
     }
 
-    private record ProductLineMeta(String itemTitle, String skuSpec, Long priceFen, String outerSkuCode) {
+    private record ProductLineMeta(String itemTitle, String skuSpec, Long priceFen, Long paymentFen,
+                                   String outerSkuCode) {
+        private boolean hasAnyMetadata() {
+            return itemTitle != null || skuSpec != null || priceFen != null
+                    || paymentFen != null || outerSkuCode != null;
+        }
+
         private ProductLineMeta merge(ProductLineMeta other) {
             if (other == null) {
                 return this;
@@ -822,6 +1104,7 @@ public class YouzanManagementService {
                     itemTitle != null ? itemTitle : other.itemTitle,
                     skuSpec != null ? skuSpec : other.skuSpec,
                     priceFen != null ? priceFen : other.priceFen,
+                    paymentFen != null ? paymentFen : other.paymentFen,
                     outerSkuCode != null ? outerSkuCode : other.outerSkuCode
             );
         }

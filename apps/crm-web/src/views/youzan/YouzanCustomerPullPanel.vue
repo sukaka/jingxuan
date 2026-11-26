@@ -708,7 +708,7 @@ onBeforeUnmount(() => {
           <div class="yz-field-label">数据源模式</div>
           <el-radio-group v-model="form.sourceMode" :disabled="isPulling" data-testid="yz-source-mode">
             <el-radio value="SCRM_LIST" data-testid="yz-source-mode-scrm">
-              有赞全量客户（含未下单，需 scrm.customer.search 权限）
+              有赞全量客户（含未下单，需 scrm.customer.list 权限）
             </el-radio>
             <el-radio value="ORDER_BUYERS" data-testid="yz-source-mode-order">
               按有赞订单买家拉取（复用已开通订单与买家接口）

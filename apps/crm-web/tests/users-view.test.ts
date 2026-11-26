@@ -3,7 +3,7 @@ import type { VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createUser, listUsers, listUserTeams, updateUser } from '../src/api/users'
+import { createUser, listUsers, listUserSupervisors, listUserTeams, updateUser } from '../src/api/users'
 import { listRoles } from '../src/api/roles'
 import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
@@ -14,6 +14,7 @@ vi.mock('../src/api/users', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/users')>()),
   createUser: vi.fn(),
   listUsers: vi.fn(),
+  listUserSupervisors: vi.fn(),
   listUserTeams: vi.fn(),
   updateUser: vi.fn(),
 }))
@@ -76,6 +77,9 @@ describe('UsersView 多维组合筛选', () => {
     vi.mocked(listUserTeams).mockReset().mockResolvedValue([
       { id: 1, teamName: '管家一组' },
       { id: 2, teamName: '管家二组' },
+    ])
+    vi.mocked(listUserSupervisors).mockReset().mockResolvedValue([
+      { id: 4, username: 'lead1', displayName: '赵主管', teamId: 1, teamName: '管家一组' },
     ])
     vi.mocked(listRoles).mockReset().mockResolvedValue([
       { id: 1, roleCode: 'ADMIN', roleName: '系统管理员', status: 'ACTIVE', permissions: [], version: 0 },
@@ -164,6 +168,9 @@ describe('UsersView 新建/编辑表单校验与字段错误展示', () => {
     vi.mocked(listUserTeams).mockReset().mockResolvedValue([
       { id: 1, teamName: '管家一组' },
     ])
+    vi.mocked(listUserSupervisors).mockReset().mockResolvedValue([
+      { id: 4, username: 'lead1', displayName: '赵主管', teamId: 1, teamName: '管家一组' },
+    ])
     vi.mocked(listRoles).mockReset().mockResolvedValue([
       { id: 2, roleCode: 'MANAGER', roleName: '管家', status: 'ACTIVE', permissions: [], version: 0 },
     ])
@@ -245,6 +252,7 @@ describe('UsersView 新建/编辑表单校验与字段错误展示', () => {
       password: 'Pass@1234',
       userType: 'EMPLOYEE',
       teamId: null,
+      supervisorUserId: null,
       roleIds: [],
     })
   })
@@ -333,6 +341,7 @@ describe('UsersView 新建/编辑表单校验与字段错误展示', () => {
     expect(updateUser).toHaveBeenCalledWith(2, {
       displayName: '王丽新',
       teamId: 1,
+      supervisorUserId: null,
       version: 0,
     })
     expect(document.querySelector('[data-testid="edit-user-submit-error"]')?.textContent)

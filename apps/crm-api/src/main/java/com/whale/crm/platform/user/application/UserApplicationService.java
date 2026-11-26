@@ -80,6 +80,11 @@ public class UserApplicationService {
         return userRepository.listTeams(tenantId);
     }
 
+    @Transactional(readOnly = true)
+    public List<UserRepository.SupervisorOptionRow> listSupervisorOptions(long tenantId) {
+        return userRepository.findActiveEmployeeOptions(tenantId);
+    }
+
     @Transactional
     public UserSummaryResponse create(long tenantId, long actorUserId, CreateUserRequest request) {
         if (userRepository.existsByUsername(tenantId, request.username())) {
@@ -88,6 +93,7 @@ public class UserApplicationService {
         Long orgId = userRepository.findDefaultOrgId(tenantId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "租户下无可用组织"));
         validateTeam(tenantId, request.teamId());
+        validateSupervisor(tenantId, request.userType(), null, request.supervisorUserId());
         List<Long> roleIds = request.roleIds() == null ? List.of() : request.roleIds().stream().distinct().toList();
         validateAssignableRoles(tenantId, actorUserId, roleIds);
 
@@ -95,6 +101,7 @@ public class UserApplicationService {
         user.setTenantId(tenantId);
         user.setOrgId(orgId);
         user.setTeamId(request.teamId());
+        user.setSupervisorUserId(request.supervisorUserId());
         user.setUsername(request.username());
         user.setDisplayName(request.displayName());
         user.setPasswordHash(passwordEncoder.encode(request.password()));
@@ -113,7 +120,8 @@ public class UserApplicationService {
                 Long.toString(user.getId()), null, userSnapshot(user, assignedRoles),
                 null);
         SysUser persisted = userRepository.findById(tenantId, user.getId()).orElseThrow();
-        return toSummary(persisted, null, assignedRoles);
+        return toSummary(persisted, null, resolveSupervisorName(tenantId, persisted.getSupervisorUserId()),
+                assignedRoles);
     }
 
     @Transactional
@@ -127,10 +135,11 @@ public class UserApplicationService {
                     List.of(new ApiResponse.ErrorDetail("password", "密码不能为空白字符")));
         }
         validateTeam(tenantId, request.teamId());
+        validateSupervisor(tenantId, existing.getUserType(), userId, request.supervisorUserId());
 
         String newPasswordHash = request.password() != null ? passwordEncoder.encode(request.password()) : null;
         int updated = userRepository.updateProfile(tenantId, userId, request.version(),
-                request.displayName(), request.teamId(), newPasswordHash);
+                request.displayName(), request.teamId(), request.supervisorUserId(), newPasswordHash);
         if (updated == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
         }
@@ -149,7 +158,7 @@ public class UserApplicationService {
         }
         auditService.record(tenantId, actorUserId, AuditService.ACTION_USER_UPDATE, "USER",
                 Long.toString(userId), beforeSnapshot, afterSnapshot, null);
-        return toSummary(after, null, roles);
+        return toSummary(after, null, resolveSupervisorName(tenantId, after.getSupervisorUserId()), roles);
     }
 
     @Transactional
@@ -240,6 +249,49 @@ public class UserApplicationService {
         }
     }
 
+    private void validateSupervisor(long tenantId, String userType, Long targetUserId, Long supervisorUserId) {
+        if (supervisorUserId == null) {
+            return;
+        }
+        if (!DefaultDataScopePolicy.USER_TYPE_EMPLOYEE.equals(userType)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请求参数校验失败",
+                    List.of(new ApiResponse.ErrorDetail("supervisorUserId", "仅内部员工账号可配置直属上级")));
+        }
+        if (targetUserId != null && Objects.equals(targetUserId, supervisorUserId)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请求参数校验失败",
+                    List.of(new ApiResponse.ErrorDetail("supervisorUserId", "直属上级不能指向本人")));
+        }
+        SysUser supervisor = userRepository.findById(tenantId, supervisorUserId)
+                .filter(SysUser::isActive)
+                .filter(u -> DefaultDataScopePolicy.USER_TYPE_EMPLOYEE.equals(u.getUserType()))
+                .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_FAILED, "请求参数校验失败",
+                        List.of(new ApiResponse.ErrorDetail("supervisorUserId", "直属上级必须为启用状态的内部员工"))));
+        if (targetUserId == null) {
+            return;
+        }
+        java.util.Set<Long> visited = new java.util.HashSet<>();
+        visited.add(targetUserId);
+        visited.add(supervisor.getId());
+        Long cursor = supervisor.getSupervisorUserId();
+        for (int depth = 0; depth < 20 && cursor != null; depth++) {
+            if (!visited.add(cursor)) {
+                throw new BusinessException(ErrorCode.CONFLICT, "直属上级关系不能形成循环汇报");
+            }
+            cursor = userRepository.findById(tenantId, cursor)
+                    .map(SysUser::getSupervisorUserId)
+                    .orElse(null);
+        }
+    }
+
+    private String resolveSupervisorName(long tenantId, Long supervisorUserId) {
+        if (supervisorUserId == null) {
+            return null;
+        }
+        return userRepository.findById(tenantId, supervisorUserId)
+                .map(SysUser::getDisplayName)
+                .orElse(null);
+    }
+
     private boolean isActorAdmin(long tenantId, long actorUserId) {
         return roleRepository.findActiveRoleCodes(tenantId, actorUserId).contains("ADMIN");
     }
@@ -312,19 +364,24 @@ public class UserApplicationService {
         snapshot.put("userType", user.getUserType());
         snapshot.put("status", user.getStatus());
         snapshot.put("teamId", user.getTeamId());
+        snapshot.put("supervisorUserId", user.getSupervisorUserId());
         snapshot.put("roles", roles);
         return snapshot;
     }
 
     private UserSummaryResponse toSummary(UserListRow row, List<String> roles) {
         return new UserSummaryResponse(row.getId(), row.getUsername(), row.getDisplayName(), row.getUserType(),
-                row.getStatus(), row.getTeamId(), row.getTeamName(), roles, row.getLastLoginAt(),
-                row.getCreatedAt(), row.getVersion());
+                row.getStatus(), row.getTeamId(), row.getTeamName(), row.getSupervisorUserId(),
+                row.getSupervisorName(), roles, row.getLastLoginAt(), row.getCreatedAt(), row.getVersion());
     }
 
     private UserSummaryResponse toSummary(SysUser user, String teamName, List<String> roles) {
+        return toSummary(user, teamName, null, roles);
+    }
+
+    private UserSummaryResponse toSummary(SysUser user, String teamName, String supervisorName, List<String> roles) {
         return new UserSummaryResponse(user.getId(), user.getUsername(), user.getDisplayName(), user.getUserType(),
-                user.getStatus(), user.getTeamId(), teamName, roles, user.getLastLoginAt(), user.getCreatedAt(),
-                user.getVersion());
+                user.getStatus(), user.getTeamId(), teamName, user.getSupervisorUserId(), supervisorName,
+                roles, user.getLastLoginAt(), user.getCreatedAt(), user.getVersion());
     }
 }

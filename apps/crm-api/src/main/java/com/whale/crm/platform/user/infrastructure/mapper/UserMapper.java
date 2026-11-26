@@ -40,6 +40,16 @@ public interface UserMapper {
 
     List<UserRepository.TeamOptionRow> selectTeams(@Param("tenantId") long tenantId);
 
+    Long selectActiveTeamLeaderId(@Param("tenantId") long tenantId, @Param("teamId") long teamId);
+
+    List<UserRepository.SupervisorOptionRow> selectActiveEmployeeOptions(@Param("tenantId") long tenantId);
+
+    List<Long> selectActiveEmployeeIdsByPermission(@Param("tenantId") long tenantId,
+                                                   @Param("permissionCode") String permissionCode);
+
+    List<Long> selectActiveEmployeeIdsByRole(@Param("tenantId") long tenantId,
+                                             @Param("roleCode") String roleCode);
+
     Long selectDefaultOrgId(@Param("tenantId") long tenantId);
 
     int countTeam(@Param("tenantId") long tenantId, @Param("teamId") long teamId);
@@ -48,7 +58,7 @@ public interface UserMapper {
 
     int updateProfile(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
                       @Param("displayName") String displayName, @Param("teamId") Long teamId,
-                      @Param("passwordHash") String passwordHash);
+                      @Param("supervisorUserId") Long supervisorUserId, @Param("passwordHash") String passwordHash);
 
     int updatePasswordHash(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
                            @Param("passwordHash") String passwordHash);

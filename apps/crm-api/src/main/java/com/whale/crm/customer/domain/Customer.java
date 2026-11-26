@@ -20,6 +20,12 @@ public class Customer {
     private String remarkName;
     private String mobileCipher;
     private String mobileHash;
+    private String idCardCipher;
+    private String idCardHash;
+    private String emailCipher;
+    private String emailHash;
+    private String wechatIdCipher;
+    private String wechatIdHash;
     private String cityCode;
     private String sourceCode;
     private String channelCode;
@@ -121,6 +127,54 @@ public class Customer {
 
     public void setMobileHash(String mobileHash) {
         this.mobileHash = mobileHash;
+    }
+
+    public String getIdCardCipher() {
+        return idCardCipher;
+    }
+
+    public void setIdCardCipher(String idCardCipher) {
+        this.idCardCipher = idCardCipher;
+    }
+
+    public String getIdCardHash() {
+        return idCardHash;
+    }
+
+    public void setIdCardHash(String idCardHash) {
+        this.idCardHash = idCardHash;
+    }
+
+    public String getEmailCipher() {
+        return emailCipher;
+    }
+
+    public void setEmailCipher(String emailCipher) {
+        this.emailCipher = emailCipher;
+    }
+
+    public String getEmailHash() {
+        return emailHash;
+    }
+
+    public void setEmailHash(String emailHash) {
+        this.emailHash = emailHash;
+    }
+
+    public String getWechatIdCipher() {
+        return wechatIdCipher;
+    }
+
+    public void setWechatIdCipher(String wechatIdCipher) {
+        this.wechatIdCipher = wechatIdCipher;
+    }
+
+    public String getWechatIdHash() {
+        return wechatIdHash;
+    }
+
+    public void setWechatIdHash(String wechatIdHash) {
+        this.wechatIdHash = wechatIdHash;
     }
 
     public String getCityCode() {

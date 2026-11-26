@@ -59,6 +59,14 @@ const ACTION_LABELS: Record<string, string> = {
   YOUZAN_CONFIG_UPDATE: '更新有赞配置',
   YOUZAN_CUSTOMER_SYNC: '有赞客户拉取建档',
   YOUZAN_CUSTOMER_CURSOR_RESET: '重置有赞客户同步游标',
+  CUSTOMER_PRIVACY_REQUEST: '申请查看客户隐私',
+  CUSTOMER_PRIVACY_CANCEL: '撤回客户隐私申请',
+  CUSTOMER_PRIVACY_APPROVE: '批准客户隐私查看',
+  CUSTOMER_PRIVACY_REJECT: '驳回客户隐私申请',
+  CUSTOMER_PRIVACY_REVOKE: '撤销客户隐私授权',
+  CUSTOMER_PRIVACY_REVEAL: '按审批查看客户隐私',
+  CUSTOMER_PRIVACY_ADMIN_REVEAL: '管理员按钮查看客户隐私',
+  CUSTOMER_PRIVACY_REVEAL_DENIED: '拒绝客户隐私越权查看',
 }
 
 const TARGET_TYPE_LABELS: Record<string, string> = {
@@ -84,6 +92,7 @@ const TARGET_TYPE_LABELS: Record<string, string> = {
   TASK: '回访任务',
   WECOM_CONTACT: '企微联系人',
   YOUZAN_ORDER: '有赞订单',
+  CUSTOMER_PRIVACY_REQUEST: '隐私查看申请',
 }
 
 const ACTION_VERB_LABELS: Record<string, string> = {
@@ -225,11 +234,11 @@ onMounted(() => load())
             <div class="snapshot">
               <div>
                 <div class="snapshot-title">变更前内容（已脱敏）</div>
-                <pre class="snapshot-json">{{ formatSnapshot(row.beforeJson) }}</pre>
+                <pre class="snapshot-json">{{ formatSnapshot(row.before ?? row.beforeJson) }}</pre>
               </div>
               <div>
                 <div class="snapshot-title">变更后内容（已脱敏）</div>
-                <pre class="snapshot-json">{{ formatSnapshot(row.afterJson) }}</pre>
+                <pre class="snapshot-json">{{ formatSnapshot(row.after ?? row.afterJson) }}</pre>
               </div>
             </div>
           </template>
@@ -237,16 +246,21 @@ onMounted(() => load())
         <el-table-column label="时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column prop="actorUserId" label="操作人" width="90">
-          <template #default="{ row }">{{ row.actorUserId ?? '-' }}</template>
+        <el-table-column prop="actorUserId" label="操作人" min-width="120">
+          <template #default="{ row }">
+            {{ row.actorUsername ? `${row.actorUsername} (#${row.actorUserId})` : (row.actorUserId ?? '-') }}
+          </template>
         </el-table-column>
-        <el-table-column label="操作动作" min-width="140">
+        <el-table-column label="操作动作" min-width="150">
           <template #default="{ row }">{{ actionLabel(row.actionCode) }}</template>
         </el-table-column>
         <el-table-column label="业务对象" width="120">
           <template #default="{ row }">{{ targetTypeLabel(row.targetType) }}</template>
         </el-table-column>
         <el-table-column prop="targetId" label="对象 ID" width="100" />
+        <el-table-column prop="reason" label="操作原因" min-width="170" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.reason || '-' }}</template>
+        </el-table-column>
         <el-table-column prop="clientIp" label="客户端 IP" width="130">
           <template #default="{ row }">{{ row.clientIp ?? '-' }}</template>
         </el-table-column>

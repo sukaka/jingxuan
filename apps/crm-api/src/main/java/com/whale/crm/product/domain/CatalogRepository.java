@@ -43,6 +43,9 @@ public interface CatalogRepository {
                          Set<Long> institutionIds, int offset, int size);
     long countSkus(long tenantId, String keyword, String status, Long packageId, Set<Long> institutionIds);
     List<Sku> findSkusByVersion(long tenantId, long packageVersionId);
+    default List<Sku> findSkusByIds(long tenantId, Set<Long> ids, Set<Long> institutionIds) {
+        return List.of();
+    }
     Optional<Sku> findSku(long tenantId, long id);
     Optional<Sku> findSkuByCode(long tenantId, String code);
     void insertSku(long tenantId, Sku sku);

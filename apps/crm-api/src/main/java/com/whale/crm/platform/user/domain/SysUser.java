@@ -14,6 +14,7 @@ public class SysUser {
     private Long tenantId;
     private Long orgId;
     private Long teamId;
+    private Long supervisorUserId;
     private String username;
     private String displayName;
     private String passwordHash;
@@ -58,6 +59,14 @@ public class SysUser {
 
     public void setTeamId(Long teamId) {
         this.teamId = teamId;
+    }
+
+    public Long getSupervisorUserId() {
+        return supervisorUserId;
+    }
+
+    public void setSupervisorUserId(Long supervisorUserId) {
+        this.supervisorUserId = supervisorUserId;
     }
 
     public String getUsername() {

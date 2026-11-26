@@ -66,6 +66,8 @@ public interface CatalogMapper {
                    @Param("status") String status, @Param("packageId") Long packageId,
                    @Param("institutionIds") Set<Long> institutionIds);
     List<Sku> selectSkusByVersion(@Param("tenantId") long tenantId, @Param("packageVersionId") long packageVersionId);
+    List<Sku> selectSkusByIds(@Param("tenantId") long tenantId, @Param("ids") Set<Long> ids,
+                              @Param("institutionIds") Set<Long> institutionIds);
     Sku selectSku(@Param("tenantId") long tenantId, @Param("id") long id);
     Sku selectSkuByCode(@Param("tenantId") long tenantId, @Param("code") String code);
     void insertSku(@Param("tenantId") long tenantId, @Param("entity") Sku sku);

@@ -7,12 +7,8 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 新建客户。nickname/displayName 至少其一（Service 校验）；mobile 可空（C01）；
- * customerNo 由服务端生成，客户端传入一律忽略。
- * ownerStaffId 可选：MANAGER/MANAGER_LEAD 缺省默认本人；其他角色缺省 400 必须显式选择；
- * 显式时校验目标为在职管家/主管且在当前用户可分配范围内。
- * tierCode 仅为识别旧客户端请求而保留，非 null 一律拒绝；等级走专用分级接口。
- * attentionProjects 仅供历史文本补录；正规关注关系使用 projectIds，不按文本猜测映射。
+ * 新建客户。nickname/displayName 至少其一（Service 校验）；mobile/idCard/email/wechatId 可空；
+ * 隐私字段落库仅存密文与盲索引，接口永不回显明文；customerNo 由服务端生成。
  */
 public record CreateCustomerRequest(
         @Size(max = 96, message = "客户姓名最长 96 字符") String displayName,
@@ -33,9 +29,22 @@ public record CreateCustomerRequest(
         @Size(max = 128) String remarkName,
         Instant firstAddedAt,
         @Size(max = 100) List<Long> projectIds,
-        @Size(max = 50, message = "标签数量超限") List<@Size(max = 64) String> tagCodes) {
+        @Size(max = 50, message = "标签数量超限") List<@Size(max = 64) String> tagCodes,
+        @Size(max = 32, message = "身份证号最长 32 字符") String idCard,
+        @Size(max = 128, message = "邮箱最长 128 字符") String email,
+        @Size(max = 64, message = "微信号最长 64 字符") String wechatId) {
     public CreateCustomerRequest {
         projectIds = projectIds == null ? null : List.copyOf(projectIds);
         tagCodes = tagCodes == null ? null : List.copyOf(tagCodes);
+    }
+
+    public CreateCustomerRequest(String displayName, String nickname, String mobile, Long ownerStaffId,
+                                 String cityCode, String sourceCode, String channelCode, String customerStatus,
+                                 String tierCode, String intentLevel, String spendingLevel, LocalDate birthday,
+                                 String attentionProjects, String blockerNote, String remark, String remarkName,
+                                 Instant firstAddedAt, List<Long> projectIds, List<String> tagCodes) {
+        this(displayName, nickname, mobile, ownerStaffId, cityCode, sourceCode, channelCode, customerStatus,
+                tierCode, intentLevel, spendingLevel, birthday, attentionProjects, blockerNote, remark, remarkName,
+                firstAddedAt, projectIds, tagCodes, null, null, null);
     }
 }

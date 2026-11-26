@@ -167,6 +167,21 @@
     SELECT <include refid="skuColumns"/> <include refid="skuFrom"/>
     WHERE s.tenant_id=#{tenantId} AND s.package_version_id=#{packageVersionId} ORDER BY s.id
   </select>
+  <select id="selectSkusByIds" resultType="com.whale.crm.product.domain.Sku">
+    SELECT <include refid="skuColumns"/> <include refid="skuFrom"/>
+    WHERE s.tenant_id=#{tenantId}
+    <if test="ids == null or ids.size() == 0">AND 1=0</if>
+    <if test="ids != null and ids.size() > 0">
+      AND s.id IN
+      <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </if>
+    <if test="institutionIds != null and institutionIds.size() == 0">AND 1=0</if>
+    <if test="institutionIds != null and institutionIds.size() > 0">
+      AND EXISTS (SELECT 1 FROM crm_sku_institution si WHERE si.tenant_id=s.tenant_id AND si.sku_id=s.id AND si.status='ACTIVE' AND si.institution_id IN
+      <foreach collection="institutionIds" item="iid" open="(" separator="," close=")">#{iid}</foreach>)
+    </if>
+    ORDER BY s.id
+  </select>
   <select id="selectSku" resultType="com.whale.crm.product.domain.Sku">
     SELECT <include refid="skuColumns"/> <include refid="skuFrom"/> WHERE s.tenant_id=#{tenantId} AND s.id=#{id}
   </select>

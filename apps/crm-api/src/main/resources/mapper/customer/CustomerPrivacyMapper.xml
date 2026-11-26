@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.customer.privacy.infrastructure.mapper.CustomerPrivacyMapper">
+
+  <resultMap id="PrivacyRequestMap" type="com.whale.crm.customer.privacy.domain.CustomerPrivacyRequest">
+    <id property="id" column="id"/>
+    <result property="tenantId" column="tenant_id"/>
+    <result property="requestNo" column="request_no"/>
+    <result property="customerId" column="customer_id"/>
+    <result property="applicantUserId" column="applicant_user_id"/>
+    <result property="applicantTeamId" column="applicant_team_id"/>
+    <result property="requestedFieldsJson" column="requested_fields_json"/>
+    <result property="approvedFieldsJson" column="approved_fields_json"/>
+    <result property="reason" column="reason"/>
+    <result property="status" column="status"/>
+    <result property="assignedApproverId" column="assigned_approver_id"/>
+    <result property="approverSource" column="approver_source"/>
+    <result property="requestedDurationMinutes" column="requested_duration_minutes"/>
+    <result property="approvedDurationMinutes" column="approved_duration_minutes"/>
+    <result property="reviewedBy" column="reviewed_by"/>
+    <result property="reviewedAt" column="reviewed_at"/>
+    <result property="reviewReason" column="review_reason"/>
+    <result property="grantStartsAt" column="grant_starts_at"/>
+    <result property="grantExpiresAt" column="grant_expires_at"/>
+    <result property="revokedBy" column="revoked_by"/>
+    <result property="revokedAt" column="revoked_at"/>
+    <result property="revokeReason" column="revoke_reason"/>
+    <result property="revealCount" column="reveal_count"/>
+    <result property="lastRevealedAt" column="last_revealed_at"/>
+    <result property="createdAt" column="created_at"/>
+    <result property="updatedAt" column="updated_at"/>
+    <result property="version" column="version"/>
+  </resultMap>
+
+  <sql id="requestColumns">
+    id, tenant_id, request_no, customer_id, applicant_user_id, applicant_team_id,
+    requested_fields_json, approved_fields_json, reason, status, assigned_approver_id, approver_source,
+    requested_duration_minutes, approved_duration_minutes, reviewed_by, reviewed_at, review_reason,
+    grant_starts_at, grant_expires_at, revoked_by, revoked_at, revoke_reason,
+    reveal_count, last_revealed_at, created_at, updated_at, version
+  </sql>
+
+  <sql id="requestRowSelect">
+    SELECT r.id, r.request_no AS requestNo, r.customer_id AS customerId,
+           c.customer_no AS customerNo, COALESCE(c.display_name, c.nickname, c.customer_no) AS customerName,
+           r.applicant_user_id AS applicantUserId, app.display_name AS applicantName,
+           r.applicant_team_id AS applicantTeamId,
+           r.requested_fields_json AS requestedFieldsJson, r.approved_fields_json AS approvedFieldsJson,
+           r.reason, r.status,
+           r.assigned_approver_id AS assignedApproverId, approver.display_name AS assignedApproverName,
+           r.approver_source AS approverSource,
+           r.requested_duration_minutes AS requestedDurationMinutes,
+           r.approved_duration_minutes AS approvedDurationMinutes,
+           r.reviewed_by AS reviewedBy, reviewer.display_name AS reviewedByName,
+           r.reviewed_at AS reviewedAt, r.review_reason AS reviewReason,
+           r.grant_starts_at AS grantStartsAt, r.grant_expires_at AS grantExpiresAt,
+           r.revoked_by AS revokedBy, revoker.display_name AS revokedByName,
+           r.revoked_at AS revokedAt, r.revoke_reason AS revokeReason,
+           r.reveal_count AS revealCount, r.last_revealed_at AS lastRevealedAt,
+           r.created_at AS createdAt, r.version
+    FROM crm_customer_privacy_request r
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id
+    LEFT JOIN sys_user app ON app.tenant_id = r.tenant_id AND app.id = r.applicant_user_id
+    LEFT JOIN sys_user approver ON approver.tenant_id = r.tenant_id AND approver.id = r.assigned_approver_id
+    LEFT JOIN sys_user reviewer ON reviewer.tenant_id = r.tenant_id AND reviewer.id = r.reviewed_by
+    LEFT JOIN sys_user revoker ON revoker.tenant_id = r.tenant_id AND revoker.id = r.revoked_by
+  </sql>
+
+  <insert id="insertRequest" parameterType="com.whale.crm.customer.privacy.domain.CustomerPrivacyRequest"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_customer_privacy_request (
+      tenant_id, request_no, customer_id, applicant_user_id, applicant_team_id,
+      requested_fields_json, reason, status, assigned_approver_id, approver_source,
+      requested_duration_minutes
+    ) VALUES (
+      #{tenantId}, #{requestNo}, #{customerId}, #{applicantUserId}, #{applicantTeamId},
+      #{requestedFieldsJson}, #{reason}, #{status}, #{assignedApproverId}, #{approverSource},
+      #{requestedDurationMinutes}
+    )
+  </insert>
+
+  <update id="backfillRequestNo">
+    UPDATE crm_customer_privacy_request
+    SET request_no = #{requestNo}
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </update>
+
+  <select id="selectRequestById" resultMap="PrivacyRequestMap">
+    SELECT <include refid="requestColumns"/>
+    FROM crm_customer_privacy_request
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <select id="selectRequestByIdForUpdate" resultMap="PrivacyRequestMap">
+    SELECT <include refid="requestColumns"/>
+    FROM crm_customer_privacy_request
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+    FOR UPDATE
+  </select>
+
+  <select id="selectRequestRowById"
+          resultType="com.whale.crm.customer.privacy.domain.CustomerPrivacyRepository$RequestRow">
+    <include refid="requestRowSelect"/>
+    WHERE r.tenant_id = #{tenantId} AND r.id = #{id}
+  </select>
+
+  <select id="countPendingForApplicantAndCustomer" resultType="int">
+    SELECT COUNT(*)
+    FROM crm_customer_privacy_request
+    WHERE tenant_id = #{tenantId}
+      AND applicant_user_id = #{applicantUserId}
+      AND customer_id = #{customerId}
+      AND status = 'PENDING'
+  </select>
+
+  <select id="selectLatestPendingForApplicantAndCustomer"
+          resultType="com.whale.crm.customer.privacy.domain.CustomerPrivacyRepository$RequestRow">
+    <include refid="requestRowSelect"/>
+    WHERE r.tenant_id = #{tenantId}
+      AND r.applicant_user_id = #{applicantUserId}
+      AND r.customer_id = #{customerId}
+      AND r.status = 'PENDING'
+    ORDER BY r.id DESC
+    LIMIT 1
+  </select>
+
+  <select id="selectLatestActiveGrant" resultMap="PrivacyRequestMap">
+    SELECT <include refid="requestColumns"/>
+    FROM crm_customer_privacy_request
+    WHERE tenant_id = #{tenantId}
+      AND applicant_user_id = #{applicantUserId}
+      AND customer_id = #{customerId}
+      AND status = 'APPROVED'
+      AND grant_starts_at &lt;= #{now}
+      AND grant_expires_at &gt; #{now}
+    ORDER BY grant_expires_at DESC, id DESC
+    LIMIT 1
+  </select>
+
+  <select id="selectLatestActiveGrantRow"
+          resultType="com.whale.crm.customer.privacy.domain.CustomerPrivacyRepository$RequestRow">
+    <include refid="requestRowSelect"/>
+    WHERE r.tenant_id = #{tenantId}
+      AND r.applicant_user_id = #{applicantUserId}
+      AND r.customer_id = #{customerId}
+      AND r.status = 'APPROVED'
+      AND r.grant_starts_at &lt;= #{now}
+      AND r.grant_expires_at &gt; #{now}
+    ORDER BY r.grant_expires_at DESC, r.id DESC
+    LIMIT 1
+  </select>
+
+  <update id="approveRequest">
+    UPDATE crm_customer_privacy_request
+    SET status = 'APPROVED',
+        approved_fields_json = #{approvedFieldsJson},
+        approved_duration_minutes = #{approvedDurationMinutes},
+        reviewed_by = #{reviewedBy},
+        reviewed_at = #{reviewedAt},
+        review_reason = #{reviewReason},
+        grant_starts_at = #{grantStartsAt},
+        grant_expires_at = #{grantExpiresAt},
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND id = #{id}
+      AND version = #{expectedVersion}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="rejectRequest">
+    UPDATE crm_customer_privacy_request
+    SET status = 'REJECTED',
+        reviewed_by = #{reviewedBy},
+        reviewed_at = #{reviewedAt},
+        review_reason = #{reviewReason},
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND id = #{id}
+      AND version = #{expectedVersion}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="cancelRequest">
+    UPDATE crm_customer_privacy_request
+    SET status = 'CANCELED',
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND id = #{id}
+      AND version = #{expectedVersion}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="revokeRequest">
+    UPDATE crm_customer_privacy_request
+    SET status = 'REVOKED',
+        revoked_by = #{revokedBy},
+        revoked_at = #{revokedAt},
+        revoke_reason = #{revokeReason},
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND id = #{id}
+      AND version = #{expectedVersion}
+      AND status = 'APPROVED'
+  </update>
+
+  <update id="recordRevealHit">
+    UPDATE crm_customer_privacy_request
+    SET reveal_count = reveal_count + 1,
+        last_revealed_at = #{revealedAt}
+    WHERE tenant_id = #{tenantId}
+      AND id = #{id}
+      AND status = 'APPROVED'
+  </update>
+
+  <sql id="requestSearchWhere">
+    WHERE r.tenant_id = #{tenantId}
+    <choose>
+      <when test="viewMode == 'MY'">
+        AND r.applicant_user_id = #{actorUserId}
+      </when>
+      <when test="viewMode == 'PENDING_APPROVAL'">
+        AND r.status = 'PENDING'
+        AND r.applicant_user_id != #{actorUserId}
+        <if test="!adminAll">
+          AND r.assigned_approver_id = #{actorUserId}
+        </if>
+      </when>
+      <when test="viewMode == 'APPROVALS'">
+        AND r.applicant_user_id != #{actorUserId}
+        <if test="!adminAll">
+          AND (r.assigned_approver_id = #{actorUserId} OR r.reviewed_by = #{actorUserId})
+        </if>
+      </when>
+      <otherwise>
+        AND 1 = 0
+      </otherwise>
+    </choose>
+    <if test="status != null and status != ''">
+      AND r.status = #{status}
+    </if>
+    <if test="customerId != null">
+      AND r.customer_id = #{customerId}
+    </if>
+    <if test="keyword != null and keyword != ''">
+      AND (r.request_no LIKE CONCAT('%', #{keyword}, '%')
+        OR c.customer_no LIKE CONCAT('%', #{keyword}, '%')
+        OR c.display_name LIKE CONCAT('%', #{keyword}, '%')
+        OR c.nickname LIKE CONCAT('%', #{keyword}, '%')
+        OR app.display_name LIKE CONCAT('%', #{keyword}, '%'))
+    </if>
+  </sql>
+
+  <select id="searchRequests"
+          resultType="com.whale.crm.customer.privacy.domain.CustomerPrivacyRepository$RequestRow">
+    <include refid="requestRowSelect"/>
+    <include refid="requestSearchWhere"/>
+    ORDER BY r.id DESC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countRequests" resultType="long">
+    SELECT COUNT(*)
+    FROM crm_customer_privacy_request r
+    INNER JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id
+    LEFT JOIN sys_user app ON app.tenant_id = r.tenant_id AND app.id = r.applicant_user_id
+    <include refid="requestSearchWhere"/>
+  </select>
+
+  <insert id="insertAccessLog" parameterType="com.whale.crm.customer.privacy.domain.CustomerPrivacyAccessLog"
+          useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_customer_privacy_access_log (
+      tenant_id, customer_id, actor_user_id, actor_role_snapshot, access_mode, request_id,
+      revealed_fields_json, masked_values_snapshot_json, reason, client_ip, user_agent, trace_id
+    ) VALUES (
+      #{tenantId}, #{customerId}, #{actorUserId}, #{actorRoleSnapshot}, #{accessMode}, #{requestId},
+      #{revealedFieldsJson}, #{maskedValuesSnapshotJson}, #{reason}, #{clientIp}, #{userAgent}, #{traceId}
+    )
+  </insert>
+
+  <sql id="accessLogScopeWhere">
+    WHERE l.tenant_id = #{tenantId}
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="teamIds" item="t" open="(" separator="," close=")">#{t}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">
+        AND c.owner_staff_id = #{selfId}
+      </when>
+      <otherwise>
+        AND 1 = 0
+      </otherwise>
+    </choose>
+    <if test="customerId != null">
+      AND l.customer_id = #{customerId}
+    </if>
+    <if test="actorUserId != null">
+      AND l.actor_user_id = #{actorUserId}
+    </if>
+    <if test="accessMode != null and accessMode != ''">
+      AND l.access_mode = #{accessMode}
+    </if>
+  </sql>
+
+  <select id="searchAccessLogs"
+          resultType="com.whale.crm.customer.privacy.domain.CustomerPrivacyRepository$AccessLogRow">
+    SELECT l.id, l.customer_id AS customerId, c.customer_no AS customerNo,
+           COALESCE(c.display_name, c.nickname, c.customer_no) AS customerName,
+           l.actor_user_id AS actorUserId, u.username AS actorUsername, u.display_name AS actorDisplayName,
+           l.actor_role_snapshot AS actorRoleSnapshot, l.access_mode AS accessMode,
+           l.request_id AS requestId, req.request_no AS requestNo,
+           l.revealed_fields_json AS revealedFieldsJson,
+           l.masked_values_snapshot_json AS maskedValuesSnapshotJson,
+           l.reason, l.client_ip AS clientIp, l.user_agent AS userAgent,
+           l.trace_id AS traceId, l.created_at AS createdAt
+    FROM crm_customer_privacy_access_log l
+    INNER JOIN crm_customer c ON c.tenant_id = l.tenant_id AND c.id = l.customer_id
+    LEFT JOIN sys_user u ON u.tenant_id = l.tenant_id AND u.id = l.actor_user_id
+    LEFT JOIN crm_customer_privacy_request req ON req.tenant_id = l.tenant_id AND req.id = l.request_id
+    <include refid="accessLogScopeWhere"/>
+    ORDER BY l.id DESC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countAccessLogs" resultType="long">
+    SELECT COUNT(*)
+    FROM crm_customer_privacy_access_log l
+    INNER JOIN crm_customer c ON c.tenant_id = l.tenant_id AND c.id = l.customer_id
+    <include refid="accessLogScopeWhere"/>
+  </select>
+
+</mapper>

@@ -18,7 +18,9 @@ public class ExportColumnPolicy {
             ExportType.CUSTOMER, columns(
                     column("customerNo", "客户编号"), column("displayName", "客户称呼"),
                     column("nickname", "客户昵称"), column("remarkName", "备注名"),
-                    column("mobile", "手机号（脱敏）"), column("cityCode", "城市"),
+                    column("mobile", "手机号（脱敏）"), column("idCard", "身份证号（脱敏）"),
+                    column("email", "邮箱（脱敏）"), column("wechatId", "微信号（脱敏）"),
+                    column("cityCode", "城市"),
                     column("sourceCode", "客户来源"), column("channelCode", "渠道"),
                     column("customerStatus", "客户状态"), column("tierCode", "客户等级"),
                     column("intentLevel", "意向级别"), column("spendingLevel", "消费能力"),

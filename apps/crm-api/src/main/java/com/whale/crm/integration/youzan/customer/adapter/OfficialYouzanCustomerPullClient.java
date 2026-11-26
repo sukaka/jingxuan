@@ -18,15 +18,13 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 真实有赞云官方客户拉取适配器：
- * - SCRM_LIST 模式：调用 youzan.scrm.customer.search（默认 3.1.2，遇 4005 自动尝试 3.1.1/3.1.0）；
+ * - SCRM_LIST 模式：调用 youzan.scrm.customer.list（默认 1.0.0，分页参数 page_no/page_size，按创建时间降序）；
  * - ORDER_BUYERS 模式：复用已实测验证的 youzan.trades.sold.get (4.0.2) / youzan.trade.get (4.0.2)；
  * - 资料补全：复用已实测验证的 youzan.users.info.query (1.0.0) 与 youzan.scrm.customer.get (3.0.0)。
  */
@@ -38,11 +36,13 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
     private static final DateTimeFormatter YOUZAN_TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final int SCRM_MAX_PAGES = 500;
+    private static final long SCRM_MAX_TOTAL = 10_000L;
+    private static final int SCRM_MAX_PAGE_SIZE = 50;
     private static final int ORDER_MAX_PAGES = 100;
 
     private final YouzanTokenService tokenService;
     private final YouzanRemoteClient remoteClient;
-    private final String scrmSearchVersion;
+    private final String scrmListVersion;
     private final String tradeDetailVersion;
     private final long minIntervalMs;
     private final Map<String, Object> rateLocks = new ConcurrentHashMap<>();
@@ -52,13 +52,13 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
     public OfficialYouzanCustomerPullClient(
             YouzanTokenService tokenService,
             YouzanRemoteClient remoteClient,
-            @Value("${YOUZAN_SCRM_CUSTOMER_SEARCH_VERSION:3.1.2}") String scrmSearchVersion,
+            @Value("${YOUZAN_SCRM_CUSTOMER_LIST_VERSION:1.0.0}") String scrmListVersion,
             @Value("${YOUZAN_TRADE_DETAIL_VERSION:4.0.2}") String tradeDetailVersion,
             @Value("${YOUZAN_API_MIN_INTERVAL_MS:100}") long minIntervalMs) {
         this.tokenService = tokenService;
         this.remoteClient = remoteClient;
-        this.scrmSearchVersion = scrmSearchVersion == null || scrmSearchVersion.isBlank()
-                ? "3.1.2" : scrmSearchVersion.trim();
+        this.scrmListVersion = scrmListVersion == null || scrmListVersion.isBlank()
+                ? "1.0.0" : scrmListVersion.trim();
         this.tradeDetailVersion = tradeDetailVersion == null || tradeDetailVersion.isBlank()
                 ? "4.0.2" : tradeDetailVersion.trim();
         this.minIntervalMs = Math.max(0L, minIntervalMs);
@@ -77,9 +77,10 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
     @Override
     public YouzanCustomerPage pullScrmPage(long tenantId, String shopId, Instant createdStart, Instant createdEnd,
                                            int pageNo, int pageSize) {
+        int effectivePageSize = Math.min(SCRM_MAX_PAGE_SIZE, Math.max(1, pageSize));
         Map<String, Object> body = new HashMap<>();
-        body.put("page", pageNo);
-        body.put("page_size", pageSize);
+        body.put("page_no", pageNo);
+        body.put("page_size", effectivePageSize);
         if (createdStart != null) {
             body.put("created_at_start", createdStart.getEpochSecond());
         }
@@ -87,10 +88,11 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
             body.put("created_at_end", createdEnd.getEpochSecond());
         }
 
-        JsonNode response = callScrmSearchWithVersionFallback(tenantId, shopId, body);
+        JsonNode response = callScrmList(tenantId, shopId, body);
         JsonNode data = response.path("data");
         long total = firstNonNegativeLong(data, "total", "total_results", "total_count");
-        if (total > (long) SCRM_MAX_PAGES * pageSize) {
+        long maxTotal = Math.min(SCRM_MAX_TOTAL, (long) SCRM_MAX_PAGES * effectivePageSize);
+        if (total >= maxTotal) {
             throw new YouzanCustomerWindowTooLargeException(total);
         }
 
@@ -105,8 +107,8 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
             }
         }
         boolean hasMore = total > 0
-                ? pageNo < SCRM_MAX_PAGES && (long) pageNo * pageSize < total
-                : pageNo < SCRM_MAX_PAGES && items.size() >= pageSize;
+                ? pageNo < SCRM_MAX_PAGES && (long) pageNo * effectivePageSize < total
+                : pageNo < SCRM_MAX_PAGES && items.size() >= effectivePageSize;
         return new YouzanCustomerPage(items, total, hasMore, List.of());
     }
 
@@ -228,33 +230,27 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
         return new YouzanCustomerEnrichment(name, nickname, mobile, genderHint, birthday, warning);
     }
 
-    private JsonNode callScrmSearchWithVersionFallback(long tenantId, String shopId, Map<String, Object> body) {
-        Set<String> candidates = new LinkedHashSet<>();
-        candidates.add(scrmSearchVersion);
-        candidates.add("3.1.2");
-        candidates.add("3.1.1");
-        candidates.add("3.1.0");
-        BusinessException lastError = null;
-        for (String version : candidates) {
-            try {
-                return callApi(tenantId, shopId, "youzan.scrm.customer.search", version, body);
-            } catch (YouzanApiException ex) {
-                throw ex;
-            } catch (BusinessException ex) {
-                lastError = ex;
-                if (ex.getMessage() != null && ex.getMessage().contains("4005")) {
-                    continue;
-                }
-                throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
-                        "有赞全量客户列表接口（youzan.scrm.customer.search/" + version
-                                + "）调用失败或未开通权限，请确认有赞云已开通该接口，或切换为「按有赞订单买家拉取」模式（"
-                                + safeReason(ex.getMessage()) + "）");
+    private JsonNode callScrmList(long tenantId, String shopId, Map<String, Object> body) {
+        try {
+            return callApi(tenantId, shopId, "youzan.scrm.customer.list", scrmListVersion, body);
+        } catch (YouzanApiException ex) {
+            throw ex;
+        } catch (BusinessException ex) {
+            String message = ex.getMessage();
+            if (message != null && message.contains("142710032")) {
+                throw new YouzanCustomerWindowTooLargeException(SCRM_MAX_TOTAL + 1L);
             }
+            if (message != null && (message.contains("4204") || message.contains("4005"))) {
+                throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
+                        "有赞全量客户列表接口（youzan.scrm.customer.list/" + scrmListVersion
+                                + "）未开通权限或暂不可用，请确认有赞云已开通「店铺客户信息同步」能力包，或切换为「按有赞订单买家拉取」模式（"
+                                + safeReason(message) + "）");
+            }
+            throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
+                    "有赞全量客户列表接口（youzan.scrm.customer.list/" + scrmListVersion
+                            + "）调用失败，请稍后重试或切换为「按有赞订单买家拉取」模式（"
+                            + safeReason(message) + "）");
         }
-        throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE,
-                "有赞全量客户列表接口（youzan.scrm.customer.search）在当前店铺未开通或版本不匹配，"
-                        + "请先在有赞云开通客户列表权限，或切换为「按有赞订单买家拉取」模式（"
-                        + safeReason(lastError == null ? null : lastError.getMessage()) + "）");
     }
 
     private JsonNode fetchOrderDetail(long tenantId, String shopId, String tid, JsonNode fallback) {
@@ -269,10 +265,10 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
 
     private YouzanPulledCustomer parseScrmCustomer(JsonNode item) {
         String yzOpenId = firstNonBlank(text(item, "yz_open_id"), text(item, "yz_open_id_str"));
-        String name = firstNonBlank(plainText(item, "name"), plainText(item, "show_name"));
-        String nickname = firstNonBlank(plainText(item, "nick_name"), plainText(item, "nickname"),
-                plainText(item, "show_name"));
         String mobile = sanitizePlainMobile(text(item, "mobile"));
+        String showName = nonMobileDisplayName(plainText(item, "show_name"), mobile);
+        String name = firstNonBlank(plainText(item, "name"), showName);
+        String nickname = firstNonBlank(plainText(item, "nick_name"), plainText(item, "nickname"), showName);
         String genderHint = parseGender(item.path("gender").asInt(0));
         LocalDate birthday = parseBirthday(text(item, "birthday"));
         Instant createdAt = parseFlexibleTime(item.path("created_at"));
@@ -427,6 +423,20 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
         }
         String compact = plain.replaceAll("[\\s-]+", "");
         return compact.matches("^\\+?\\d{5,15}$") ? compact : null;
+    }
+
+    private static String nonMobileDisplayName(String candidate, String mobile) {
+        if (candidate == null || candidate.isBlank()) {
+            return null;
+        }
+        String compact = candidate.replaceAll("[\\s-]+", "");
+        if (mobile != null && compact.equals(mobile)) {
+            return null;
+        }
+        if (compact.matches("^(\\+?86)?1[3-9]\\d{9}$")) {
+            return null;
+        }
+        return candidate;
     }
 
     private static long firstNonNegativeLong(JsonNode node, String... fields) {

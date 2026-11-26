@@ -7,6 +7,7 @@ import { ApiError } from '../../types/api'
 import CustomerAssignDialog from './CustomerAssignDialog.vue'
 import type { CustomerAssignTarget } from './CustomerAssignDialog.vue'
 import CustomerAvatar from './CustomerAvatar.vue'
+import CustomerPrivacyPanel from './CustomerPrivacyPanel.vue'
 import FollowupPanel from './FollowupPanel.vue'
 import OwnershipPanel from './OwnershipPanel.vue'
 import PointsPanel from './PointsPanel.vue'
@@ -259,6 +260,11 @@ defineExpose({ reload: load })
 
         <el-tabs v-model="activeTab">
           <el-tab-pane label="客户概览" name="overview">
+            <CustomerPrivacyPanel
+              :customer-id="detail.id"
+              :visible="modelValue"
+              :readonly="detail.deleted"
+            />
             <div class="stat-grid">
               <div class="mini-stat"><div class="stat-label">积分余额</div><div class="stat-value">{{ detail.pointsCached }}</div></div>
               <div class="mini-stat"><div class="stat-label">最后跟进</div><div class="stat-text">{{ formatDateTime(detail.lastFollowupAt) }}</div></div>

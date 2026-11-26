@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { ManagedUser, TeamOption } from '../api/users'
+import type { ManagedUser, SupervisorOption, TeamOption } from '../api/users'
 import {
   createUser,
   disableUser,
   listUsers,
+  listUserSupervisors,
   listUserTeams,
   updateUser,
   updateUserRoles,
@@ -54,6 +55,14 @@ const errorMessage = ref('')
 
 const allRoles = ref<RoleItem[]>([])
 const allTeams = ref<TeamOption[]>([])
+const allSupervisors = ref<SupervisorOption[]>([])
+const editSupervisorOptions = computed(() => allSupervisors.value.filter((item) => item.id !== editForm.id))
+
+function supervisorOptionLabel(option: SupervisorOption): string {
+  return option.teamName
+    ? `${option.displayName}（${option.username} · ${option.teamName}）`
+    : `${option.displayName}（${option.username}）`
+}
 const hasFilters = computed(() => Boolean(
   query.keyword || query.status || query.userType || query.teamId !== '' || query.roleCode,
 ))
@@ -127,12 +136,13 @@ const createForm = reactive({
   password: '',
   userType: 'EMPLOYEE',
   teamId: undefined as number | undefined,
+  supervisorUserId: undefined as number | undefined,
   roleIds: [] as number[],
 })
 const createFieldErrors = reactive<CreateUserFieldErrors>({})
 
 const CREATE_USER_FIELDS: readonly CreateUserField[] = [
-  'username', 'displayName', 'password', 'userType', 'teamId', 'roleIds',
+  'username', 'displayName', 'password', 'userType', 'teamId', 'supervisorUserId', 'roleIds',
 ]
 
 function clearCreateErrors() {
@@ -169,6 +179,7 @@ function openCreateDialog() {
   createForm.password = ''
   createForm.userType = 'EMPLOYEE'
   createForm.teamId = undefined
+  createForm.supervisorUserId = undefined
   createForm.roleIds = []
   clearCreateErrors()
   createDialogVisible.value = true
@@ -195,10 +206,12 @@ async function submitCreate() {
       password: createForm.password,
       userType: createForm.userType,
       teamId: createForm.teamId ?? null,
+      supervisorUserId: createForm.userType === 'EMPLOYEE' ? (createForm.supervisorUserId ?? null) : null,
       roleIds: createForm.roleIds,
     })
     ElMessage.success('用户已创建')
     createDialogVisible.value = false
+    allSupervisors.value = await listUserSupervisors().catch(() => allSupervisors.value)
     await load()
   } catch (error) {
     if (error instanceof ApiError) {
@@ -220,13 +233,15 @@ const editSubmitting = ref(false)
 const editSubmitError = ref('')
 const editForm = reactive({
   id: 0,
+  userType: 'EMPLOYEE',
   displayName: '',
   teamId: undefined as number | undefined,
+  supervisorUserId: undefined as number | undefined,
   version: 0,
 })
 const editFieldErrors = reactive<EditUserFieldErrors>({})
 
-const EDIT_USER_FIELDS: readonly EditUserField[] = ['displayName', 'teamId']
+const EDIT_USER_FIELDS: readonly EditUserField[] = ['displayName', 'teamId', 'supervisorUserId']
 
 function clearEditErrors() {
   editSubmitError.value = ''
@@ -242,8 +257,10 @@ function clearEditFieldError(field: EditUserField) {
 
 function openEditDialog(user: ManagedUser) {
   editForm.id = user.id
+  editForm.userType = user.userType
   editForm.displayName = user.displayName
   editForm.teamId = user.teamId ?? undefined
+  editForm.supervisorUserId = user.supervisorUserId ?? undefined
   editForm.version = user.version
   clearEditErrors()
   editDialogVisible.value = true
@@ -262,10 +279,12 @@ async function submitEdit() {
     await updateUser(editForm.id, {
       displayName: editForm.displayName.trim(),
       teamId: editForm.teamId ?? null,
+      supervisorUserId: editForm.userType === 'EMPLOYEE' ? (editForm.supervisorUserId ?? null) : null,
       version: editForm.version,
     })
     ElMessage.success('已保存')
     editDialogVisible.value = false
+    allSupervisors.value = await listUserSupervisors().catch(() => allSupervisors.value)
     await load()
   } catch (error) {
     if (error instanceof ApiError) {
@@ -345,6 +364,7 @@ onMounted(async () => {
   await load()
   allRoles.value = await listRoles().catch(() => [])
   allTeams.value = await listUserTeams().catch(() => [])
+  allSupervisors.value = await listUserSupervisors().catch(() => [])
 })
 </script>
 
@@ -427,6 +447,9 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="团队" min-width="110">
           <template #default="{ row }">{{ row.teamName ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column label="直属上级" min-width="110">
+          <template #default="{ row }">{{ row.supervisorName ?? '-' }}</template>
         </el-table-column>
         <el-table-column label="角色" min-width="180">
           <template #default="{ row }">
@@ -540,6 +563,30 @@ onMounted(async () => {
             {{ createFieldErrors.teamId }}
           </p>
         </el-form-item>
+        <el-form-item
+          v-if="createForm.userType === 'EMPLOYEE'"
+          label="直属上级"
+          :class="{ 'is-error': Boolean(createFieldErrors.supervisorUserId) }"
+        >
+          <el-select
+            v-model="createForm.supervisorUserId"
+            clearable
+            filterable
+            placeholder="可选；未设置时按团队负责人/上级角色推导"
+            data-testid="create-supervisor-select"
+            @change="clearCreateFieldError('supervisorUserId')"
+          >
+            <el-option
+              v-for="sup in allSupervisors"
+              :key="sup.id"
+              :label="supervisorOptionLabel(sup)"
+              :value="sup.id"
+            />
+          </el-select>
+          <p v-if="createFieldErrors.supervisorUserId" class="field-error" role="alert" data-testid="create-supervisor-error">
+            {{ createFieldErrors.supervisorUserId }}
+          </p>
+        </el-form-item>
         <el-form-item label="角色" :class="{ 'is-error': Boolean(createFieldErrors.roleIds) }">
           <el-checkbox-group v-model="createForm.roleIds" @change="clearCreateFieldError('roleIds')">
             <el-checkbox v-for="role in allRoles" :key="role.id" :value="role.id">
@@ -591,6 +638,30 @@ onMounted(async () => {
           </el-select>
           <p v-if="editFieldErrors.teamId" class="field-error" role="alert" data-testid="edit-team-error">
             {{ editFieldErrors.teamId }}
+          </p>
+        </el-form-item>
+        <el-form-item
+          v-if="editForm.userType === 'EMPLOYEE'"
+          label="直属上级"
+          :class="{ 'is-error': Boolean(editFieldErrors.supervisorUserId) }"
+        >
+          <el-select
+            v-model="editForm.supervisorUserId"
+            clearable
+            filterable
+            placeholder="可选；未设置时按团队负责人/上级角色推导"
+            data-testid="edit-supervisor-select"
+            @change="clearEditFieldError('supervisorUserId')"
+          >
+            <el-option
+              v-for="sup in editSupervisorOptions"
+              :key="sup.id"
+              :label="supervisorOptionLabel(sup)"
+              :value="sup.id"
+            />
+          </el-select>
+          <p v-if="editFieldErrors.supervisorUserId" class="field-error" role="alert" data-testid="edit-supervisor-error">
+            {{ editFieldErrors.supervisorUserId }}
           </p>
         </el-form-item>
         <el-form-item label="数据版本">
