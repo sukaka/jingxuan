@@ -49,4 +49,17 @@ public class MybatisCustomerTransferRepository implements CustomerTransferReposi
     public List<TransferRow> findRowsByCustomerId(long tenantId, long customerId) {
         return mapper.selectRowsByCustomerId(tenantId, customerId);
     }
+
+    @Override
+    public List<ScopedTransferRow> searchScopedRows(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                                    String status, Long ownerId, String keyword,
+                                                    int offset, int size) {
+        return mapper.searchScopedRows(tenantId, scopeType, teamIds, selfId, status, ownerId, keyword, offset, size);
+    }
+
+    @Override
+    public long countScopedRows(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                String status, Long ownerId, String keyword) {
+        return mapper.countScopedRows(tenantId, scopeType, teamIds, selfId, status, ownerId, keyword);
+    }
 }

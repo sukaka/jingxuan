@@ -168,6 +168,26 @@ app:
       connect-timeout-ms: 3000
       read-timeout-ms: 10000
       token-refresh-skew-seconds: 60
+  annual-h5:
+    default-tenant-id: ${ANNUAL_H5_DEFAULT_TENANT_ID:1}
+    public-origin: ${ANNUAL_H5_PUBLIC_ORIGIN:http://localhost:5173}
+    session-cookie-name: ${ANNUAL_H5_SESSION_COOKIE_NAME:WHALE_H5_SESSION}
+    pending-cookie-name: ${ANNUAL_H5_PENDING_COOKIE_NAME:WHALE_H5_WECHAT_PENDING}
+    state-cookie-name: ${ANNUAL_H5_STATE_COOKIE_NAME:WHALE_H5_OAUTH_STATE}
+    session-ttl-seconds: ${ANNUAL_H5_SESSION_TTL_SECONDS:604800}
+    wechat-mp:
+      enabled: ${ANNUAL_H5_WECHAT_MP_ENABLED:false}
+      app-id: ${ANNUAL_H5_WECHAT_MP_APP_ID:}
+      app-secret: ${ANNUAL_H5_WECHAT_MP_APP_SECRET:}
+      authorize-url: ${ANNUAL_H5_WECHAT_MP_AUTHORIZE_URL:https://open.weixin.qq.com/connect/oauth2/authorize}
+      api-base-url: ${ANNUAL_H5_WECHAT_MP_API_BASE_URL:https://api.weixin.qq.com}
+      callback-url: ${ANNUAL_H5_WECHAT_MP_CALLBACK_URL:http://localhost:8080/api/v1/public/annual-reports/auth/wechat/callback}
+    sms:
+      mode: ${ANNUAL_H5_SMS_MODE:DISABLED}
+      ttl-seconds: ${ANNUAL_H5_SMS_TTL_SECONDS:300}
+      cooldown-seconds: ${ANNUAL_H5_SMS_COOLDOWN_SECONDS:60}
+      webhook-url: ${ANNUAL_H5_SMS_WEBHOOK_URL:}
+      webhook-token: ${ANNUAL_H5_SMS_WEBHOOK_TOKEN:}
 
 springdoc:
   swagger-ui:

@@ -26,6 +26,62 @@ export interface CustomerListItem {
   birthday?: string | null
   tagCodes?: string[]
   nextFollowupAt?: string | null
+  addedStewardCount?: number | null
+  addedStewardNames?: string[] | null
+}
+
+export interface CustomerStewardRelationItem {
+  staffUserId: number
+  staffName: string
+  teamId: number | null
+  teamName: string | null
+  inMyScope: boolean
+  customerId: number | null
+  customerNo: string | null
+  customerName: string | null
+  relationTypes: string[]
+  addedAt: string | null
+}
+
+export interface CustomerStewardSummary {
+  customerId: number
+  stewardCount: number
+  inScopeStewardCount: number
+  crossTeamStewardCount: number
+  matchReasons: string[]
+  evidenceMasked: string | null
+  stewards: CustomerStewardRelationItem[]
+}
+
+export interface MultiStewardCustomerGroupItem {
+  groupKey: string
+  primaryCustomerId: number | null
+  primaryCustomerNo: string | null
+  displayName: string | null
+  nickname: string | null
+  mobileMasked: string | null
+  stewardCount: number
+  inScopeStewardCount: number
+  crossTeamStewardCount: number
+  crossTeam: boolean
+  matchReasons: string[]
+  evidenceMasked: string | null
+  latestAddedAt: string | null
+  stewards: CustomerStewardRelationItem[]
+}
+
+export interface MultiStewardSummary {
+  multiStewardCustomerCount: number
+  crossTeamCustomerCount: number
+  maxStewardCount: number
+}
+
+export interface MultiStewardListQuery {
+  page: number
+  size: number
+  keyword?: string
+  minStewards?: number
+  crossTeamOnly?: boolean
 }
 
 export interface CustomerIdentityItem {
@@ -50,6 +106,7 @@ export interface CustomerDetail extends CustomerListItem {
   tagCodes: string[]
   identities: CustomerIdentityItem[]
   deleted: boolean
+  addedStewards?: CustomerStewardRelationItem[] | null
 }
 
 /** ownerId 只允许收窄当前用户数据范围(后端强制,传他人 ID 不放大) */
@@ -80,6 +137,7 @@ export interface CreateCustomerRequest {
   birthday?: string
   attentionProjects?: string
   projectIds?: number[]
+  tagCodes?: string[]
   blockerNote?: string
   remark?: string
   remarkName?: string
@@ -102,6 +160,7 @@ export interface UpdateCustomerRequest {
   birthday?: string
   attentionProjects?: string
   projectIds?: number[]
+  tagCodes?: string[]
   blockerNote?: string
   remark?: string
   version: number
@@ -204,8 +263,113 @@ export interface OwnershipHistoryItem {
   changedBy: number
   changedByName?: string | null
   reason: string | null
+  approvalRef?: string | null
+  changeMode?: string | null
   effectiveAt: string | null
   createdAt: string
+}
+
+export interface AssignCustomerOwnerRequest {
+  newOwnerId: number
+  reason: string
+  version: number
+}
+
+export interface CustomerOwnerAssignmentResult {
+  historyId: number
+  customerId: number
+  customerNo: string
+  customerName: string
+  oldOwnerId: number
+  oldOwnerName: string | null
+  newOwnerId: number
+  newOwnerName: string | null
+  oldTeamId: number | null
+  newTeamId: number | null
+  changedBy: number
+  changedByName: string | null
+  reason: string
+  approvalRef: string
+  effectiveAt: string
+  customerVersion: number
+}
+
+export interface BatchAssignCustomerOwnerItem {
+  customerId: number
+  version: number
+}
+
+export interface BatchAssignCustomerOwnerRequest {
+  items: BatchAssignCustomerOwnerItem[]
+  newOwnerId: number
+  reason: string
+}
+
+export interface BatchAssignCustomerOwnerResultItem {
+  customerId: number
+  customerNo: string
+  customerName: string
+  status: 'ASSIGNED' | 'SKIPPED' | string
+  oldOwnerId: number
+  oldOwnerName: string | null
+  newOwnerId: number
+  newOwnerName: string | null
+  historyId: number | null
+  customerVersion: number
+  message: string
+}
+
+export interface BatchAssignCustomerOwnerResult {
+  batchRef: string
+  newOwnerId: number
+  newOwnerName: string | null
+  newTeamId: number | null
+  reason: string
+  totalCount: number
+  assignedCount: number
+  skippedCount: number
+  effectiveAt: string
+  items: BatchAssignCustomerOwnerResultItem[]
+}
+
+export interface CustomerOwnershipLogItem {
+  id: number
+  customerId: number
+  customerNo: string
+  customerName: string
+  oldOwnerId: number
+  oldOwnerName: string | null
+  newOwnerId: number
+  newOwnerName: string | null
+  changedBy: number
+  changedByName: string | null
+  reason: string | null
+  approvalRef: string | null
+  changeMode: string
+  effectiveAt: string | null
+  createdAt: string
+}
+
+export interface CustomerOwnershipLogQuery {
+  page: number
+  size: number
+  customerId?: number
+  ownerId?: number
+  keyword?: string
+}
+
+export interface ScopedOwnershipTransferItem extends OwnershipTransferItem {
+  customerNo: string
+  customerName: string
+  reviewReason?: string | null
+}
+
+export interface ScopedOwnershipTransferQuery {
+  page: number
+  size: number
+  status?: string
+  ownerId?: number
+  keyword?: string
 }
 
 export async function listCustomers(query: CustomerListQuery): Promise<PageResult<CustomerListItem>> {
@@ -425,6 +589,71 @@ export async function listOwnershipHistory(customerId: number): Promise<Ownershi
   return res.data.data
 }
 
+/** 主管/管理员直接分配单个客户给目标管家(立即生效并追加不可修改归属历史) */
+export async function assignCustomerOwner(
+  customerId: number,
+  request: AssignCustomerOwnerRequest,
+  idempotencyKey?: string,
+): Promise<CustomerOwnerAssignmentResult> {
+  const res = await http.post<ApiResponse<CustomerOwnerAssignmentResult>>(
+    `/customers/${customerId}/owner-assignment`,
+    request,
+    { headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined },
+  )
+  return res.data.data
+}
+
+/** 主管/管理员批量分配客户给目标管家(同事务原子生效并逐条追加归属历史) */
+export async function batchAssignCustomerOwners(
+  request: BatchAssignCustomerOwnerRequest,
+  idempotencyKey?: string,
+): Promise<BatchAssignCustomerOwnerResult> {
+  const res = await http.post<ApiResponse<BatchAssignCustomerOwnerResult>>(
+    '/customers/owner-assignments/batch',
+    request,
+    { headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined },
+  )
+  return res.data.data
+}
+
+/** 全局分页查询已生效客户归属日志(按数据范围隔离) */
+export async function listCustomerOwnershipLogs(
+  query: CustomerOwnershipLogQuery,
+): Promise<PageResult<CustomerOwnershipLogItem>> {
+  const res = await http.get<ApiResponse<PageResult<CustomerOwnershipLogItem>>>(
+    '/customer-ownership-history',
+    {
+      params: {
+        page: query.page,
+        size: query.size,
+        customerId: query.customerId ?? undefined,
+        ownerId: query.ownerId ?? undefined,
+        keyword: query.keyword || undefined,
+      },
+    },
+  )
+  return res.data.data
+}
+
+/** 全局分页查询客户转交审批单(按数据范围隔离) */
+export async function listScopedOwnershipTransfers(
+  query: ScopedOwnershipTransferQuery,
+): Promise<PageResult<ScopedOwnershipTransferItem>> {
+  const res = await http.get<ApiResponse<PageResult<ScopedOwnershipTransferItem>>>(
+    '/customer-ownership-transfers',
+    {
+      params: {
+        page: query.page,
+        size: query.size,
+        status: query.status || undefined,
+        ownerId: query.ownerId ?? undefined,
+        keyword: query.keyword || undefined,
+      },
+    },
+  )
+  return res.data.data
+}
+
 /** GET /customer-owner-options:当前用户数据范围内可归属的管家选项;无权限时后端返回 403 */
 export async function listCustomerOwnerOptions(): Promise<CustomerOwnerOption[]> {
   const res = await http.get<ApiResponse<CustomerOwnerOption[]>>('/customer-owner-options')
@@ -434,5 +663,168 @@ export async function listCustomerOwnerOptions(): Promise<CustomerOwnerOption[]>
 /** GET /customers/{id}/legacy-profile(customer:read + 范围):原业务表 23 字段逐项映射 */
 export async function getCustomerLegacyProfile(id: number): Promise<LegacyProfileField[]> {
   const res = await http.get<ApiResponse<LegacyProfileField[]>>(`/customers/${id}/legacy-profile`)
+  return res.data.data
+}
+
+/** 客户标签定义（由管家主管/管理员维护，管家仅选择使用） */
+export interface CustomerTagItem {
+  id: number
+  optionCode: string
+  optionLabel: string
+  sortNo: number
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED' | string
+  version: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface CreateCustomerTagRequest {
+  optionCode?: string
+  optionLabel: string
+  sortNo?: number
+}
+
+export interface UpdateCustomerTagRequest {
+  optionLabel: string
+  sortNo: number
+  version: number
+}
+
+/** GET /customer-tags(customer:tag:manage):全部状态的客户标签库 */
+export async function listCustomerTags(): Promise<CustomerTagItem[]> {
+  const res = await http.get<ApiResponse<CustomerTagItem[]>>('/customer-tags')
+  return res.data.data
+}
+
+/** POST /customer-tags(customer:tag:manage):新增客户标签内容 */
+export async function createCustomerTag(request: CreateCustomerTagRequest): Promise<CustomerTagItem> {
+  const res = await http.post<ApiResponse<CustomerTagItem>>('/customer-tags', request)
+  return res.data.data
+}
+
+/** PATCH /customer-tags/{id}(customer:tag:manage):修改客户标签内容与排序 */
+export async function updateCustomerTag(
+  id: number,
+  request: UpdateCustomerTagRequest,
+): Promise<CustomerTagItem> {
+  const res = await http.patch<ApiResponse<CustomerTagItem>>(`/customer-tags/${id}`, request)
+  return res.data.data
+}
+
+/** POST /customer-tags/{id}/disable(customer:tag:manage):停用客户标签（不影响历史客户标签） */
+export async function disableCustomerTag(id: number): Promise<CustomerTagItem> {
+  const res = await http.post<ApiResponse<CustomerTagItem>>(`/customer-tags/${id}/disable`)
+  return res.data.data
+}
+
+/** POST /customer-tags/{id}/enable(customer:tag:manage):重新启用已停用客户标签 */
+export async function enableCustomerTag(id: number): Promise<CustomerTagItem> {
+  const res = await http.post<ApiResponse<CustomerTagItem>>(`/customer-tags/${id}/enable`)
+  return res.data.data
+}
+
+/** 客户来源 / 客户渠道配置项（由管家主管/管理员维护，普通管家仅下拉选择） */
+export type CustomerOptionItem = CustomerTagItem
+export type CreateCustomerOptionRequest = CreateCustomerTagRequest
+export type UpdateCustomerOptionRequest = UpdateCustomerTagRequest
+
+/** GET /customer-sources(customer:source_channel:manage):全部状态的客户来源选项 */
+export async function listCustomerSources(): Promise<CustomerOptionItem[]> {
+  const res = await http.get<ApiResponse<CustomerOptionItem[]>>('/customer-sources')
+  return res.data.data
+}
+
+/** POST /customer-sources(customer:source_channel:manage):新增客户来源 */
+export async function createCustomerSource(
+  request: CreateCustomerOptionRequest,
+): Promise<CustomerOptionItem> {
+  const res = await http.post<ApiResponse<CustomerOptionItem>>('/customer-sources', request)
+  return res.data.data
+}
+
+/** PATCH /customer-sources/{id}(customer:source_channel:manage):修改客户来源名称与排序 */
+export async function updateCustomerSource(
+  id: number,
+  request: UpdateCustomerOptionRequest,
+): Promise<CustomerOptionItem> {
+  const res = await http.patch<ApiResponse<CustomerOptionItem>>(`/customer-sources/${id}`, request)
+  return res.data.data
+}
+
+/** POST /customer-sources/{id}/disable(customer:source_channel:manage):停用客户来源 */
+export async function disableCustomerSource(id: number): Promise<CustomerOptionItem> {
+  const res = await http.post<ApiResponse<CustomerOptionItem>>(`/customer-sources/${id}/disable`)
+  return res.data.data
+}
+
+/** POST /customer-sources/{id}/enable(customer:source_channel:manage):重新启用客户来源 */
+export async function enableCustomerSource(id: number): Promise<CustomerOptionItem> {
+  const res = await http.post<ApiResponse<CustomerOptionItem>>(`/customer-sources/${id}/enable`)
+  return res.data.data
+}
+
+/** GET /customer-channels(customer:source_channel:manage):全部状态的客户渠道选项 */
+export async function listCustomerChannels(): Promise<CustomerOptionItem[]> {
+  const res = await http.get<ApiResponse<CustomerOptionItem[]>>('/customer-channels')
+  return res.data.data
+}
+
+/** POST /customer-channels(customer:source_channel:manage):新增客户渠道 */
+export async function createCustomerChannel(
+  request: CreateCustomerOptionRequest,
+): Promise<CustomerOptionItem> {
+  const res = await http.post<ApiResponse<CustomerOptionItem>>('/customer-channels', request)
+  return res.data.data
+}
+
+/** PATCH /customer-channels/{id}(customer:source_channel:manage):修改客户渠道名称与排序 */
+export async function updateCustomerChannel(
+  id: number,
+  request: UpdateCustomerOptionRequest,
+): Promise<CustomerOptionItem> {
+  const res = await http.patch<ApiResponse<CustomerOptionItem>>(`/customer-channels/${id}`, request)
+  return res.data.data
+}
+
+/** POST /customer-channels/{id}/disable(customer:source_channel:manage):停用客户渠道 */
+export async function disableCustomerChannel(id: number): Promise<CustomerOptionItem> {
+  const res = await http.post<ApiResponse<CustomerOptionItem>>(`/customer-channels/${id}/disable`)
+  return res.data.data
+}
+
+/** POST /customer-channels/{id}/enable(customer:source_channel:manage):重新启用客户渠道 */
+export async function enableCustomerChannel(id: number): Promise<CustomerOptionItem> {
+  const res = await http.post<ApiResponse<CustomerOptionItem>>(`/customer-channels/${id}/enable`)
+  return res.data.data
+}
+
+/** GET /customer-uniqueness/summary(customer:merge):多管家重复排查汇总统计 */
+export async function getMultiStewardSummary(): Promise<MultiStewardSummary> {
+  const res = await http.get<ApiResponse<MultiStewardSummary>>('/customer-uniqueness/summary')
+  return res.data.data
+}
+
+/** GET /customer-uniqueness/multi-stewards(customer:merge):只读查询同一顾客添加多位管家明细 */
+export async function listMultiStewardCustomers(
+  query: MultiStewardListQuery,
+): Promise<PageResult<MultiStewardCustomerGroupItem>> {
+  const res = await http.get<ApiResponse<PageResult<MultiStewardCustomerGroupItem>>>(
+    '/customer-uniqueness/multi-stewards',
+    {
+      params: {
+        page: query.page,
+        size: query.size,
+        keyword: query.keyword || undefined,
+        minStewards: query.minStewards ?? 2,
+        crossTeamOnly: query.crossTeamOnly || undefined,
+      },
+    },
+  )
+  return res.data.data
+}
+
+/** GET /customers/{id}/steward-relations(customer:merge):查询单个客户关联的全部管家明细（跨组仅汇总） */
+export async function getCustomerStewardRelations(id: number): Promise<CustomerStewardSummary> {
+  const res = await http.get<ApiResponse<CustomerStewardSummary>>(`/customers/${id}/steward-relations`)
   return res.data.data
 }

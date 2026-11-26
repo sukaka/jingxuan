@@ -31,3 +31,6 @@ app:
   ai:
     worker:
       internal-token: ${AI_INTERNAL_TOKEN:dev-ai-internal-token-change-me}
+  annual-h5:
+    sms:
+      mode: ${ANNUAL_H5_SMS_MODE:MOCK}

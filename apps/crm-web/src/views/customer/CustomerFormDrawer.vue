@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { CreateCustomerRequest, CustomerOwnerOption } from '../../api/customer'
 import { createCustomer, getCustomer, listCustomerOwnerOptions, updateCustomer } from '../../api/customer'
@@ -7,6 +7,8 @@ import type { Project } from '../../api/catalog'
 import { listProjects } from '../../api/catalog'
 import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../types/api'
+import CustomerSourceChannelManageDialog from './CustomerSourceChannelManageDialog.vue'
+import CustomerTagManageDialog from './CustomerTagManageDialog.vue'
 import { useDictionaries } from './shared'
 
 const props = defineProps<{
@@ -21,10 +23,15 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 const dicts = useDictionaries()
-void dicts.load('cities', 'customerSources', 'customerChannels', 'customerStatuses')
+void dicts.load('cities', 'customerSources', 'customerChannels', 'customerStatuses', 'customerTags')
 
 // 所属管家:管理员建档必须显式选择;MANAGER/MANAGER_LEAD 默认本人(缺省由后端归属当前登录人)
 const isAdmin = auth.hasRole('ADMIN')
+const canManageTagCatalog = computed(() => auth.hasPermission('customer:tag:manage'))
+const canManageSourceChannel = computed(() => auth.hasPermission('customer:source_channel:manage'))
+const tagManageVisible = ref(false)
+const sourceChannelManageVisible = ref(false)
+const sourceChannelManageTab = ref<'sources' | 'channels'>('sources')
 const ownerOptions = ref<CustomerOwnerOption[]>([])
 const ownerOptionsError = ref('')
 const formOwnerId = ref<number | undefined>(undefined)
@@ -51,6 +58,7 @@ interface FormState {
   intentLevel: string
   spendingLevel: string
   birthday: string
+  tagCodes: string[]
   projectIds: number[]
   blockerNote: string
   remark: string
@@ -70,6 +78,7 @@ function emptyForm(): FormState {
     intentLevel: '',
     spendingLevel: '',
     birthday: '',
+    tagCodes: [],
     projectIds: [],
     blockerNote: '',
     remark: '',
@@ -78,14 +87,28 @@ function emptyForm(): FormState {
 }
 
 const form = reactive<FormState>(emptyForm())
+const tagSelectOptions = computed(() => dicts.optionsWithHistoryList('customerTags', form.tagCodes))
 const loading = ref(false)
 const submitting = ref(false)
 const version = ref(0)
 let idempotencyKey = ''
 
+async function onTagCatalogChanged() {
+  await dicts.load('customerTags')
+}
+
+function openSourceChannelManage(tab: 'sources' | 'channels') {
+  sourceChannelManageTab.value = tab
+  sourceChannelManageVisible.value = true
+}
+
+async function onSourceChannelCatalogChanged() {
+  await dicts.load('customerSources', 'customerChannels')
+}
+
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 409) return '该客户已被他人修改，请关闭后重新打开编辑'
+    if (error.status === 409) return error.message || '该客户已被他人修改，请关闭后重新打开编辑'
     if (error.status === 404) return '客户不存在或不在您的可见范围内'
     return error.message
   }
@@ -107,6 +130,7 @@ watch(
   () => props.modelValue,
   async (visible) => {
     if (!visible) return
+    void dicts.load('customerTags', 'customerSources', 'customerChannels')
     void loadProjectOptions()
     if (props.mode === 'create') {
       Object.assign(form, emptyForm())
@@ -142,6 +166,7 @@ watch(
         intentLevel: detail.intentLevel ?? '',
         spendingLevel: detail.spendingLevel ?? '',
         birthday: detail.birthday ?? '',
+        tagCodes: [...(detail.tagCodes ?? [])],
         projectIds: [...(detail.attentionProjectIds ?? [])],
         blockerNote: detail.blockerNote ?? '',
         remark: detail.remark ?? '',
@@ -158,12 +183,15 @@ watch(
 
 /** 空字符串不上送,可空列保持 NULL(尤其 mobile 不能写成空串) */
 function buildPayload(): CreateCustomerRequest {
-  const payload: Record<string, string | number | number[]> = {}
+  const payload: Record<string, string | number | number[] | string[]> = {}
   for (const [key, value] of Object.entries(form)) {
-    if (key === 'projectIds') continue
+    if (key === 'projectIds' || key === 'tagCodes') continue
     if (value) payload[key] = value as string
   }
   payload.projectIds = [...form.projectIds]
+  if (props.mode === 'edit' || form.tagCodes.length > 0) {
+    payload.tagCodes = [...form.tagCodes]
+  }
   return payload as CreateCustomerRequest
 }
 
@@ -250,6 +278,42 @@ async function submit() {
           <el-form-item label="备注名">
             <el-input v-model="form.remarkName" />
           </el-form-item>
+          <el-form-item label="客户标签" class="form-grid-full">
+            <div class="tag-field-wrap">
+              <el-select
+                v-model="form.tagCodes"
+                multiple
+                filterable
+                clearable
+                data-testid="customer-tag-select"
+                placeholder="请选择客户标签（可多选）"
+                class="tag-select"
+              >
+                <el-option
+                  v-for="option in tagSelectOptions"
+                  :key="option.code"
+                  :label="option.label"
+                  :value="option.code"
+                  :disabled="option.disabled"
+                />
+              </el-select>
+              <div class="tag-field-meta">
+                <el-button
+                  v-if="canManageTagCatalog"
+                  text
+                  type="primary"
+                  size="small"
+                  data-testid="form-manage-tags-btn"
+                  @click="tagManageVisible = true"
+                >
+                  管理标签内容
+                </el-button>
+                <span v-else class="tag-field-hint">
+                  仅可选择已有标签；如需新增或修改标签内容，请联系管家主管维护
+                </span>
+              </div>
+            </div>
+          </el-form-item>
           <el-form-item label="城市">
             <el-select v-model="form.cityCode" clearable filterable data-testid="customer-city-select">
               <el-option
@@ -262,26 +326,74 @@ async function submit() {
             </el-select>
           </el-form-item>
           <el-form-item label="客户来源">
-            <el-select v-model="form.sourceCode" clearable>
-              <el-option
-                v-for="option in dicts.optionsWithHistory('customerSources', form.sourceCode)"
-                :key="option.code"
-                :label="option.label"
-                :value="option.code"
-                :disabled="option.disabled"
-              />
-            </el-select>
+            <div class="tag-field-wrap">
+              <el-select
+                v-model="form.sourceCode"
+                clearable
+                filterable
+                placeholder="请选择客户来源"
+                data-testid="customer-source-select"
+                class="tag-select"
+              >
+                <el-option
+                  v-for="option in dicts.optionsWithHistory('customerSources', form.sourceCode)"
+                  :key="option.code"
+                  :label="option.label"
+                  :value="option.code"
+                  :disabled="option.disabled"
+                />
+              </el-select>
+              <div class="tag-field-meta">
+                <el-button
+                  v-if="canManageSourceChannel"
+                  text
+                  type="primary"
+                  size="small"
+                  data-testid="form-manage-sources-btn"
+                  @click="openSourceChannelManage('sources')"
+                >
+                  管理来源
+                </el-button>
+                <span v-else class="tag-field-hint" data-testid="form-source-readonly-hint">
+                  仅可下拉选择，由管家主管统一维护
+                </span>
+              </div>
+            </div>
           </el-form-item>
           <el-form-item label="客户渠道">
-            <el-select v-model="form.channelCode" clearable>
-              <el-option
-                v-for="option in dicts.optionsWithHistory('customerChannels', form.channelCode)"
-                :key="option.code"
-                :label="option.label"
-                :value="option.code"
-                :disabled="option.disabled"
-              />
-            </el-select>
+            <div class="tag-field-wrap">
+              <el-select
+                v-model="form.channelCode"
+                clearable
+                filterable
+                placeholder="请选择客户渠道"
+                data-testid="customer-channel-select"
+                class="tag-select"
+              >
+                <el-option
+                  v-for="option in dicts.optionsWithHistory('customerChannels', form.channelCode)"
+                  :key="option.code"
+                  :label="option.label"
+                  :value="option.code"
+                  :disabled="option.disabled"
+                />
+              </el-select>
+              <div class="tag-field-meta">
+                <el-button
+                  v-if="canManageSourceChannel"
+                  text
+                  type="primary"
+                  size="small"
+                  data-testid="form-manage-channels-btn"
+                  @click="openSourceChannelManage('channels')"
+                >
+                  管理渠道
+                </el-button>
+                <span v-else class="tag-field-hint" data-testid="form-channel-readonly-hint">
+                  仅可下拉选择，由管家主管统一维护
+                </span>
+              </div>
+            </div>
           </el-form-item>
           <el-form-item label="客户状态">
             <el-select v-model="form.customerStatus" clearable>
@@ -360,6 +472,17 @@ async function submit() {
         {{ mode === 'create' ? '建档' : '保存' }}
       </el-button>
     </template>
+    <CustomerTagManageDialog
+      v-if="canManageTagCatalog"
+      v-model="tagManageVisible"
+      @changed="onTagCatalogChanged"
+    />
+    <CustomerSourceChannelManageDialog
+      v-if="canManageSourceChannel"
+      v-model="sourceChannelManageVisible"
+      :initial-tab="sourceChannelManageTab"
+      @changed="onSourceChannelCatalogChanged"
+    />
   </el-drawer>
 </template>
 
@@ -382,8 +505,25 @@ async function submit() {
   grid-column: 1 / -1;
 }
 
-.owner-select {
+.owner-select,
+.tag-select {
   width: 100%;
+}
+
+.tag-field-wrap {
+  width: 100%;
+}
+
+.tag-field-meta {
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.tag-field-hint {
+  color: #7c9288;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .owner-error {

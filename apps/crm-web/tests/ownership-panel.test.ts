@@ -13,6 +13,8 @@ vi.mock('../src/api/customer', () => ({
   createOwnershipTransfer: vi.fn(),
   approveOwnershipTransfer: vi.fn(),
   rejectOwnershipTransfer: vi.fn(),
+  assignCustomerOwner: vi.fn(),
+  batchAssignCustomerOwners: vi.fn(),
 }))
 
 describe('OwnershipPanel 转交契约', () => {
@@ -72,5 +74,57 @@ describe('OwnershipPanel 转交契约', () => {
     const actionColumn = wrapper.findAllComponents({ name: 'ElTableColumn' })
       .find((column) => column.props('label') === '操作')
     expect(Number(actionColumn?.props('minWidth'))).toBe(230)
+  })
+
+  it('传入客户对象时展示直接分配入口并渲染变更方式标签', async () => {
+    vi.mocked(listOwnershipTransfers).mockResolvedValue([])
+    vi.mocked(listOwnershipHistory).mockResolvedValue([
+      {
+        id: 11,
+        customerId: 1,
+        oldOwnerId: 2,
+        oldOwnerName: '王丽',
+        newOwnerId: 12,
+        newOwnerName: '周小洁',
+        changedBy: 4,
+        changedByName: '张敏',
+        reason: '休假代管',
+        approvalRef: 'DIRECT_ASSIGN',
+        changeMode: 'DIRECT_ASSIGN',
+        effectiveAt: '2026-10-25T02:00:00Z',
+        createdAt: '2026-10-25T02:00:00Z',
+      },
+    ])
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    auth.user = {
+      userId: 4,
+      username: 'lead1',
+      displayName: '张敏',
+      userType: 'EMPLOYEE',
+      roles: ['MANAGER_LEAD'],
+      permissions: ['customer:read', 'customer:transfer'],
+    }
+    const wrapper = mount(OwnershipPanel, {
+      props: {
+        customerId: 1,
+        customer: {
+          id: 1,
+          customerNo: 'C0000000001',
+          displayName: '陈女士',
+          nickname: '小鱼',
+          ownerStaffId: 12,
+          ownerName: '周小洁',
+          version: 2,
+        },
+      },
+      global: { plugins: [ElementPlus, pinia] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="panel-direct-assign-btn"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('主管直接分配')
+    expect(wrapper.text()).toContain('周小洁')
   })
 })

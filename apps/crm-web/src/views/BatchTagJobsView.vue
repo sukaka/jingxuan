@@ -28,11 +28,14 @@ import {
 import PageCard from '../components/prototype/PageCard.vue'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import { useAuthStore } from '../stores/auth'
+import CustomerTagManageDialog from './customer/CustomerTagManageDialog.vue'
 import { customerTagLabel, useDictionaries } from './customer/shared'
 
 const auth = useAuthStore()
 const dicts = useDictionaries()
 const canManage = computed(() => auth.user?.userType !== 'INSTITUTION' && auth.hasPermission('customer:write'))
+const canManageTagCatalog = computed(() => auth.hasPermission('customer:tag:manage'))
+const tagManageVisible = ref(false)
 const jobs = ref<BatchTagJobDetail['job'][]>([])
 const segments = ref<CustomerSegment[]>([])
 const projects = ref<Project[]>([])
@@ -374,7 +377,11 @@ onMounted(() => {
     <PageHeader
       title="批量重打标"
       description="预览并锁定目标客户范围后执行批量添加或移除标签，不会覆盖客户其他已有标签，执行前自动校验权限与归属关系"
-    />
+    >
+      <template v-if="canManageTagCatalog" #actions>
+        <el-button data-testid="batch-tag-manage-btn" @click="tagManageVisible = true">标签管理</el-button>
+      </template>
+    </PageHeader>
     <el-alert v-if="!canManage" title="当前账号没有批量重打标权限；机构账号不可操作" type="warning" :closable="false" />
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" role="alert" />
 
@@ -579,6 +586,11 @@ onMounted(() => {
         </dl>
       </details>
     </PageCard>
+    <CustomerTagManageDialog
+      v-if="canManageTagCatalog"
+      v-model="tagManageVisible"
+      @changed="dicts.load('customerTags')"
+    />
   </div>
 </template>
 

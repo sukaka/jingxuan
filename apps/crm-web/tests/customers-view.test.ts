@@ -3,7 +3,11 @@ import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
-import { listCustomers, listMergeCandidates } from '../src/api/customer'
+import {
+  getMultiStewardSummary,
+  listCustomerOwnerOptions,
+  listCustomers,
+} from '../src/api/customer'
 import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
 import CustomersView from '../src/views/CustomersView.vue'
@@ -25,10 +29,30 @@ vi.mock('../src/api/customer', () => ({
   listOwnershipTransfers: vi.fn(),
   approveOwnershipTransfer: vi.fn(),
   rejectOwnershipTransfer: vi.fn(),
+  assignCustomerOwner: vi.fn(),
+  batchAssignCustomerOwners: vi.fn(),
   listOwnershipHistory: vi.fn(),
   listCustomerOwnerOptions: vi.fn().mockResolvedValue([]),
   getCustomerLegacyProfile: vi.fn().mockResolvedValue([]),
   scanMergeCandidates: vi.fn(),
+  listCustomerTags: vi.fn().mockResolvedValue([]),
+  createCustomerTag: vi.fn(),
+  updateCustomerTag: vi.fn(),
+  disableCustomerTag: vi.fn(),
+  enableCustomerTag: vi.fn(),
+  listCustomerSources: vi.fn().mockResolvedValue([]),
+  createCustomerSource: vi.fn(),
+  updateCustomerSource: vi.fn(),
+  disableCustomerSource: vi.fn(),
+  enableCustomerSource: vi.fn(),
+  listCustomerChannels: vi.fn().mockResolvedValue([]),
+  createCustomerChannel: vi.fn(),
+  updateCustomerChannel: vi.fn(),
+  disableCustomerChannel: vi.fn(),
+  enableCustomerChannel: vi.fn(),
+  getMultiStewardSummary: vi.fn(),
+  listMultiStewardCustomers: vi.fn(),
+  getCustomerStewardRelations: vi.fn(),
 }))
 
 vi.mock('../src/api/followup', () => ({
@@ -104,7 +128,11 @@ function mountView(user: AuthUser) {
 describe('CustomersView 客户中心', () => {
   beforeEach(() => {
     vi.mocked(listCustomers).mockReset()
-    vi.mocked(listMergeCandidates).mockReset().mockResolvedValue({ items: [], total: 0, page: 1, size: 1 })
+    vi.mocked(getMultiStewardSummary).mockReset().mockResolvedValue({
+      multiStewardCustomerCount: 0,
+      crossTeamCustomerCount: 0,
+      maxStewardCount: 0,
+    })
   })
 
   afterEach(() => {
@@ -139,36 +167,55 @@ describe('CustomersView 客户中心', () => {
     expect(wrapper.find('.crm-avatar').exists()).toBe(true)
   })
 
-  it('具备 customer:merge 权限时展示全部四项统计；无 customer:merge 时不请求查重接口且不把 S/A/跟进 KPI 归零', async () => {
+  it('具备 customer:merge 权限时展示全部四项统计与多管家徽章；无 customer:merge 时不请求多管家汇总且隐藏入口', async () => {
     vi.mocked(listCustomers).mockImplementation(async (query) => {
       if (query.tierCode === 'S') return { ...samplePage, total: 12, size: 1 }
       if (query.tierCode === 'A') return { ...samplePage, total: 8, size: 1 }
       if (query.followupDueBefore) return { ...samplePage, total: 3, size: 1 }
-      return samplePage
+      return {
+        ...samplePage,
+        items: [{
+          ...samplePage.items[0]!,
+          addedStewardCount: 2,
+          addedStewardNames: ['王丽', '周小洁'],
+        }],
+      }
     })
-    vi.mocked(listMergeCandidates).mockResolvedValue({ items: [], total: 2, page: 1, size: 1 })
+    vi.mocked(getMultiStewardSummary).mockResolvedValue({
+      multiStewardCustomerCount: 2,
+      crossTeamCustomerCount: 1,
+      maxStewardCount: 3,
+    })
 
-    const withMerge = mountView({ ...managerUser, permissions: [...managerUser.permissions, 'customer:merge'] })
+    const withMerge = mountView({
+      ...managerUser,
+      permissions: [...managerUser.permissions, 'customer:merge', 'customer:source_channel:manage'],
+    })
     await flushPromises()
     expect(withMerge.findAll('.proto-stat-card .number').map((value) => value.text())).toEqual([
       '12 位',
       '8 位',
       '3 条',
-      '2 组',
+      '2 位',
     ])
-    expect(listMergeCandidates).toHaveBeenCalledWith({ status: 'SUGGESTED', page: 1, size: 1 })
+    expect(getMultiStewardSummary).toHaveBeenCalledTimes(1)
+    expect(withMerge.get('[data-testid="customer-merge-link"]').text()).toBe('多管家排查')
+    expect(withMerge.find('[data-testid="customer-source-channel-manage-btn"]').exists()).toBe(true)
+    expect(withMerge.get('[data-testid="customer-multi-steward-1"]').text()).toBe('已加 2 位管家')
     withMerge.unmount()
 
-    vi.mocked(listMergeCandidates).mockClear()
+    vi.mocked(getMultiStewardSummary).mockClear()
     const withoutMerge = mountView(managerUser)
     await flushPromises()
-    expect(listMergeCandidates).not.toHaveBeenCalled()
+    expect(getMultiStewardSummary).not.toHaveBeenCalled()
     expect(withoutMerge.findAll('.proto-stat-card .number').map((value) => value.text())).toEqual([
       '12 位',
       '8 位',
       '3 条',
     ])
     expect(withoutMerge.find('[data-testid="customer-merge-link"]').exists()).toBe(false)
+    expect(withoutMerge.find('[data-testid="customer-source-channel-manage-btn"]').exists()).toBe(false)
+    expect(withoutMerge.find('[data-testid="customer-multi-steward-1"]').exists()).toBe(false)
     expect(listCustomers).toHaveBeenCalledWith({ tierCode: 'S', page: 1, size: 1 })
     expect(listCustomers).toHaveBeenCalledWith({ tierCode: 'A', page: 1, size: 1 })
     expect(listCustomers).toHaveBeenCalledWith({
@@ -320,5 +367,48 @@ describe('CustomersView 客户中心', () => {
       tierCode: undefined,
       followupDueBefore: undefined,
     })
+  })
+
+  it('主管具备 customer:transfer 时展示所属管家筛选、单客分配与批量勾选分配入口', async () => {
+    const leadUser: AuthUser = {
+      userId: 4,
+      username: 'lead1',
+      displayName: '张敏',
+      userType: 'EMPLOYEE',
+      roles: ['MANAGER_LEAD'],
+      permissions: ['customer:read', 'customer:write', 'customer:transfer', 'dictionary:read'],
+    }
+    vi.mocked(listCustomerOwnerOptions).mockResolvedValue([
+      { id: 2, displayName: '王丽', teamId: 1, teamName: '管家一组' },
+      { id: 12, displayName: '周小洁', teamId: 1, teamName: '管家一组' },
+      { id: 4, displayName: '张敏', teamId: 1, teamName: '管家一组' },
+    ])
+    vi.mocked(listCustomers).mockResolvedValue(samplePage)
+    const wrapper = mountView(leadUser)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="customer-owner-filter"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="row-assign-btn"]').exists()).toBe(true)
+
+    vi.mocked(listCustomers).mockClear()
+    const ownerSelect = wrapper.findAllComponents({ name: 'ElSelect' })
+      .find((select) => select.attributes('data-testid') === 'customer-owner-filter')
+    expect(ownerSelect).toBeDefined()
+    await ownerSelect?.vm.$emit('update:modelValue', 2)
+    await ownerSelect?.vm.$emit('change', 2)
+    await flushPromises()
+    expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({ page: 1, ownerId: 2 }))
+
+    // 勾选列表行后出现批量分配栏
+    const appTable = wrapper.findComponent({ name: 'AppTable' })
+    await appTable.vm.$emit('selection-change', samplePage.items)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="batch-assign-bar"]').text()).toContain('已选择 1 位客户')
+
+    await wrapper.find('[data-testid="batch-assign-btn"]').trigger('click')
+    await flushPromises()
+    const assignDialog = wrapper.findComponent({ name: 'CustomerAssignDialog' })
+    expect(assignDialog.props('modelValue')).toBe(true)
+    expect(assignDialog.props('customers')).toHaveLength(1)
   })
 })

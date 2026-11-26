@@ -32,8 +32,10 @@ public record CreateCustomerRequest(
         @Size(max = 2000) String remark,
         @Size(max = 128) String remarkName,
         Instant firstAddedAt,
-        @Size(max = 100) List<Long> projectIds) {
+        @Size(max = 100) List<Long> projectIds,
+        @Size(max = 50, message = "标签数量超限") List<@Size(max = 64) String> tagCodes) {
     public CreateCustomerRequest {
         projectIds = projectIds == null ? null : List.copyOf(projectIds);
+        tagCodes = tagCodes == null ? null : List.copyOf(tagCodes);
     }
 }

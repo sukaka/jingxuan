@@ -2,12 +2,23 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
+  buildWechatAuthorizeUrl,
+  getMyPublicAnnualReport,
   getPublicAnnualReport,
   isValidAnnualShareKey,
+  logoutPublicAnnualSession,
+  sendMyPublicAnnualTelemetry,
+  sendPublicAnnualSmsCode,
   sendPublicAnnualTelemetry,
+  submitMyPublicAnnualBookingIntent,
   submitPublicAnnualBookingIntent,
+  verifyPublicAnnualSmsCode,
 } from '../api/annualReport'
-import type { AnnualTelemetryEventType, PublicAnnualReport } from '../api/annualReport'
+import type {
+  AnnualTelemetryEventType,
+  PublicAnnualMeResult,
+  PublicAnnualReport,
+} from '../api/annualReport'
 import { ApiError } from '../types/api'
 import { formatAnnualYuan, renderAnnualKeepsakePoster } from '../utils/annualPosterExporter'
 import { PAPER_SCENE_THEMES, PaperLightboxEngine } from '../utils/paperLightboxEngine'
@@ -18,9 +29,29 @@ const MAX_DELTA_MS = 30_000
 
 const route = useRoute()
 const shareKey = computed(() => String(route.params.shareKey ?? ''))
+const isUnifiedEntry = computed(() => route.name === 'public-annual-report-entry' || !shareKey.value)
+const targetYear = computed(() => {
+  const raw = Number(route.query.year)
+  return Number.isFinite(raw) && raw >= 2020 && raw <= 2099 ? raw : new Date().getFullYear()
+})
+const targetShopId = computed(() => (typeof route.query.shopId === 'string' ? route.query.shopId.trim() : ''))
+
 const report = ref<PublicAnnualReport | null>(null)
+const meState = ref<PublicAnnualMeResult | null>(null)
+const authMode = ref<'none' | 'gate' | 'empty'>('none')
 const loading = ref(true)
 const errorMessage = ref('')
+
+// 统一免密入口：手机号兜底验证态
+const smsMobile = ref('')
+const smsCode = ref('')
+const smsSending = ref(false)
+const smsVerifying = ref(false)
+const smsCooldown = ref(0)
+const smsFeedback = ref('')
+const smsDevPreview = ref<string | null>(null)
+const shareCopiedHint = ref('')
+let smsCooldownTimer: number | null = null
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let engine: PaperLightboxEngine | null = null
@@ -137,18 +168,18 @@ function flushTelemetry(eventType: AnnualTelemetryEventType, detail?: string, us
     return
   }
   const deltaDurationMs = consumeVisibleDelta()
-  void sendPublicAnnualTelemetry(
-    shareKey.value,
-    {
-      sessionKey,
-      eventType,
-      sceneIndex: sceneIndex.value + 1,
-      deltaDurationMs,
-      clientDevice: detectClientDevice(),
-      detail,
-    },
-    useBeacon,
-  ).catch(() => {
+  const payload = {
+    sessionKey,
+    eventType,
+    sceneIndex: sceneIndex.value + 1,
+    deltaDurationMs,
+    clientDevice: detectClientDevice(),
+    detail,
+  }
+  const req = isUnifiedEntry.value
+    ? sendMyPublicAnnualTelemetry(report.value.reportYear, payload, useBeacon)
+    : sendPublicAnnualTelemetry(shareKey.value, payload, useBeacon)
+  void req.catch(() => {
     // 埋点上报失败不阻断客户正常浏览体验
   })
 }
@@ -203,10 +234,10 @@ async function handleBookButler(): Promise<void> {
   bookingSubmitting.value = true
   bookingFeedback.value = ''
   try {
-    const res = await submitPublicAnnualBookingIntent(shareKey.value, {
-      sessionKey,
-      note: `客户在 ${report.value.reportYear} 年度盘点 H5 点击预约专属管家`,
-    })
+    const note = `客户在 ${report.value.reportYear} 年度盘点 H5 点击预约专属管家`
+    const res = isUnifiedEntry.value
+      ? await submitMyPublicAnnualBookingIntent(report.value.reportYear, { sessionKey, note })
+      : await submitPublicAnnualBookingIntent(shareKey.value, { sessionKey, note })
     bookingFeedback.value = res.message
     bookingModalOpen.value = true
   } catch (err) {
@@ -280,30 +311,157 @@ function handleKeydown(e: KeyboardEvent): void {
   }
 }
 
+async function copyUnifiedMomentsLink(): Promise<void> {
+  if (!report.value) {
+    return
+  }
+  const url = `${window.location.origin}/h5/annual-reports/entry?year=${report.value.reportYear}`
+  try {
+    await navigator.clipboard.writeText(url)
+    shareCopiedHint.value = '已复制统一入口链接，发朋友圈后朋友打开看各自轨迹，不泄露您的消费记录。'
+  } catch {
+    shareCopiedHint.value = `请复制统一入口：${url}`
+  }
+}
+
+function goWechatSilentLogin(): void {
+  window.location.assign(buildWechatAuthorizeUrl(targetYear.value, targetShopId.value || undefined))
+}
+
+function startSmsCountdown(seconds: number): void {
+  smsCooldown.value = Math.max(1, seconds)
+  if (smsCooldownTimer !== null) {
+    window.clearInterval(smsCooldownTimer)
+  }
+  smsCooldownTimer = window.setInterval(() => {
+    if (smsCooldown.value <= 1) {
+      smsCooldown.value = 0
+      if (smsCooldownTimer !== null) {
+        window.clearInterval(smsCooldownTimer)
+        smsCooldownTimer = null
+      }
+      return
+    }
+    smsCooldown.value -= 1
+  }, 1000)
+}
+
+async function handleSendSms(): Promise<void> {
+  const mobile = smsMobile.value.trim()
+  if (!/^\+?\d{5,15}$/.test(mobile)) {
+    smsFeedback.value = '请输入正确的下单手机号'
+    return
+  }
+  smsSending.value = true
+  smsFeedback.value = ''
+  smsDevPreview.value = null
+  try {
+    const res = await sendPublicAnnualSmsCode(mobile)
+    smsFeedback.value = `验证码已发送至 ${res.mobileMasked}，${Math.round(res.ttlSeconds / 60)} 分钟内有效`
+    smsDevPreview.value = res.devPreviewCode
+    startSmsCountdown(res.cooldownSeconds)
+  } catch (err) {
+    smsFeedback.value = err instanceof ApiError || err instanceof Error ? err.message : '验证码发送失败，请稍后重试'
+  } finally {
+    smsSending.value = false
+  }
+}
+
+async function handleVerifySms(): Promise<void> {
+  const mobile = smsMobile.value.trim()
+  const code = smsCode.value.trim()
+  if (!/^\+?\d{5,15}$/.test(mobile) || !/^\d{6}$/.test(code)) {
+    smsFeedback.value = '请输入手机号与 6 位数字验证码'
+    return
+  }
+  smsVerifying.value = true
+  smsFeedback.value = ''
+  try {
+    const res = await verifyPublicAnnualSmsCode({
+      mobile,
+      code,
+      reportYear: targetYear.value,
+      shopId: targetShopId.value || undefined,
+    })
+    smsFeedback.value = res.message
+    if (res.authenticated) {
+      await load()
+    }
+  } catch (err) {
+    smsFeedback.value = err instanceof ApiError || err instanceof Error ? err.message : '验证失败，请核对验证码'
+  } finally {
+    smsVerifying.value = false
+  }
+}
+
+async function handleSwitchAccount(): Promise<void> {
+  try {
+    await logoutPublicAnnualSession()
+  } catch {
+    // 忽略清理异常
+  }
+  report.value = null
+  meState.value = null
+  authMode.value = 'gate'
+  smsCode.value = ''
+  smsFeedback.value = '已退出当前访客会话，可重新验证。'
+}
+
+async function mountReportExperience(data: PublicAnnualReport): Promise<void> {
+  report.value = data
+  authMode.value = 'none'
+  document.title = `${data.reportYear} 光采轨迹 · ${data.displayName} - 鲸选美学`
+  await nextTick()
+  if (canvasRef.value) {
+    engine?.destroy()
+    engine = new PaperLightboxEngine(canvasRef.value)
+    engine.start()
+  }
+  lastTickMs = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  flushTelemetry('SESSION_OPEN')
+  if (heartbeatTimer !== null) {
+    window.clearInterval(heartbeatTimer)
+  }
+  heartbeatTimer = window.setInterval(() => {
+    if (isVisible) {
+      flushTelemetry('HEARTBEAT')
+    }
+  }, HEARTBEAT_INTERVAL_MS)
+}
+
 async function load(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
+  authMode.value = 'none'
   try {
+    if (isUnifiedEntry.value) {
+      const me = await getMyPublicAnnualReport(targetYear.value)
+      meState.value = me
+      if (me.authenticated && me.report) {
+        await mountReportExperience(me.report)
+        return
+      }
+      if (!me.authenticated) {
+        const isWechat = detectClientDevice() === 'WECHAT'
+        const needBindQuery = route.query.needBind === '1'
+        const authDoneQuery = route.query.auth === 'ok'
+        if (isWechat && me.wechatMpEnabled && !needBindQuery && !authDoneQuery) {
+          goWechatSilentLogin()
+          return
+        }
+        authMode.value = 'gate'
+        return
+      }
+      authMode.value = 'empty'
+      return
+    }
+
     if (!isValidAnnualShareKey(shareKey.value)) {
       errorMessage.value = '年度报告链接无效或格式不正确'
       return
     }
     const data = await getPublicAnnualReport(shareKey.value)
-    report.value = data
-    document.title = `${data.reportYear} 光采轨迹 · ${data.displayName} - 鲸选美学`
-    await nextTick()
-    if (canvasRef.value) {
-      engine?.destroy()
-      engine = new PaperLightboxEngine(canvasRef.value)
-      engine.start()
-    }
-    lastTickMs = typeof performance !== 'undefined' ? performance.now() : Date.now()
-    flushTelemetry('SESSION_OPEN')
-    heartbeatTimer = window.setInterval(() => {
-      if (isVisible) {
-        flushTelemetry('HEARTBEAT')
-      }
-    }, HEARTBEAT_INTERVAL_MS)
+    await mountReportExperience(data)
   } catch (err) {
     errorMessage.value = err instanceof ApiError || err instanceof Error ? err.message : '年度报告暂时无法打开'
   } finally {
@@ -323,6 +481,9 @@ onUnmounted(() => {
   robots.remove()
   if (heartbeatTimer !== null) {
     window.clearInterval(heartbeatTimer)
+  }
+  if (smsCooldownTimer !== null) {
+    window.clearInterval(smsCooldownTimer)
   }
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   window.removeEventListener('pagehide', handlePageHide)
@@ -362,6 +523,81 @@ onUnmounted(() => {
             <h1>年度报告暂时无法查看</h1>
             <p role="alert">{{ errorMessage }}</p>
             <small>链接可能已停用或失效，请联系分享此页面的专属管家。</small>
+          </section>
+
+          <!-- 统一入口免密自动登录 / 手机号兜底验证态 -->
+          <section v-else-if="authMode === 'gate'" class="state-overlay auth-gate" data-testid="public-annual-auth-gate">
+            <div class="brand-seal-lg">鲸</div>
+            <h1>开启你的 {{ targetYear }} 光采轨迹</h1>
+            <p v-if="meState?.hasPendingWechat">
+              已识别当前微信，验证一次有赞下单手机号后将自动绑定，下次打开可 0.5 秒直接免密进入。
+            </p>
+            <p v-else-if="meState?.smsEnabled">
+              请验证您的有赞下单手机号，仅限本人开启专属年度购买轨迹。
+            </p>
+            <p v-else>
+              请在微信内通过鲸选美学服务号入口打开，系统将自动免密识别您的年度轨迹；如尚未匹配，请联系专属美学管家获取专属直达链接。
+            </p>
+
+            <button
+              v-if="meState?.wechatMpEnabled"
+              type="button"
+              class="primary-paper-btn gate-btn"
+              data-testid="btn-wechat-silent-login"
+              @click="goWechatSilentLogin"
+            >
+              微信一键静默登录
+            </button>
+
+            <div v-if="meState?.smsEnabled" class="sms-gate-form">
+              <input
+                v-model="smsMobile"
+                type="tel"
+                maxlength="15"
+                placeholder="输入有赞下单手机号"
+                class="paper-input"
+                data-testid="input-sms-mobile"
+              >
+              <div class="sms-code-row">
+                <input
+                  v-model="smsCode"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="6"
+                  placeholder="6 位验证码"
+                  class="paper-input"
+                  data-testid="input-sms-code"
+                >
+                <button
+                  type="button"
+                  class="ghost-paper-btn sms-send-btn"
+                  :disabled="smsSending || smsCooldown > 0"
+                  data-testid="btn-sms-send"
+                  @click="handleSendSms"
+                >
+                  {{ smsCooldown > 0 ? `${smsCooldown}s` : smsSending ? '发送中…' : '获取验证码' }}
+                </button>
+              </div>
+              <button
+                type="button"
+                class="primary-paper-btn gate-btn"
+                :disabled="smsVerifying"
+                data-testid="btn-sms-verify"
+                @click="handleVerifySms"
+              >
+                {{ smsVerifying ? '验证中…' : '验证并查看我的轨迹' }}
+              </button>
+              <p v-if="smsFeedback" class="gate-feedback" role="status">{{ smsFeedback }}</p>
+              <small v-if="smsDevPreview" class="gate-dev-hint">开发演示验证码：{{ smsDevPreview }}</small>
+            </div>
+          </section>
+
+          <!-- 统一入口已认证但当年暂无订单态 -->
+          <section v-else-if="authMode === 'empty'" class="state-overlay" data-testid="public-annual-empty">
+            <div class="brand-seal-lg is-muted">鲸</div>
+            <h1>暂未找到 {{ targetYear }} 年度订单记录</h1>
+            <p>您的账号暂未同步到 {{ targetYear }} 年的有赞或院线购买轨迹，可联系专属美学管家协助核对。</p>
+            <button type="button" class="ghost-paper-btn gate-btn" @click="handleSwitchAccount">切换手机号重查</button>
           </section>
 
           <!-- 正式 6 幕纸雕灯影内容 -->
@@ -861,6 +1097,10 @@ onUnmounted(() => {
                   <button type="button" class="ghost-paper-btn" @click="togglePrivacy">
                     {{ hideAmount ? '海报显示消费金额' : '海报隐藏消费金额' }}
                   </button>
+                  <button type="button" class="ghost-paper-btn" @click="copyUnifiedMomentsLink">
+                    复制朋友圈安全入口（朋友看各自轨迹）
+                  </button>
+                  <p v-if="shareCopiedHint" class="gate-feedback">{{ shareCopiedHint }}</p>
                 </div>
               </div>
             </div>
@@ -1055,6 +1295,15 @@ onUnmounted(() => {
 .poster-preview-wrap { flex: 1; min-height: 0; display: flex; justify-content: center; align-items: center; margin-bottom: 12px; background: rgba(0, 0, 0, 0.4); border-radius: 12px; padding: 8px; }
 .poster-preview-wrap img { max-height: 410px; max-width: 100%; border-radius: 8px; }
 .poster-modal-actions { display: flex; flex-direction: column; gap: 8px; }
+.auth-gate { gap: 12px; padding: 28px 24px; }
+.sms-gate-form { width: 100%; max-width: 300px; display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.sms-code-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.paper-input { width: 100%; box-sizing: border-box; border-radius: 12px; border: 1px solid rgba(255, 226, 179, 0.34); background: rgba(16, 12, 16, 0.64); color: #fdf4e3; padding: 11px 12px; font-size: 14px; outline: none; }
+.paper-input:focus { border-color: #f4c678; }
+.sms-send-btn { white-space: nowrap; padding: 0 12px; }
+.gate-btn { width: 100%; max-width: 300px; }
+.gate-feedback { margin: 0; font-size: 12px; line-height: 1.5; color: #f7d79d; }
+.gate-dev-hint { font-size: 12px; color: #8ce4d9; }
 @media (max-width: 540px) {
   .lamp-spill, .wood-bevel { display: none; }
   .lightbox-stage { padding: 0; }

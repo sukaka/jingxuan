@@ -16,6 +16,21 @@ vi.mock('../src/api/customer', () => ({
   getCustomer: vi.fn(),
   listCustomerOwnerOptions: vi.fn().mockResolvedValue([]),
   updateCustomer: vi.fn(),
+  listCustomerTags: vi.fn().mockResolvedValue([]),
+  createCustomerTag: vi.fn(),
+  updateCustomerTag: vi.fn(),
+  disableCustomerTag: vi.fn(),
+  enableCustomerTag: vi.fn(),
+  listCustomerSources: vi.fn().mockResolvedValue([]),
+  createCustomerSource: vi.fn(),
+  updateCustomerSource: vi.fn(),
+  disableCustomerSource: vi.fn(),
+  enableCustomerSource: vi.fn(),
+  listCustomerChannels: vi.fn().mockResolvedValue([]),
+  createCustomerChannel: vi.fn(),
+  updateCustomerChannel: vi.fn(),
+  disableCustomerChannel: vi.fn(),
+  enableCustomerChannel: vi.fn(),
 }))
 
 vi.mock('../src/api/dictionary', () => ({

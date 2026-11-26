@@ -28,6 +28,7 @@ const ACTION_LABELS: Record<string, string> = {
   DICTIONARY_ITEM_CREATE: '新增字典配置',
   DICTIONARY_ITEM_UPDATE: '修改字典配置',
   DICTIONARY_ITEM_DISABLE: '停用字典配置',
+  DICTIONARY_ITEM_ENABLE: '启用字典配置',
   EXPORT_REQUEST: '申请数据导出',
   EXPORT_DOWNLOAD: '下载导出文件',
   CUSTOMER_CREATE: '新建客户',

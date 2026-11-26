@@ -12,10 +12,15 @@ import {
 } from '../../api/customer'
 import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../types/api'
+import CustomerAssignDialog from './CustomerAssignDialog.vue'
+import type { CustomerAssignTarget } from './CustomerAssignDialog.vue'
 import StatusPill from './StatusPill.vue'
 import { formatDateTime } from './shared'
 
-const props = defineProps<{ customerId: number }>()
+const props = defineProps<{
+  customerId: number
+  customer?: CustomerAssignTarget
+}>()
 const emit = defineEmits<{ changed: [] }>()
 
 const auth = useAuthStore()
@@ -25,6 +30,7 @@ const transfers = ref<OwnershipTransferItem[]>([])
 const history = ref<OwnershipHistoryItem[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
+const assignVisible = ref(false)
 
 const TRANSFER_STATUS: Record<string, { label: string; tone: 'warning' | 'success' | 'danger' | 'info' | 'dark' }> = {
   PENDING: { label: '待审批', tone: 'warning' },
@@ -34,8 +40,24 @@ const TRANSFER_STATUS: Record<string, { label: string; tone: 'warning' | 'succes
   CANCELED: { label: '已取消', tone: 'dark' },
 }
 
+const CHANGE_MODE_META: Record<string, { label: string; tone: 'info' | 'success' | 'dark' }> = {
+  DIRECT_ASSIGN: { label: '主管直接分配', tone: 'success' },
+  BATCH_ASSIGN: { label: '主管批量分配', tone: 'success' },
+  TRANSFER_APPROVAL: { label: '转交审批', tone: 'info' },
+}
+
 function transferStatusLabel(status: string) {
   return TRANSFER_STATUS[status] ?? { label: '未知状态', tone: 'dark' as const }
+}
+
+function changeModeMeta(item: OwnershipHistoryItem) {
+  if (item.changeMode && CHANGE_MODE_META[item.changeMode]) {
+    return CHANGE_MODE_META[item.changeMode]
+  }
+  if (item.approvalRef?.startsWith('TR-')) return CHANGE_MODE_META.TRANSFER_APPROVAL
+  if (item.approvalRef?.startsWith('BATCH-')) return CHANGE_MODE_META.BATCH_ASSIGN
+  if (item.approvalRef) return CHANGE_MODE_META.DIRECT_ASSIGN
+  return { label: '归属变更', tone: 'dark' as const }
 }
 
 function errorText(error: unknown): string {
@@ -64,6 +86,11 @@ async function load() {
   }
 }
 
+async function handleDirectAssigned() {
+  emit('changed')
+  await load()
+}
+
 // ---- 发起转交 ----
 const createDialogVisible = ref(false)
 const createSubmitting = ref(false)
@@ -72,7 +99,11 @@ const ownerOptionsError = ref('')
 const createForm = reactive({ toOwnerId: undefined as number | undefined, reason: '' })
 
 function ownerOptionLabel(option: CustomerOwnerOption): string {
-  return option.teamName ? `${option.displayName}(${option.teamName})` : option.displayName
+  const base = option.teamName ? `${option.displayName}(${option.teamName})` : option.displayName
+  if (props.customer && option.id === props.customer.ownerStaffId) {
+    return `${base} · 当前归属`
+  }
+  return base
 }
 
 async function openCreateDialog() {
@@ -183,10 +214,15 @@ onMounted(load)
     />
 
     <div class="section-head">
-      <span class="section-title">转交申请</span>
-      <el-button v-if="canTransfer" type="primary" size="small" @click="openCreateDialog">
-        发起转交
-      </el-button>
+      <span class="section-title">归属分配与转交申请</span>
+      <div v-if="canTransfer" class="section-head-actions">
+        <el-button v-if="customer" type="primary" size="small" data-testid="panel-direct-assign-btn" @click="assignVisible = true">
+          直接分配管家
+        </el-button>
+        <el-button :type="customer ? 'default' : 'primary'" size="small" @click="openCreateDialog">
+          发起转交
+        </el-button>
+      </div>
     </div>
     <app-table :data="transfers" size="small">
       <el-table-column prop="id" label="申请号" width="80" />
@@ -234,6 +270,11 @@ onMounted(load)
       <el-table-column label="新管家" width="100">
         <template #default="{ row }">{{ ownerLabel(row.newOwnerId, row.newOwnerName) }}</template>
       </el-table-column>
+      <el-table-column label="变更方式" width="120">
+        <template #default="{ row }">
+          <StatusPill :text="changeModeMeta(row).label" :tone="changeModeMeta(row).tone" />
+        </template>
+      </el-table-column>
       <el-table-column label="操作人" width="100">
         <template #default="{ row }">{{ row.changedByName ?? `#${row.changedBy}` }}</template>
       </el-table-column>
@@ -247,6 +288,13 @@ onMounted(load)
         <span>暂无归属变更记录</span>
       </template>
     </app-table>
+
+    <CustomerAssignDialog
+      v-if="customer"
+      v-model="assignVisible"
+      :customers="[customer]"
+      @assigned="handleDirectAssigned"
+    />
 
     <el-dialog v-model="createDialogVisible" title="发起客户转交" width="460px">
       <el-alert
@@ -276,6 +324,7 @@ onMounted(load)
               :key="option.id"
               :label="ownerOptionLabel(option)"
               :value="option.id"
+              :disabled="Boolean(customer && option.id === customer.ownerStaffId)"
             />
           </el-select>
         </el-form-item>
@@ -313,6 +362,12 @@ onMounted(load)
 
 .section-head:first-child {
   margin-top: 0;
+}
+
+.section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .section-title {

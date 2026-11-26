@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import type { MergeCaseItem } from '../api/customer'
+import type {
+  CustomerStewardRelationItem,
+  MergeCaseItem,
+  MultiStewardCustomerGroupItem,
+  MultiStewardSummary,
+} from '../api/customer'
 import {
-  confirmMergeCase,
-  createMergeCase,
+  getMultiStewardSummary,
   listMergeCandidates,
-  rejectMergeCase,
+  listMultiStewardCustomers,
   requestMergeReversal,
-  reviewMergeCase,
   reviewMergeReversal,
-  scanMergeCandidates,
 } from '../api/customer'
 import { useAuthStore } from '../stores/auth'
 import { ApiError } from '../types/api'
+import CustomerDetailDrawer from './customer/CustomerDetailDrawer.vue'
 import StatusPill from './customer/StatusPill.vue'
+import { formatDateTime } from './customer/shared'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import StatCard from '../components/prototype/StatCard.vue'
 import PageCard from '../components/prototype/PageCard.vue'
@@ -23,24 +27,125 @@ import './customer/customer-ui.css'
 const auth = useAuthStore()
 const canMerge = computed(() => auth.hasPermission('customer:merge'))
 const canReverse = computed(() => auth.hasPermission('customer:merge_reverse'))
-const summary = reactive({ pending: 0, processed: 0 })
+
+const activeTab = ref<'multi-stewards' | 'history-reversals'>('multi-stewards')
 const showRules = ref(false)
-const query = reactive({ status: '', page: 1, size: 20 })
-const items = ref<MergeCaseItem[]>([])
+
+// ---- 多管家排查（主视图，只读，无需合并） ----
+const summary = reactive<MultiStewardSummary>({
+  multiStewardCustomerCount: 0,
+  crossTeamCustomerCount: 0,
+  maxStewardCount: 0,
+})
+const query = reactive({
+  keyword: '',
+  minStewards: 2,
+  crossTeamOnly: false,
+  page: 1,
+  size: 20,
+})
+const groups = ref<MultiStewardCustomerGroupItem[]>([])
 const total = ref(0)
 const loading = ref(false)
 const errorMessage = ref('')
 
-const STATUS_META: Record<string, { label: string; tone: 'warning' | 'success' | 'danger' | 'info' | 'dark' }> = {
-  SUGGESTED: { label: '待审核', tone: 'warning' },
-  REVIEWING: { label: '审核中', tone: 'info' },
-  CONFIRMED: { label: '已合并', tone: 'success' },
-  REJECTED: { label: '已拒绝', tone: 'dark' },
-  REVERSED: { label: '已更正', tone: 'info' },
+const detailVisible = ref(false)
+const detailCustomerId = ref<number | null>(null)
+
+const MATCH_LABELS: Record<string, string> = {
+  MOBILE_HASH: '手机号一致',
+  IDENTITY: '外部身份一致',
+  WECOM_CONTACT: '企微多管家添加',
 }
 
-function statusMeta(status: string) {
-  return STATUS_META[status] ?? { label: '未知状态', tone: 'dark' as const }
+const RELATION_LABELS: Record<string, string> = {
+  CUSTOMER_OWNER: '客户归属',
+  WECOM_FOLLOW: '企微好友',
+}
+
+function matchReasonLabel(code: string): string {
+  return MATCH_LABELS[code] ?? '关联识别'
+}
+
+function relationLabel(code: string): string {
+  return RELATION_LABELS[code] ?? code
+}
+
+function stewardDisplayLabel(steward: CustomerStewardRelationItem): string {
+  return steward.teamName ? `${steward.staffName}（${steward.teamName}）` : steward.staffName
+}
+
+function groupCustomerTitle(row: MultiStewardCustomerGroupItem): string {
+  return row.displayName || row.nickname || row.primaryCustomerNo || '企微未建档顾客'
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 409) return '该记录状态已变更，请刷新后重试'
+    if (error.status === 404) return '记录或客户不在您的权限范围内'
+    return error.message
+  }
+  return error instanceof Error ? error.message : '未知错误'
+}
+
+async function loadSummary() {
+  if (!canMerge.value) return
+  try {
+    const result = await getMultiStewardSummary()
+    summary.multiStewardCustomerCount = result.multiStewardCustomerCount
+    summary.crossTeamCustomerCount = result.crossTeamCustomerCount
+    summary.maxStewardCount = result.maxStewardCount
+  } catch {
+    // 汇总失败时不覆盖列表错误提示
+  }
+}
+
+async function loadGroups(page = query.page) {
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    const result = await listMultiStewardCustomers({
+      page,
+      size: query.size,
+      keyword: query.keyword.trim() || undefined,
+      minStewards: query.minStewards,
+      crossTeamOnly: query.crossTeamOnly,
+    })
+    groups.value = result.items
+    total.value = result.total
+    query.page = result.page
+    query.size = result.size
+  } catch (error) {
+    groups.value = []
+    total.value = 0
+    errorMessage.value = errorText(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+function searchGroups() {
+  void loadGroups(1)
+  void loadSummary()
+}
+
+function openCustomerDetail(customerId: number) {
+  detailCustomerId.value = customerId
+  detailVisible.value = true
+}
+
+// ---- 历史已合并记录更正（仅管理员 customer:merge_reverse 可见，不再开放新合并操作） ----
+const historyQuery = reactive({ status: 'CONFIRMED', page: 1, size: 20 })
+const historyItems = ref<MergeCaseItem[]>([])
+const historyTotal = ref(0)
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyLoaded = ref(false)
+
+const STATUS_META: Record<string, { label: string; tone: 'warning' | 'success' | 'danger' | 'info' | 'dark' }> = {
+  CONFIRMED: { label: '历史已合并', tone: 'success' },
+  REVERSED: { label: '已更正', tone: 'info' },
+  REJECTED: { label: '已拒绝', tone: 'dark' },
 }
 
 const REVERSAL_LABELS: Record<string, string> = {
@@ -51,188 +156,38 @@ const REVERSAL_LABELS: Record<string, string> = {
   ERROR: '更正执行失败',
 }
 
+function statusMeta(status: string) {
+  return STATUS_META[status] ?? { label: status, tone: 'dark' as const }
+}
+
 function reversalLabel(item: MergeCaseItem): string {
   return REVERSAL_LABELS[item.reversalStatus ?? ''] ?? ''
 }
 
-const MATCH_LABELS: Record<string, string> = {
-  MOBILE_HASH: '手机号一致',
-  IDENTITY: '身份标识一致',
-  MANUAL: '人工登记',
-}
-
-function evidenceReasons(evidence: unknown): string[] {
-  if (!evidence || typeof evidence !== 'object') return []
-  const matched = (evidence as { matchedOn?: unknown }).matchedOn
-  if (!Array.isArray(matched)) return []
-  return matched.map((code) => MATCH_LABELS[String(code)] ?? '其他依据')
-}
-
-function evidenceMasked(evidence: unknown): string {
-  if (!evidence || typeof evidence !== 'object') return ''
-  const e = evidence as { mobileMasked?: unknown; externalIdMasked?: unknown }
-  return String(e.mobileMasked ?? e.externalIdMasked ?? '')
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 409) return '该候选状态已变更，请刷新后重试'
-    if (error.status === 404) return '候选记录或客户不在您的权限范围内'
-    return error.message
-  }
-  return error instanceof Error ? error.message : '未知错误'
-}
-
-async function load(page = query.page) {
-  loading.value = true
-  errorMessage.value = ''
+async function loadHistory(page = historyQuery.page) {
+  if (!canReverse.value) return
+  historyLoading.value = true
+  historyError.value = ''
   try {
-    const result = await listMergeCandidates({ page, size: query.size, status: query.status })
-    items.value = result.items
-    total.value = result.total
-    query.page = result.page
-    query.size = result.size
-  } catch (error) {
-    items.value = []
-    total.value = 0
-    errorMessage.value = errorText(error)
-  } finally {
-    loading.value = false
-  }
-}
-
-function search() {
-  void load(1)
-}
-
-const scanning = ref(false)
-const scanMessage = ref('')
-
-async function handleScan() {
-  scanning.value = true
-  scanMessage.value = ''
-  try {
-    const result = await scanMergeCandidates()
-    scanMessage.value = result.created > 0 ? `新增 ${result.created} 组候选，请逐组人工审核` : '未发现新的重复客户候选'
-    await load(1)
-  } catch (error) {
-    ElMessage.error(errorText(error))
-  } finally {
-    scanning.value = false
-  }
-}
-
-// ---- 人工登记候选 ----
-const createDialogVisible = ref(false)
-const createSubmitting = ref(false)
-const createForm = reactive({
-  primaryCustomerId: undefined as number | undefined,
-  secondaryCustomerId: undefined as number | undefined,
-})
-
-function openCreateDialog() {
-  createForm.primaryCustomerId = undefined
-  createForm.secondaryCustomerId = undefined
-  createDialogVisible.value = true
-}
-
-async function submitCreate() {
-  if (!createForm.primaryCustomerId || !createForm.secondaryCustomerId) {
-    ElMessage.warning('请填写主客户与被合并客户 ID')
-    return
-  }
-  if (createForm.primaryCustomerId === createForm.secondaryCustomerId) {
-    ElMessage.warning('主客户与被合并客户不能相同')
-    return
-  }
-  createSubmitting.value = true
-  try {
-    await createMergeCase({
-      primaryCustomerId: createForm.primaryCustomerId,
-      secondaryCustomerId: createForm.secondaryCustomerId,
+    const result = await listMergeCandidates({
+      page,
+      size: historyQuery.size,
+      status: historyQuery.status || undefined,
     })
-    ElMessage.success('合并候选已登记（待审核），未经确认不会迁移任何客户数据')
-    createDialogVisible.value = false
-    await load(1)
+    historyItems.value = result.items.filter((item) => item.status === 'CONFIRMED' || item.status === 'REVERSED')
+    historyTotal.value = result.total
+    historyQuery.page = result.page
+    historyQuery.size = result.size
+    historyLoaded.value = true
   } catch (error) {
-    ElMessage.error(errorText(error))
+    historyItems.value = []
+    historyTotal.value = 0
+    historyError.value = errorText(error)
   } finally {
-    createSubmitting.value = false
+    historyLoading.value = false
   }
 }
 
-// ---- 审核动作 ----
-async function handleReview(item: MergeCaseItem) {
-  try {
-    await reviewMergeCase(item.id, item.version)
-    ElMessage.success('已进入审核中')
-    await load()
-  } catch (error) {
-    ElMessage.error(errorText(error))
-  }
-}
-
-const confirmDialogVisible = ref(false)
-const confirmSubmitting = ref(false)
-const confirmTarget = ref<MergeCaseItem | null>(null)
-const confirmReason = ref('')
-
-function openConfirmDialog(item: MergeCaseItem) {
-  confirmTarget.value = item
-  confirmReason.value = ''
-  confirmDialogVisible.value = true
-}
-
-async function submitConfirm() {
-  if (!confirmTarget.value) return
-  if (!confirmReason.value.trim()) {
-    ElMessage.warning('请填写合并理由（将记入操作日志）')
-    return
-  }
-  confirmSubmitting.value = true
-  try {
-    await confirmMergeCase(confirmTarget.value.id, confirmTarget.value.version, confirmReason.value.trim())
-    ElMessage.success('合并已确认：身份、标签、跟进、任务和积分已迁移至主客户，被合并客户已归档')
-    confirmDialogVisible.value = false
-    await load()
-  } catch (error) {
-    ElMessage.error(errorText(error))
-  } finally {
-    confirmSubmitting.value = false
-  }
-}
-
-const rejectDialogVisible = ref(false)
-const rejectSubmitting = ref(false)
-const rejectTarget = ref<MergeCaseItem | null>(null)
-const rejectReason = ref('')
-
-function openRejectDialog(item: MergeCaseItem) {
-  rejectTarget.value = item
-  rejectReason.value = ''
-  rejectDialogVisible.value = true
-}
-
-async function submitReject() {
-  if (!rejectTarget.value) return
-  if (!rejectReason.value.trim()) {
-    ElMessage.warning('请填写拒绝原因')
-    return
-  }
-  rejectSubmitting.value = true
-  try {
-    await rejectMergeCase(rejectTarget.value.id, rejectTarget.value.version, rejectReason.value.trim())
-    ElMessage.success('已标记为「不是同一人」')
-    rejectDialogVisible.value = false
-    await load()
-  } catch (error) {
-    ElMessage.error(errorText(error))
-  } finally {
-    rejectSubmitting.value = false
-  }
-}
-
-// ---- 错误合并更正：申请与审批分离，审批人使用更正单版本 ----
 type ReversalAction = 'request' | 'approve' | 'complete' | 'reject'
 const reversalDialogVisible = ref(false)
 const reversalSubmitting = ref(false)
@@ -248,7 +203,7 @@ const REVERSAL_ACTION_LABELS: Record<ReversalAction, string> = {
 }
 
 function openReversalDialog(item: MergeCaseItem, action: ReversalAction) {
-  if (action === 'request' ? !canMerge.value : !canReverse.value) {
+  if (!canReverse.value) {
     ElMessage.warning('当前账号没有此操作权限')
     return
   }
@@ -284,15 +239,14 @@ async function submitReversal() {
         version: item.reversalVersion!,
       }, reversalKey)
     if (reversalAction.value === 'approve') {
-      ElMessage[ saved.status === 'MANUAL_REVIEW' ? 'warning' : 'success' ](
+      ElMessage[saved.status === 'MANUAL_REVIEW' ? 'warning' : 'success'](
         saved.status === 'MANUAL_REVIEW' ? '被合并客户已恢复，其他关联数据需人工逐项迁移确认' : '已按合并前记录执行更正',
       )
     } else {
       ElMessage.success(reversalAction.value === 'reject' ? '更正申请已驳回，客户数据未改变' : '操作已完成')
     }
     reversalDialogVisible.value = false
-    await load()
-    void loadSummary()
+    await loadHistory()
   } catch (error) {
     ElMessage.error(`${errorText(error)}，请核对后重试`)
   } finally {
@@ -300,124 +254,322 @@ async function submitReversal() {
   }
 }
 
-function scoreOf(evidence: unknown) {
-  if (evidence && typeof evidence === 'object' && 'score' in evidence) {
-    const score = (evidence as { score?: unknown }).score
-    return typeof score === 'number' ? score : null
+watch(activeTab, (tab) => {
+  if (tab === 'history-reversals' && canReverse.value && !historyLoaded.value) {
+    void loadHistory(1)
   }
-  return null
-}
-async function loadSummary() {
-  const [suggested, reviewing, confirmed, rejected] = await Promise.all([
-    listMergeCandidates({ status: 'SUGGESTED', page: 1, size: 1 }),
-    listMergeCandidates({ status: 'REVIEWING', page: 1, size: 1 }),
-    listMergeCandidates({ status: 'CONFIRMED', page: 1, size: 1 }),
-    listMergeCandidates({ status: 'REJECTED', page: 1, size: 1 }),
-  ])
-  summary.pending = suggested.total + reviewing.total
-  summary.processed = confirmed.total + rejected.total
-}
-onMounted(() => { void load(); void loadSummary() })
+})
+
+onMounted(() => {
+  void loadGroups(1)
+  void loadSummary()
+})
 </script>
 
 <template>
   <div class="proto-page">
-    <PageHeader title="客户查重合并" description="系统只生成重复候选，必须人工确认；保留主客户档案，迁移关联数据并留存操作记录">
-      <template #actions><el-button @click="showRules=true">查重规则说明</el-button><el-button v-if="canMerge" :loading="scanning" @click="handleScan">扫描重复客户</el-button><el-button v-if="canMerge" type="primary" @click="openCreateDialog">登记候选</el-button></template>
+    <PageHeader
+      title="客户唯一性 · 多管家排查"
+      description="查看同一顾客添加了哪几位管家及所属团队；保留各管家独立跟进，无需合并客户档案"
+    >
+      <template #actions>
+        <el-button @click="showRules = true">识别规则说明</el-button>
+        <el-button type="primary" :loading="loading" data-testid="multi-steward-refresh" @click="searchGroups">
+          刷新排查
+        </el-button>
+      </template>
     </PageHeader>
-    <div class="proto-stat-grid three"><StatCard label="待确认候选" :value="`${summary.pending} 组`" sub="必须人工审核" icon="users" /><StatCard label="高相似度" value="按核验依据" sub="依据手机号或外部身份识别" icon="heart" /><StatCard label="已处理" :value="`${summary.processed} 组`" sub="合并与拒绝均留痕" icon="check" /></div>
-    <PageCard>
-      <div class="proto-toolbar"><div class="proto-toolbar-left"><el-select v-model="query.status" placeholder="全部状态" clearable><el-option label="待审核" value="SUGGESTED" /><el-option label="审核中" value="REVIEWING" /><el-option label="已合并" value="CONFIRMED" /><el-option label="已拒绝" value="REJECTED" /><el-option label="已更正" value="REVERSED" /></el-select><el-button type="primary" @click="search">查询</el-button></div><span class="proto-note">昵称相似不构成自动合并依据</span></div>
-      <el-alert v-if="scanMessage" type="success" :closable="false" :title="scanMessage" />
-      <el-alert v-if="errorMessage" type="error" :closable="false" :title="errorMessage" />
+
+    <div class="proto-stat-grid three">
+      <StatCard
+        label="多管家客户"
+        :value="`${summary.multiStewardCustomerCount} 位`"
+        sub="同一顾客添加 2 位及以上管家"
+        icon="users"
+      />
+      <StatCard
+        label="跨团队重复"
+        :value="`${summary.crossTeamCustomerCount} 位`"
+        sub="跨组仅展示管家与团队汇总"
+        icon="heart"
+      />
+      <StatCard
+        label="单客最高管家数"
+        :value="`${summary.maxStewardCount} 位`"
+        sub="无需合并，各自独立跟进"
+        icon="check"
+      />
+    </div>
+
+    <el-tabs v-if="canReverse" v-model="activeTab" class="uniqueness-tabs" data-testid="uniqueness-admin-tabs">
+      <el-tab-pane label="多管家重复排查" name="multi-stewards" />
+      <el-tab-pane label="历史合并更正（管理员）" name="history-reversals" />
+    </el-tabs>
+
+    <PageCard v-if="!canReverse || activeTab === 'multi-stewards'">
+      <div class="proto-toolbar">
+        <div class="proto-toolbar-left">
+          <el-input
+            v-model="query.keyword"
+            placeholder="客户姓名 / 手机 / 编号 / 管家姓名"
+            clearable
+            style="width: 260px"
+            data-testid="multi-steward-keyword"
+            @keyup.enter="loadGroups(1)"
+          />
+          <el-select
+            v-model="query.minStewards"
+            style="width: 145px"
+            data-testid="multi-steward-min-select"
+            @change="loadGroups(1)"
+          >
+            <el-option label="2 位及以上管家" :value="2" />
+            <el-option label="3 位及以上管家" :value="3" />
+            <el-option label="4 位及以上管家" :value="4" />
+          </el-select>
+          <el-checkbox
+            v-model="query.crossTeamOnly"
+            data-testid="multi-steward-cross-team-only"
+            @change="loadGroups(1)"
+          >
+            仅看跨团队重复
+          </el-checkbox>
+          <el-button type="primary" :loading="loading" data-testid="multi-steward-search-btn" @click="loadGroups(1)">
+            查询
+          </el-button>
+        </div>
+        <span class="proto-note">跨团队客户仅展示管家姓名、团队与总数汇总，不泄露跨组敏感详情</span>
+      </div>
+
+      <el-alert v-if="errorMessage" type="error" :closable="false" :title="errorMessage" class="crm-table-alert" />
+
       <div class="proto-table-wrap">
-        <app-table v-loading="loading" :data="items">
-          <el-table-column prop="id" label="候选" width="80" />
-          <el-table-column label="CRM 客户" min-width="170"><template #default="{row}">{{ row.primarySummary }}<div class="proto-subcell">保留 #{{ row.primaryCustomerId }}</div></template></el-table-column>
-          <el-table-column label="另一身份" min-width="170"><template #default="{row}">{{ row.secondarySummary }}<div class="proto-subcell">{{ row.status === 'REVERSED' || row.reversalStatus === 'MANUAL_REVIEW' || row.reversalStatus === 'EXECUTED' ? '已恢复' : '归档' }} #{{ row.secondaryCustomerId }}</div></template></el-table-column>
-          <el-table-column label="相似度" width="95"><template #default="{row}">{{ scoreOf(row.matchEvidence) ?? '待评估' }}</template></el-table-column>
-          <el-table-column label="命中依据" min-width="190"><template #default="{row}"><template v-if="evidenceReasons(row.matchEvidence).length"><StatusPill v-for="reason in evidenceReasons(row.matchEvidence)" :key="reason" :text="reason" tone="info" /><div v-if="evidenceMasked(row.matchEvidence)" class="proto-subcell">{{ evidenceMasked(row.matchEvidence) }}</div></template><span v-else class="proto-muted">-</span></template></el-table-column>
-          <el-table-column label="状态" width="120">
-            <template #default="{row}">
+        <app-table v-loading="loading" :data="groups" data-testid="multi-steward-table">
+          <el-table-column label="顾客" min-width="180">
+            <template #default="{ row }">
+              <strong>{{ groupCustomerTitle(row) }}</strong>
+              <div class="proto-subcell">
+                <span v-if="row.primaryCustomerNo">{{ row.primaryCustomerNo }}</span>
+                <span v-if="row.primaryCustomerNo && row.mobileMasked"> · </span>
+                <span v-if="row.mobileMasked">{{ row.mobileMasked }}</span>
+                <span v-if="!row.primaryCustomerNo && !row.mobileMasked">{{ row.evidenceMasked || '—' }}</span>
+              </div>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="已加管家数" width="145">
+            <template #default="{ row }">
+              <StatusPill :text="`已加 ${row.stewardCount} 位管家`" :tone="row.stewardCount >= 3 ? 'danger' : 'warning'" />
+              <div v-if="row.crossTeamStewardCount > 0" class="proto-subcell">
+                含跨组 {{ row.crossTeamStewardCount }} 位
+              </div>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="已添加管家明细" min-width="310">
+            <template #default="{ row }">
+              <div class="steward-chip-list">
+                <div
+                  v-for="steward in row.stewards"
+                  :key="steward.staffUserId"
+                  class="steward-chip"
+                  :class="{ 'is-cross-team': !steward.inMyScope }"
+                  :data-testid="`steward-chip-${steward.staffUserId}`"
+                >
+                  <span class="steward-chip-name">{{ stewardDisplayLabel(steward) }}</span>
+                  <span
+                    v-for="rel in steward.relationTypes"
+                    :key="rel"
+                    class="steward-rel-tag"
+                  >
+                    {{ relationLabel(rel) }}
+                  </span>
+                  <el-button
+                    v-if="steward.inMyScope && steward.customerId"
+                    text
+                    type="primary"
+                    size="small"
+                    :data-testid="`steward-customer-btn-${steward.customerId}`"
+                    @click="openCustomerDetail(steward.customerId)"
+                  >
+                    {{ steward.customerNo || '查看档案' }}
+                  </el-button>
+                  <span v-else-if="!steward.inMyScope" class="steward-cross-tag" data-testid="cross-team-summary-tag">
+                    跨组仅汇总
+                  </span>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="识别依据" min-width="170">
+            <template #default="{ row }">
+              <div class="reason-pills">
+                <StatusPill
+                  v-for="reason in row.matchReasons"
+                  :key="reason"
+                  :text="matchReasonLabel(reason)"
+                  tone="info"
+                />
+              </div>
+              <div v-if="row.evidenceMasked" class="proto-subcell">{{ row.evidenceMasked }}</div>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="最近添加时间" width="165">
+            <template #default="{ row }">{{ formatDateTime(row.latestAddedAt) }}</template>
+          </el-table-column>
+
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.primaryCustomerId"
+                text
+                type="primary"
+                :data-testid="`group-open-detail-${row.primaryCustomerId}`"
+                @click="openCustomerDetail(row.primaryCustomerId)"
+              >
+                客户详情
+              </el-button>
+              <span v-else class="proto-muted">企微未建档</span>
+            </template>
+          </el-table-column>
+
+          <template #empty>当前数据范围内暂无添加多位管家的顾客</template>
+        </app-table>
+      </div>
+
+      <el-pagination
+        v-model:current-page="query.page"
+        v-model:page-size="query.size"
+        :total="total"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="loadGroups"
+        @size-change="query.size = $event; loadGroups(1)"
+      />
+    </PageCard>
+
+    <PageCard v-else-if="canReverse && activeTab === 'history-reversals'">
+      <div class="proto-toolbar">
+        <div class="proto-toolbar-left">
+          <el-select v-model="historyQuery.status" style="width: 150px" @change="loadHistory(1)">
+            <el-option label="历史已合并" value="CONFIRMED" />
+            <el-option label="已更正" value="REVERSED" />
+            <el-option label="全部历史记录" value="" />
+          </el-select>
+          <el-button type="primary" :loading="historyLoading" @click="loadHistory(1)">查询</el-button>
+        </div>
+        <span class="proto-note">当前业务不再需要合并客户；本页仅保留管理员对历史已合并记录的更正查看与处理</span>
+      </div>
+      <el-alert v-if="historyError" type="error" :closable="false" :title="historyError" class="crm-table-alert" />
+      <div class="proto-table-wrap">
+        <app-table v-loading="historyLoading" :data="historyItems">
+          <el-table-column prop="id" label="记录" width="80" />
+          <el-table-column label="保留档案" min-width="170">
+            <template #default="{ row }">
+              {{ row.primarySummary }}
+              <div class="proto-subcell">保留 #{{ row.primaryCustomerId }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="原归档档案" min-width="170">
+            <template #default="{ row }">
+              {{ row.secondarySummary }}
+              <div class="proto-subcell">
+                {{ row.status === 'REVERSED' || row.reversalStatus === 'MANUAL_REVIEW' || row.reversalStatus === 'EXECUTED' ? '已恢复' : '归档' }}
+                #{{ row.secondaryCustomerId }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="130">
+            <template #default="{ row }">
               <StatusPill :text="statusMeta(row.status).label" :tone="statusMeta(row.status).tone" />
-              <div v-if="reversalLabel(row)" class="proto-subcell" :data-testid="`reversal-status-${row.id}`">{{ reversalLabel(row) }}</div>
+              <div v-if="reversalLabel(row)" class="proto-subcell" :data-testid="`reversal-status-${row.id}`">
+                {{ reversalLabel(row) }}
+              </div>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="250" fixed="right">
-            <template #default="{row}">
-              <el-button v-if="canMerge && row.status==='SUGGESTED'" text @click="handleReview(row)">开始审核</el-button>
-              <template v-else-if="canMerge && row.status==='REVIEWING'">
-                <el-button text type="primary" @click="openConfirmDialog(row)">确认合并</el-button>
-                <el-button text type="danger" @click="openRejectDialog(row)">不是同一人</el-button>
+          <el-table-column label="操作" width="230" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.status === 'CONFIRMED' && !row.reversalStatus"
+                text
+                type="warning"
+                :data-testid="`reversal-request-${row.id}`"
+                @click="openReversalDialog(row, 'request')"
+              >
+                申请更正
+              </el-button>
+              <template v-else-if="row.reversalStatus === 'REQUESTED'">
+                <el-button
+                  text
+                  type="warning"
+                  :data-testid="`reversal-approve-${row.id}`"
+                  @click="openReversalDialog(row, 'approve')"
+                >
+                  审批并执行
+                </el-button>
+                <el-button
+                  text
+                  type="danger"
+                  :data-testid="`reversal-reject-${row.id}`"
+                  @click="openReversalDialog(row, 'reject')"
+                >
+                  驳回
+                </el-button>
               </template>
-              <el-button v-else-if="canMerge && row.status==='CONFIRMED' && !row.reversalStatus" text type="warning" :data-testid="`reversal-request-${row.id}`" @click="openReversalDialog(row, 'request')">申请更正</el-button>
-              <template v-else-if="canReverse && row.reversalStatus==='REQUESTED'">
-                <el-button text type="warning" :data-testid="`reversal-approve-${row.id}`" @click="openReversalDialog(row, 'approve')">审批并执行</el-button>
-                <el-button text type="danger" :data-testid="`reversal-reject-${row.id}`" @click="openReversalDialog(row, 'reject')">驳回</el-button>
-              </template>
-              <el-button v-else-if="canReverse && row.reversalStatus==='MANUAL_REVIEW'" text type="warning" :data-testid="`reversal-complete-${row.id}`" @click="openReversalDialog(row, 'complete')">人工完成</el-button>
-              <span v-else class="proto-muted">{{ row.reversalStatus ? '已提交更正' : '已处理' }}</span>
+              <el-button
+                v-else-if="row.reversalStatus === 'MANUAL_REVIEW'"
+                text
+                type="warning"
+                :data-testid="`reversal-complete-${row.id}`"
+                @click="openReversalDialog(row, 'complete')"
+              >
+                人工完成
+              </el-button>
+              <span v-else class="proto-muted">已处理</span>
             </template>
           </el-table-column>
-          <template #empty>暂无合并候选</template>
+          <template #empty>暂无历史已合并记录</template>
           <template #append>
-            <template v-for="row in items" :key="`warning-${row.id}`">
-              <el-alert v-if="row.reversalWarning" type="warning" :closable="false" :title="`候选 #${row.id}：${row.reversalWarning}`" class="crm-table-alert" :data-testid="`reversal-warning-${row.id}`" />
+            <template v-for="row in historyItems" :key="`warning-${row.id}`">
+              <el-alert
+                v-if="row.reversalWarning"
+                type="warning"
+                :closable="false"
+                :title="`记录 #${row.id}：${row.reversalWarning}`"
+                class="crm-table-alert"
+                :data-testid="`reversal-warning-${row.id}`"
+              />
             </template>
           </template>
         </app-table>
       </div>
-      <el-pagination v-model:current-page="query.page" v-model:page-size="query.size" :total="total" :page-sizes="[10,20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="query.size=$event;load(1)" />
-    </PageCard>
-    <div class="proto-callout" style="margin-top:18px">合并保留主客户档案，迁移身份、标签、跟进、任务和积分；被合并客户归档，操作全程记入操作日志。</div>
-    <el-dialog v-model="showRules" title="查重规则说明" width="520px"><p>系统依据手机号一致或外部身份一致生成重复候选，仅昵称相似不会判定为同一客户。人工确认前不会迁移任何数据，确认后将统一完成关联数据迁移。</p></el-dialog>
-
-    <el-dialog v-model="createDialogVisible" title="登记合并候选" width="460px">
-      <el-form label-width="110px">
-        <el-form-item label="主客户 ID" required>
-          <el-input-number v-model="createForm.primaryCustomerId" :min="1" controls-position="right" class="full-width" />
-          <span class="crm-muted">合并后保留的客户</span>
-        </el-form-item>
-        <el-form-item label="被合并客户 ID" required>
-          <el-input-number v-model="createForm.secondaryCustomerId" :min="1" controls-position="right" class="full-width" />
-          <span class="crm-muted">合并后归档的客户</span>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="createSubmitting" @click="submitCreate">登记</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="confirmDialogVisible" title="确认合并" width="520px">
-      <el-alert
-        v-if="confirmTarget"
-        type="warning"
-        :closable="false"
-        :title="`将把 #${confirmTarget.secondaryCustomerId} 的关联数据迁移到 #${confirmTarget.primaryCustomerId}，并归档被合并客户。合并历史保留，错误合并需通过更正审批处理。`"
-        class="crm-table-alert"
+      <el-pagination
+        v-model:current-page="historyQuery.page"
+        v-model:page-size="historyQuery.size"
+        :total="historyTotal"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="loadHistory"
+        @size-change="historyQuery.size = $event; loadHistory(1)"
       />
-      <el-form label-width="90px">
-        <el-form-item label="合并理由" required>
-          <el-input v-model="confirmReason" type="textarea" :rows="2" placeholder="请填写合并理由（将记入操作日志）" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="confirmDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="confirmSubmitting" @click="submitConfirm">确认合并</el-button>
-      </template>
-    </el-dialog>
+    </PageCard>
 
-    <el-dialog v-model="rejectDialogVisible" title="拒绝合并" width="460px">
-      <el-form label-width="90px">
-        <el-form-item label="拒绝原因" required>
-          <el-input v-model="rejectReason" type="textarea" :rows="2" placeholder="如：核实后不是同一人" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="rejectDialogVisible = false">取消</el-button>
-        <el-button type="danger" :loading="rejectSubmitting" @click="submitReject">确认拒绝</el-button>
-      </template>
+    <div class="proto-callout" style="margin-top: 18px">
+      客户唯一 ID 独立于手机号与昵称；本视图仅用于管家主管掌握同一顾客添加了哪几位管家，不执行客户档案合并，也不突破跨团队敏感数据隔离。
+    </div>
+
+    <el-dialog v-model="showRules" title="多管家识别规则说明" width="540px">
+      <p>系统基于以下三种客观关联自动汇总同一顾客添加的多位管家，无需执行合并：</p>
+      <ul class="rule-list">
+        <li><strong>手机号一致</strong>：使用加密手机号不可逆盲索引比对，界面仅展示脱敏号段。</li>
+        <li><strong>外部身份一致</strong>：同一有赞/企微/历史外部身份映射到多个客户档案。</li>
+        <li><strong>企微多管家添加</strong>：企微中同一外部联系人（或同一 UnionID / 同一客户）存在多位活跃跟进管家。</li>
+      </ul>
+      <p class="crm-muted">
+        跨团队隔离：管家主管仅能查看本组客户关联的重复情况；跨团队管家仅展示姓名、所属团队与总数汇总，不可越权查看跨组客户详情、跟进或订单。
+      </p>
     </el-dialog>
 
     <el-dialog v-model="reversalDialogVisible" :title="REVERSAL_ACTION_LABELS[reversalAction]" width="560px">
@@ -426,11 +578,11 @@ onMounted(() => { void load(); void loadSummary() })
         type="warning"
         :closable="false"
         :title="reversalAction === 'request'
-          ? `申请对候选 #${reversalTarget.id} 的合并进行更正；申请不会立即修改客户，须由有更正审批权限的管理员执行。`
+          ? `申请对历史合并记录 #${reversalTarget.id} 进行更正；申请不会立即修改客户，须由管理员审批执行。`
           : reversalAction === 'approve'
-            ? '合并时留有迁出记录的，系统将自动迁回对应数据；无历史迁出记录的仅恢复被合并客户档案，其余关联数据须人工逐项处理。原合并记录与操作日志均永久保留。'
+            ? '合并时留有迁出记录的，系统将自动迁回对应数据；无历史迁出记录的仅恢复被合并客户档案，其余关联数据须人工逐项处理。'
             : reversalAction === 'complete'
-              ? '仅在已逐项人工核对并迁移旧合并关联数据后完成；完成后不会自动恢复合并时去重合并的身份或标签。'
+              ? '仅在已逐项人工核对并迁移旧合并关联数据后完成；完成后不会自动恢复合并时去重删除的身份或标签。'
               : '驳回只关闭本次更正申请，不改变原合并结果或客户数据。'"
         class="crm-table-alert"
       />
@@ -442,27 +594,92 @@ onMounted(() => { void load(); void loadSummary() })
             :rows="4"
             maxlength="1000"
             show-word-limit
-            :placeholder="reversalAction === 'complete' ? '说明已核对的身份、标签、跟进、任务、积分、订单和权益处理结果' : '请填写原因，提交后不可修改历史记录'"
+            :placeholder="reversalAction === 'complete' ? '说明已核对的关联数据处理结果' : '请填写原因，提交后不可修改历史记录'"
             data-testid="reversal-reason"
           />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="reversalDialogVisible = false">取消</el-button>
-        <el-button :type="reversalAction === 'reject' ? 'danger' : 'primary'" :loading="reversalSubmitting" data-testid="reversal-submit" @click="submitReversal">
+        <el-button
+          :type="reversalAction === 'reject' ? 'danger' : 'primary'"
+          :loading="reversalSubmitting"
+          data-testid="reversal-submit"
+          @click="submitReversal"
+        >
           {{ REVERSAL_ACTION_LABELS[reversalAction] }}
         </el-button>
       </template>
     </el-dialog>
+
+    <CustomerDetailDrawer
+      v-model="detailVisible"
+      :customer-id="detailCustomerId"
+      @changed="searchGroups"
+    />
   </div>
 </template>
 
 <style scoped>
-.filter-select {
-  width: 130px;
+.uniqueness-tabs {
+  margin-bottom: 12px;
 }
 
-.full-width {
-  width: 100%;
+.steward-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.steward-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid #d9e8e3;
+  background: #f5faf8;
+  font-size: 12px;
+  color: #21453d;
+}
+
+.steward-chip.is-cross-team {
+  border-color: #eadcc4;
+  background: #fdf8ef;
+  color: #6b4e1e;
+}
+
+.steward-chip-name {
+  font-weight: 600;
+}
+
+.steward-rel-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e3f1ed;
+  color: #1f5c52;
+  font-size: 11px;
+}
+
+.steward-chip.is-cross-team .steward-rel-tag {
+  background: #f5e7cf;
+  color: #7c581a;
+}
+
+.steward-cross-tag {
+  font-size: 11px;
+  color: #9a6c20;
+}
+
+.reason-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rule-list {
+  margin: 10px 0 12px;
+  padding-left: 18px;
+  line-height: 1.8;
 }
 </style>

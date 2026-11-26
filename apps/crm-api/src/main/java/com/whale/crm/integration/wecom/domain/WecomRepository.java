@@ -9,6 +9,9 @@ public interface WecomRepository {
     Optional<WecomContact> findContactForUpdate(long tenantId, String corpId, String externalUserid, long staffUserId);
     Optional<WecomContact> findContactById(long tenantId, long id);
     List<WecomContact> findContactsByExternalUserid(long tenantId, String corpId, String externalUserid);
+    List<WecomContact> findActiveContactsForUniqueness(long tenantId, List<Long> customerIds,
+                                                       List<String> externalUserids, List<String> unionids);
+    List<WecomContact> findCandidateMultiStewardContacts(long tenantId);
     boolean contactMapped(long tenantId, String externalUserid, long customerId);
     void insertContact(long tenantId, WecomContact contact);
     int updateContactConsent(long tenantId, long id, long version, String status, String evidenceRef, Instant syncedAt);

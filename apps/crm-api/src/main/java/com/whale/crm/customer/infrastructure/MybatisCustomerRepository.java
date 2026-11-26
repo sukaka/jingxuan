@@ -137,4 +137,30 @@ public class MybatisCustomerRepository implements CustomerRepository {
                         customerMapper.selectCustomerIdsByExternalId(tenantId, scopeType, teamIds, selfId, externalId)))
                 .toList();
     }
+
+    @Override
+    public List<Customer> findActiveByIds(long tenantId, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return customerMapper.selectActiveByIds(tenantId, ids);
+    }
+
+    @Override
+    public List<Customer> findActiveByMobileHashes(long tenantId, List<String> mobileHashes) {
+        if (mobileHashes == null || mobileHashes.isEmpty()) {
+            return List.of();
+        }
+        return customerMapper.selectActiveByMobileHashes(tenantId, mobileHashes);
+    }
+
+    @Override
+    public List<String> findTenantDuplicatedMobileHashes(long tenantId) {
+        return customerMapper.selectTenantDuplicatedMobileHashes(tenantId);
+    }
+
+    @Override
+    public List<String> findTenantDuplicatedIdentityExternalIds(long tenantId) {
+        return customerMapper.selectTenantDuplicatedIdentityExternalIds(tenantId);
+    }
 }

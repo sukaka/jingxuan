@@ -33,6 +33,9 @@ public interface UserMapper {
                                                                @Param("teamIdEq") Long teamIdEq,
                                                                @Param("userIdEq") Long userIdEq);
 
+    List<UserRepository.StewardOptionRow> selectStaffProfilesByIds(@Param("tenantId") long tenantId,
+                                                                   @Param("userIds") List<Long> userIds);
+
     long countSearch(@Param("tenantId") long tenantId, @Param("filter") UserSearchFilter filter);
 
     List<UserRepository.TeamOptionRow> selectTeams(@Param("tenantId") long tenantId);

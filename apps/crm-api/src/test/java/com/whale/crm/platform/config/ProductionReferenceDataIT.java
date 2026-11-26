@@ -72,7 +72,12 @@ class ProductionReferenceDataIT {
                 "wecom:mapping:manage", "followup:policy:manage", "channel:approve_finance");
 
         assertThat(rolePermissions(jdbc, "ADMIN")).contains(
-                "wecom:mapping:manage", "followup:policy:manage", "channel:approve_finance");
+                "wecom:mapping:manage", "followup:policy:manage", "channel:approve_finance",
+                "customer:tag:manage", "customer:source_channel:manage");
+        assertThat(rolePermissions(jdbc, "MANAGER_LEAD")).contains("customer:tag:manage", "customer:source_channel:manage")
+                .doesNotContain("dictionary:write");
+        assertThat(rolePermissions(jdbc, "MANAGER")).doesNotContain("customer:tag:manage",
+                "customer:source_channel:manage", "dictionary:write");
         assertThat(rolePermissions(jdbc, "OPERATION_LEAD")).contains("followup:policy:manage");
         assertThat(rolePermissions(jdbc, "FINANCE")).contains("channel:approve_finance");
 

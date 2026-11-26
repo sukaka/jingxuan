@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getCustomerTimeline } from '../api/customerTimeline'
 import type { CustomerTimelineItem } from '../api/customerTimeline'
+import { getDictionaryOptions } from '../api/dictionary'
+import type { DictionaryOption } from '../api/dictionary'
 import { listEntitlements } from '../api/trading'
 import type { Entitlement } from '../api/trading'
 import { getWecomSidebarContext, getWecomSidebarGroupContext } from '../api/wecomSidebar'
@@ -77,6 +79,7 @@ const groupLoading = ref(false)
 const groupError = ref('')
 const entitlements = ref<Entitlement[]>([])
 const timeline = ref<CustomerTimelineItem[]>([])
+const tagOptions = ref<DictionaryOption[]>([])
 const errorMessage = ref('')
 const auxiliaryMessage = ref('')
 const mismatchNotice = ref('')
@@ -295,6 +298,16 @@ async function loadBusinessData(customerId: number, seq: number): Promise<void> 
       }
     })())
   }
+  if (auth.hasPermission('dictionary:read')) {
+    tasks.push((async () => {
+      try {
+        const loaded = await getDictionaryOptions('customerTags')
+        if (seq === loadSeq) tagOptions.value = loaded
+      } catch {
+        // Fallback to TAG_LABELS silently
+      }
+    })())
+  }
   await Promise.all(tasks)
 }
 
@@ -391,7 +404,7 @@ function intentLabel(level: string | null | undefined): string {
 }
 
 function tagLabel(code: string): string {
-  return TAG_LABELS[code] ?? code
+  return tagOptions.value.find((item) => item.code === code)?.label ?? TAG_LABELS[code] ?? code
 }
 
 function entitlementStatus(statusCode: string): string {

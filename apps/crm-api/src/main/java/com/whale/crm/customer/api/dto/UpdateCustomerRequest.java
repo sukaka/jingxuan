@@ -29,8 +29,10 @@ public record UpdateCustomerRequest(
         @Size(max = 2000) String blockerNote,
         @Size(max = 2000) String remark,
         @NotNull(message = "数据版本号不能为空") Long version,
-        @Size(max = 100) List<Long> projectIds) {
+        @Size(max = 100) List<Long> projectIds,
+        @Size(max = 50, message = "标签数量超限") List<@Size(max = 64) String> tagCodes) {
     public UpdateCustomerRequest {
         projectIds = projectIds == null ? null : List.copyOf(projectIds);
+        tagCodes = tagCodes == null ? null : List.copyOf(tagCodes);
     }
 }

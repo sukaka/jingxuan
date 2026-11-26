@@ -78,4 +78,60 @@
     ORDER BY t.id DESC
   </select>
 
+  <sql id="scopedTransferWhere">
+    WHERE t.tenant_id = #{tenantId}
+      AND c.deleted = 0
+    <choose>
+      <when test="scopeType == 'ALL'"></when>
+      <when test="scopeType == 'TEAM'">
+        AND (c.owner_staff_id = #{selfId}
+        <if test="teamIds != null and teamIds.size() > 0">
+          OR c.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>
+        </if>)
+      </when>
+      <when test="scopeType == 'SELF'">
+        AND c.owner_staff_id = #{selfId}
+      </when>
+      <otherwise>AND 1 = 0</otherwise>
+    </choose>
+    <if test="status != null and status != ''">
+      AND t.status = #{status}
+    </if>
+    <if test="ownerId != null">
+      AND (t.from_owner_id = #{ownerId} OR t.to_owner_id = #{ownerId})
+    </if>
+    <if test="keyword != null and keyword != ''">
+      AND (c.customer_no LIKE CONCAT('%', #{keyword}, '%')
+        OR c.display_name LIKE CONCAT('%', #{keyword}, '%')
+        OR c.nickname LIKE CONCAT('%', #{keyword}, '%'))
+    </if>
+  </sql>
+
+  <select id="searchScopedRows"
+          resultType="com.whale.crm.customer.domain.CustomerTransferRepository$ScopedTransferRow">
+    SELECT t.id, t.customer_id, c.customer_no,
+           COALESCE(NULLIF(c.display_name, ''), NULLIF(c.nickname, ''), c.customer_no) AS customer_name,
+           t.from_owner_id, fu.display_name AS from_owner_name,
+           t.to_owner_id, tu.display_name AS to_owner_name, t.from_team_id, t.to_team_id, t.status,
+           t.requested_by, ru.display_name AS requested_by_name, t.reason,
+           t.reviewed_by, vu.display_name AS reviewed_by_name, t.reviewed_at, t.review_reason,
+           t.base_version, t.effective_at, t.created_at, t.version
+    FROM crm_customer_transfer t
+    INNER JOIN crm_customer c ON c.tenant_id = t.tenant_id AND c.id = t.customer_id
+    LEFT JOIN sys_user fu ON fu.tenant_id = t.tenant_id AND fu.id = t.from_owner_id
+    LEFT JOIN sys_user tu ON tu.tenant_id = t.tenant_id AND tu.id = t.to_owner_id
+    LEFT JOIN sys_user ru ON ru.tenant_id = t.tenant_id AND ru.id = t.requested_by
+    LEFT JOIN sys_user vu ON vu.tenant_id = t.tenant_id AND vu.id = t.reviewed_by
+    <include refid="scopedTransferWhere"/>
+    ORDER BY t.id DESC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countScopedRows" resultType="long">
+    SELECT COUNT(*)
+    FROM crm_customer_transfer t
+    INNER JOIN crm_customer c ON c.tenant_id = t.tenant_id AND c.id = t.customer_id
+    <include refid="scopedTransferWhere"/>
+  </select>
+
 </mapper>

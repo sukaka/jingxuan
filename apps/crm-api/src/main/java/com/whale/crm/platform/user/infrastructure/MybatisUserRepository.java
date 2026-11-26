@@ -78,6 +78,14 @@ public class MybatisUserRepository implements UserRepository {
     }
 
     @Override
+    public List<StewardOptionRow> findStaffProfilesByIds(long tenantId, List<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return List.of();
+        }
+        return userMapper.selectStaffProfilesByIds(tenantId, userIds);
+    }
+
+    @Override
     public Optional<Long> findDefaultOrgId(long tenantId) {
         return Optional.ofNullable(userMapper.selectDefaultOrgId(tenantId));
     }

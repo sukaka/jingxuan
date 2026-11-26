@@ -188,6 +188,7 @@ describe('WecomQuickActionsPanel 快捷业务操作', () => {
 
     expect(getDictionaryOptions).toHaveBeenCalledWith('customerTags')
     expect(wrapper.get('[data-testid="quick-preset-tag-RISK"]').text()).toBe('风险预警')
+    expect(wrapper.find('[data-testid="quick-custom-tag-input"]').exists()).toBe(false)
 
     await wrapper.get('[data-testid="quick-intent-HIGH"]').trigger('click')
     await wrapper.get('[data-testid="quick-preset-tag-HIGH_INTENT"]').trigger('click')
@@ -209,6 +210,25 @@ describe('WecomQuickActionsPanel 快捷业务操作', () => {
 
     expect(wrapper.get('[data-testid="quick-preset-tag-VIP"]').text()).toBe('贵宾客户')
     expect(wrapper.get('[data-testid="quick-preset-tag-REFERRAL_GOOD"]').text()).toBe('优质转介绍')
+  })
+
+  it('customerTags 字典返回空列表时清空默认预设标签并展示空态提示', async () => {
+    vi.mocked(getDictionaryOptions).mockImplementation(async (dictCode: string) => (
+      dictCode === 'customerTags' ? [] : [{ code: 'WECOM', label: '企业微信', sortNo: 1 }]
+    ))
+    const linked = mountPanel({ customer: sampleCustomer, externalUserid: 'ext-1001' })
+    await linked.get('[data-testid="quick-action-tags"]').trigger('click')
+    await flushPromises()
+
+    expect(linked.find('[data-testid="quick-preset-tag-VIP"]').exists()).toBe(false)
+    expect(linked.get('[data-testid="quick-tags-empty"]').text()).toContain('暂无已启用客户标签')
+
+    const unlinked = mountPanel({ customer: null, externalUserid: 'ext-unlinked-empty' })
+    await unlinked.get('[data-testid="unlinked-mode-create"]').trigger('click')
+    await flushPromises()
+
+    expect(unlinked.find('[data-testid="unlinked-new-tag-VIP"]').exists()).toBe(false)
+    expect(unlinked.get('[data-testid="unlinked-tags-empty"]').text()).toContain('暂无已启用客户标签')
   })
 
   it('可基于生效权益发起预约申请，绝不直接核销扣减次数', async () => {
@@ -260,13 +280,15 @@ describe('WecomQuickActionsPanel 快捷业务操作', () => {
     const wrapper = mountPanel({ customer: null, externalUserid: 'ext-unlinked-2' })
 
     await wrapper.get('[data-testid="unlinked-mode-create"]').trigger('click')
+    await flushPromises()
     await wrapper.get('[data-testid="unlinked-new-display-name"]').setValue('林女士')
     await wrapper.get('[data-testid="unlinked-new-intent"]').setValue('HIGH')
+    await wrapper.get('[data-testid="unlinked-new-tag-VIP"]').trigger('click')
     await wrapper.get('[data-testid="unlinked-create-form"]').trigger('submit')
     await flushPromises()
 
     expect(createCustomer).toHaveBeenCalledWith(
-      expect.objectContaining({ displayName: '林女士', intentLevel: 'HIGH' }),
+      expect.objectContaining({ displayName: '林女士', intentLevel: 'HIGH', tagCodes: ['VIP'] }),
       expect.stringContaining('sidebar-customer-create-'),
     )
     expect(linkWecomSidebarContact).toHaveBeenCalledWith({

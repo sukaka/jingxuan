@@ -24,6 +24,13 @@ public class MybatisWecomRepository implements WecomRepository {
     public Optional<WecomContact> findContactForUpdate(long t, String c, String e, long s) { return Optional.ofNullable(mapper.selectContactForUpdate(t, c, e, s)); }
     public Optional<WecomContact> findContactById(long t, long id) { return Optional.ofNullable(mapper.selectContactById(t, id)); }
     public List<WecomContact> findContactsByExternalUserid(long t, String c, String e) { return mapper.selectContactsByExternalUserid(t, c, e); }
+    public List<WecomContact> findActiveContactsForUniqueness(long t, List<Long> cids, List<String> exts, List<String> uids) {
+        if ((cids == null || cids.isEmpty()) && (exts == null || exts.isEmpty()) && (uids == null || uids.isEmpty())) {
+            return List.of();
+        }
+        return mapper.selectActiveContactsForUniqueness(t, cids, exts, uids);
+    }
+    public List<WecomContact> findCandidateMultiStewardContacts(long t) { return mapper.selectCandidateMultiStewardContacts(t); }
     public boolean contactMapped(long t, String e, long customer) { return mapper.countContactMapping(t, e, customer) == 1; }
     public void insertContact(long t, WecomContact e) { mapper.insertContact(t, e); }
     public int updateContactConsent(long t, long id, long v, String s, String e, Instant at) { return mapper.updateContactConsent(t, id, v, s, e, at); }

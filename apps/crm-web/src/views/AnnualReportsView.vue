@@ -6,8 +6,11 @@ import {
   createAnnualReport,
   disableAnnualReport,
   getAnnualReportSummary,
+  getYouzanAnnualSnapshotSummary,
   listAnnualReportSessions,
   listAnnualReports,
+  listYouzanAnnualProfiles,
+  syncYouzanAnnualSnapshots,
 } from '../api/annualReport'
 import type {
   AnnualGenderHint,
@@ -15,6 +18,8 @@ import type {
   AnnualReportSession,
   AnnualReportSummary,
   AnnualToneCode,
+  YouzanAnnualProfileItem,
+  YouzanAnnualSnapshotSummary,
 } from '../api/annualReport'
 import { listCustomers } from '../api/customer'
 import type { CustomerListItem } from '../api/customer'
@@ -26,6 +31,7 @@ import { createRequestId } from '../utils/requestId'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('customer:write'))
+const canManageYouzan = computed(() => auth.hasPermission('integration:youzan:manage'))
 
 const currentYear = new Date().getFullYear()
 const yearOptions = [currentYear, currentYear - 1, currentYear - 2]
@@ -89,6 +95,23 @@ const sessionsLoading = ref(false)
 const activeReport = ref<AnnualReportItem | null>(null)
 const sessions = ref<AnnualReportSession[]>([])
 
+// V60: 有赞历史订单只读快照与统一免密入口
+const yzSummary = ref<YouzanAnnualSnapshotSummary | null>(null)
+const yzSyncDialogOpen = ref(false)
+const yzSyncing = ref(false)
+const yzSyncForm = reactive({
+  shopId: '',
+  startDate: `${currentYear}-01-01`,
+  endDate: `${currentYear}-12-31`,
+  enrichBuyerProfile: true,
+})
+const yzProfilesDrawerOpen = ref(false)
+const yzProfilesLoading = ref(false)
+const yzProfiles = ref<YouzanAnnualProfileItem[]>([])
+const yzProfilesTotal = ref(0)
+const yzProfilesKeyword = ref('')
+const yzProfilesPage = ref(1)
+
 const TONE_LABELS: Record<string, string> = {
   AUTO: '自动推断（按画像）',
   POETIC: '诗意松弛风',
@@ -130,7 +153,7 @@ function resolvePublicHref(row: AnnualReportItem): string {
 async function loadData(): Promise<void> {
   loading.value = true
   try {
-    const [pageRes, summaryRes] = await Promise.all([
+    const [pageRes, summaryRes, yzRes] = await Promise.all([
       listAnnualReports({
         reportYear: filters.reportYear,
         status: filters.status || undefined,
@@ -138,14 +161,91 @@ async function loadData(): Promise<void> {
         size: filters.size,
       }),
       getAnnualReportSummary(filters.reportYear),
+      getYouzanAnnualSnapshotSummary().catch(() => null),
     ])
     items.value = pageRes.items
     total.value = pageRes.total
     summary.value = summaryRes
+    yzSummary.value = yzRes
   } catch (err) {
     ElMessage.error(err instanceof ApiError || err instanceof Error ? err.message : '加载年终报告数据失败')
   } finally {
     loading.value = false
+  }
+}
+
+const unifiedEntryHref = computed(() => {
+  const base = yzSummary.value?.unifiedEntryUrl && /^https?:\/\//i.test(yzSummary.value.unifiedEntryUrl)
+    ? yzSummary.value.unifiedEntryUrl
+    : `${window.location.origin}/h5/annual-reports/entry`
+  return `${base}?year=${filters.reportYear}`
+})
+
+async function copyUnifiedEntryUrl(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(unifiedEntryHref.value)
+    ElMessage.success('已复制统一免密入口链接（适用于公众号/朋友圈/有赞微商城，转发不泄密）')
+  } catch {
+    ElMessage.info(`请手动复制链接：${unifiedEntryHref.value}`)
+  }
+}
+
+function openYzSyncDialog(): void {
+  yzSyncForm.startDate = `${filters.reportYear}-01-01`
+  yzSyncForm.endDate = `${filters.reportYear}-12-31`
+  yzSyncDialogOpen.value = true
+}
+
+async function handleYzSync(): Promise<void> {
+  if (!yzSyncForm.shopId.trim()) {
+    ElMessage.warning('请填写有赞店铺 ID（kdt_id）')
+    return
+  }
+  yzSyncing.value = true
+  try {
+    const res = await syncYouzanAnnualSnapshots(
+      {
+        shopId: yzSyncForm.shopId.trim(),
+        startDate: yzSyncForm.startDate,
+        endDate: yzSyncForm.endDate,
+        enrichBuyerProfile: yzSyncForm.enrichBuyerProfile,
+      },
+      createRequestId(),
+    )
+    const warnSuffix = res.warnings.length ? `（提示：${res.warnings[0]}）` : ''
+    ElMessage.success(
+      `拉取完成：只读实付订单 ${res.paidOrdersSynced} 笔、买家 ${res.buyersSynced} 位、含微信 OpenID ${res.openIdBoundCount} 位${warnSuffix}`,
+    )
+    yzSyncDialogOpen.value = false
+    await loadData()
+  } catch (err) {
+    ElMessage.error(err instanceof ApiError || err instanceof Error ? err.message : '拉取有赞历史快照失败')
+  } finally {
+    yzSyncing.value = false
+  }
+}
+
+async function openYzProfilesDrawer(): Promise<void> {
+  yzProfilesDrawerOpen.value = true
+  yzProfilesPage.value = 1
+  await loadYzProfiles()
+}
+
+async function loadYzProfiles(): Promise<void> {
+  yzProfilesLoading.value = true
+  try {
+    const res = await listYouzanAnnualProfiles({
+      keyword: yzProfilesKeyword.value.trim() || undefined,
+      page: yzProfilesPage.value,
+      size: 20,
+    })
+    yzProfiles.value = res.items
+    yzProfilesTotal.value = res.total
+  } catch (err) {
+    yzProfiles.value = []
+    ElMessage.error(err instanceof ApiError || err instanceof Error ? err.message : '读取有赞买家镜像失败')
+  } finally {
+    yzProfilesLoading.value = false
   }
 }
 
@@ -334,6 +434,41 @@ onMounted(() => {
         <div class="metric-value">{{ summary.posterReports }} <small>/ {{ summary.bookingIntentReports }}</small></div>
       </el-card>
     </div>
+
+    <!-- 有赞历史订单只读快照 & 统一免密入口卡片 -->
+    <el-card v-if="yzSummary" shadow="never" class="youzan-portal-card" data-testid="youzan-annual-portal-card">
+      <template #header>
+        <div class="card-head-row">
+          <div>
+            <strong>有赞历史订单只读快照与微信免密统一入口</strong>
+            <el-tag size="small" :type="yzSummary.wechatMpConfigured ? 'success' : 'info'" style="margin-left: 8px">
+              服务号静默授权：{{ yzSummary.wechatMpConfigured ? '已启用' : '待配置' }}
+            </el-tag>
+            <el-tag size="small" :type="yzSummary.smsEnabled ? 'success' : 'info'" style="margin-left: 6px">
+              手机号验证码兜底：{{ yzSummary.smsEnabled ? '已启用' : '默认关闭' }}
+            </el-tag>
+          </div>
+          <div class="portal-actions">
+            <el-button size="small" @click="copyUnifiedEntryUrl">复制朋友圈/公众号统一入口</el-button>
+            <el-button size="small" @click="openYzProfilesDrawer">
+              有赞买家镜像 ({{ yzSummary.profileCount }})
+            </el-button>
+            <el-button v-if="canManageYouzan" size="small" type="primary" plain @click="openYzSyncDialog">
+              拉取有赞历史快照
+            </el-button>
+          </div>
+        </div>
+      </template>
+      <div class="portal-stats-row">
+        <span>统一免密链接：<code>{{ unifiedEntryHref }}</code></span>
+        <span>已拉有赞买家：<b>{{ yzSummary.profileCount }}</b>（含 OpenID {{ yzSummary.openIdBoundCount }} / UnionID {{ yzSummary.unionIdBoundCount }}）</span>
+        <span>有赞只读实付订单：<b>{{ yzSummary.paidOrderCount }}</b> 笔（¥{{ fenToYuan(yzSummary.totalPaymentFen) }}）</span>
+        <span>统一入口访问会话：<b>{{ yzSummary.unifiedVisitSessions }}</b> 次</span>
+      </div>
+      <div class="portal-tip">
+        仅作年终 H5 只读轨迹展示，绝不改动 CRM 正式订单与权益发放；客户转发统一入口至朋友圈时，朋友打开自动识别各自身份，不泄露原主人账单。
+      </div>
+    </el-card>
 
     <!-- 6 幕逐页留存漏斗 -->
     <el-card v-if="summary" shadow="never" class="funnel-card">
@@ -542,6 +677,86 @@ onMounted(() => {
       </template>
     </el-dialog>
 
+    <!-- 拉取有赞历史订单只读快照弹窗 -->
+    <el-dialog v-model="yzSyncDialogOpen" title="拉取有赞历史订单只读快照" width="500px" destroy-on-close>
+      <el-alert
+        type="info"
+        :closable="false"
+        style="margin-bottom: 14px"
+        title="本操作仅拉取有赞历史订单商品标题与买家身份（盲索引）至只读快照表供年终 H5 展示，绝不创建 CRM 正式订单或发放权益。"
+      />
+      <el-form label-width="112px">
+        <el-form-item label="有赞店铺 ID" required>
+          <el-input v-model="yzSyncForm.shopId" placeholder="请输入有赞店铺 kdt_id（需先在「有赞订单同步」完成店铺授权）" />
+        </el-form-item>
+        <el-form-item label="开始日期">
+          <el-input v-model="yzSyncForm.startDate" placeholder="YYYY-MM-DD" />
+        </el-form-item>
+        <el-form-item label="结束日期">
+          <el-input v-model="yzSyncForm.endDate" placeholder="YYYY-MM-DD" />
+        </el-form-item>
+        <el-form-item label="补全买家信息">
+          <el-switch
+            v-model="yzSyncForm.enrichBuyerProfile"
+            active-text="同步姓名、性别及微信 OpenID/UnionID（自动按 ≤89 天切窗）"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="yzSyncDialogOpen = false">取消</el-button>
+        <el-button type="primary" :loading="yzSyncing" @click="handleYzSync">开始拉取只读快照</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 有赞买家只读镜像抽屉 -->
+    <el-drawer v-model="yzProfilesDrawerOpen" title="有赞买家年度只读镜像（已脱敏）" size="680px">
+      <div style="display: flex; gap: 8px; margin-bottom: 12px">
+        <el-input
+          v-model="yzProfilesKeyword"
+          clearable
+          placeholder="按称呼或脱敏手机号搜索"
+          @keyup.enter="yzProfilesPage = 1; loadYzProfiles()"
+        />
+        <el-button type="primary" @click="yzProfilesPage = 1; loadYzProfiles()">查询</el-button>
+      </div>
+      <el-table v-loading="yzProfilesLoading" :data="yzProfiles" border stripe size="small">
+        <el-table-column label="买家称呼" min-width="120">
+          <template #default="{ row }">
+            <div class="cell-main">{{ row.displayName }}</div>
+            <div class="cell-sub">{{ row.mobileMasked || '未留手机' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="免密识别能力" min-width="150">
+          <template #default="{ row }">
+            <el-tag v-if="row.hasWechatOpenId" size="small" type="success" style="margin-right: 4px">OpenID</el-tag>
+            <el-tag v-if="row.hasWechatUnionId" size="small" type="success" style="margin-right: 4px">UnionID</el-tag>
+            <el-tag v-if="row.customerId" size="small" type="info">已关 CRM #{{ row.customerId }}</el-tag>
+            <span v-if="!row.hasWechatOpenId && !row.hasWechatUnionId" class="cell-sub">待手机号/管家链接</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="有赞实付单 / 消费" min-width="130">
+          <template #default="{ row }">
+            <div>{{ row.orderCount }} 笔</div>
+            <div class="cell-sub">¥{{ fenToYuan(row.totalPaymentFen) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="最近同步" min-width="135">
+          <template #default="{ row }">
+            {{ shanghaiDateTimeMinute(row.syncedAt) }}
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="pager-row">
+        <el-pagination
+          v-model:current-page="yzProfilesPage"
+          :page-size="20"
+          :total="yzProfilesTotal"
+          layout="total, prev, pager, next"
+          @current-change="loadYzProfiles"
+        />
+      </div>
+    </el-drawer>
+
     <!-- 访问会话明细抽屉 -->
     <el-drawer
       v-model="sessionsDrawerOpen"
@@ -607,4 +822,8 @@ onMounted(() => {
 .session-scene-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .scene-pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #eef6f5; color: #0c756e; }
 .session-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+.portal-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.portal-stats-row { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--app-ink); margin-bottom: 8px; }
+.portal-stats-row code { padding: 2px 6px; border-radius: 4px; background: #f2f6f8; font-size: 12px; }
+.portal-tip { font-size: 12px; color: var(--app-muted); }
 </style>

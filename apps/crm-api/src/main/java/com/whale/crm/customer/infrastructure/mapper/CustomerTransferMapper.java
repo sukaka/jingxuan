@@ -26,4 +26,15 @@ public interface CustomerTransferMapper {
 
     List<CustomerTransferRepository.TransferRow> selectRowsByCustomerId(@Param("tenantId") long tenantId,
                                                                         @Param("customerId") long customerId);
+
+    List<CustomerTransferRepository.ScopedTransferRow> searchScopedRows(
+            @Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
+            @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
+            @Param("status") String status, @Param("ownerId") Long ownerId,
+            @Param("keyword") String keyword, @Param("offset") int offset, @Param("size") int size);
+
+    long countScopedRows(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
+                         @Param("teamIds") List<Long> teamIds, @Param("selfId") long selfId,
+                         @Param("status") String status, @Param("ownerId") Long ownerId,
+                         @Param("keyword") String keyword);
 }

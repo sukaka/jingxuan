@@ -1,7 +1,9 @@
 package com.whale.crm.annualreport.application;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.whale.crm.annualreport.adapter.YouzanAnnualPullClient;
 import com.whale.crm.annualreport.api.dto.AnnualReportBatchGenerateRequest;
 import com.whale.crm.annualreport.api.dto.AnnualReportBatchGenerateResponse;
 import com.whale.crm.annualreport.api.dto.AnnualReportDisableRequest;
@@ -14,6 +16,8 @@ import com.whale.crm.annualreport.domain.AnnualReport;
 import com.whale.crm.annualreport.domain.AnnualReportCustomerFact;
 import com.whale.crm.annualreport.domain.AnnualReportRepository;
 import com.whale.crm.annualreport.domain.AnnualReportVisitSession;
+import com.whale.crm.annualreport.domain.YouzanAnnualOrderSnapshot;
+import com.whale.crm.annualreport.domain.YouzanAnnualSnapshotRepository;
 import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.customer.domain.Customer;
 import com.whale.crm.integration.wecom.sidebar.adapter.WecomSidebarProperties;
@@ -74,6 +78,7 @@ public class AnnualReportService {
     };
 
     private final AnnualReportRepository repository;
+    private final YouzanAnnualSnapshotRepository youzanSnapshotRepository;
     private final CustomerScopeSupport scopeSupport;
     private final AnnualReportCopyEngine copyEngine;
     private final QuickReplyTextMasker masker;
@@ -84,6 +89,7 @@ public class AnnualReportService {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AnnualReportService(AnnualReportRepository repository,
+                               YouzanAnnualSnapshotRepository youzanSnapshotRepository,
                                CustomerScopeSupport scopeSupport,
                                AnnualReportCopyEngine copyEngine,
                                QuickReplyTextMasker masker,
@@ -92,6 +98,7 @@ public class AnnualReportService {
                                AuditService auditService,
                                ObjectMapper objectMapper) {
         this.repository = repository;
+        this.youzanSnapshotRepository = youzanSnapshotRepository;
         this.scopeSupport = scopeSupport;
         this.copyEngine = copyEngine;
         this.masker = masker;
@@ -283,6 +290,8 @@ public class AnnualReportService {
 
         List<AnnualReportCustomerFact.OrderRow> orders = repository.findYearPaidOrders(
                 tenantId, customer.getId(), yearStart, yearEnd);
+        List<YouzanAnnualOrderSnapshot> extraYouzanOrders = findExtraYouzanSnapshots(
+                tenantId, customer.getId(), orders, yearStart, yearEnd);
         List<Long> orderIds = orders.stream().map(AnnualReportCustomerFact.OrderRow::orderId).toList();
         List<AnnualReportCustomerFact.OrderItemRow> orderItems = orderIds.isEmpty()
                 ? List.of() : repository.findOrderItemsByOrderIds(tenantId, orderIds);
@@ -307,12 +316,16 @@ public class AnnualReportService {
         LocalDate todayLocal = now.atZone(SHANGHAI).toLocalDate();
         long daysTogether = Math.max(1L, ChronoUnit.DAYS.between(firstMeetLocal, todayLocal) + 1L);
 
-        // 严格整数分汇总全年净消费（有效实付扣成功退款，不低于 0）
+        // 严格整数分汇总全年净消费（有效实付扣成功退款，不低于 0；合并未落 crm_order 的有赞历史只读快照单）
         long netSpendFen = 0L;
         for (AnnualReportCustomerFact.OrderRow order : orders) {
             long net = Math.max(0L, order.paidFen() - order.refundedFen());
             netSpendFen += net;
         }
+        for (YouzanAnnualOrderSnapshot yzOrder : extraYouzanOrders) {
+            netSpendFen += Math.max(0L, yzOrder.paymentFen() - yzOrder.refundedFen());
+        }
+        int totalOrderCount = orders.size() + extraYouzanOrders.size();
 
         // 整理订单明细、状态与品类统计
         Map<Long, List<AnnualReportCustomerFact.OrderItemRow>> itemsByOrder = orderItems.stream()
@@ -366,6 +379,28 @@ public class AnnualReportService {
                     skuSnapshots
             ));
         }
+
+        for (YouzanAnnualOrderSnapshot yzOrder : extraYouzanOrders) {
+            Instant effectiveTime = firstNonNull(yzOrder.paidAt(), yzOrder.orderedAt(), now);
+            ZonedDateTime zdt = effectiveTime.atZone(SHANGHAI);
+            distinctCategories.add("有赞臻选");
+            orderSnapshots.add(new PublicAnnualReportResponse.OrderSnapshot(
+                    maskOrderNo(yzOrder.tid()),
+                    zdt.format(DATE_FMT),
+                    zdt.format(MD_FMT),
+                    zdt.format(TIME_FMT),
+                    seasonOf(zdt.getMonthValue()),
+                    masker.mask(yzOrder.titleSummary(), 80),
+                    "有赞臻选",
+                    Math.max(0L, yzOrder.paymentFen() - yzOrder.refundedFen()),
+                    "TRADE_SUCCESS".equalsIgnoreCase(yzOrder.orderStatus()) ? "已完成" : "已支付",
+                    false,
+                    "有赞历史只读快照",
+                    readYouzanOrderSkus(yzOrder)
+            ));
+        }
+        orderSnapshots.sort(Comparator.comparing(PublicAnnualReportResponse.OrderSnapshot::date)
+                .thenComparing(PublicAnnualReportResponse.OrderSnapshot::time));
 
         // 深夜/最晚活跃时刻（优先取当年订单实付时刻，若当年无订单则取当年跟进时刻）
         MidnightComputation midnightComp = computeMidnight(orders, orderSnapshots, followups, now);
@@ -421,7 +456,7 @@ public class AnnualReportService {
                 butlerName,
                 firstMeetLocal.format(DATE_FMT),
                 daysTogether,
-                orders.size(),
+                totalOrderCount,
                 redeemCount,
                 remainingTotal,
                 favoriteComp.projectName(),
@@ -441,7 +476,7 @@ public class AnnualReportService {
                 butlerName,
                 firstMeetLocal.format(DATE_FMT),
                 daysTogether,
-                orders.size(),
+                totalOrderCount,
                 netSpendFen,
                 Math.max(distinctCategories.size(), favoriteComp.dimensions().isEmpty() ? 0 : 1),
                 redeemCount,
@@ -478,7 +513,7 @@ public class AnnualReportService {
                 displayName,
                 tierLabel,
                 butlerName,
-                orders.size(),
+                totalOrderCount,
                 netSpendFen,
                 redeemCount,
                 remainingTotal,
@@ -493,6 +528,49 @@ public class AnnualReportService {
         );
         repository.insertReport(entity);
         return repository.findByShareKey(shareKey).orElseThrow();
+    }
+
+    private List<YouzanAnnualOrderSnapshot> findExtraYouzanSnapshots(
+            long tenantId,
+            long customerId,
+            List<AnnualReportCustomerFact.OrderRow> crmOrders,
+            Instant yearStart,
+            Instant yearEnd) {
+        List<YouzanAnnualOrderSnapshot> snapshots = youzanSnapshotRepository.findPaidOrdersByCustomerYear(
+                tenantId, customerId, yearStart, yearEnd);
+        if (snapshots.isEmpty()) {
+            return List.of();
+        }
+        Set<String> existingTids = crmOrders.stream()
+                .map(AnnualReportCustomerFact.OrderRow::externalOrderNo)
+                .filter(tid -> tid != null && !tid.isBlank())
+                .collect(Collectors.toSet());
+        return snapshots.stream()
+                .filter(item -> !existingTids.contains(item.tid()))
+                .toList();
+    }
+
+    private List<PublicAnnualReportResponse.OrderSkuSnapshot> readYouzanOrderSkus(YouzanAnnualOrderSnapshot order) {
+        if (order.itemsJson() == null || order.itemsJson().isBlank()) {
+            return List.of(new PublicAnnualReportResponse.OrderSkuSnapshot(
+                    masker.mask(order.titleSummary(), 80), "1 件"));
+        }
+        try {
+            List<YouzanAnnualPullClient.PulledOrderItem> items = objectMapper.readValue(
+                    order.itemsJson(), new TypeReference<List<YouzanAnnualPullClient.PulledOrderItem>>() {
+                    });
+            if (items.isEmpty()) {
+                return List.of(new PublicAnnualReportResponse.OrderSkuSnapshot(
+                        masker.mask(order.titleSummary(), 80), "1 件"));
+            }
+            return items.stream()
+                    .map(i -> new PublicAnnualReportResponse.OrderSkuSnapshot(
+                            masker.mask(i.title(), 80), Math.max(1, i.num()) + " 件"))
+                    .toList();
+        } catch (JsonProcessingException ex) {
+            return List.of(new PublicAnnualReportResponse.OrderSkuSnapshot(
+                    masker.mask(order.titleSummary(), 80), "1 件"));
+        }
     }
 
     private List<PublicAnnualReportResponse.OrderSkuSnapshot> buildOrderSkus(

@@ -241,6 +241,15 @@ describe('V30-V33 导航增量接入', () => {
     expect(paths).not.toContain('/settings/complaint-automation')
   })
 
+  it('同时拥有管家与管家主管角色时保留主管菜单（含客户归属日志）', () => {
+    const items = visibleMenuItems(
+      hasPermissionFrom(['customer:read', 'customer:transfer', 'customer:merge']),
+      ['MANAGER', 'MANAGER_LEAD'],
+      'EMPLOYEE',
+    )
+    expect(enabledPaths(items)).toEqual(expect.arrayContaining(['/customers', '/customers/merge', '/customers/ownership-logs']))
+  })
+
   it('普通管家只增加后端可访问的业务入口，不继承系统配置菜单', () => {
     const items = visibleMenuItems(
       hasPermissionFrom(allPermissions.filter((code) => code !== 'complaint:config')),

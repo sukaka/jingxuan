@@ -27,7 +27,7 @@ export const routes: RouteRecordRaw[] = [
     path: '/customers/merge',
     name: 'customer-merge',
     component: () => import('../views/CustomerMergeView.vue'),
-    meta: { title: '查重合并', section: '客户管理', permission: 'customer:merge' },
+    meta: { title: '多管家排查', section: '客户管理', permission: 'customer:merge' },
   },
   {
     path: '/customers/segments',
@@ -326,6 +326,12 @@ export const routes: RouteRecordRaw[] = [
     name: 'public-h5-card',
     component: () => import('../views/PublicH5CardView.vue'),
     meta: { title: '项目介绍', public: true, display: true },
+  },
+  {
+    path: '/h5/annual-reports/entry',
+    name: 'public-annual-report-entry',
+    component: () => import('../views/PublicAnnualReportView.vue'),
+    meta: { title: '年度光采轨迹', public: true, display: true },
   },
   {
     path: '/h5/annual-reports/:shareKey',

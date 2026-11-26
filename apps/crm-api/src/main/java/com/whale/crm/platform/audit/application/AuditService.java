@@ -42,6 +42,7 @@ public class AuditService {
     public static final String ACTION_DICTIONARY_ITEM_CREATE = "DICTIONARY_ITEM_CREATE";
     public static final String ACTION_DICTIONARY_ITEM_UPDATE = "DICTIONARY_ITEM_UPDATE";
     public static final String ACTION_DICTIONARY_ITEM_DISABLE = "DICTIONARY_ITEM_DISABLE";
+    public static final String ACTION_DICTIONARY_ITEM_ENABLE = "DICTIONARY_ITEM_ENABLE";
     public static final String ACTION_CUSTOMER_CREATE = "CUSTOMER_CREATE";
     public static final String ACTION_CUSTOMER_UPDATE = "CUSTOMER_UPDATE";
     public static final String ACTION_CUSTOMER_TAGS_UPDATE = "CUSTOMER_TAGS_UPDATE";
@@ -49,6 +50,7 @@ public class AuditService {
     public static final String ACTION_CUSTOMER_TRANSFER_REQUEST = "CUSTOMER_TRANSFER_REQUEST";
     public static final String ACTION_CUSTOMER_TRANSFER_APPROVE = "CUSTOMER_TRANSFER_APPROVE";
     public static final String ACTION_CUSTOMER_TRANSFER_REJECT = "CUSTOMER_TRANSFER_REJECT";
+    public static final String ACTION_CUSTOMER_OWNER_ASSIGN = "CUSTOMER_OWNER_ASSIGN";
     public static final String ACTION_MERGE_CASE_CREATE = "MERGE_CASE_CREATE";
     public static final String ACTION_MERGE_CANDIDATE_SCAN = "MERGE_CANDIDATE_SCAN";
     public static final String ACTION_MERGE_CASE_REVIEW = "MERGE_CASE_REVIEW";

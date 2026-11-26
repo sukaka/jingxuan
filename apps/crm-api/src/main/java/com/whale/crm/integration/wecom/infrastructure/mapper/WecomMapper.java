@@ -72,6 +72,40 @@ public interface WecomMapper {
     List<WecomContact> selectContactsByExternalUserid(@Param("tenantId") long tenantId, @Param("corpId") String corpId,
                                                       @Param("externalUserid") String externalUserid);
 
+    @Select("<script>SELECT " + ALIASED_CONTACT_COLUMNS + " FROM crm_wecom_contact c "
+            + "WHERE c.tenant_id=#{tenantId} AND c.follow_status='ACTIVE' AND ("
+            + "<trim prefixOverrides='OR'>"
+            + "<if test='customerIds != null and customerIds.size() > 0'>"
+            + " OR c.customer_id IN <foreach collection='customerIds' item='cid' open='(' separator=',' close=')'>#{cid}</foreach>"
+            + "</if>"
+            + "<if test='externalUserids != null and externalUserids.size() > 0'>"
+            + " OR c.external_userid IN <foreach collection='externalUserids' item='ext' open='(' separator=',' close=')'>#{ext}</foreach>"
+            + "</if>"
+            + "<if test='unionids != null and unionids.size() > 0'>"
+            + " OR c.unionid IN <foreach collection='unionids' item='uid' open='(' separator=',' close=')'>#{uid}</foreach>"
+            + "</if>"
+            + "</trim>) ORDER BY c.id ASC</script>")
+    List<WecomContact> selectActiveContactsForUniqueness(@Param("tenantId") long tenantId,
+                                                         @Param("customerIds") List<Long> customerIds,
+                                                         @Param("externalUserids") List<String> externalUserids,
+                                                         @Param("unionids") List<String> unionids);
+
+    @Select("SELECT " + ALIASED_CONTACT_COLUMNS + " FROM crm_wecom_contact c "
+            + "WHERE c.tenant_id=#{tenantId} AND c.follow_status='ACTIVE' AND ("
+            + "EXISTS (SELECT 1 FROM crm_wecom_contact c2 WHERE c2.tenant_id=c.tenant_id AND c2.corp_id=c.corp_id "
+            + "AND c2.external_userid=c.external_userid AND c2.follow_status='ACTIVE' AND c2.staff_user_id != c.staff_user_id) "
+            + "OR (c.unionid IS NOT NULL AND c.unionid != '' AND EXISTS (SELECT 1 FROM crm_wecom_contact c3 "
+            + "WHERE c3.tenant_id=c.tenant_id AND c3.unionid=c.unionid AND c3.follow_status='ACTIVE' AND c3.staff_user_id != c.staff_user_id)) "
+            + "OR (c.customer_id IS NOT NULL AND EXISTS (SELECT 1 FROM crm_wecom_contact c4 WHERE c4.tenant_id=c.tenant_id "
+            + "AND c4.customer_id=c.customer_id AND c4.follow_status='ACTIVE' AND c4.staff_user_id != c.staff_user_id)) "
+            + "OR (c.customer_id IS NOT NULL AND EXISTS (SELECT 1 FROM crm_customer cu WHERE cu.tenant_id=c.tenant_id "
+            + "AND cu.id=c.customer_id AND cu.deleted=0 AND cu.owner_staff_id != c.staff_user_id))"
+            + "OR EXISTS (SELECT 1 FROM crm_customer_identity ci INNER JOIN crm_customer cu ON cu.tenant_id=ci.tenant_id "
+            + "AND cu.id=ci.customer_id AND cu.deleted=0 WHERE ci.tenant_id=c.tenant_id AND ci.identity_type='WECOM' "
+            + "AND ci.external_id=c.external_userid AND cu.owner_staff_id != c.staff_user_id)"
+            + ") ORDER BY c.id ASC")
+    List<WecomContact> selectCandidateMultiStewardContacts(@Param("tenantId") long tenantId);
+
     @Select("SELECT COUNT(*) FROM crm_wecom_contact WHERE tenant_id=#{tenantId} AND external_userid=#{externalUserid} AND customer_id=#{customerId} AND follow_status='ACTIVE'")
     int countContactMapping(@Param("tenantId") long tenantId, @Param("externalUserid") String externalUserid,
                             @Param("customerId") long customerId);

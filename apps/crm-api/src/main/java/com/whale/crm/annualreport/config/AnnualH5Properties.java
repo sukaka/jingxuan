@@ -2,8 +2,10 @@ package com.whale.crm.annualreport.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.Locale;
+
 /**
- * 年终购买轨迹 H5 统一自动登录配置（微信服务号静默授权 + 小程序换票 + 手机号验证码兜底）。
+ * 年终购买轨迹 H5 统一自动登录配置（微信服务号静默授权 + 预留手机号验证码兜底开关）。
  * 所有密钥均通过环境变量注入，默认全部关闭，禁止在代码或仓库中硬编码真实凭证。
  */
 @ConfigurationProperties(prefix = "app.annual-h5")
@@ -15,7 +17,6 @@ public record AnnualH5Properties(
         String stateCookieName,
         long sessionTtlSeconds,
         WechatMp wechatMp,
-        MiniProgram miniprogram,
         Sms sms
 ) {
     public AnnualH5Properties {
@@ -32,7 +33,6 @@ public record AnnualH5Properties(
         wechatMp = wechatMp == null ? new WechatMp(false, "", "",
                 "https://open.weixin.qq.com/connect/oauth2/authorize",
                 "https://api.weixin.qq.com", "") : wechatMp;
-        miniprogram = miniprogram == null ? new MiniProgram(false, "", "", "https://api.weixin.qq.com") : miniprogram;
         sms = sms == null ? new Sms("DISABLED", 300, 60, "", "") : sms;
     }
 
@@ -43,14 +43,8 @@ public record AnnualH5Properties(
                 && wechatMp.callbackUrl() != null && !wechatMp.callbackUrl().isBlank();
     }
 
-    public boolean isMiniprogramConfigured() {
-        return miniprogram.enabled()
-                && miniprogram.appId() != null && !miniprogram.appId().isBlank()
-                && miniprogram.appSecret() != null && !miniprogram.appSecret().isBlank();
-    }
-
     public boolean isSmsEnabled() {
-        String mode = sms.mode() == null ? "DISABLED" : sms.mode().trim().toUpperCase(java.util.Locale.ROOT);
+        String mode = sms.mode() == null ? "DISABLED" : sms.mode().trim().toUpperCase(Locale.ROOT);
         return "MOCK".equals(mode) || ("WEBHOOK".equals(mode) && sms.webhookUrl() != null && !sms.webhookUrl().isBlank());
     }
 
@@ -65,14 +59,6 @@ public record AnnualH5Properties(
             String authorizeUrl,
             String apiBaseUrl,
             String callbackUrl
-    ) {
-    }
-
-    public record MiniProgram(
-            boolean enabled,
-            String appId,
-            String appSecret,
-            String apiBaseUrl
     ) {
     }
 

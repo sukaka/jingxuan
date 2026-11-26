@@ -80,4 +80,13 @@ public interface CustomerMapper {
                                              @Param("scopeType") String scopeType,
                                              @Param("teamIds") List<Long> teamIds,
                                              @Param("selfId") long selfId);
+
+    List<Customer> selectActiveByIds(@Param("tenantId") long tenantId, @Param("ids") List<Long> ids);
+
+    List<Customer> selectActiveByMobileHashes(@Param("tenantId") long tenantId,
+                                              @Param("mobileHashes") List<String> mobileHashes);
+
+    List<String> selectTenantDuplicatedMobileHashes(@Param("tenantId") long tenantId);
+
+    List<String> selectTenantDuplicatedIdentityExternalIds(@Param("tenantId") long tenantId);
 }

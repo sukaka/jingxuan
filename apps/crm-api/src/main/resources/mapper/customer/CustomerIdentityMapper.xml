@@ -24,6 +24,24 @@
     ORDER BY id ASC
   </select>
 
+  <select id="selectByCustomerIds" resultMap="CustomerIdentityMap">
+    SELECT id, tenant_id, customer_id, identity_type, source_app, external_id, verified_at, status,
+           created_at, updated_at, version
+    FROM crm_customer_identity
+    WHERE tenant_id = #{tenantId}
+      AND customer_id IN <foreach collection="customerIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+    ORDER BY id ASC
+  </select>
+
+  <select id="selectByExternalIds" resultMap="CustomerIdentityMap">
+    SELECT id, tenant_id, customer_id, identity_type, source_app, external_id, verified_at, status,
+           created_at, updated_at, version
+    FROM crm_customer_identity
+    WHERE tenant_id = #{tenantId}
+      AND external_id IN <foreach collection="externalIds" item="ext" open="(" separator="," close=")">#{ext}</foreach>
+    ORDER BY id ASC
+  </select>
+
   <insert id="insertIdentity" parameterType="com.whale.crm.customer.domain.CustomerIdentity"
           useGeneratedKeys="true" keyProperty="id">
     INSERT INTO crm_customer_identity (tenant_id, customer_id, identity_type, source_app, external_id,

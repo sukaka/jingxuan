@@ -460,4 +460,94 @@ class CustomerApiIT extends AbstractMysqlIT {
                 .andExpect(jsonPath("$.data.total").value(1))
                 .andExpect(jsonPath("$.data.items[0].nextFollowupAt").doesNotExist());
     }
+
+    @Test
+    void createAndUpdateWithTags_enforcesActiveCatalogAndSupportsSupervisorCreatedTags() throws Exception {
+        AuthCookies lead = login("lead1");
+        AuthCookies manager1 = login("manager1");
+        String suffix = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 6);
+
+        // 1. 管家主管新增新标签，管家在新建客户时即可直接选择打标
+        String tagResp = mockMvc.perform(lead.withAuth(post("/api/v1/customer-tags"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"optionLabel\":\"热玛吉意向-" + suffix + "\",\"sortNo\":30}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long tagId = objectMapper.readTree(tagResp).at("/data/id").asLong();
+        String supervisorTagCode = objectMapper.readTree(tagResp).at("/data/optionCode").asText();
+
+        String createdBody = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"ITTAG-建档打标-" + suffix + "\","
+                                + "\"tagCodes\":[\"VIP\",\"" + supervisorTagCode + "\",\"VIP\"]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.tagCodes.length()").value(2))
+                .andExpect(jsonPath("$.data.tagCodes", hasItem("VIP")))
+                .andExpect(jsonPath("$.data.tagCodes", hasItem(supervisorTagCode)))
+                .andReturn().getResponse().getContentAsString();
+        long customerId = objectMapper.readTree(createdBody).at("/data/id").asLong();
+
+        // 2. 管家不可在新建客户或打标接口自行提交未定义标签内容
+        mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"ITTAG-非法自定义\",\"tagCodes\":[\"FREE_CUSTOM_TAG\"]}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+        mockMvc.perform(manager1.withAuth(put("/api/v1/customers/" + customerId + "/tags"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tagCodes\":[\"VIP\",\"FREE_CUSTOM_TAG\"]}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+
+        // 3. 主管停用标签后：已有客户编辑可保留旧历史标签，但不能为其他客户新选该已停用标签
+        mockMvc.perform(lead.withAuth(post("/api/v1/customer-tags/" + tagId + "/disable")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/customers/" + customerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"remark\":\"保留历史标签\",\"tagCodes\":[\"VIP\",\""
+                                + supervisorTagCode + "\"],\"version\":0}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tagCodes.length()").value(2))
+                .andExpect(jsonPath("$.data.tagCodes", hasItem(supervisorTagCode)));
+
+        mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"ITTAG-停用拒选\",\"tagCodes\":[\"" + supervisorTagCode + "\"]}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+
+        // 4. PATCH 传入新 tagCodes 会同步更新标签并记审计；PATCH 不传 tagCodes 时原标签保持不变
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/customers/" + customerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tagCodes\":[\"HIGH_INTENT\"],\"version\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tagCodes.length()").value(1))
+                .andExpect(jsonPath("$.data.tagCodes[0]").value("HIGH_INTENT"));
+
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/customers/" + customerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"remark\":\"仅改备注不传标签\",\"version\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tagCodes.length()").value(1))
+                .andExpect(jsonPath("$.data.tagCodes[0]").value("HIGH_INTENT"));
+
+        // 5. PATCH 新增未定义标签或已停用标签（移除后试图重新添加）均 409 拒绝
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/customers/" + customerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tagCodes\":[\"HIGH_INTENT\",\"FREE_CUSTOM_TAG\"],\"version\":3}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+
+        mockMvc.perform(manager1.withAuth(patch("/api/v1/customers/" + customerId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tagCodes\":[\"HIGH_INTENT\",\"" + supervisorTagCode + "\"],\"version\":3}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+
+        Integer tagAuditCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM crm_audit_log WHERE action_code='CUSTOMER_TAGS_UPDATE' AND target_id=?",
+                Integer.class, Long.toString(customerId));
+        assertThat(tagAuditCount).isGreaterThanOrEqualTo(1);
+    }
 }

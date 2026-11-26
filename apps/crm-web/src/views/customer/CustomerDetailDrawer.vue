@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import type { CustomerDetail, LegacyProfileField } from '../../api/customer'
+import { computed, ref, watch } from 'vue'
+import type { CustomerDetail, CustomerStewardRelationItem, LegacyProfileField } from '../../api/customer'
 import { getCustomer, getCustomerLegacyProfile } from '../../api/customer'
 import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../types/api'
+import CustomerAssignDialog from './CustomerAssignDialog.vue'
+import type { CustomerAssignTarget } from './CustomerAssignDialog.vue'
 import CustomerAvatar from './CustomerAvatar.vue'
 import FollowupPanel from './FollowupPanel.vue'
 import OwnershipPanel from './OwnershipPanel.vue'
@@ -28,11 +30,39 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 const dicts = useDictionaries()
+const canViewMultiSteward = computed(() => auth.hasPermission('customer:merge'))
 
 const detail = ref<CustomerDetail | null>(null)
+const crossTeamStewardCount = computed(() => (detail.value?.addedStewards ?? []).filter((item) => !item.inMyScope).length)
+
+const STEWARD_RELATION_LABELS: Record<string, string> = {
+  CUSTOMER_OWNER: '客户归属',
+  WECOM_FOLLOW: '企微好友',
+}
+
+function stewardRelationLabel(code: string): string {
+  return STEWARD_RELATION_LABELS[code] ?? code
+}
+
+function stewardTeamLabel(steward: CustomerStewardRelationItem): string {
+  return steward.teamName ? `${steward.staffName}（${steward.teamName}）` : steward.staffName
+}
 const loading = ref(false)
 const errorMessage = ref('')
 const activeTab = ref('overview')
+const assignVisible = ref(false)
+
+function toAssignTarget(item: CustomerDetail): CustomerAssignTarget {
+  return {
+    id: item.id,
+    customerNo: item.customerNo,
+    displayName: item.displayName,
+    nickname: item.nickname,
+    ownerStaffId: item.ownerStaffId,
+    ownerName: item.ownerName,
+    version: item.version,
+  }
+}
 
 // 原业务表 23 字段档案:切到该 tab 才加载;无可用值时不拿其他系统字段凑数
 const legacyFields = ref<LegacyProfileField[]>([])
@@ -134,7 +164,7 @@ watch(
     resetState()
     if (visible && customerId !== null) {
       activeTab.value = props.initialTab || 'overview'
-      void dicts.load('cities', 'customerSources', 'customerChannels', 'customerStatuses', 'customerTiers')
+      void dicts.load('cities', 'customerSources', 'customerChannels', 'customerStatuses', 'customerTiers', 'customerTags')
       void load()
     }
   },
@@ -146,7 +176,7 @@ watch(activeTab, (tab) => {
 
 async function handleChildChanged() {
   emit('changed')
-  await load()
+  await Promise.all([dicts.load('customerTags'), load()])
 }
 
 defineExpose({ reload: load })
@@ -191,13 +221,33 @@ defineExpose({ reload: load })
                 tone="info"
               />
               <StatusPill v-if="detail.tierCode" :text="dicts.label('customerTiers', detail.tierCode)" tone="dark" />
+              <StatusPill
+                v-if="canViewMultiSteward && detail.addedStewardCount && detail.addedStewardCount > 1"
+                :text="`已加 ${detail.addedStewardCount} 位管家`"
+                tone="warning"
+                data-testid="detail-multi-steward-pill"
+              />
             </div>
             <div class="crm-muted">
               编号 {{ detail.customerNo }} · 管家 {{ detail.ownerName ?? `#${detail.ownerStaffId}` }} ·
               {{ detail.mobileMasked ?? '未留手机号' }}
             </div>
+            <div v-if="detail.tagCodes.length" class="head-tags" data-testid="detail-head-tags">
+              <span v-for="code in detail.tagCodes" :key="code" class="proto-pill success tag-item">
+                {{ dicts.tagLabel(code) }}
+              </span>
+            </div>
           </div>
           <div class="head-actions">
+            <el-button
+              v-if="auth.hasPermission('customer:transfer') && !detail.deleted"
+              type="primary"
+              plain
+              data-testid="detail-assign-owner-btn"
+              @click="assignVisible = true"
+            >
+              分配管家
+            </el-button>
             <el-button
               v-if="auth.hasPermission('customer:write') && !detail.deleted"
               @click="emit('edit', detail.id)"
@@ -223,9 +273,70 @@ defineExpose({ reload: load })
               <el-descriptions-item label="消费能力">{{ levelLabel(detail.spendingLevel) }}</el-descriptions-item>
               <el-descriptions-item label="生日">{{ formatDate(detail.birthday) }}</el-descriptions-item>
             </el-descriptions>
+            <section
+              v-if="canViewMultiSteward && detail.addedStewards && detail.addedStewards.length"
+              class="steward-relations-card"
+              data-testid="detail-steward-relations-card"
+            >
+              <div class="steward-relations-head">
+                <div>
+                  <strong>多管家添加情况（无需合并）</strong>
+                  <p class="steward-relations-sub">
+                    该顾客当前共添加了 <strong>{{ detail.addedStewardCount ?? detail.addedStewards.length }}</strong> 位管家
+                    <template v-if="crossTeamStewardCount > 0">
+                      （含 {{ crossTeamStewardCount }} 位跨团队管家，跨组仅展示姓名与团队汇总）
+                    </template>
+                  </p>
+                </div>
+                <StatusPill
+                  :text="(detail.addedStewardCount ?? detail.addedStewards.length) > 1 ? '已跨管家添加' : '单管家跟进'"
+                  :tone="(detail.addedStewardCount ?? detail.addedStewards.length) > 1 ? 'warning' : 'success'"
+                />
+              </div>
+              <div class="steward-relations-list">
+                <div
+                  v-for="steward in detail.addedStewards"
+                  :key="steward.staffUserId"
+                  class="steward-relation-row"
+                  :class="{ 'is-cross-team': !steward.inMyScope }"
+                  :data-testid="`detail-steward-row-${steward.staffUserId}`"
+                >
+                  <div class="steward-relation-main">
+                    <span class="steward-relation-name">{{ stewardTeamLabel(steward) }}</span>
+                    <span v-for="rel in steward.relationTypes" :key="rel" class="steward-relation-badge">
+                      {{ stewardRelationLabel(rel) }}
+                    </span>
+                    <span v-if="steward.inMyScope && steward.customerNo" class="steward-relation-no">
+                      {{ steward.customerId === detail.id ? '当前档案' : `本组档案 ${steward.customerNo}` }}
+                    </span>
+                    <span v-else-if="!steward.inMyScope" class="steward-relation-cross" data-testid="detail-cross-team-tag">
+                      跨组仅汇总
+                    </span>
+                  </div>
+                  <span class="steward-relation-time">{{ formatDateTime(steward.addedAt) }}</span>
+                </div>
+              </div>
+            </section>
+            <section class="tags-overview-card" data-testid="detail-tags-card">
+              <TagsIdentityPanel
+                section="tags"
+                :customer-id="detail.id"
+                :tag-codes="detail.tagCodes"
+                :identities="detail.identities"
+                :readonly="detail.deleted"
+                @changed="handleChildChanged"
+              />
+            </section>
             <el-collapse>
-              <el-collapse-item title="标签、身份与积分维护" name="more">
-                <TagsIdentityPanel :customer-id="detail.id" :tag-codes="detail.tagCodes" :identities="detail.identities" :readonly="detail.deleted" @changed="handleChildChanged" />
+              <el-collapse-item title="关联身份与积分维护" name="more">
+                <TagsIdentityPanel
+                  section="identities"
+                  :customer-id="detail.id"
+                  :tag-codes="detail.tagCodes"
+                  :identities="detail.identities"
+                  :readonly="detail.deleted"
+                  @changed="handleChildChanged"
+                />
                 <el-divider />
                 <PointsPanel :customer-id="detail.id" :birthday="detail.birthday" @changed="handleChildChanged" />
               </el-collapse-item>
@@ -253,9 +364,19 @@ defineExpose({ reload: load })
               </div>
               <div v-else-if="!legacyLoading" class="profile-empty">暂无档案信息</div>
             </section>
-            <OwnershipPanel :customer-id="detail.id" class="profile-ownership" @changed="handleChildChanged" />
+            <OwnershipPanel
+              :customer-id="detail.id"
+              :customer="detail.deleted ? undefined : toAssignTarget(detail)"
+              class="profile-ownership"
+              @changed="handleChildChanged"
+            />
           </el-tab-pane>
         </el-tabs>
+        <CustomerAssignDialog
+          v-model="assignVisible"
+          :customers="detail.deleted ? [] : [toAssignTarget(detail)]"
+          @assigned="handleChildChanged"
+        />
       </template>
     </div>
   </el-drawer>
@@ -285,6 +406,13 @@ defineExpose({ reload: load })
 .head-main {
   flex: 1;
   min-width: 0;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .head-name {
@@ -333,6 +461,101 @@ defineExpose({ reload: load })
 
 .tag-item {
   margin-right: 6px;
+}
+
+.head-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.tags-overview-card {
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  background: #fff;
+  border: 1px solid #e9eff3;
+  border-radius: 12px;
+}
+
+.steward-relations-card {
+  margin-bottom: 16px;
+  padding: 15px 18px;
+  background: #fffdf9;
+  border: 1px solid #ecdcc0;
+  border-radius: 12px;
+}
+
+.steward-relations-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.steward-relations-sub {
+  margin: 4px 0 0;
+  color: #6c7f8c;
+  font-size: 12px;
+}
+
+.steward-relations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.steward-relation-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f5faf8;
+  border: 1px solid #dcebe6;
+  font-size: 12px;
+}
+
+.steward-relation-row.is-cross-team {
+  background: #fdf6ea;
+  border-color: #eedbb9;
+}
+
+.steward-relation-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.steward-relation-name {
+  font-weight: 600;
+  color: #21453d;
+}
+
+.steward-relation-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e2f1ec;
+  color: #1d5d53;
+  font-size: 11px;
+}
+
+.steward-relation-no {
+  color: #5b7783;
+}
+
+.steward-relation-cross {
+  color: #9a6c20;
+  font-weight: 600;
+}
+
+.steward-relation-time {
+  color: #7c8f9c;
+  font-size: 11px;
 }
 
 .profile-card {

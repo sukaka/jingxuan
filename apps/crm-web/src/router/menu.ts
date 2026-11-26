@@ -34,7 +34,7 @@ const ADMIN_MENU: MenuEntry[] = [
   ]),
   group('customer', '客户管理', 'users', [
     item('/customers', '客户中心', 'users', 'customer:read'),
-    item('/customers/merge', '客户查重合并', 'users', 'customer:merge'),
+    item('/customers/merge', '多管家排查', 'users', 'customer:merge'),
     item('/customers/segments', '客户分组', 'users', 'customer:read'),
     item('/customers/tier-reviews', '等级复核', 'shield', 'customer:read'),
     item('/customers/batch-tag-jobs', '批量标签', 'clipboard', 'customer:read'),
@@ -146,7 +146,7 @@ export function visibleMenuItems(
 ): MenuEntry[] {
   const entries = userType === 'INSTITUTION'
     ? INSTITUTION_MENU
-    : roles.includes('MANAGER') && !roles.includes('ADMIN') ? MANAGER_MENU : ADMIN_MENU
+    : roles.includes('MANAGER') && !roles.includes('ADMIN') && !roles.includes('MANAGER_LEAD') ? MANAGER_MENU : ADMIN_MENU
   const allowed = (entry: MenuItem) => {
     if (entry.requiredRoles && !entry.requiredRoles.some((role) => roles.includes(role))) return false
     if (!entry.permission) return !entry.disabled

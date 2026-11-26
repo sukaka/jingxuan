@@ -111,7 +111,9 @@ INSERT INTO sys_permission (tenant_id,permission_code,description) VALUES
   (1,'notification:delivery:retry','通知投递人工重试'),
   (1,'wecom:mapping:manage','企微员工映射与通知开关管理'),
   (1,'followup:policy:manage','跟进间隔策略管理'),
-  (1,'channel:approve_finance','合作渠道财务与佣金变更审批')
+  (1,'channel:approve_finance','合作渠道财务与佣金变更审批'),
+  (1,'customer:tag:manage','客户标签内容维护（新增/修改/停用）'),
+  (1,'customer:source_channel:manage','客户来源与渠道维护（新增/修改/停用/启用）')
   ON DUPLICATE KEY UPDATE description=VALUES(description);
 
 -- ========== 角色→权限映射 ==========
@@ -131,7 +133,7 @@ INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
   SELECT 1,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
   WHERE r.tenant_id=1 AND r.role_code='MANAGER_LEAD' AND p.permission_code IN (
-    'customer:read','customer:write','customer:transfer','customer:merge','customer:points_adjust',
+    'customer:read','customer:write','customer:transfer','customer:merge','customer:points_adjust','customer:tag:manage','customer:source_channel:manage',
     'followup:read','followup:write','task:read','task:write',
     'order:read','order:write','order:confirm_payment','entitlement:read',
     'appointment:read','appointment:write','redemption:read','redemption:submit','redemption:reverse',
@@ -265,3 +267,9 @@ WHERE p.permission_code='followup:policy:manage' AND r.role_code IN ('ADMIN','OP
 INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
 SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
 WHERE p.permission_code='channel:approve_finance' AND r.role_code IN ('ADMIN','FINANCE');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:tag:manage' AND r.role_code IN ('ADMIN','MANAGER_LEAD');
+INSERT IGNORE INTO sys_role_permission (tenant_id,role_id,permission_id)
+SELECT r.tenant_id,r.id,p.id FROM sys_role r JOIN sys_permission p ON p.tenant_id=r.tenant_id
+WHERE p.permission_code='customer:source_channel:manage' AND r.role_code IN ('ADMIN','MANAGER_LEAD');

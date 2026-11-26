@@ -153,6 +153,16 @@
     ORDER BY u.id ASC
   </select>
 
+  <select id="selectStaffProfilesByIds"
+          resultType="com.whale.crm.platform.user.domain.UserRepository$StewardOptionRow">
+    SELECT u.id, u.display_name, u.team_id, t.team_name
+    FROM sys_user u
+    LEFT JOIN sys_team t ON t.tenant_id = u.tenant_id AND t.id = u.team_id
+    WHERE u.tenant_id = #{tenantId}
+      AND u.id IN <foreach collection="userIds" item="uid" open="(" separator="," close=")">#{uid}</foreach>
+    ORDER BY u.id ASC
+  </select>
+
   <select id="selectDefaultOrgId" resultType="long">
     SELECT id FROM sys_org WHERE tenant_id = #{tenantId} AND status = 'ACTIVE' ORDER BY id ASC LIMIT 1
   </select>

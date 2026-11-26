@@ -28,7 +28,8 @@ class ProductionProfileTest {
 
         String seed = resource("db/prod/R__seed_rbac_prod.sql");
         assertThat(seed).contains("'ADMIN'", "'MANAGER'", "'FINANCE'",
-                "'wecom:mapping:manage'", "'followup:policy:manage'", "'channel:approve_finance'");
+                "'wecom:mapping:manage'", "'followup:policy:manage'", "'channel:approve_finance'",
+                "'customer:tag:manage'", "'customer:source_channel:manage'");
         assertThat(seed).doesNotContain("Dev@12345", "INSERT INTO sys_user", "password_hash");
     }
 

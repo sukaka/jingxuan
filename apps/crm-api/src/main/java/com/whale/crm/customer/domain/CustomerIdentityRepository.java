@@ -9,6 +9,10 @@ public interface CustomerIdentityRepository {
 
     List<CustomerIdentity> findByCustomerId(long tenantId, long customerId);
 
+    List<CustomerIdentity> findByCustomerIds(long tenantId, List<Long> customerIds);
+
+    List<CustomerIdentity> findByExternalIds(long tenantId, List<String> externalIds);
+
     void insert(CustomerIdentity identity);
 
     /**

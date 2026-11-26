@@ -26,6 +26,12 @@ vi.mock('../src/api/wecomSidebar', () => ({
 }))
 vi.mock('../src/api/trading', () => ({ listEntitlements: vi.fn() }))
 vi.mock('../src/api/customerTimeline', () => ({ getCustomerTimeline: vi.fn() }))
+vi.mock('../src/api/dictionary', () => ({
+  getDictionaryOptions: vi.fn().mockResolvedValue([
+    { code: 'VIP', label: '贵宾客户', sortNo: 1 },
+    { code: 'TAG_NEW_01', label: '敏感肌', sortNo: 2 },
+  ]),
+}))
 
 let sidebarAllowed = true
 let loggedIn = true

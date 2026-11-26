@@ -22,6 +22,22 @@ public class MybatisCustomerIdentityRepository implements CustomerIdentityReposi
     }
 
     @Override
+    public List<CustomerIdentity> findByCustomerIds(long tenantId, List<Long> customerIds) {
+        if (customerIds == null || customerIds.isEmpty()) {
+            return List.of();
+        }
+        return customerIdentityMapper.selectByCustomerIds(tenantId, customerIds);
+    }
+
+    @Override
+    public List<CustomerIdentity> findByExternalIds(long tenantId, List<String> externalIds) {
+        if (externalIds == null || externalIds.isEmpty()) {
+            return List.of();
+        }
+        return customerIdentityMapper.selectByExternalIds(tenantId, externalIds);
+    }
+
+    @Override
     public void insert(CustomerIdentity identity) {
         customerIdentityMapper.insertIdentity(identity);
     }

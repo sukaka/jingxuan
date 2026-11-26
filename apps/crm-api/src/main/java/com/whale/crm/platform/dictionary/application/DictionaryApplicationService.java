@@ -11,6 +11,7 @@ import com.whale.crm.platform.dictionary.domain.DictionaryRepository;
 import com.whale.crm.platform.dictionary.domain.DictionaryType;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -97,21 +98,48 @@ public class DictionaryApplicationService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<DictionaryItemResponse> listItemsByDictCode(long tenantId, String dictCode) {
+        DictionaryType type = dictionaryRepository.findTypeByCode(tenantId, dictCode)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "字典类型不存在"));
+        return listItemsOfType(tenantId, type.getId());
+    }
+
     @Transactional
     public DictionaryItemResponse createItem(long tenantId, long actorUserId, CreateDictionaryItemRequest request) {
-        DictionaryType type = dictionaryRepository.findTypeByCode(tenantId, request.dictCode())
+        return createItemForType(tenantId, actorUserId, request.dictCode(), request.optionCode(),
+                request.optionLabel(), request.sortNo(), false);
+    }
+
+    @Transactional
+    public DictionaryItemResponse createItemForType(long tenantId, long actorUserId, String dictCode,
+                                                    String optionCode, String optionLabel, Integer sortNo,
+                                                    boolean rejectDuplicateLabel) {
+        DictionaryType type = dictionaryRepository.findTypeByCode(tenantId, dictCode)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "字典类型不存在"));
-        if (dictionaryRepository.existsItemCode(tenantId, type.getId(), request.optionCode())) {
+        String normalizedCode = optionCode.strip();
+        String normalizedLabel = optionLabel.strip();
+        if (dictionaryRepository.existsItemCode(tenantId, type.getId(), normalizedCode)) {
             throw new BusinessException(ErrorCode.CONFLICT, "该字典下选项代码已存在");
+        }
+        if (rejectDuplicateLabel && existsItemLabel(tenantId, type.getId(), normalizedLabel, null)) {
+            String duplicateMessage = "customerTags".equals(dictCode)
+                    ? "标签内容已存在，请更换名称或重新启用已有标签"
+                    : "「" + dictionaryDisplayName(tenantId, dictCode) + "」中该名称已存在，请更换名称或重新启用已有选项";
+            throw new BusinessException(ErrorCode.CONFLICT, duplicateMessage);
         }
         DictionaryItem item = new DictionaryItem();
         item.setTenantId(tenantId);
         item.setDictTypeId(type.getId());
-        item.setOptionCode(request.optionCode());
-        item.setOptionLabel(request.optionLabel());
-        item.setSortNo(request.sortNo() == null ? Integer.valueOf(0) : request.sortNo());
+        item.setOptionCode(normalizedCode);
+        item.setOptionLabel(normalizedLabel);
+        item.setSortNo(sortNo == null ? Integer.valueOf(0) : sortNo);
         item.setStatus(DictionaryItem.STATUS_ACTIVE);
-        dictionaryRepository.insertItem(item);
+        try {
+            dictionaryRepository.insertItem(item);
+        } catch (DuplicateKeyException ex) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该字典下选项代码已存在");
+        }
 
         DictionaryItem persisted = dictionaryRepository.findItemById(tenantId, item.getId()).orElseThrow();
         auditService.record(tenantId, actorUserId, AuditService.ACTION_DICTIONARY_ITEM_CREATE, "DICTIONARY_ITEM",
@@ -124,22 +152,19 @@ public class DictionaryApplicationService {
                                              UpdateDictionaryItemRequest request) {
         DictionaryItem existing = dictionaryRepository.findItemById(tenantId, itemId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "字典项不存在或不可见"));
-        if (!existing.isEditable()) {
-            throw new BusinessException(ErrorCode.CONFLICT, "已归档字典项不可修改");
-        }
-        int updated = dictionaryRepository.updateItem(tenantId, itemId, request.version(),
-                request.optionLabel(), request.sortNo());
-        if (updated == 0) {
-            throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
-        }
-        DictionaryItem after = dictionaryRepository.findItemById(tenantId, itemId).orElseThrow();
         String dictCode = dictionaryRepository.findTypes(tenantId).stream()
-                .filter(type -> type.getId().equals(after.getDictTypeId()))
+                .filter(type -> type.getId().equals(existing.getDictTypeId()))
                 .map(DictionaryType::getDictCode)
                 .findFirst().orElse("-");
-        auditService.record(tenantId, actorUserId, AuditService.ACTION_DICTIONARY_ITEM_UPDATE, "DICTIONARY_ITEM",
-                Long.toString(itemId), itemSnapshot(dictCode, existing), itemSnapshot(dictCode, after), null);
-        return toItemResponse(after);
+        return doUpdateItem(tenantId, actorUserId, dictCode, existing, request, false);
+    }
+
+    @Transactional
+    public DictionaryItemResponse updateItemForType(long tenantId, long actorUserId, String dictCode, long itemId,
+                                                    UpdateDictionaryItemRequest request,
+                                                    boolean rejectDuplicateLabel) {
+        DictionaryItem existing = requireItemOfType(tenantId, dictCode, itemId);
+        return doUpdateItem(tenantId, actorUserId, dictCode, existing, request, rejectDuplicateLabel);
     }
 
     @Transactional
@@ -150,6 +175,74 @@ public class DictionaryApplicationService {
                 .filter(type -> type.getId().equals(existing.getDictTypeId()))
                 .map(DictionaryType::getDictCode)
                 .findFirst().orElse("-");
+        return doDisableItem(tenantId, actorUserId, dictCode, existing);
+    }
+
+    @Transactional
+    public DictionaryItemResponse disableItemForType(long tenantId, long actorUserId, String dictCode, long itemId) {
+        DictionaryItem existing = requireItemOfType(tenantId, dictCode, itemId);
+        return doDisableItem(tenantId, actorUserId, dictCode, existing);
+    }
+
+    @Transactional
+    public DictionaryItemResponse enableItemForType(long tenantId, long actorUserId, String dictCode, long itemId) {
+        DictionaryItem existing = requireItemOfType(tenantId, dictCode, itemId);
+        Map<String, Object> beforeSnapshot = itemSnapshot(dictCode, existing);
+        try {
+            existing.enable();
+        } catch (IllegalStateException ex) {
+            throw new BusinessException(ErrorCode.CONFLICT, "仅已停用的配置项可重新启用（当前状态 "
+                    + existing.getStatus() + "）");
+        }
+        int updated = dictionaryRepository.updateItemStatus(tenantId, itemId,
+                DictionaryItem.STATUS_INACTIVE, DictionaryItem.STATUS_ACTIVE);
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+        }
+        DictionaryItem after = dictionaryRepository.findItemById(tenantId, itemId).orElseThrow();
+        auditService.record(tenantId, actorUserId, AuditService.ACTION_DICTIONARY_ITEM_ENABLE, "DICTIONARY_ITEM",
+                Long.toString(itemId), beforeSnapshot, itemSnapshot(dictCode, after), null);
+        return toItemResponse(after);
+    }
+
+    private DictionaryItem requireItemOfType(long tenantId, String dictCode, long itemId) {
+        DictionaryType type = dictionaryRepository.findTypeByCode(tenantId, dictCode)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "字典类型不存在"));
+        DictionaryItem existing = dictionaryRepository.findItemById(tenantId, itemId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "配置项不存在或不可见"));
+        if (!type.getId().equals(existing.getDictTypeId())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "配置项不存在或不可见");
+        }
+        return existing;
+    }
+
+    private DictionaryItemResponse doUpdateItem(long tenantId, long actorUserId, String dictCode,
+                                                DictionaryItem existing, UpdateDictionaryItemRequest request,
+                                                boolean rejectDuplicateLabel) {
+        if (!existing.isEditable()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "已归档字典项不可修改");
+        }
+        String normalizedLabel = request.optionLabel().strip();
+        if (rejectDuplicateLabel && existsItemLabel(tenantId, existing.getDictTypeId(),
+                normalizedLabel, existing.getId())) {
+            String duplicateMessage = "customerTags".equals(dictCode)
+                    ? "标签内容已存在，请更换名称"
+                    : "「" + dictionaryDisplayName(tenantId, dictCode) + "」中该名称已存在，请更换名称";
+            throw new BusinessException(ErrorCode.CONFLICT, duplicateMessage);
+        }
+        int updated = dictionaryRepository.updateItem(tenantId, existing.getId(), request.version(),
+                normalizedLabel, request.sortNo());
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
+        }
+        DictionaryItem after = dictionaryRepository.findItemById(tenantId, existing.getId()).orElseThrow();
+        auditService.record(tenantId, actorUserId, AuditService.ACTION_DICTIONARY_ITEM_UPDATE, "DICTIONARY_ITEM",
+                Long.toString(existing.getId()), itemSnapshot(dictCode, existing), itemSnapshot(dictCode, after), null);
+        return toItemResponse(after);
+    }
+
+    private DictionaryItemResponse doDisableItem(long tenantId, long actorUserId, String dictCode,
+                                                 DictionaryItem existing) {
         Map<String, Object> beforeSnapshot = itemSnapshot(dictCode, existing);
         try {
             existing.disable();
@@ -157,15 +250,23 @@ public class DictionaryApplicationService {
             throw new BusinessException(ErrorCode.CONFLICT, "仅启用中的字典项可停用（当前状态 "
                     + existing.getStatus() + "）");
         }
-        int updated = dictionaryRepository.updateItemStatus(tenantId, itemId,
+        int updated = dictionaryRepository.updateItemStatus(tenantId, existing.getId(),
                 DictionaryItem.STATUS_ACTIVE, DictionaryItem.STATUS_INACTIVE);
         if (updated == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "数据已被他人修改，请刷新后重试");
         }
-        DictionaryItem after = dictionaryRepository.findItemById(tenantId, itemId).orElseThrow();
+        DictionaryItem after = dictionaryRepository.findItemById(tenantId, existing.getId()).orElseThrow();
         auditService.record(tenantId, actorUserId, AuditService.ACTION_DICTIONARY_ITEM_DISABLE, "DICTIONARY_ITEM",
-                Long.toString(itemId), beforeSnapshot, itemSnapshot(dictCode, after), null);
+                Long.toString(existing.getId()), beforeSnapshot, itemSnapshot(dictCode, after), null);
         return toItemResponse(after);
+    }
+
+    private boolean existsItemLabel(long tenantId, long dictTypeId, String normalizedLabel, Long excludeId) {
+        return dictionaryRepository.findAllItems(tenantId).stream()
+                .filter(item -> item.getDictTypeId() != null && item.getDictTypeId() == dictTypeId)
+                .filter(item -> excludeId == null || !excludeId.equals(item.getId()))
+                .anyMatch(item -> item.getOptionLabel() != null
+                        && item.getOptionLabel().strip().equalsIgnoreCase(normalizedLabel));
     }
 
     private Map<String, Object> itemSnapshot(String dictCode, DictionaryItem item) {

@@ -15,6 +15,8 @@ public record OwnershipHistoryItemResponse(
         Long changedBy,
         String changedByName,
         String reason,
+        String approvalRef,
+        String changeMode,
         Instant effectiveAt,
         Instant createdAt) {
 }

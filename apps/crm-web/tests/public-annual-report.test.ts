@@ -4,18 +4,35 @@ import { routes } from '../src/router'
 import PublicAnnualReportView from '../src/views/PublicAnnualReportView.vue'
 import type { PublicAnnualReport } from '../src/api/annualReport'
 
-const { getPublicMock, telemetryMock, bookingMock, routeParams } = vi.hoisted(() => ({
+const {
+  getPublicMock,
+  getMyMock,
+  telemetryMock,
+  myTelemetryMock,
+  bookingMock,
+  smsSendMock,
+  smsVerifyMock,
+  routeState,
+} = vi.hoisted(() => ({
   getPublicMock: vi.fn(),
+  getMyMock: vi.fn(),
   telemetryMock: vi.fn().mockResolvedValue(undefined),
+  myTelemetryMock: vi.fn().mockResolvedValue(undefined),
   bookingMock: vi.fn(),
-  routeParams: { shareKey: 'B'.repeat(43) },
+  smsSendMock: vi.fn(),
+  smsVerifyMock: vi.fn(),
+  routeState: {
+    name: 'public-annual-report',
+    params: { shareKey: 'B'.repeat(43) } as Record<string, string>,
+    query: {} as Record<string, string>,
+  },
 }))
 
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
   return {
     ...actual,
-    useRoute: () => ({ params: routeParams }),
+    useRoute: () => routeState,
   }
 })
 
@@ -24,8 +41,12 @@ vi.mock('../src/api/annualReport', async () => {
   return {
     ...actual,
     getPublicAnnualReport: getPublicMock,
+    getMyPublicAnnualReport: getMyMock,
     sendPublicAnnualTelemetry: telemetryMock,
+    sendMyPublicAnnualTelemetry: myTelemetryMock,
     submitPublicAnnualBookingIntent: bookingMock,
+    sendPublicAnnualSmsCode: smsSendMock,
+    verifyPublicAnnualSmsCode: smsVerifyMock,
   }
 })
 
@@ -107,13 +128,23 @@ const SAMPLE_REPORT: PublicAnnualReport = {
 
 describe('PublicAnnualReportView & routing', () => {
   beforeEach(() => {
-    routeParams.shareKey = 'B'.repeat(43)
+    routeState.name = 'public-annual-report'
+    routeState.params = { shareKey: 'B'.repeat(43) }
+    routeState.query = {}
     getPublicMock.mockReset()
+    getMyMock.mockReset()
     telemetryMock.mockClear()
+    myTelemetryMock.mockClear()
     bookingMock.mockReset()
+    smsSendMock.mockReset()
+    smsVerifyMock.mockReset()
   })
 
-  it('registers both public H5 and protected management routes', () => {
+  it('registers public shareKey H5, unified entry H5, and protected management routes', () => {
+    const entryRoute = routes.find((r) => r.name === 'public-annual-report-entry')
+    expect(entryRoute?.path).toBe('/h5/annual-reports/entry')
+    expect(entryRoute?.meta?.public).toBe(true)
+
     const publicRoute = routes.find((r) => r.name === 'public-annual-report')
     expect(publicRoute?.path).toBe('/h5/annual-reports/:shareKey')
     expect(publicRoute?.meta?.public).toBe(true)
@@ -155,10 +186,74 @@ describe('PublicAnnualReportView & routing', () => {
   })
 
   it('renders error view cleanly for invalid shareKey', async () => {
-    routeParams.shareKey = 'invalid-short'
+    routeState.params = { shareKey: 'invalid-short' }
     const wrapper = mount(PublicAnnualReportView)
     await flushPromises()
     expect(wrapper.get('[data-testid="public-annual-error"]').text()).toContain('链接无效')
+    wrapper.unmount()
+  })
+
+  it('supports unified entry auto-login and SMS fallback verification', async () => {
+    routeState.name = 'public-annual-report-entry'
+    routeState.params = {}
+    routeState.query = { year: '2026' }
+    getMyMock
+      .mockResolvedValueOnce({
+        authenticated: false,
+        needPhoneBind: true,
+        hasPendingWechat: true,
+        wechatMpEnabled: true,
+        smsEnabled: true,
+        smsMockMode: true,
+        hasOrders: false,
+        authChannel: null,
+        dataSource: null,
+        shareKey: null,
+        report: null,
+      })
+      .mockResolvedValueOnce({
+        authenticated: true,
+        needPhoneBind: false,
+        hasPendingWechat: false,
+        wechatMpEnabled: true,
+        smsEnabled: true,
+        smsMockMode: true,
+        hasOrders: true,
+        authChannel: 'SMS_VERIFY',
+        dataSource: 'YOUZAN_READONLY_SNAPSHOT',
+        shareKey: null,
+        report: SAMPLE_REPORT,
+      })
+    smsSendMock.mockResolvedValue({
+      sent: true,
+      ttlSeconds: 300,
+      cooldownSeconds: 60,
+      mobileMasked: '138****8991',
+      devPreviewCode: '123456',
+    })
+    smsVerifyMock.mockResolvedValue({
+      authenticated: true,
+      matchedProfile: true,
+      wechatBound: true,
+      displayName: '林清晚',
+      message: '验证成功，已自动绑定当前微信',
+    })
+
+    const wrapper = mount(PublicAnnualReportView)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="public-annual-auth-gate"]').text()).toContain('已识别当前微信')
+    await wrapper.get('[data-testid="input-sms-mobile"]').setValue('13800138991')
+    await wrapper.get('[data-testid="btn-sms-send"]').trigger('click')
+    await flushPromises()
+    expect(smsSendMock).toHaveBeenCalledWith('13800138991')
+
+    await wrapper.get('[data-testid="input-sms-code"]').setValue('123456')
+    await wrapper.get('[data-testid="btn-sms-verify"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('林清晚')
+    expect(myTelemetryMock).toHaveBeenCalledWith(2026, expect.objectContaining({ eventType: 'SESSION_OPEN' }), false)
     wrapper.unmount()
   })
 })

@@ -28,11 +28,25 @@ public interface CustomerTransferRepository {
      */
     List<TransferRow> findRowsByCustomerId(long tenantId, long customerId);
 
+    List<ScopedTransferRow> searchScopedRows(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                             String status, Long ownerId, String keyword, int offset, int size);
+
+    long countScopedRows(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                         String status, Long ownerId, String keyword);
+
     record TransferRow(Long id, Long customerId, Long fromOwnerId, String fromOwnerName,
                        Long toOwnerId, String toOwnerName, Long fromTeamId, Long toTeamId,
                        String status, Long requestedBy, String requestedByName, String reason,
                        Long reviewedBy, String reviewedByName, java.time.Instant reviewedAt,
                        String reviewReason, Long baseVersion, java.time.Instant effectiveAt,
                        java.time.Instant createdAt, Long version) {
+    }
+
+    record ScopedTransferRow(Long id, Long customerId, String customerNo, String customerName,
+                             Long fromOwnerId, String fromOwnerName, Long toOwnerId, String toOwnerName,
+                             Long fromTeamId, Long toTeamId, String status, Long requestedBy,
+                             String requestedByName, String reason, Long reviewedBy, String reviewedByName,
+                             java.time.Instant reviewedAt, String reviewReason, Long baseVersion,
+                             java.time.Instant effectiveAt, java.time.Instant createdAt, Long version) {
     }
 }

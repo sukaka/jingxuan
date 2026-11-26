@@ -11,6 +11,12 @@ public interface CustomerIdentityMapper {
 
     List<CustomerIdentity> selectByCustomerId(@Param("tenantId") long tenantId, @Param("customerId") long customerId);
 
+    List<CustomerIdentity> selectByCustomerIds(@Param("tenantId") long tenantId,
+                                               @Param("customerIds") List<Long> customerIds);
+
+    List<CustomerIdentity> selectByExternalIds(@Param("tenantId") long tenantId,
+                                               @Param("externalIds") List<String> externalIds);
+
     int insertIdentity(CustomerIdentity identity);
 
     int deleteById(@Param("tenantId") long tenantId, @Param("id") long id);

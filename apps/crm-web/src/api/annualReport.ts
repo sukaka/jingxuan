@@ -201,6 +201,93 @@ export interface PublicAnnualBookingResult {
   message: string
 }
 
+export interface YouzanAnnualSnapshotSyncInput {
+  shopId: string
+  startDate?: string
+  endDate?: string
+  enrichBuyerProfile?: boolean
+  maxPagesPerWindow?: number
+}
+
+export interface YouzanAnnualSnapshotSyncResult {
+  shopId: string
+  startDate: string
+  endDate: string
+  windowsPulled: number
+  ordersSynced: number
+  paidOrdersSynced: number
+  buyersSynced: number
+  buyersEnriched: number
+  openIdBoundCount: number
+  unionIdBoundCount: number
+  linkedCustomerCount: number
+  warnings: string[]
+  syncedAt: string
+}
+
+export interface YouzanAnnualSnapshotSummary {
+  shopCount: number
+  profileCount: number
+  linkedCustomerCount: number
+  openIdBoundCount: number
+  unionIdBoundCount: number
+  mobileBoundCount: number
+  paidOrderCount: number
+  totalPaymentFen: number
+  unifiedVisitSessions: number
+  lastSyncedAt: string | null
+  unifiedEntryUrl: string
+  wechatMpConfigured: boolean
+  smsEnabled: boolean
+}
+
+export interface YouzanAnnualProfileItem {
+  id: number
+  shopId: string
+  yzOpenIdMasked: string
+  customerId: number | null
+  displayName: string
+  genderHint: AnnualGenderHint
+  mobileMasked: string | null
+  hasWechatOpenId: boolean
+  hasWechatUnionId: boolean
+  orderCount: number
+  totalPaymentFen: number
+  firstOrderAt: string | null
+  lastOrderAt: string | null
+  syncedAt: string
+}
+
+export interface PublicAnnualMeResult {
+  authenticated: boolean
+  needPhoneBind: boolean
+  hasPendingWechat: boolean
+  wechatMpEnabled: boolean
+  smsEnabled: boolean
+  smsMockMode: boolean
+  hasOrders: boolean
+  authChannel: string | null
+  dataSource: string | null
+  shareKey: string | null
+  report: PublicAnnualReport | null
+}
+
+export interface PublicAnnualSmsSendResult {
+  sent: boolean
+  ttlSeconds: number
+  cooldownSeconds: number
+  mobileMasked: string
+  devPreviewCode: string | null
+}
+
+export interface PublicAnnualSmsVerifyResult {
+  authenticated: boolean
+  matchedProfile: boolean
+  wechatBound: boolean
+  displayName: string | null
+  message: string
+}
+
 export const ANNUAL_SHARE_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
 export function isValidAnnualShareKey(shareKey: string): boolean {
@@ -307,6 +394,107 @@ export async function submitPublicAnnualBookingIntent(
   const res = await http.post<ApiResponse<PublicAnnualBookingResult>>(
     `/public/annual-reports/${encodeURIComponent(shareKey)}/booking-intent`,
     body,
+  )
+  return res.data.data
+}
+
+// ---- V60: 有赞历史订单只读快照（B 端）与 C 端统一免密入口 ----
+
+export async function syncYouzanAnnualSnapshots(
+  body: YouzanAnnualSnapshotSyncInput,
+  key: string,
+): Promise<YouzanAnnualSnapshotSyncResult> {
+  const res = await http.post<ApiResponse<YouzanAnnualSnapshotSyncResult>>(
+    '/annual-reports/youzan-snapshots/sync',
+    body,
+    idempotency(key),
+  )
+  return res.data.data
+}
+
+export async function getYouzanAnnualSnapshotSummary(shopId?: string): Promise<YouzanAnnualSnapshotSummary> {
+  const res = await http.get<ApiResponse<YouzanAnnualSnapshotSummary>>(
+    '/annual-reports/youzan-snapshots/summary',
+    { params: shopId ? { shopId } : undefined },
+  )
+  return res.data.data
+}
+
+export async function listYouzanAnnualProfiles(params: {
+  shopId?: string
+  keyword?: string
+  page?: number
+  size?: number
+}): Promise<PageResult<YouzanAnnualProfileItem>> {
+  const res = await http.get<ApiResponse<PageResult<YouzanAnnualProfileItem>>>(
+    '/annual-reports/youzan-snapshots/profiles',
+    { params },
+  )
+  return res.data.data
+}
+
+export function buildWechatAuthorizeUrl(year: number, shopId?: string): string {
+  const params = new URLSearchParams({ year: String(year) })
+  if (shopId) {
+    params.set('shopId', shopId)
+  }
+  return `/api/v1/public/annual-reports/auth/wechat/authorize?${params.toString()}`
+}
+
+export async function getMyPublicAnnualReport(year?: number): Promise<PublicAnnualMeResult> {
+  const res = await http.get<ApiResponse<PublicAnnualMeResult>>('/public/annual-reports/me', {
+    params: year ? { year } : undefined,
+  })
+  return res.data.data
+}
+
+export async function sendPublicAnnualSmsCode(mobile: string): Promise<PublicAnnualSmsSendResult> {
+  const res = await http.post<ApiResponse<PublicAnnualSmsSendResult>>(
+    '/public/annual-reports/auth/sms/send',
+    { mobile },
+  )
+  return res.data.data
+}
+
+export async function verifyPublicAnnualSmsCode(body: {
+  mobile: string
+  code: string
+  reportYear?: number
+  shopId?: string
+}): Promise<PublicAnnualSmsVerifyResult> {
+  const res = await http.post<ApiResponse<PublicAnnualSmsVerifyResult>>(
+    '/public/annual-reports/auth/sms/verify',
+    body,
+  )
+  return res.data.data
+}
+
+export async function logoutPublicAnnualSession(): Promise<void> {
+  await http.post('/public/annual-reports/auth/logout')
+}
+
+export async function sendMyPublicAnnualTelemetry(
+  year: number,
+  payload: PublicAnnualTelemetryPayload,
+  useBeacon = false,
+): Promise<void> {
+  const url = `/api/v1/public/annual-reports/me/telemetry?year=${encodeURIComponent(String(year))}`
+  if (useBeacon && typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' })
+    navigator.sendBeacon(url, blob)
+    return
+  }
+  await http.post(`/public/annual-reports/me/telemetry`, payload, { params: { year } })
+}
+
+export async function submitMyPublicAnnualBookingIntent(
+  year: number,
+  body: { sessionKey: string; note?: string },
+): Promise<PublicAnnualBookingResult> {
+  const res = await http.post<ApiResponse<PublicAnnualBookingResult>>(
+    '/public/annual-reports/me/booking-intent',
+    body,
+    { params: { year } },
   )
   return res.data.data
 }

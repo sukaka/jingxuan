@@ -6,7 +6,7 @@
     <resultMap id="YouzanAnnualProfileMap" type="com.whale.crm.annualreport.domain.YouzanAnnualProfile">
         <constructor>
             <arg column="id" javaType="java.lang.Long"/>
-            <arg column="tenant_id" javaType="long"/>
+            <arg column="tenant_id" javaType="_long"/>
             <arg column="shop_id" javaType="java.lang.String"/>
             <arg column="yz_open_id" javaType="java.lang.String"/>
             <arg column="customer_id" javaType="java.lang.Long"/>
@@ -16,8 +16,8 @@
             <arg column="weixin_union_id_hash" javaType="java.lang.String"/>
             <arg column="mobile_hash" javaType="java.lang.String"/>
             <arg column="mobile_masked" javaType="java.lang.String"/>
-            <arg column="order_count" javaType="int"/>
-            <arg column="total_payment_fen" javaType="long"/>
+            <arg column="order_count" javaType="_int"/>
+            <arg column="total_payment_fen" javaType="_long"/>
             <arg column="first_order_at" javaType="java.time.Instant"/>
             <arg column="last_order_at" javaType="java.time.Instant"/>
             <arg column="synced_at" javaType="java.time.Instant"/>
@@ -29,16 +29,16 @@
     <resultMap id="YouzanAnnualOrderSnapshotMap" type="com.whale.crm.annualreport.domain.YouzanAnnualOrderSnapshot">
         <constructor>
             <arg column="id" javaType="java.lang.Long"/>
-            <arg column="tenant_id" javaType="long"/>
+            <arg column="tenant_id" javaType="_long"/>
             <arg column="shop_id" javaType="java.lang.String"/>
             <arg column="tid" javaType="java.lang.String"/>
             <arg column="yz_open_id" javaType="java.lang.String"/>
             <arg column="order_status" javaType="java.lang.String"/>
-            <arg column="is_paid" javaType="boolean"/>
+            <arg column="is_paid" javaType="_boolean"/>
             <arg column="ordered_at" javaType="java.time.Instant"/>
             <arg column="paid_at" javaType="java.time.Instant"/>
-            <arg column="payment_fen" javaType="long"/>
-            <arg column="refunded_fen" javaType="long"/>
+            <arg column="payment_fen" javaType="_long"/>
+            <arg column="refunded_fen" javaType="_long"/>
             <arg column="title_summary" javaType="java.lang.String"/>
             <arg column="items_json" javaType="java.lang.String"/>
             <arg column="synced_at" javaType="java.time.Instant"/>
@@ -50,7 +50,7 @@
     <resultMap id="H5ClientIdentityBindingMap" type="com.whale.crm.annualreport.domain.H5ClientIdentityBinding">
         <constructor>
             <arg column="id" javaType="java.lang.Long"/>
-            <arg column="tenant_id" javaType="long"/>
+            <arg column="tenant_id" javaType="_long"/>
             <arg column="channel_type" javaType="java.lang.String"/>
             <arg column="openid_hash" javaType="java.lang.String"/>
             <arg column="unionid_hash" javaType="java.lang.String"/>
@@ -67,10 +67,10 @@
     <resultMap id="H5SmsVerificationMap" type="com.whale.crm.annualreport.domain.H5SmsVerification">
         <constructor>
             <arg column="id" javaType="java.lang.Long"/>
-            <arg column="tenant_id" javaType="long"/>
+            <arg column="tenant_id" javaType="_long"/>
             <arg column="mobile_hash" javaType="java.lang.String"/>
             <arg column="code_hash" javaType="java.lang.String"/>
-            <arg column="attempt_count" javaType="int"/>
+            <arg column="attempt_count" javaType="_int"/>
             <arg column="expires_at" javaType="java.time.Instant"/>
             <arg column="consumed_at" javaType="java.time.Instant"/>
             <arg column="created_at" javaType="java.time.Instant"/>
@@ -80,26 +80,26 @@
     <resultMap id="H5UnifiedVisitSessionMap" type="com.whale.crm.annualreport.domain.H5UnifiedVisitSession">
         <constructor>
             <arg column="id" javaType="java.lang.Long"/>
-            <arg column="tenant_id" javaType="long"/>
+            <arg column="tenant_id" javaType="_long"/>
             <arg column="shop_id" javaType="java.lang.String"/>
             <arg column="yz_open_id" javaType="java.lang.String"/>
             <arg column="customer_id" javaType="java.lang.Long"/>
             <arg column="display_name_snapshot" javaType="java.lang.String"/>
-            <arg column="report_year" javaType="int"/>
+            <arg column="report_year" javaType="_int"/>
             <arg column="session_key" javaType="java.lang.String"/>
             <arg column="entry_channel" javaType="java.lang.String"/>
             <arg column="first_open_at" javaType="java.time.Instant"/>
             <arg column="last_active_at" javaType="java.time.Instant"/>
-            <arg column="visible_duration_ms" javaType="long"/>
-            <arg column="max_scene_reached" javaType="int"/>
-            <arg column="viewed_scene_count" javaType="int"/>
+            <arg column="visible_duration_ms" javaType="_long"/>
+            <arg column="max_scene_reached" javaType="_int"/>
+            <arg column="viewed_scene_count" javaType="_int"/>
             <arg column="viewed_scenes_json" javaType="java.lang.String"/>
             <arg column="scene_durations_json" javaType="java.lang.String"/>
-            <arg column="ignited_lamp" javaType="boolean"/>
-            <arg column="opened_order_count" javaType="int"/>
-            <arg column="toggled_privacy" javaType="boolean"/>
-            <arg column="generated_poster" javaType="boolean"/>
-            <arg column="clicked_book_butler" javaType="boolean"/>
+            <arg column="ignited_lamp" javaType="_boolean"/>
+            <arg column="opened_order_count" javaType="_int"/>
+            <arg column="toggled_privacy" javaType="_boolean"/>
+            <arg column="generated_poster" javaType="_boolean"/>
+            <arg column="clicked_book_butler" javaType="_boolean"/>
             <arg column="client_device" javaType="java.lang.String"/>
             <arg column="created_at" javaType="java.time.Instant"/>
             <arg column="updated_at" javaType="java.time.Instant"/>
@@ -109,15 +109,15 @@
     <resultMap id="SnapshotSummaryRowMap"
                type="com.whale.crm.annualreport.domain.YouzanAnnualSnapshotRepository$SnapshotSummaryRow">
         <constructor>
-            <arg column="shop_count" javaType="long"/>
-            <arg column="profile_count" javaType="long"/>
-            <arg column="linked_customer_count" javaType="long"/>
-            <arg column="open_id_bound_count" javaType="long"/>
-            <arg column="union_id_bound_count" javaType="long"/>
-            <arg column="mobile_bound_count" javaType="long"/>
-            <arg column="paid_order_count" javaType="long"/>
-            <arg column="total_payment_fen" javaType="long"/>
-            <arg column="unified_visit_sessions" javaType="long"/>
+            <arg column="shop_count" javaType="_long"/>
+            <arg column="profile_count" javaType="_long"/>
+            <arg column="linked_customer_count" javaType="_long"/>
+            <arg column="open_id_bound_count" javaType="_long"/>
+            <arg column="union_id_bound_count" javaType="_long"/>
+            <arg column="mobile_bound_count" javaType="_long"/>
+            <arg column="paid_order_count" javaType="_long"/>
+            <arg column="total_payment_fen" javaType="_long"/>
+            <arg column="unified_visit_sessions" javaType="_long"/>
             <arg column="last_synced_at" javaType="java.time.Instant"/>
         </constructor>
     </resultMap>

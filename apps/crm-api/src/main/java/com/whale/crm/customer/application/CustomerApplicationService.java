@@ -6,6 +6,8 @@ import com.whale.crm.customer.api.dto.CustomerDetailResponse;
 import com.whale.crm.customer.api.dto.CustomerIdentityItemResponse;
 import com.whale.crm.customer.api.dto.CustomerListItemResponse;
 import com.whale.crm.customer.api.dto.CustomerPointsResponse;
+import com.whale.crm.customer.api.dto.CustomerStewardRelationItemResponse;
+import com.whale.crm.customer.api.dto.CustomerStewardSummaryResponse;
 import com.whale.crm.customer.api.dto.CustomerTimelineItemResponse;
 import com.whale.crm.customer.api.dto.OwnershipHistoryItemResponse;
 import com.whale.crm.customer.api.dto.PointsAdjustmentRequest;
@@ -33,6 +35,7 @@ import com.whale.crm.platform.user.domain.UserRepository;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -74,6 +77,7 @@ public class CustomerApplicationService {
     private final CustomerTierReviewService tierReviewService;
     private final CustomerAttentionProjectRepository attentionProjectRepository;
     private final CustomerProjectSupport projectSupport;
+    private final CustomerUniquenessService uniquenessService;
 
     public CustomerApplicationService(CustomerRepository customerRepository,
                                       CustomerIdentityRepository identityRepository,
@@ -91,6 +95,29 @@ public class CustomerApplicationService {
                                       CustomerTierReviewService tierReviewService,
                                       CustomerAttentionProjectRepository attentionProjectRepository,
                                       CustomerProjectSupport projectSupport) {
+        this(customerRepository, identityRepository, tagRepository, ownerHistoryRepository, pointsLedgerRepository,
+                userRepository, scopeSupport, mobileSupport, auditService, dictionaryService, idempotencyService,
+                objectMapper, stewardDirectory, tierReviewService, attentionProjectRepository, projectSupport, null);
+    }
+
+    @Autowired
+    public CustomerApplicationService(CustomerRepository customerRepository,
+                                      CustomerIdentityRepository identityRepository,
+                                      CustomerTagRepository tagRepository,
+                                      CustomerOwnerHistoryRepository ownerHistoryRepository,
+                                      PointsLedgerRepository pointsLedgerRepository,
+                                      UserRepository userRepository,
+                                      CustomerScopeSupport scopeSupport,
+                                      MobileSupport mobileSupport,
+                                      AuditService auditService,
+                                      DictionaryApplicationService dictionaryService,
+                                      IdempotencyService idempotencyService,
+                                      ObjectMapper objectMapper,
+                                      StewardDirectory stewardDirectory,
+                                      CustomerTierReviewService tierReviewService,
+                                      CustomerAttentionProjectRepository attentionProjectRepository,
+                                      CustomerProjectSupport projectSupport,
+                                      CustomerUniquenessService uniquenessService) {
         this.customerRepository = customerRepository;
         this.identityRepository = identityRepository;
         this.tagRepository = tagRepository;
@@ -107,6 +134,7 @@ public class CustomerApplicationService {
         this.tierReviewService = tierReviewService;
         this.attentionProjectRepository = attentionProjectRepository;
         this.projectSupport = projectSupport;
+        this.uniquenessService = uniquenessService;
     }
 
     @Transactional(readOnly = true)
@@ -122,10 +150,19 @@ public class CustomerApplicationService {
                 ? mobileSupport.hash(mobileSupport.normalize(keyword)) : null;
         CustomerScopeSupport.ScopeQuery query = scopeSupport.queryOf(scope, user);
         int offset = (page - 1) * size;
-        List<CustomerListItemResponse> items = customerRepository
-                .search(tenantId, query.scopeType(), query.teamIds(), query.selfId(), keyword, mobileHashKeyword,
-                        status, cityCode, sourceCode, channelCode, tierCode, ownerId, followupDueBefore, offset, size)
-                .stream().map(this::toListItem).toList();
+        List<CustomerListRow> rows = customerRepository.search(tenantId, query.scopeType(), query.teamIds(),
+                query.selfId(), keyword, mobileHashKeyword, status, cityCode, sourceCode, channelCode, tierCode,
+                ownerId, followupDueBefore, offset, size);
+        Map<Long, CustomerStewardSummaryResponse> stewardSummaries = Map.of();
+        if (uniquenessService != null && uniquenessService.canView(user) && !rows.isEmpty()) {
+            List<Long> rowIds = rows.stream().map(CustomerListRow::getId).toList();
+            List<Customer> pageCustomers = customerRepository.findActiveByIds(tenantId, rowIds);
+            stewardSummaries = uniquenessService.summarizeForCustomers(tenantId, user, pageCustomers);
+        }
+        Map<Long, CustomerStewardSummaryResponse> finalSummaries = stewardSummaries;
+        List<CustomerListItemResponse> items = rows.stream()
+                .map(row -> toListItem(row, finalSummaries.get(row.getId())))
+                .toList();
         long total = customerRepository.countSearch(tenantId, query.scopeType(), query.teamIds(), query.selfId(),
                 keyword, mobileHashKeyword, status, cityCode, sourceCode, channelCode, tierCode, ownerId,
                 followupDueBefore);
@@ -168,6 +205,10 @@ public class CustomerApplicationService {
         validateNewCustomerDictionaryOptions(tenantId, request);
         List<Long> projectIds = normalizeProjectIds(request.projectIds());
         projectSupport.requireExisting(tenantId, projectIds);
+        List<String> tagCodes = normalizeTagCodes(request.tagCodes());
+        for (String code : tagCodes) {
+            dictionaryService.requireActiveOption(tenantId, "customerTags", code);
+        }
 
         Customer customer = new Customer();
         customer.setTenantId(tenantId);
@@ -197,21 +238,30 @@ public class CustomerApplicationService {
         for (Long projectId : projectIds) {
             attentionProjectRepository.insert(tenantId, customer.getId(), projectId, user.userId());
         }
+        for (String code : tagCodes) {
+            tagRepository.insert(tenantId, customer.getId(), code, user.userId());
+        }
+        List<String> persistedTags = tagRepository.findTagCodes(tenantId, customer.getId());
 
         idempotencyService.recordSuccess(tenantId, IDEMPOTENCY_SCOPE_CREATE, idempotencyKey,
                 "CUSTOMER", Long.toString(customer.getId()), payload);
         Customer persisted = customerRepository.findById(tenantId, customer.getId()).orElseThrow();
         auditService.record(tenantId, user.userId(), AuditService.ACTION_CUSTOMER_CREATE, "CUSTOMER",
                 Long.toString(customer.getId()), null, customerSnapshot(persisted), null);
-        return toDetail(persisted, owner.getDisplayName(), List.of(), List.of());
+        return toDetail(persisted, owner.getDisplayName(), persistedTags, List.of());
     }
 
     @Transactional(readOnly = true)
     public CustomerDetailResponse detail(long tenantId, CurrentUser user, long customerId) {
         Customer customer = scopeSupport.requireVisible(tenantId, customerId, user);
+        CustomerStewardSummaryResponse stewardSummary = null;
+        if (uniquenessService != null && uniquenessService.canView(user) && !customer.isDeleted()) {
+            stewardSummary = uniquenessService.summarizeForCustomers(tenantId, user, List.of(customer)).get(customerId);
+        }
         return toDetail(customer, ownerNameOf(tenantId, customer),
                 tagRepository.findTagCodes(tenantId, customerId),
-                identityRepository.findByCustomerId(tenantId, customerId));
+                identityRepository.findByCustomerId(tenantId, customerId),
+                stewardSummary);
     }
 
     @Transactional
@@ -227,6 +277,17 @@ public class CustomerApplicationService {
                     "历史关注项目文本仅作只读保留，请通过标准关注项目列表维护");
         }
         validateChangedCustomerDictionaryOptions(tenantId, request, existing);
+        List<String> beforeTags = null;
+        List<String> targetTags = null;
+        if (request.tagCodes() != null) {
+            beforeTags = tagRepository.findTagCodes(tenantId, customerId);
+            targetTags = normalizeTagCodes(request.tagCodes());
+            for (String code : targetTags) {
+                if (!beforeTags.contains(code)) {
+                    dictionaryService.requireActiveOption(tenantId, "customerTags", code);
+                }
+            }
+        }
         Map<String, Object> beforeSnapshot = customerSnapshot(existing);
 
         Customer updated = new Customer();
@@ -273,12 +334,32 @@ public class CustomerApplicationService {
                 attentionProjectRepository.insert(tenantId, customerId, projectId, user.userId());
             }
         }
+        List<String> afterTags;
+        if (targetTags != null && beforeTags != null) {
+            for (String code : beforeTags) {
+                if (!targetTags.contains(code)) {
+                    tagRepository.delete(tenantId, customerId, code);
+                }
+            }
+            for (String code : targetTags) {
+                if (!beforeTags.contains(code)) {
+                    tagRepository.insert(tenantId, customerId, code, user.userId());
+                }
+            }
+            afterTags = tagRepository.findTagCodes(tenantId, customerId);
+            if (!beforeTags.equals(afterTags)) {
+                auditService.record(tenantId, user.userId(), AuditService.ACTION_CUSTOMER_TAGS_UPDATE, "CUSTOMER",
+                        Long.toString(customerId), Map.of("tagCodes", beforeTags), Map.of("tagCodes", afterTags),
+                        null);
+            }
+        } else {
+            afterTags = tagRepository.findTagCodes(tenantId, customerId);
+        }
         Customer after = customerRepository.findById(tenantId, customerId).orElseThrow();
         tierReviewService.markCustomerChanged(tenantId, customerId, user.userId());
         auditService.record(tenantId, user.userId(), AuditService.ACTION_CUSTOMER_UPDATE, "CUSTOMER",
                 Long.toString(customerId), beforeSnapshot, customerSnapshot(after), null);
-        return toDetail(after, ownerNameOf(tenantId, after),
-                tagRepository.findTagCodes(tenantId, customerId),
+        return toDetail(after, ownerNameOf(tenantId, after), afterTags,
                 identityRepository.findByCustomerId(tenantId, customerId));
     }
 
@@ -287,13 +368,7 @@ public class CustomerApplicationService {
                                               List<String> tagCodes) {
         Customer existing = scopeSupport.requireVisible(tenantId, customerId, user);
         List<String> before = tagRepository.findTagCodes(tenantId, customerId);
-        LinkedHashSet<String> target = new LinkedHashSet<>();
-        for (String code : tagCodes) {
-            if (code == null || code.isBlank()) {
-                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签不能为空");
-            }
-            target.add(code.strip());
-        }
+        List<String> target = normalizeTagCodes(tagCodes);
         for (String code : target) {
             if (!before.contains(code)) {
                 dictionaryService.requireActiveOption(tenantId, "customerTags", code);
@@ -383,7 +458,9 @@ public class CustomerApplicationService {
         return ownerHistoryRepository.findRowsByCustomerId(tenantId, customerId).stream()
                 .map(row -> new OwnershipHistoryItemResponse(row.id(), row.customerId(), row.oldOwnerId(),
                         row.oldOwnerName(), row.newOwnerId(), row.newOwnerName(), row.changedBy(),
-                        row.changedByName(), row.reason(), row.effectiveAt(), row.createdAt()))
+                        row.changedByName(), row.reason(), row.approvalRef(),
+                        CustomerAssignmentApplicationService.resolveChangeMode(row.approvalRef()),
+                        row.effectiveAt(), row.createdAt()))
                 .toList();
     }
 
@@ -418,22 +495,39 @@ public class CustomerApplicationService {
     }
 
     CustomerListItemResponse toListItem(CustomerListRow row) {
+        return toListItem(row, null);
+    }
+
+    CustomerListItemResponse toListItem(CustomerListRow row, CustomerStewardSummaryResponse stewardSummary) {
+        Integer addedStewardCount = stewardSummary != null ? stewardSummary.stewardCount() : null;
+        List<String> addedStewardNames = stewardSummary != null
+                ? stewardSummary.stewards().stream().map(CustomerStewardRelationItemResponse::staffName).toList()
+                : null;
         return new CustomerListItemResponse(row.getId(), row.getCustomerNo(), row.getDisplayName(),
                 row.getNickname(), mobileSupport.maskFromCipher(row.getMobileCipher()), row.getCityCode(),
                 row.getCustomerStatus(), row.getTierCode(), row.getIntentLevel(), row.getOwnerStaffId(),
                 row.getOwnerName(), row.getTeamId(), row.getPointsCached(), row.getLastFollowupAt(),
                 row.getCreatedAt(), row.getVersion(), row.getSourceCode(), row.getChannelCode(), row.getSpendingLevel(),
                 row.getBirthday(), row.getTagCodes(),
-                row.getNextFollowupAt());
+                row.getNextFollowupAt(), addedStewardCount, addedStewardNames);
     }
 
     CustomerDetailResponse toDetail(Customer customer, String ownerName, List<String> tagCodes,
                                     List<CustomerIdentity> identities) {
+        return toDetail(customer, ownerName, tagCodes, identities, null);
+    }
+
+    CustomerDetailResponse toDetail(Customer customer, String ownerName, List<String> tagCodes,
+                                    List<CustomerIdentity> identities,
+                                    CustomerStewardSummaryResponse stewardSummary) {
         List<CustomerIdentityItemResponse> identityItems = identities == null ? List.of()
                 : identities.stream()
                 .map(i -> new CustomerIdentityItemResponse(i.getIdentityType(), i.getSourceApp(),
                         maskExternalId(i.getExternalId()), i.getStatus()))
                 .toList();
+        Integer addedStewardCount = stewardSummary != null ? stewardSummary.stewardCount() : null;
+        List<CustomerStewardRelationItemResponse> addedStewards = stewardSummary != null
+                ? stewardSummary.stewards() : null;
         return new CustomerDetailResponse(customer.getId(), customer.getCustomerNo(), customer.getDisplayName(),
                 customer.getNickname(), mobileSupport.maskFromCipher(customer.getMobileCipher()),
                 customer.getCityCode(), customer.getCustomerStatus(), customer.getTierCode(),
@@ -444,7 +538,8 @@ public class CustomerApplicationService {
                 customer.getBlockerNote(), customer.getRemark(), customer.getRemarkName(),
                 customer.getFirstAddedAt(), customer.getFirstOrderAt(),
                 tagCodes == null ? List.of() : new ArrayList<>(tagCodes), identityItems, customer.isDeleted(),
-                attentionProjectRepository.findProjectIds(customer.getTenantId(), customer.getId()));
+                attentionProjectRepository.findProjectIds(customer.getTenantId(), customer.getId()),
+                addedStewardCount, addedStewards);
     }
 
     /**
@@ -471,6 +566,7 @@ public class CustomerApplicationService {
         snapshot.put("legacyAttentionProjects", customer.getAttentionProjects());
         snapshot.put("attentionProjectIds",
                 attentionProjectRepository.findProjectIds(customer.getTenantId(), customer.getId()));
+        snapshot.put("tagCodes", tagRepository.findTagCodes(customer.getTenantId(), customer.getId()));
         snapshot.put("deleted", customer.isDeleted());
         return snapshot;
     }
@@ -530,6 +626,20 @@ public class CustomerApplicationService {
         if (normalized != null) {
             dictionaryService.requireActiveOption(tenantId, dictCode, normalized);
         }
+    }
+
+    private List<String> normalizeTagCodes(List<String> input) {
+        if (input == null) {
+            return List.of();
+        }
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        for (String code : input) {
+            if (code == null || code.isBlank()) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签不能为空");
+            }
+            codes.add(code.strip());
+        }
+        return List.copyOf(codes);
     }
 
     private List<Long> normalizeProjectIds(List<Long> input) {

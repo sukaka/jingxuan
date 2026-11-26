@@ -29,7 +29,7 @@ public abstract class AbstractMysqlIT {
     protected static final String DEV_PASSWORD = "Dev@12345";
 
     @ServiceConnection
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
+    protected static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
             .withDatabaseName("medical_crm")
             .withUrlParam("connectionTimeZone", "UTC")
             .withCommand("--log-bin-trust-function-creators=1")

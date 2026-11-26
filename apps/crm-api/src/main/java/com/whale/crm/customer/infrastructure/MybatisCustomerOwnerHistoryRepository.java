@@ -7,6 +7,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class MybatisCustomerOwnerHistoryRepository implements CustomerOwnerHistoryRepository {
@@ -28,6 +29,16 @@ public class MybatisCustomerOwnerHistoryRepository implements CustomerOwnerHisto
     }
 
     @Override
+    public Optional<OwnerHistoryRow> findRowById(long tenantId, long id) {
+        return Optional.ofNullable(mapper.selectRowById(tenantId, id));
+    }
+
+    @Override
+    public List<OwnerHistoryRow> findRowsByApprovalRef(long tenantId, String approvalRef) {
+        return mapper.selectRowsByApprovalRef(tenantId, approvalRef);
+    }
+
+    @Override
     public List<OwnerHistoryRow> findRowsByCustomerId(long tenantId, long customerId) {
         return mapper.selectRowsByCustomerId(tenantId, customerId);
     }
@@ -38,5 +49,17 @@ public class MybatisCustomerOwnerHistoryRepository implements CustomerOwnerHisto
                                                               int limit) {
         return mapper.selectTimelineRowsByCustomerId(tenantId, customerId, cursorMode, cursorOccurredAt,
                 cursorSourceId, limit);
+    }
+
+    @Override
+    public List<OwnerHistoryLogRow> searchLogs(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                               Long customerId, Long ownerId, String keyword, int offset, int size) {
+        return mapper.searchLogs(tenantId, scopeType, teamIds, selfId, customerId, ownerId, keyword, offset, size);
+    }
+
+    @Override
+    public long countSearchLogs(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                Long customerId, Long ownerId, String keyword) {
+        return mapper.countSearchLogs(tenantId, scopeType, teamIds, selfId, customerId, ownerId, keyword);
     }
 }

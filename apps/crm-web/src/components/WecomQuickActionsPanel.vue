@@ -87,7 +87,6 @@ const tagOptions = ref<DictionaryOption[]>([...DEFAULT_TAGS])
 const tagsLoaded = ref(false)
 const editingIntent = ref('')
 const editingTags = ref<string[]>([])
-const customTagInput = ref('')
 
 // Quick appointment state
 const appointmentOptions = ref<AppointmentOptionsResponse | null>(null)
@@ -111,6 +110,7 @@ const newDisplayName = ref('')
 const newNickname = ref('')
 const newMobile = ref('')
 const newIntentLevel = ref('')
+const newTagCodes = ref<string[]>([])
 const newRemark = ref('')
 let createCustomerKey = ''
 let pendingCreatedCustomerId: number | null = null
@@ -171,7 +171,6 @@ function tagLabel(code: string): string {
 function syncProfileDraft(): void {
   editingIntent.value = props.customer?.intentLevel ?? ''
   editingTags.value = [...(props.customer?.tagCodes ?? [])]
-  customTagInput.value = ''
 }
 
 watch(
@@ -214,8 +213,15 @@ watch(
     feedback.value = ''
     createCustomerKey = ''
     pendingCreatedCustomerId = null
+    newTagCodes.value = []
   },
 )
+
+watch(unlinkedMode, (mode) => {
+  if (mode === 'CREATE') {
+    void ensureTagsLoaded()
+  }
+})
 
 watch(selectedInstitutionId, () => {
   const first = filteredEntitlements.value[0]
@@ -243,9 +249,7 @@ async function ensureTagsLoaded(): Promise<void> {
   if (tagsLoaded.value) return
   try {
     const loaded = await getDictionaryOptions('customerTags')
-    if (loaded.length) {
-      tagOptions.value = loaded
-    }
+    tagOptions.value = loaded
     tagsLoaded.value = true
   } catch {
     // Keep DEFAULT_TAGS fallback silently
@@ -355,13 +359,12 @@ function togglePresetTag(code: string): void {
   }
 }
 
-function addCustomTag(): void {
-  const value = customTagInput.value.trim()
-  if (!value) return
-  if (!editingTags.value.includes(value)) {
-    editingTags.value = [...editingTags.value, value]
+function toggleNewCustomerTag(code: string): void {
+  if (newTagCodes.value.includes(code)) {
+    newTagCodes.value = newTagCodes.value.filter((item) => item !== code)
+  } else {
+    newTagCodes.value = [...newTagCodes.value, code]
   }
-  customTagInput.value = ''
 }
 
 function removeTag(code: string): void {
@@ -505,6 +508,7 @@ async function createAndBindCustomer(): Promise<void> {
           nickname: newNickname.value.trim() || undefined,
           mobile: newMobile.value.trim() || undefined,
           intentLevel: newIntentLevel.value || undefined,
+          tagCodes: newTagCodes.value.length ? [...newTagCodes.value] : undefined,
           remark: newRemark.value.trim() || undefined,
         },
         createCustomerKey,
@@ -524,6 +528,7 @@ async function createAndBindCustomer(): Promise<void> {
     newNickname.value = ''
     newMobile.value = ''
     newIntentLevel.value = ''
+    newTagCodes.value = []
     newRemark.value = ''
     feedback.value = '新客户已建档并完成企微关联，正在刷新…'
     emit('linked', customerId)
@@ -673,7 +678,7 @@ async function createAndBindCustomer(): Promise<void> {
       </div>
 
       <label>客户标签</label>
-      <div class="qa-pills">
+      <div v-if="tagOptions.length" class="qa-pills">
         <button
           v-for="tag in tagOptions"
           :key="tag.code"
@@ -687,20 +692,8 @@ async function createAndBindCustomer(): Promise<void> {
           {{ tag.label }}
         </button>
       </div>
-
-      <label for="qa-custom-tag">自定义标签</label>
-      <div class="qa-inline-input">
-        <input
-          id="qa-custom-tag"
-          v-model="customTagInput"
-          data-testid="quick-custom-tag-input"
-          maxlength="32"
-          :disabled="busy"
-          placeholder="输入标签后点击添加"
-          @keydown.enter.prevent="addCustomTag"
-        >
-        <button type="button" class="qa-minor" data-testid="quick-custom-tag-add" :disabled="busy || !customTagInput.trim()" @click="addCustomTag">添加</button>
-      </div>
+      <p v-else class="qa-note" data-testid="quick-tags-empty">暂无已启用客户标签，请联系管家主管在标签管理中维护。</p>
+      <p v-if="tagOptions.length" class="qa-note">标签内容由管家主管统一维护，当前仅可选择已有标签。</p>
 
       <div v-if="editingTags.length" class="qa-selected-tags">
         <span v-for="code in editingTags" :key="code" class="qa-tag-chip">
@@ -916,6 +909,22 @@ async function createAndBindCustomer(): Promise<void> {
           <option value="">暂不评估</option>
           <option v-for="opt in INTENT_OPTIONS" :key="opt.code" :value="opt.code">{{ opt.label }}</option>
         </select>
+        <label>客户标签 <small>选填，由管家主管统一维护</small></label>
+        <div v-if="tagOptions.length" class="qa-pills">
+          <button
+            v-for="tag in tagOptions"
+            :key="tag.code"
+            type="button"
+            class="qa-pill"
+            :class="{ selected: newTagCodes.includes(tag.code) }"
+            :data-testid="`unlinked-new-tag-${tag.code}`"
+            :disabled="busy"
+            @click="toggleNewCustomerTag(tag.code)"
+          >
+            {{ tag.label }}
+          </button>
+        </div>
+        <p v-else class="qa-note" data-testid="unlinked-tags-empty">暂无已启用客户标签，请联系管家主管在标签管理中维护。</p>
         <label for="qa-new-remark">建档备注 <small>选填</small></label>
         <textarea
           id="qa-new-remark"

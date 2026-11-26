@@ -20,8 +20,10 @@ class RolePermissionApiIT extends AbstractMysqlIT {
         AuthCookies admin = login("admin");
         mockMvc.perform(get("/api/v1/permissions").cookie(admin.cookies()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(76))
+                .andExpect(jsonPath("$.data.length()").value(78))
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'customer:merge_reverse')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.permissionCode == 'customer:tag:manage')]").isNotEmpty())
+                .andExpect(jsonPath("$.data[?(@.permissionCode == 'customer:source_channel:manage')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'ai:knowledge:config')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'ai:knowledge:publish')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.permissionCode == 'integration:runtime:manage')]").isNotEmpty())
@@ -45,10 +47,11 @@ class RolePermissionApiIT extends AbstractMysqlIT {
         for (var role : roles) {
             switch (role.get("roleCode").asText()) {
                 case "ADMIN" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(76);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(78);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
-                            .contains("redemption:approve", "customer:merge_reverse", "integration:runtime:manage",
+                            .contains("redemption:approve", "customer:merge_reverse", "customer:tag:manage",
+                                    "customer:source_channel:manage", "integration:runtime:manage",
                                     "wecom:mapping:manage", "followup:policy:manage", "channel:approve_finance");
                 }
                 case "OWNER" -> {
@@ -60,12 +63,13 @@ class RolePermissionApiIT extends AbstractMysqlIT {
                             .doesNotContain("ai:knowledge:publish");
                 }
                 case "MANAGER_LEAD" -> {
-                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(36);
+                    org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(38);
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions"))
                             .extracting(node -> node.asText())
                             .contains("redemption:read", "redemption:submit", "redemption:reverse", "ai:write", "ai:confirm",
-                                    "complaint:read", "complaint:write", "wecom:sidebar:view", "quickreply:view")
-                            .doesNotContain("redemption:approve");
+                                    "complaint:read", "complaint:write", "wecom:sidebar:view", "quickreply:view",
+                                    "customer:tag:manage", "customer:source_channel:manage")
+                            .doesNotContain("redemption:approve", "dictionary:write");
                 }
                 case "MANAGER" -> {
                     org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(30);
@@ -73,7 +77,8 @@ class RolePermissionApiIT extends AbstractMysqlIT {
                             .extracting(node -> node.asText())
                             .contains("redemption:read", "redemption:submit", "redemption:reverse", "ai:write",
                                     "complaint:read", "complaint:write", "wecom:sidebar:view", "quickreply:view")
-                            .doesNotContain("redemption:approve");
+                            .doesNotContain("redemption:approve", "customer:tag:manage",
+                                    "customer:source_channel:manage", "dictionary:write");
                 }
                 case "BUSINESS" -> org.assertj.core.api.Assertions.assertThat(role.get("permissions")).hasSize(20);
                 case "OPERATION" -> {

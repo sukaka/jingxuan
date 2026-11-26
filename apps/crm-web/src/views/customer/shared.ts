@@ -73,6 +73,28 @@ export function useDictionaries() {
     return [...active, { code: currentCode, label: `${currentCode}（已停用）`, sortNo: -1, disabled: true }]
   }
 
+  function optionsWithHistoryList(
+    dictCode: string,
+    currentCodes: readonly string[] | null | undefined,
+  ): DictionarySelectOption[] {
+    const active = options(dictCode).map((option) => ({ ...option, disabled: false }))
+    if (!currentCodes?.length) {
+      return active
+    }
+    const activeSet = new Set(active.map((option) => option.code))
+    const extras: DictionarySelectOption[] = []
+    for (const code of currentCodes) {
+      if (!code || activeSet.has(code)) continue
+      activeSet.add(code)
+      const fallback = dictCode === 'customerTags' ? customerTagLabel(code) : null
+      const historicalLabel = loadedMap.value[dictCode]
+        ? (fallback && fallback !== '其他标签' ? `${fallback}（已停用）` : `${code}（已停用）`)
+        : (fallback && fallback !== '其他标签' ? fallback : code)
+      extras.push({ code, label: historicalLabel, sortNo: -1, disabled: true })
+    }
+    return [...active, ...extras]
+  }
+
   function label(dictCode: string, optionCode: string | null | undefined): string {
     if (!optionCode) return '-'
     const hit = optionsMap.value[dictCode]?.find((option) => option.code === optionCode)
@@ -80,5 +102,14 @@ export function useDictionaries() {
     return loadedMap.value[dictCode] ? `${optionCode}（已停用）` : optionCode
   }
 
-  return { optionsMap, load, options, optionsWithHistory, label }
+  function tagLabel(optionCode: string | null | undefined): string {
+    if (!optionCode) return '-'
+    const hit = optionsMap.value.customerTags?.find((option) => option.code === optionCode)
+    if (hit) return hit.label
+    const fallback = customerTagLabel(optionCode)
+    if (fallback !== '其他标签') return fallback
+    return loadedMap.value.customerTags ? `${optionCode}（已停用）` : fallback
+  }
+
+  return { optionsMap, load, options, optionsWithHistory, optionsWithHistoryList, label, tagLabel }
 }

@@ -1,6 +1,7 @@
 package com.whale.crm.platform.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.whale.crm.annualreport.config.AnnualH5Properties;
 import com.whale.crm.platform.security.AuthSecurityProperties;
 import com.whale.crm.platform.security.CryptoProperties;
 import com.whale.crm.platform.security.CsrfValidationFilter;
@@ -38,7 +39,12 @@ import java.nio.charset.StandardCharsets;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@EnableConfigurationProperties({AuthSecurityProperties.class, CryptoProperties.class, PasswordPolicyProperties.class})
+@EnableConfigurationProperties({
+        AuthSecurityProperties.class,
+        CryptoProperties.class,
+        PasswordPolicyProperties.class,
+        AnnualH5Properties.class
+})
 public class SecurityConfig {
 
     private final ObjectMapper objectMapper;
@@ -92,8 +98,19 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/wecom/oauth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/integrations/refunds/*/callback").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/public/h5-cards/*").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/public/annual-reports/*").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/public/annual-reports/*/telemetry",
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/v1/public/annual-reports/auth/config",
+                                "/api/v1/public/annual-reports/auth/wechat/authorize",
+                                "/api/v1/public/annual-reports/auth/wechat/callback",
+                                "/api/v1/public/annual-reports/me",
+                                "/api/v1/public/annual-reports/*").permitAll()
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/v1/public/annual-reports/auth/sms/send",
+                                "/api/v1/public/annual-reports/auth/sms/verify",
+                                "/api/v1/public/annual-reports/auth/logout",
+                                "/api/v1/public/annual-reports/me/telemetry",
+                                "/api/v1/public/annual-reports/me/booking-intent",
+                                "/api/v1/public/annual-reports/*/telemetry",
                                 "/api/v1/public/annual-reports/*/booking-intent").permitAll()
                         .requestMatchers(
                                 "/api/v1/auth/login", "/api/v1/auth/captcha",

@@ -1,9 +1,13 @@
 package com.whale.crm.customer.api;
 
+import com.whale.crm.customer.api.dto.AssignCustomerOwnerRequest;
+import com.whale.crm.customer.api.dto.BatchAssignCustomerOwnerRequest;
+import com.whale.crm.customer.api.dto.BatchAssignCustomerOwnerResponse;
 import com.whale.crm.customer.api.dto.CreateCustomerRequest;
 import com.whale.crm.customer.api.dto.CreateTransferRequest;
 import com.whale.crm.customer.api.dto.CustomerDetailResponse;
 import com.whale.crm.customer.api.dto.CustomerListItemResponse;
+import com.whale.crm.customer.api.dto.CustomerOwnerAssignmentResponse;
 import com.whale.crm.customer.api.dto.CustomerPointsResponse;
 import com.whale.crm.customer.api.dto.OwnershipHistoryItemResponse;
 import com.whale.crm.customer.api.dto.PointsAdjustmentRequest;
@@ -11,6 +15,7 @@ import com.whale.crm.customer.api.dto.TransferItemResponse;
 import com.whale.crm.customer.api.dto.UpdateCustomerRequest;
 import com.whale.crm.customer.api.dto.UpdateCustomerTagsRequest;
 import com.whale.crm.customer.application.CustomerApplicationService;
+import com.whale.crm.customer.application.CustomerAssignmentApplicationService;
 import com.whale.crm.customer.application.TransferApplicationService;
 import com.whale.crm.platform.context.TenantContext;
 import com.whale.crm.platform.security.SecuritySupport;
@@ -52,11 +57,14 @@ public class CustomerController {
 
     private final CustomerApplicationService customerService;
     private final TransferApplicationService transferService;
+    private final CustomerAssignmentApplicationService assignmentService;
 
     public CustomerController(CustomerApplicationService customerService,
-                              TransferApplicationService transferService) {
+                              TransferApplicationService transferService,
+                              CustomerAssignmentApplicationService assignmentService) {
         this.customerService = customerService;
         this.transferService = transferService;
+        this.assignmentService = assignmentService;
     }
 
     @GetMapping
@@ -155,6 +163,27 @@ public class CustomerController {
         TransferItemResponse created = transferService.create(TenantContext.currentTenantId(),
                 SecuritySupport.requireCurrentUser(), id, body);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(created, requestId(request)));
+    }
+
+    @PostMapping("/{id}/owner-assignment")
+    @PreAuthorize("hasAuthority('customer:transfer')")
+    public ApiResponse<CustomerOwnerAssignmentResponse> assignOwner(
+            @PathVariable long id,
+            @Valid @RequestBody AssignCustomerOwnerRequest body,
+            @RequestHeader(name = "Idempotency-Key", required = false) @Size(max = 128) String idempotencyKey,
+            HttpServletRequest request) {
+        return ApiResponse.ok(assignmentService.assignOwner(TenantContext.currentTenantId(),
+                SecuritySupport.requireCurrentUser(), id, body, idempotencyKey), requestId(request));
+    }
+
+    @PostMapping("/owner-assignments/batch")
+    @PreAuthorize("hasAuthority('customer:transfer')")
+    public ApiResponse<BatchAssignCustomerOwnerResponse> batchAssignOwners(
+            @Valid @RequestBody BatchAssignCustomerOwnerRequest body,
+            @RequestHeader(name = "Idempotency-Key", required = false) @Size(max = 128) String idempotencyKey,
+            HttpServletRequest request) {
+        return ApiResponse.ok(assignmentService.batchAssignOwners(TenantContext.currentTenantId(),
+                SecuritySupport.requireCurrentUser(), body, idempotencyKey), requestId(request));
     }
 
     private String requestId(HttpServletRequest request) {

@@ -34,6 +34,16 @@ public class DictionaryItem {
         this.status = STATUS_INACTIVE;
     }
 
+    /**
+     * 仅 INACTIVE 可重新启用；已启用或已归档视为状态冲突。
+     */
+    public void enable() {
+        if (!STATUS_INACTIVE.equals(status)) {
+            throw new IllegalStateException("仅已停用的字典项可重新启用");
+        }
+        this.status = STATUS_ACTIVE;
+    }
+
     public boolean isEditable() {
         return !STATUS_ARCHIVED.equals(status);
     }

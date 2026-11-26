@@ -73,6 +73,14 @@ public interface CustomerRepository {
     List<DuplicateIdentityGroup> findDuplicateIdentityGroups(long tenantId, String scopeType, List<Long> teamIds,
                                                              long selfId);
 
+    List<Customer> findActiveByIds(long tenantId, List<Long> ids);
+
+    List<Customer> findActiveByMobileHashes(long tenantId, List<String> mobileHashes);
+
+    List<String> findTenantDuplicatedMobileHashes(long tenantId);
+
+    List<String> findTenantDuplicatedIdentityExternalIds(long tenantId);
+
     /**
      * 查重候选分组投影。
      */

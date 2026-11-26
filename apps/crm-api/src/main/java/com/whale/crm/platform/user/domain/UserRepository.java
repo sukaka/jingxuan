@@ -58,6 +58,8 @@ public interface UserRepository {
     List<StewardOptionRow> findStewardOptions(long tenantId, java.util.Collection<String> roleCodes,
                                               Long teamIdEq, Long userIdEq);
 
+    List<StewardOptionRow> findStaffProfilesByIds(long tenantId, List<Long> userIds);
+
     /**
      * 管家选项投影（含团队名）。
      */

@@ -53,6 +53,9 @@ info:
     personalized copywriting engine (POETIC/CLINICAL/MINIMAL with medical claim guard),
     public read-only view/telemetry/booking-intent APIs (zero PII/internal ID leakage, booking intent
     creates only a deduplicated butler FOLLOWUP task) and scoped B-end summary/session analytics.
+    V60: Youzan read-only historical order & buyer profile snapshots (strictly isolated from crm_order
+    and entitlement ledger) plus unified C-end auto-login entry via WeChat Service Account silent OAuth2
+    (snsapi_base, /sns/oauth2/access_token only) and optional SMS fallback verification with blind indexes.
 servers:
   - url: http://localhost:8080/api/v1
 security:
@@ -884,7 +887,7 @@ paths:
       summary: 客户详情（customer:read + 范围；范围外 404 不泄露存在性）
       parameters: [{name: id, in: path, required: true, schema: {type: integer, format: int64}}]
       responses:
-        '200': {description: 详情（手机号仅 mobileMasked）}
+        '200': {description: 详情（手机号仅 mobileMasked；仅具备 customer:merge 权限时额外返回 addedStewardCount 与 addedStewards，跨团队管家仅返回姓名/团队汇总）}
         '404': {$ref: '#/components/responses/NotFound'}
     patch:
       tags: [Customers]
@@ -902,7 +905,7 @@ paths:
   /customers/{id}/tags:
     put:
       tags: [Customers]
-      summary: 全量替换客户标签（customer:write + 范围；审计 before/after）
+      summary: 全量替换客户标签（customer:write + 范围；审计 before/after；新增标签须为启用中 customerTags）
       parameters: [{name: id, in: path, required: true, schema: {type: integer, format: int64}}]
       requestBody:
         required: true
@@ -911,6 +914,228 @@ paths:
             schema: {$ref: '#/components/schemas/UpdateCustomerTags'}
       responses:
         '200': {description: 已替换，返回详情}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-tags:
+    get:
+      tags: [Customers]
+      summary: 查询全部状态客户标签库（customer:tag:manage，管家主管/系统管理员）
+      responses:
+        '200': {description: 客户标签配置项列表（含 ACTIVE/INACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Customers]
+      summary: 新增客户标签内容（customer:tag:manage）；optionCode 选填留空自动生成，optionLabel 去重校验
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateCustomerTag'}
+      responses:
+        '201': {description: 已创建（ACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-tags/{id}:
+    patch:
+      tags: [Customers]
+      summary: 修改客户标签内容或排序（customer:tag:manage）；body.version 乐观锁，仅限 customerTags 类型
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateCustomerTag'}
+      responses:
+        '200': {description: 已更新}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-tags/{id}/disable:
+    post:
+      tags: [Customers]
+      summary: 停用客户标签（customer:tag:manage）；不可新选，历史客户标签不受影响
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '200': {description: 已停用（INACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-tags/{id}/enable:
+    post:
+      tags: [Customers]
+      summary: 重新启用已停用客户标签（customer:tag:manage）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '200': {description: 已启用（ACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-sources:
+    get:
+      tags: [Customers]
+      summary: 查询全部状态客户来源选项（customer:source_channel:manage，管家主管/系统管理员）
+      responses:
+        '200': {description: 客户来源配置项列表（含 ACTIVE/INACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Customers]
+      summary: 新增客户来源选项（customer:source_channel:manage）；普通管家仅可下拉选择
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateCustomerOption'}
+      responses:
+        '201': {description: 已创建（ACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-sources/{id}:
+    patch:
+      tags: [Customers]
+      summary: 修改客户来源名称与排序（customer:source_channel:manage）；body.version 乐观锁
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateCustomerOption'}
+      responses:
+        '200': {description: 已更新}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-sources/{id}/disable:
+    post:
+      tags: [Customers]
+      summary: 停用客户来源（customer:source_channel:manage）；不可新选，历史客户不受影响
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '200': {description: 已停用（INACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-sources/{id}/enable:
+    post:
+      tags: [Customers]
+      summary: 重新启用已停用客户来源（customer:source_channel:manage）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '200': {description: 已启用（ACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-channels:
+    get:
+      tags: [Customers]
+      summary: 查询全部状态客户渠道选项（customer:source_channel:manage，管家主管/系统管理员）
+      responses:
+        '200': {description: 客户渠道配置项列表（含 ACTIVE/INACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Customers]
+      summary: 新增客户渠道选项（customer:source_channel:manage）；普通管家仅可下拉选择
+      parameters: [{$ref: '#/components/parameters/CsrfToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateCustomerOption'}
+      responses:
+        '201': {description: 已创建（ACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-channels/{id}:
+    patch:
+      tags: [Customers]
+      summary: 修改客户渠道名称与排序（customer:source_channel:manage）；body.version 乐观锁
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateCustomerOption'}
+      responses:
+        '200': {description: 已更新}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-channels/{id}/disable:
+    post:
+      tags: [Customers]
+      summary: 停用客户渠道（customer:source_channel:manage）；不可新选，历史客户不受影响
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '200': {description: 已停用（INACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-channels/{id}/enable:
+    post:
+      tags: [Customers]
+      summary: 重新启用已停用客户渠道（customer:source_channel:manage）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '200': {description: 已启用（ACTIVE）}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-uniqueness/summary:
+    get:
+      tags: [Customers]
+      summary: 客户唯一性多管家排查汇总统计（customer:merge，只读不合并）
+      responses:
+        '200':
+          description: 多管家客户总数、跨团队重复数与最高管家数
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MultiStewardSummary'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /customer-uniqueness/multi-stewards:
+    get:
+      tags: [Customers]
+      summary: 分页排查同一顾客添加多位管家明细（customer:merge，只读不合并；跨组仅返回管家与团队汇总）
+      parameters:
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: keyword, in: query, schema: {type: string, maxLength: 64}}
+        - {name: minStewards, in: query, schema: {type: integer, minimum: 2, maximum: 50, default: 2}}
+        - {name: crossTeamOnly, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200': {description: 多管家顾客分组分页列表}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /customers/{id}/steward-relations:
+    get:
+      tags: [Customers]
+      summary: 单客户视角查询同一顾客添加的全部管家明细（customer:merge，跨组仅汇总；越权 404）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+      responses:
+        '200':
+          description: 该顾客关联的全部管家列表及汇总计数
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CustomerStewardSummary'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
   /customers/{id}/points:
     get:
@@ -1159,6 +1384,88 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /customers/{id}/owner-assignment:
+    post:
+      tags: [CustomerTransfers]
+      operationId: assignCustomerOwner
+      summary: 主管/管理员直接分配单个客户给目标管家（customer:transfer；立即生效并追加不可修改归属历史与审计）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {name: Idempotency-Key, in: header, required: false, schema: {type: string, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssignCustomerOwnerRequest'}
+      responses:
+        '200':
+          description: 分配生效（或同幂等键回放）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CustomerOwnerAssignmentEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customers/owner-assignments/batch:
+    post:
+      tags: [CustomerTransfers]
+      operationId: batchAssignCustomerOwners
+      summary: 主管/管理员批量分配客户给目标管家（customer:transfer；最多 100 位，同事务按 ID 升序加锁原子生效，跳过原已归属客户）
+      parameters:
+        - {name: Idempotency-Key, in: header, required: false, schema: {type: string, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BatchAssignCustomerOwnerRequest'}
+      responses:
+        '200':
+          description: 批量分配结果（含 batchRef 与逐客分配/跳过明细）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BatchAssignCustomerOwnerEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /customer-ownership-history:
+    get:
+      tags: [CustomerTransfers]
+      operationId: listCustomerOwnershipHistory
+      summary: 分页查询已生效客户归属变更日志（customer:read + 行级数据范围，覆盖直接分配/批量分配/转交审批）
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - {name: customerId, in: query, required: false, schema: {type: integer, format: int64}}
+        - {name: ownerId, in: query, required: false, schema: {type: integer, format: int64}}
+        - {name: keyword, in: query, required: false, schema: {type: string, maxLength: 64}}
+      responses:
+        '200':
+          description: 已生效归属变更分页列表
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CustomerOwnershipLogPageEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /customer-ownership-transfers:
+    get:
+      tags: [CustomerTransfers]
+      operationId: listScopedCustomerOwnershipTransfers
+      summary: 分页查询客户转交审批单（customer:read + 行级数据范围）
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - {name: status, in: query, required: false, schema: {type: string, maxLength: 32}}
+        - {name: ownerId, in: query, required: false, schema: {type: integer, format: int64}}
+        - {name: keyword, in: query, required: false, schema: {type: string, maxLength: 64}}
+      responses:
+        '200':
+          description: 转交审批单分页列表
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /customers/{id}/ownership-transfers:
     get:
       tags: [CustomerTransfers]
@@ -2503,6 +2810,150 @@ paths:
         '200': {description: 预约意向已通知专属管家, content: {application/json: {schema: {$ref: '#/components/schemas/PublicAnnualBookingEnvelope'}}}}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /annual-reports/youzan-snapshots/sync:
+    post:
+      tags: [AnnualReport]
+      operationId: syncYouzanAnnualSnapshots
+      summary: 拉取有赞历史订单只读快照与买家身份镜像（integration:youzan:manage + CSRF + 幂等）
+      description: 仅写入只读快照表供年终 H5 展示，严禁写入 crm_order 或发放权益；自动按 <=89 天切分时间窗。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [shopId], properties: {shopId: {type: string}, startDate: {type: string}, endDate: {type: string}, enrichBuyerProfile: {type: boolean}, maxPagesPerWindow: {type: integer}}}}}
+      responses:
+        '200': {description: 同步汇总结果, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /annual-reports/youzan-snapshots/summary:
+    get:
+      tags: [AnnualReport]
+      operationId: getYouzanAnnualSnapshotSummary
+      summary: 查询有赞只读快照汇总与 C 端统一入口配置状态（integration:youzan:manage 或 customer:read）
+      parameters:
+        - {name: shopId, in: query, schema: {type: string}}
+      responses:
+        '200': {description: 汇总统计与配置状态, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /annual-reports/youzan-snapshots/profiles:
+    get:
+      tags: [AnnualReport]
+      operationId: listYouzanAnnualProfiles
+      summary: 分页查询脱敏的有赞买家年度只读镜像（integration:youzan:manage 或 customer:read）
+      parameters:
+        - {name: shopId, in: query, schema: {type: string}}
+        - {name: keyword, in: query, schema: {type: string}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        '200': {description: 脱敏买家列表（不含明文手机号与明文 OpenID）, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /public/annual-reports/auth/config:
+    get:
+      tags: [AnnualReport]
+      operationId: getPublicAnnualAuthConfig
+      summary: 查询 C 端统一免密入口能力开关（服务号静默授权/预留短信开关）
+      security: []
+      responses:
+        '200': {description: 公开能力开关（无密钥）, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}}
+  /public/annual-reports/auth/wechat/authorize:
+    get:
+      tags: [AnnualReport]
+      operationId: startPublicAnnualWechatOAuth
+      summary: 发起微信服务号静默网页授权（scope=snsapi_base）
+      security: []
+      parameters:
+        - {name: year, in: query, schema: {type: integer, minimum: 2020, maximum: 2099}}
+        - {name: shopId, in: query, schema: {type: string}}
+      responses:
+        '302': {description: 重定向至微信官方网页静默授权页}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /public/annual-reports/auth/wechat/callback:
+    get:
+      tags: [AnnualReport]
+      operationId: handlePublicAnnualWechatCallback
+      summary: 微信服务号静默授权回调（仅调 /sns/oauth2/access_token，签发 C 端独立 HttpOnly Cookie）
+      security: []
+      parameters:
+        - {name: code, in: query, required: true, schema: {type: string}}
+        - {name: state, in: query, required: true, schema: {type: string}}
+      responses:
+        '302': {description: 重定向回统一 H5 入口}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /public/annual-reports/auth/sms/send:
+    post:
+      tags: [AnnualReport]
+      operationId: sendPublicAnnualSmsCode
+      summary: 发送 C 端兜底手机号 6 位验证码（默认关闭，按开关启用）
+      security: []
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [mobile], properties: {mobile: {type: string}}}}}
+      responses:
+        '200': {description: 发送回执, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /public/annual-reports/auth/sms/verify:
+    post:
+      tags: [AnnualReport]
+      operationId: verifyPublicAnnualSmsCode
+      summary: 校验兜底手机号验证码并永久绑定待确认微信 OpenID
+      security: []
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [mobile, code], properties: {mobile: {type: string}, code: {type: string}, reportYear: {type: integer}, shopId: {type: string}}}}}
+      responses:
+        '200': {description: 验证结果并签发 C 端 HttpOnly Cookie, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+  /public/annual-reports/auth/logout:
+    post:
+      tags: [AnnualReport]
+      operationId: logoutPublicAnnualSession
+      summary: 退出当前 C 端 H5 访客会话 Cookie
+      security: []
+      responses:
+        '200': {description: 已退出, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}}
+  /public/annual-reports/me:
+    get:
+      tags: [AnnualReport]
+      operationId: getMyPublicAnnualReport
+      summary: 基于 C 端专属 Cookie 获取当前客户本人年度购买轨迹 H5
+      security: []
+      parameters:
+        - {name: year, in: query, schema: {type: integer, minimum: 2020, maximum: 2099}}
+      responses:
+        '200': {description: 登录状态与本人年度报告快照, content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}}
+  /public/annual-reports/me/telemetry:
+    post:
+      tags: [AnnualReport]
+      operationId: recordMyPublicAnnualTelemetry
+      summary: 统一入口上报当前登录客户的浏览时长、页数与转化埋点
+      security: []
+      parameters:
+        - {name: year, in: query, schema: {type: integer, minimum: 2020, maximum: 2099}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PublicAnnualTelemetryRequest'}}}
+      responses:
+        '200': {description: 埋点入库回执, content: {application/json: {schema: {$ref: '#/components/schemas/PublicAnnualTelemetryEnvelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /public/annual-reports/me/booking-intent:
+    post:
+      tags: [AnnualReport]
+      operationId: submitMyPublicAnnualBookingIntent
+      summary: 统一入口提交当前登录客户的管家预约意向
+      security: []
+      parameters:
+        - {name: year, in: query, schema: {type: integer, minimum: 2020, maximum: 2099}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PublicAnnualBookingRequest'}}}
+      responses:
+        '200': {description: 预约意向回执, content: {application/json: {schema: {$ref: '#/components/schemas/PublicAnnualBookingEnvelope'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
   /ai/replies/generate:
     post:
       tags: [AI]
@@ -8497,6 +8948,8 @@ components:
         remarkName: {type: string, nullable: true}
         firstAddedAt: {type: string, format: date-time, nullable: true, description: 必须带 UTC 或本地时区 offset}
         ownerStaffId: {type: integer, format: int64, nullable: true, description: MANAGER/MANAGER_LEAD 缺省本人；其他角色必选且只能是合格管家}
+        projectIds: {type: array, maxItems: 100, items: {type: integer, format: int64}, nullable: true}
+        tagCodes: {type: array, maxItems: 50, items: {type: string, maxLength: 64}, nullable: true, description: 建档时可选客户标签，须全部为启用中的 customerTags 字典项}
       description: nickname/displayName 至少其一（服务端校验）；归属必须是 ACTIVE 且在当前范围内可分配的 MANAGER/MANAGER_LEAD。
     OwnerOption:
       type: object
@@ -8752,12 +9205,71 @@ components:
         blockerNote: {type: string}
         remark: {type: string}
         version: {type: integer, format: int64}
+        projectIds: {type: array, maxItems: 100, items: {type: integer, format: int64}, nullable: true}
+        tagCodes: {type: array, maxItems: 50, items: {type: string, maxLength: 64}, nullable: true, description: 传入时全量替换客户标签（新增标签须为启用中 customerTags，保留既有历史标签）；未传则不修改}
       description: PATCH 白名单；未传字段保持不变。
     UpdateCustomerTags:
       type: object
       required: [tagCodes]
       properties:
         tagCodes: {type: array, maxItems: 50, items: {type: string, maxLength: 64}}
+    CreateCustomerTag:
+      type: object
+      required: [optionLabel]
+      properties:
+        optionCode: {type: string, pattern: '[A-Za-z0-9_-]{1,64}', nullable: true, description: 选填；留空由服务端自动生成不可变标签编码}
+        optionLabel: {type: string, minLength: 1, maxLength: 64}
+        sortNo: {type: integer, minimum: 0, maximum: 999999, default: 0}
+    UpdateCustomerTag:
+      type: object
+      required: [optionLabel, sortNo, version]
+      properties:
+        optionLabel: {type: string, minLength: 1, maxLength: 64}
+        sortNo: {type: integer, minimum: 0, maximum: 999999}
+        version: {type: integer, format: int64, minimum: 0}
+    CreateCustomerOption:
+      type: object
+      required: [optionLabel]
+      properties:
+        optionCode: {type: string, pattern: '[A-Za-z0-9_-]{1,64}', nullable: true, description: 选填；留空自动生成 SRC_/CHN_ 不可变编码}
+        optionLabel: {type: string, minLength: 1, maxLength: 64}
+        sortNo: {type: integer, minimum: 0, maximum: 999999, default: 0}
+    UpdateCustomerOption:
+      type: object
+      required: [optionLabel, sortNo, version]
+      properties:
+        optionLabel: {type: string, minLength: 1, maxLength: 64}
+        sortNo: {type: integer, minimum: 0, maximum: 999999}
+        version: {type: integer, format: int64, minimum: 0}
+    CustomerStewardRelationItem:
+      type: object
+      properties:
+        staffUserId: {type: integer, format: int64}
+        staffName: {type: string}
+        teamId: {type: integer, format: int64, nullable: true}
+        teamName: {type: string, nullable: true}
+        inMyScope: {type: boolean, description: 为 false 表示跨团队管家，此时 customerId/customerNo/customerName 均为 null}
+        customerId: {type: integer, format: int64, nullable: true}
+        customerNo: {type: string, nullable: true}
+        customerName: {type: string, nullable: true}
+        relationTypes: {type: array, items: {type: string, enum: [CUSTOMER_OWNER, WECOM_FOLLOW]}}
+        addedAt: {type: string, format: date-time, nullable: true}
+    CustomerStewardSummary:
+      type: object
+      properties:
+        customerId: {type: integer, format: int64}
+        stewardCount: {type: integer}
+        inScopeStewardCount: {type: integer}
+        crossTeamStewardCount: {type: integer}
+        matchReasons: {type: array, items: {type: string, enum: [MOBILE_HASH, IDENTITY, WECOM_CONTACT]}}
+        evidenceMasked: {type: string, nullable: true}
+        stewards: {type: array, items: {$ref: '#/components/schemas/CustomerStewardRelationItem'}}
+    MultiStewardSummary:
+      type: object
+      properties:
+        multiStewardCustomerCount: {type: integer, format: int64}
+        crossTeamCustomerCount: {type: integer, format: int64}
+        maxStewardCount: {type: integer}
     PointsAdjustment:
       type: object
       required: [delta, reasonCode]
@@ -8793,6 +9305,12 @@ components:
           items: {type: string, maxLength: 64}
           description: 当前客户标签编码集合；无标签为空数组
         nextFollowupAt: {type: string, format: date-time, nullable: true}
+        addedStewardCount: {type: integer, nullable: true, description: 仅 customer:merge 权限返回，同一顾客当前添加管家总数}
+        addedStewardNames:
+          type: array
+          nullable: true
+          items: {type: string}
+          description: 仅 customer:merge 权限返回，同一顾客当前添加管家姓名列表
     CreateMergeCase:
       type: object
       required: [primaryCustomerId, secondaryCustomerId]
@@ -8875,6 +9393,122 @@ components:
       properties:
         version: {type: integer, format: int64}
         reason: {type: string, maxLength: 500}
+    AssignCustomerOwnerRequest:
+      type: object
+      required: [newOwnerId, reason, version]
+      properties:
+        newOwnerId: {type: integer, format: int64, minimum: 1}
+        reason: {type: string, minLength: 1, maxLength: 500}
+        version: {type: integer, format: int64, minimum: 0}
+    CustomerOwnerAssignmentResponse:
+      type: object
+      properties:
+        historyId: {type: integer, format: int64}
+        customerId: {type: integer, format: int64}
+        customerNo: {type: string}
+        customerName: {type: string}
+        oldOwnerId: {type: integer, format: int64}
+        oldOwnerName: {type: string, nullable: true}
+        newOwnerId: {type: integer, format: int64}
+        newOwnerName: {type: string, nullable: true}
+        oldTeamId: {type: integer, format: int64, nullable: true}
+        newTeamId: {type: integer, format: int64, nullable: true}
+        changedBy: {type: integer, format: int64}
+        changedByName: {type: string, nullable: true}
+        reason: {type: string}
+        approvalRef: {type: string}
+        effectiveAt: {type: string, format: date-time}
+        customerVersion: {type: integer, format: int64}
+    CustomerOwnerAssignmentEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/CustomerOwnerAssignmentResponse'}
+    BatchAssignCustomerOwnerItem:
+      type: object
+      required: [customerId, version]
+      properties:
+        customerId: {type: integer, format: int64, minimum: 1}
+        version: {type: integer, format: int64, minimum: 0}
+    BatchAssignCustomerOwnerRequest:
+      type: object
+      required: [items, newOwnerId, reason]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: {$ref: '#/components/schemas/BatchAssignCustomerOwnerItem'}
+        newOwnerId: {type: integer, format: int64, minimum: 1}
+        reason: {type: string, minLength: 1, maxLength: 500}
+    BatchAssignCustomerOwnerResultItem:
+      type: object
+      properties:
+        customerId: {type: integer, format: int64}
+        customerNo: {type: string}
+        customerName: {type: string}
+        status: {type: string, enum: [ASSIGNED, SKIPPED]}
+        oldOwnerId: {type: integer, format: int64}
+        oldOwnerName: {type: string, nullable: true}
+        newOwnerId: {type: integer, format: int64}
+        newOwnerName: {type: string, nullable: true}
+        historyId: {type: integer, format: int64, nullable: true}
+        customerVersion: {type: integer, format: int64}
+        message: {type: string}
+    BatchAssignCustomerOwnerResponse:
+      type: object
+      properties:
+        batchRef: {type: string}
+        newOwnerId: {type: integer, format: int64}
+        newOwnerName: {type: string, nullable: true}
+        newTeamId: {type: integer, format: int64, nullable: true}
+        reason: {type: string}
+        totalCount: {type: integer}
+        assignedCount: {type: integer}
+        skippedCount: {type: integer}
+        effectiveAt: {type: string, format: date-time, nullable: true}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/BatchAssignCustomerOwnerResultItem'}
+    BatchAssignCustomerOwnerEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/BatchAssignCustomerOwnerResponse'}
+    CustomerOwnershipLogItem:
+      type: object
+      properties:
+        id: {type: integer, format: int64}
+        customerId: {type: integer, format: int64}
+        customerNo: {type: string}
+        customerName: {type: string}
+        oldOwnerId: {type: integer, format: int64}
+        oldOwnerName: {type: string, nullable: true}
+        newOwnerId: {type: integer, format: int64}
+        newOwnerName: {type: string, nullable: true}
+        changedBy: {type: integer, format: int64}
+        changedByName: {type: string, nullable: true}
+        reason: {type: string, nullable: true}
+        approvalRef: {type: string, nullable: true}
+        changeMode: {type: string, enum: [DIRECT_ASSIGN, BATCH_ASSIGN, TRANSFER_APPROVAL]}
+        effectiveAt: {type: string, format: date-time, nullable: true}
+        createdAt: {type: string, format: date-time}
+    CustomerOwnershipLogPageEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items: {$ref: '#/components/schemas/CustomerOwnershipLogItem'}
+                total: {type: integer, format: int64}
+                page: {type: integer}
+                size: {type: integer}
     CreateFollowup:
       type: object
       required: [customerId, channelCode]

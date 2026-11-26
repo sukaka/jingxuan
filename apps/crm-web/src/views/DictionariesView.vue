@@ -18,6 +18,7 @@ const DICTIONARY_ACTION_LABELS: Record<string, string> = {
   DICTIONARY_ITEM_CREATE: '新增字典配置',
   DICTIONARY_ITEM_UPDATE: '修改字典配置',
   DICTIONARY_ITEM_DISABLE: '停用字典配置',
+  DICTIONARY_ITEM_ENABLE: '启用字典配置',
 }
 const activeType = computed(() => types.value.find((type) => type.id === selectedTypeId.value) ?? null)
 const currentItems = computed(() => activeType.value ? grouped.value[activeType.value.id] ?? [] : [])

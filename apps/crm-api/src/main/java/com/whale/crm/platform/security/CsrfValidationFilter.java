@@ -36,6 +36,11 @@ public class CsrfValidationFilter extends OncePerRequestFilter {
     private static final String PUBLIC_ANNUAL_REPORT_PREFIX = "/api/v1/public/annual-reports/";
     private static final String PUBLIC_ANNUAL_TELEMETRY_SUFFIX = "/telemetry";
     private static final String PUBLIC_ANNUAL_BOOKING_SUFFIX = "/booking-intent";
+    private static final Set<String> PUBLIC_ANNUAL_AUTH_POST_PATHS = Set.of(
+            "/api/v1/public/annual-reports/auth/sms/send",
+            "/api/v1/public/annual-reports/auth/sms/verify",
+            "/api/v1/public/annual-reports/auth/logout"
+    );
     private static final String API_PREFIX = "/api/";
 
     private final ObjectMapper objectMapper;
@@ -70,6 +75,9 @@ public class CsrfValidationFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
     private boolean isPublicAnnualReportPost(String path) {
+        if (PUBLIC_ANNUAL_AUTH_POST_PATHS.contains(path)) {
+            return true;
+        }
         return path.startsWith(PUBLIC_ANNUAL_REPORT_PREFIX)
                 && (path.endsWith(PUBLIC_ANNUAL_TELEMETRY_SUFFIX) || path.endsWith(PUBLIC_ANNUAL_BOOKING_SUFFIX));
     }
