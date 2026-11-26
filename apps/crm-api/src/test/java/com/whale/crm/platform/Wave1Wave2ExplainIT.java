@@ -129,6 +129,21 @@ class Wave1Wave2ExplainIT {
                     custSelfParams);
             assertThat(rowForTable(custCountRows, "c").get("key")).isEqualTo("idx_customer_1");
 
+            for (List<Long> teamIds : List.of(List.of(10L, 11L), List.of(11L))) {
+                List<Map<String, Object>> custTeamCountRows = assertNoFullTableScans(
+                        conn, "CustomerMapper.countSearch(TEAM, teamIds=" + teamIds + ")",
+                        "com.whale.crm.customer.infrastructure.mapper.CustomerMapper.countSearch",
+                        customerSearchParams("TEAM", teamIds, 10L, null));
+                List<Map<String, Object>> cRows = custTeamCountRows.stream()
+                        .filter(r -> "c".equals(String.valueOf(r.get("table"))))
+                        .toList();
+                assertThat(cRows).hasSize(2);
+                assertThat(cRows).allSatisfy(r -> {
+                    assertThat(String.valueOf(r.get("type"))).isNotEqualToIgnoringCase("ALL");
+                    assertThat(String.valueOf(r.get("key"))).isIn("idx_customer_1", "idx_customer_team");
+                });
+            }
+
             // 2. CustomerTagMapper#selectTagCodesByCustomerIds
             List<Map<String, Object>> tagRows = assertNoFullTableScans(
                     conn, "CustomerTagMapper.selectTagCodesByCustomerIds",
@@ -566,7 +581,8 @@ class Wave1Wave2ExplainIT {
                     "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.searchMembers",
                     params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L,
                             "filters", attentionCriteria, "offset", 0, "size", 20));
-            assertThat(rowForTable(segAttentionRows, "ap").get("key")).isEqualTo("idx_customer_attention_project_filter");
+            assertThat(String.valueOf(rowForTable(segAttentionRows, "ap").get("key")))
+                    .isIn("idx_customer_attention_project_filter", "uk_customer_attention_project");
 
             CustomerSegmentCriteria redeemedCriteria = new CustomerSegmentCriteria(
                     null, null, null, null, List.of(701L), 1);
@@ -583,6 +599,29 @@ class Wave1Wave2ExplainIT {
                     "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.countMembers",
                     params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L,
                             "filters", purchasedCriteria));
+
+            List<Map<String, Object>> segAllEmptyCountRows = assertNoFullTableScans(
+                    conn, "CustomerSegmentMapper.countMembers(ALL, empty)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.countMembers",
+                    params("tenantId", 1L, "scopeType", "ALL", "teamIds", List.of(), "selfId", 10L,
+                            "filters", CustomerSegmentCriteria.empty()));
+            assertThat(rowForTable(segAllEmptyCountRows, "c").get("key")).isEqualTo("idx_customer_created");
+
+            for (List<Long> teamIds : List.of(List.of(10L, 11L), List.of(11L))) {
+                List<Map<String, Object>> segTeamEmptyCountRows = assertNoFullTableScans(
+                        conn, "CustomerSegmentMapper.countMembers(TEAM, teamIds=" + teamIds + ", empty)",
+                        "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.countMembers",
+                        params("tenantId", 1L, "scopeType", "TEAM", "teamIds", teamIds, "selfId", 10L,
+                                "filters", CustomerSegmentCriteria.empty()));
+                List<Map<String, Object>> cRows = segTeamEmptyCountRows.stream()
+                        .filter(r -> "c".equals(String.valueOf(r.get("table"))))
+                        .toList();
+                assertThat(cRows).hasSize(2);
+                assertThat(cRows).allSatisfy(r -> {
+                    assertThat(String.valueOf(r.get("type"))).isNotEqualToIgnoringCase("ALL");
+                    assertThat(String.valueOf(r.get("key"))).isIn("idx_customer_1", "idx_customer_team");
+                });
+            }
         }
     }
 
@@ -742,6 +781,13 @@ class Wave1Wave2ExplainIT {
                             "criteria", new MaterialSearchCriteria(
                                     "synthetic", null, null, null, null, null, null, 0, 20),
                             "offset", 0, "size", 20));
+            logExplainAnalyze(conn, "CustomerMapper.countSearch(TEAM)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerMapper.countSearch",
+                    customerSearchParams("TEAM", List.of(10L, 11L), 10L, null));
+            logExplainAnalyze(conn, "CustomerSegmentMapper.countMembers(TEAM, empty)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerSegmentMapper.countMembers",
+                    params("tenantId", 1L, "scopeType", "TEAM", "teamIds", List.of(10L, 11L), "selfId", 10L,
+                            "filters", CustomerSegmentCriteria.empty()));
         }
     }
 

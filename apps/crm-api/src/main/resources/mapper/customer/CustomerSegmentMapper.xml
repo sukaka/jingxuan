@@ -60,10 +60,7 @@
     WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND deleted=0
   </update>
 
-  <sql id="memberWhere">
-    FROM crm_customer c
-    LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
-    WHERE c.tenant_id=#{tenantId} AND c.deleted=0
+  <sql id="memberScopeClause">
     <choose>
       <when test="scopeType == 'ALL'"></when>
       <when test="scopeType == 'TEAM'">
@@ -75,6 +72,8 @@
       <when test="scopeType == 'SELF'">AND c.owner_staff_id=#{selfId}</when>
       <otherwise>AND 1=0</otherwise>
     </choose>
+  </sql>
+  <sql id="memberConditions">
     <if test="filters.cityCodes.size() > 0">
       AND c.city_code IN <foreach collection="filters.cityCodes" item="code" open="(" separator="," close=")">#{code}</foreach>
     </if>
@@ -106,6 +105,13 @@
                     ELSE 0 END) &gt;= #{filters.redeemedMinCount})
     </if>
   </sql>
+  <sql id="memberWhere">
+    FROM crm_customer c
+    LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
+    WHERE c.tenant_id=#{tenantId} AND c.deleted=0
+    <include refid="memberScopeClause"/>
+    <include refid="memberConditions"/>
+  </sql>
   <sql id="memberColumns">
     c.id,c.tenant_id,c.owner_staff_id,o.display_name AS owner_name,c.team_id,c.customer_no,
     c.display_name,c.nickname,c.mobile_cipher,c.city_code,c.customer_status,c.tier_code,c.intent_level,
@@ -117,7 +123,26 @@
     ORDER BY c.id ASC LIMIT #{size} OFFSET #{offset}
   </select>
   <select id="countMembers" resultType="long">
-    SELECT COUNT(*) <include refid="memberWhere"/>
+    <choose>
+      <when test="scopeType == 'TEAM' and teamIds != null and teamIds.size() > 0">
+        SELECT COUNT(*) FROM (
+          SELECT c.id FROM crm_customer c
+          WHERE c.tenant_id=#{tenantId} AND c.deleted=0 AND c.owner_staff_id=#{selfId}
+          <include refid="memberConditions"/>
+          UNION
+          SELECT c.id FROM crm_customer c
+          WHERE c.tenant_id=#{tenantId} AND c.deleted=0
+            AND c.team_id IN <foreach collection="teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>
+          <include refid="memberConditions"/>
+        ) t
+      </when>
+      <otherwise>
+        SELECT COUNT(*) FROM crm_customer c
+        WHERE c.tenant_id=#{tenantId} AND c.deleted=0
+        <include refid="memberScopeClause"/>
+        <include refid="memberConditions"/>
+      </otherwise>
+    </choose>
   </select>
 
   <sql id="batchColumns">

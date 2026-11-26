@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#091124" />
+  <title>光采轨迹 · 2026 鲸选美学年度私享灯箱</title>
+  <link rel="stylesheet" href="./styles/paper-lightbox.css" />
+</head>
+<body data-scene="0">
+  <!-- 桌面端环境光与演示控制台（移动端自动收纳为顶部轻量入口） -->
+  <div class="room-ambient" aria-hidden="true"></div>
+
+  <aside class="demo-toolbar" aria-label="演示控制台">
+    <div class="toolbar-brand">
+      <span class="toolbar-dot"></span>
+      <span>鲸选年终 H5</span>
+      <span class="toolbar-style-tag">纸雕灯影</span>
+    </div>
+    <div class="toolbar-controls">
+      <div class="persona-switch" role="group" aria-label="切换示例客户">
+        <button type="button" class="persona-btn is-active" data-persona="lin">林清晚 · 她S级</button>
+        <button type="button" class="persona-btn" data-persona="su">苏知夏 · 她A级</button>
+        <button type="button" class="persona-btn" data-persona="chen">陈砚洲 · 他男士</button>
+      </div>
+      <div class="tone-switch" role="group" aria-label="切换文案语调偏好" title="可手动切换不同喜好语调，观察同一客户文案实时变化">
+        <button type="button" class="tone-btn is-active" data-tone="poetic">诗意</button>
+        <button type="button" class="tone-btn" data-tone="clinical">专业</button>
+        <button type="button" class="tone-btn" data-tone="minimal">高效</button>
+      </div>
+      <button type="button" class="tool-pill" id="btnPrivacy" aria-pressed="false" title="隐藏或显示消费金额">
+        <span class="pill-icon" aria-hidden="true">◐</span>
+        <span class="pill-label">金额可见</span>
+      </button>
+      <button type="button" class="tool-pill" id="btnSchema" title="查看有赞数据拉取与安全口径说明">
+        <span class="pill-icon" aria-hidden="true">◈</span>
+        <span class="pill-label">有赞口径</span>
+      </button>
+      <button type="button" class="tool-pill tool-pill-telemetry" id="btnTelemetry" title="实时查看客户浏览页数、停留时长与上报报文">
+        <span class="telemetry-live-dot" aria-hidden="true"></span>
+        <span class="pill-label">访问埋点</span>
+        <span class="telemetry-live-badge mono" id="toolbarTelemetryBadge">1/6页 · 0s</span>
+      </button>
+      <button type="button" class="tool-pill" id="btnSound" aria-pressed="true" title="开关氛围光效提示音">
+        <span class="pill-icon" aria-hidden="true">♪</span>
+        <span class="pill-label">音效开</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- 物理纸雕灯箱外壳（桌面呈现胡桃木相框+溢光，手机端全屏沉浸，末页框景回拉） -->
+  <main class="lightbox-stage">
+    <div class="lamp-spill" aria-hidden="true"></div>
+    <div class="lightbox-frame" id="lightboxFrame">
+      <div class="wood-bevel" aria-hidden="true"></div>
+
+      <div class="lightbox-cavity" id="lightboxCavity">
+        <!-- 实时纸雕灯影 Canvas 引擎：6层剪纸 + 纸浆纤维 + 暖背光 + 镂空窗格 + 柔和投影 -->
+        <canvas id="paperCanvas" class="paper-canvas" aria-hidden="true"></canvas>
+        <!-- 柔和暗角与纸框阴影 -->
+        <div class="cavity-vignette" aria-hidden="true"></div>
+
+        <!-- 顶部进度灯条 + 移动端快捷操作 -->
+        <header class="hud-top">
+          <div class="story-progress" id="storyProgress" role="tablist" aria-label="章节进度"></div>
+          <div class="hud-row">
+            <div class="brand-lockup">
+              <span class="brand-seal">鲸</span>
+              <div class="brand-text">
+                <span class="brand-cn">鲸选美学</span>
+                <span class="brand-en">WHALE AESTHETICS · 2026</span>
+              </div>
+            </div>
+            <div class="hud-mini-actions">
+              <button type="button" class="mini-chip" id="miniPersona" title="切换3位示例客户（含男女）">切客</button>
+              <button type="button" class="mini-chip mini-chip-tone" id="miniTone" title="切换文案语调（诗意/专业/高效）">诗意</button>
+              <button type="button" class="mini-chip" id="miniPrivacy" title="隐私模式开关">隐私</button>
+              <button type="button" class="mini-chip mini-chip-live" id="miniTelemetry" title="查看实时访问埋点">埋点</button>
+            </div>
+          </div>
+        </header>
+
+        <!-- 六幕叙事内容容器 -->
+        <div class="scenes-viewport" id="scenesViewport">
+
+          <!-- 第 1 幕 · 启幕灯箱（相识纪念日 + 陪伴天数） -->
+          <section class="scene is-active" data-scene-index="0" aria-label="启幕相识">
+            <div class="scene-inner scene-cover">
+              <div class="cover-eyebrow">
+                <span class="seal-tag" id="coverTierTag">臻选 S 级缪斯</span>
+                <span class="mono-id" id="coverMemberNo">NO. JX-2024-0512</span>
+              </div>
+
+              <div class="cover-headline">
+                <p class="salutation" id="coverSalutation">致 <strong id="coverName">林清晚</strong></p>
+                <h1 class="main-title">
+                  <span>光采轨迹</span>
+                  <small id="coverSubTitle">2026 年度私享纸雕灯箱</small>
+                </h1>
+                <div class="tone-origin-pill" id="toneOriginPill">✦ 诗意松弛风 · 自动匹配</div>
+              </div>
+
+              <!-- 未点亮态提示 / 点亮后呈现相识记忆 -->
+              <div class="cover-ignite-box" id="coverIgniteBox">
+                <button type="button" class="ignite-btn" id="btnIgnite">
+                  <span class="ignite-ring"></span>
+                  <span class="ignite-core">✦</span>
+                  <span class="ignite-text" id="igniteBtnText">轻触点亮你的 2026 光采灯箱</span>
+                </button>
+                <p class="ignite-hint" id="igniteHint">来自有赞与鲸选美学专属档案 · 仅你本人可见</p>
+              </div>
+
+              <div class="cover-revealed" id="coverRevealed" hidden>
+                <div class="paper-plaque">
+                  <div class="plaque-row">
+                    <span class="plaque-label">初次与鲸选相遇</span>
+                    <span class="plaque-value mono" id="firstMeetDate">2024.05.12</span>
+                  </div>
+                  <div class="plaque-divider"></div>
+                  <div class="plaque-hero">
+                    <span class="hero-prefix">相伴的第</span>
+                    <strong class="hero-num mono" id="daysTogether">928</strong>
+                    <span class="hero-suffix">天</span>
+                  </div>
+                  <p class="plaque-note" id="firstMeetNote">从第一支院线光采项目开始，时间把每一次用心都酿成了光泽。</p>
+                </div>
+
+                <button type="button" class="primary-paper-btn" data-action="next">
+                  <span id="coverNextBtnText">推开四季光影</span>
+                  <span class="btn-arrow">→</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 第 2 幕 · 四季购买轨迹（有赞全年订单时间轴） -->
+          <section class="scene" data-scene-index="1" aria-label="四季购买轨迹">
+            <div class="scene-inner scene-timeline">
+              <div class="chapter-head">
+                <span class="chapter-kicker">CHAPTER 01 · YOUZAN LEDGER</span>
+                <h2 class="chapter-title" id="scene1Title">一整年，你把光留在了这些日子</h2>
+              </div>
+
+              <div class="kpi-strip">
+                <div class="kpi-cell">
+                  <span class="kpi-label">全年有赞订单</span>
+                  <strong class="kpi-val mono"><span id="statOrderCount">7</span><em>笔</em></strong>
+                </div>
+                <div class="kpi-cell">
+                  <span class="kpi-label">年度净投入</span>
+                  <strong class="kpi-val mono" id="statTotalSpend">¥26,800</strong>
+                </div>
+                <div class="kpi-cell">
+                  <span class="kpi-label">臻选品类</span>
+                  <strong class="kpi-val mono"><span id="statCategoryCount">4</span><em>类</em></strong>
+                </div>
+              </div>
+
+              <div class="season-tabs" id="seasonTabs" role="tablist" aria-label="按季节筛选">
+                <button type="button" class="season-tab is-active" data-season="ALL">全年</button>
+                <button type="button" class="season-tab" data-season="春">春</button>
+                <button type="button" class="season-tab" data-season="夏">夏</button>
+                <button type="button" class="season-tab" data-season="秋">秋</button>
+                <button type="button" class="season-tab" data-season="冬">冬</button>
+              </div>
+
+              <div class="timeline-scroll scrollable-zone" id="timelineList" aria-label="购买轨迹列表">
+                <!-- JS 动态填充有赞订单节点 -->
+              </div>
+
+              <p class="tap-tip">轻点任意一张日期纸签，展开该笔有赞订单与项目明细</p>
+            </div>
+          </section>
+
+          <!-- 第 3 幕 · 深夜光影时刻（午夜窗灯 + 24小时变美时钟） -->
+          <section class="scene" data-scene-index="2" aria-label="深夜光影时刻">
+            <div class="scene-inner scene-midnight">
+              <div class="chapter-head">
+                <span class="chapter-kicker">CHAPTER 02 · MIDNIGHT LAMP</span>
+                <h2 class="chapter-title" id="scene2Title">整座城睡着时，有一扇窗还亮着</h2>
+              </div>
+
+              <div class="midnight-showcase">
+                <div class="clock-dial-wrap">
+                  <svg class="circadian-svg" id="circadianSvg" viewBox="0 0 220 220" aria-label="24小时购美时刻分布">
+                    <defs>
+                      <radialGradient id="windowGlowGrad" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stop-color="#ffd589" stop-opacity="0.45" />
+                        <stop offset="100%" stop-color="#ffb862" stop-opacity="0" />
+                      </radialGradient>
+                    </defs>
+                    <circle cx="110" cy="110" r="96" fill="rgba(7, 13, 32, 0.42)" />
+                    <circle cx="110" cy="110" r="88" fill="url(#windowGlowGrad)" />
+                    <circle cx="110" cy="110" r="82" fill="none" stroke="rgba(255,214,150,0.22)" stroke-width="1.2" stroke-dasharray="2 5" />
+                    <circle cx="110" cy="110" r="62" fill="none" stroke="rgba(255,214,150,0.16)" stroke-width="1" />
+                    <g id="clockTicks"></g>
+                    <g id="clockPoints"></g>
+                    <text x="110" y="20" text-anchor="middle" class="clock-axis">00:00</text>
+                    <text x="204" y="114" text-anchor="middle" class="clock-axis">06</text>
+                    <text x="110" y="210" text-anchor="middle" class="clock-axis">12:00</text>
+                    <text x="16" y="114" text-anchor="middle" class="clock-axis">18</text>
+                  </svg>
+                  <div class="clock-center-readout">
+                    <span class="clock-sub">最晚光影时刻</span>
+                    <strong class="clock-time mono" id="midnightTime">23:47</strong>
+                    <span class="clock-date mono" id="midnightDate">2026.07.18</span>
+                  </div>
+                </div>
+
+                <div class="paper-plaque midnight-card">
+                  <div class="midnight-badge-row">
+                    <span class="amber-dot"></span>
+                    <span id="midnightEventType">有赞深夜下单时刻</span>
+                  </div>
+                  <p class="midnight-story" id="midnightStory"></p>
+                  <div class="midnight-meta-row">
+                    <span id="midnightPeakLabel">高频活跃时段：21:00–24:00</span>
+                    <button type="button" class="inline-link-btn" id="btnMidnightSource">数据口径 ⓘ</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 第 4 幕 · 年度挚爱项目 & 美学成分雷达 -->
+          <section class="scene" data-scene-index="3" aria-label="年度挚爱项目">
+            <div class="scene-inner scene-favorite">
+              <div class="chapter-head">
+                <span class="chapter-kicker">CHAPTER 03 · SIGNATURE RITUAL</span>
+                <h2 class="chapter-title" id="scene3Title">你的年度本命，藏在一次次偏爱里</h2>
+              </div>
+
+              <div class="paper-plaque favorite-hero-card">
+                <div class="fav-top-row">
+                  <span class="seal-tag seal-rose">年度挚爱 TOP 1</span>
+                  <span class="mono fav-beat" id="favBeatPercent">超越 94% 同期会员</span>
+                </div>
+                <h3 class="fav-name" id="favProjectName">M22 黄金超光子</h3>
+                <p class="fav-subtitle" id="favProjectDesc">全年累计入手与打卡 6 次 · 你最信赖的光学亮肤底牌</p>
+                <div class="fav-chips" id="favProjectTags"></div>
+              </div>
+
+              <div class="paper-plaque radar-card">
+                <div class="radar-head">
+                  <span>2026 美学能量分布</span>
+                  <div class="mini-seg" role="tablist">
+                    <button type="button" class="seg-btn is-active" data-fav-view="dimensions">四大维度</button>
+                    <button type="button" class="seg-btn" data-fav-view="top3">挚爱榜单</button>
+                  </div>
+                </div>
+                <div id="favDimensionsPanel" class="dimensions-list"></div>
+                <div id="favTop3Panel" class="top3-list" hidden></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 第 5 幕 · 履约蜕变与权益宝库（CRM 独家转化钩子） -->
+          <section class="scene" data-scene-index="4" aria-label="履约蜕变与权益宝库">
+            <div class="scene-inner scene-vault">
+              <div class="chapter-head">
+                <span class="chapter-kicker">CHAPTER 04 · JOURNEY &amp; VAULT</span>
+                <h2 class="chapter-title" id="scene4Title">不止于下单，更见证每一次赴约蜕变</h2>
+              </div>
+
+              <div class="vault-stats-grid">
+                <div class="vault-tile">
+                  <span class="vault-tile-label">正式到院核销</span>
+                  <strong class="vault-tile-num mono"><span id="vaultRedeemCount">9</span><em>次</em></strong>
+                </div>
+                <div class="vault-tile">
+                  <span class="vault-tile-label">打卡臻选机构</span>
+                  <strong class="vault-tile-num mono"><span id="vaultInstCount">2</span><em>家</em></strong>
+                </div>
+                <div class="vault-tile">
+                  <span class="vault-tile-label">专属管家响应</span>
+                  <strong class="vault-tile-num mono"><span id="vaultButlerCount">24</span><em>次</em></strong>
+                </div>
+              </div>
+
+              <div class="paper-plaque vault-treasure">
+                <div class="vault-treasure-head">
+                  <div>
+                    <span class="teal-badge" id="vaultBadgeText">✦ 你的美学宝库仍有待开启权益</span>
+                    <h3 class="vault-remaining-title">剩余 <strong class="mono" id="vaultRemainTotal">3</strong> 次焕美权益</h3>
+                  </div>
+                  <span class="vault-expire mono" id="vaultExpireText">有效期至 2027.06.30</span>
+                </div>
+                <ul class="vault-items" id="vaultItemsList"></ul>
+                <button type="button" class="teal-cta-btn" id="btnBookButler">
+                  <span id="vaultCtaText">一键通知专属管家 安安 预约</span>
+                  <span>→</span>
+                </button>
+                <p class="vault-compliance-note">点击仅向专属管家发送预约意向，正式核销以合作机构到院确认为准</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- 第 6 幕 · 年度美学人格 & 私享纪念灯箱海报（The box as keepsake） -->
+          <section class="scene" data-scene-index="5" aria-label="年度私享灯箱海报">
+            <div class="scene-inner scene-keepsake">
+              <div class="keepsake-box-card">
+                <div class="keepsake-corner tl"></div>
+                <div class="keepsake-corner tr"></div>
+                <div class="keepsake-corner bl"></div>
+                <div class="keepsake-corner br"></div>
+
+                <div class="keepsake-top">
+                  <span class="keepsake-year mono">2026 · WHALE AESTHETICS</span>
+                  <span class="seal-stamp" id="keepsakeSeal">臻选</span>
+                </div>
+
+                <p class="keepsake-owner" id="keepsakeOwnerHeading"><span id="keepsakeName">林清晚</span> 的年度美学人格</p>
+                <h2 class="keepsake-persona" id="keepsakePersona">午夜发光收藏家</h2>
+                <p class="keepsake-quote" id="keepsakeQuote"></p>
+
+                <div class="keepsake-metrics">
+                  <div class="km-item">
+                    <span>相伴鲸选</span>
+                    <strong class="mono" id="kmDays">928 天</strong>
+                  </div>
+                  <div class="km-item">
+                    <span>全年订单</span>
+                    <strong class="mono" id="kmOrders">7 笔</strong>
+                  </div>
+                  <div class="km-item">
+                    <span>年度挚爱</span>
+                    <strong id="kmFav">M22 超光子</strong>
+                  </div>
+                  <div class="km-item">
+                    <span>年度投入</span>
+                    <strong class="mono" id="kmSpend">¥26,800</strong>
+                  </div>
+                </div>
+
+                <div class="keepsake-butler-note">
+                  <span class="butler-sign" id="keepsakeButlerSign">专属管家 安安 · 敬寄</span>
+                  <span class="keepsake-privacy-tag" id="keepsakePrivacyNote">已显示金额 · 可切换隐私晒图</span>
+                </div>
+              </div>
+
+              <div class="keepsake-actions">
+                <button type="button" class="primary-paper-btn" id="btnGeneratePoster">
+                  <span>✦ 生成纸雕灯影纪念海报（PNG）</span>
+                </button>
+                <div class="keepsake-secondary-row">
+                  <button type="button" class="ghost-paper-btn" id="btnTogglePrivacyEnd">
+                    <span id="endPrivacyLabel">切换隐藏金额</span>
+                  </button>
+                  <button type="button" class="ghost-paper-btn" id="btnReplay">
+                    <span>重温光采轨迹</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+        </div>
+
+        <!-- 底部切幕控制区 -->
+        <footer class="hud-bottom" id="hudBottom">
+          <button type="button" class="nav-arrow" id="btnPrev" aria-label="上一幕" disabled>← 上一幕</button>
+          <span class="scene-counter mono" id="sceneCounter">01 / 06</span>
+          <button type="button" class="nav-arrow nav-next" id="btnNext" aria-label="下一幕">下一幕 →</button>
+        </footer>
+
+        <!-- 订单详情抽屉（第2幕点击订单时呼出） -->
+        <div class="sheet-backdrop" id="orderSheet" hidden aria-modal="true" role="dialog" aria-label="有赞订单明细">
+          <div class="paper-sheet">
+            <div class="sheet-handle"></div>
+            <div class="sheet-header">
+              <div>
+                <span class="sheet-kicker mono" id="sheetOrderNo">YZ20260718****8421</span>
+                <h3 class="sheet-title" id="sheetOrderTitle">订单标题</h3>
+              </div>
+              <button type="button" class="sheet-close" data-close-sheet="orderSheet" aria-label="关闭">✕</button>
+            </div>
+            <div class="sheet-meta-grid" id="sheetMetaGrid"></div>
+            <div class="sheet-section-label">套餐 / 项目权益快照</div>
+            <ul class="sheet-sku-list" id="sheetSkuList"></ul>
+            <p class="sheet-footnote">订单事实来源于有赞官方交易同步与鲸选 CRM 冻结快照，历史实付不可篡改。</p>
+          </div>
+        </div>
+
+        <!-- 预约管家确认弹窗（第5幕 CTA） -->
+        <div class="sheet-backdrop" id="bookingSheet" hidden aria-modal="true" role="dialog" aria-label="预约专属管家">
+          <div class="paper-sheet">
+            <div class="sheet-handle"></div>
+            <div class="sheet-header">
+              <div>
+                <span class="sheet-kicker">CONCIERGE REQUEST · 预约意向</span>
+                <h3 class="sheet-title">已为专属管家生成待办提醒</h3>
+              </div>
+              <button type="button" class="sheet-close" data-close-sheet="bookingSheet" aria-label="关闭">✕</button>
+            </div>
+            <p class="sheet-body-text" id="bookingBodyText"></p>
+            <div class="booking-preview-box" id="bookingPreviewBox"></div>
+            <button type="button" class="primary-paper-btn" data-close-sheet="bookingSheet">好的，静候管家联系</button>
+          </div>
+        </div>
+
+        <!-- 高清纪念海报预览 & 下载弹窗（第6幕） -->
+        <div class="sheet-backdrop" id="posterModal" hidden aria-modal="true" role="dialog" aria-label="纪念海报预览">
+          <div class="paper-sheet poster-sheet">
+            <div class="sheet-header">
+              <div>
+                <span class="sheet-kicker">KEEPSAKE POSTER · 750×1334</span>
+                <h3 class="sheet-title">2026 纸雕灯影私享纪念海报</h3>
+              </div>
+              <button type="button" class="sheet-close" data-close-sheet="posterModal" aria-label="关闭">✕</button>
+            </div>
+            <div class="poster-preview-wrap">
+              <img id="posterPreviewImg" alt="鲸选美学年度纸雕灯影纪念海报" />
+            </div>
+            <div class="poster-modal-actions">
+              <a id="btnDownloadPoster" class="primary-paper-btn" download="jingxuan-2026-keepsake.png" href="#">下载 PNG 海报</a>
+              <button type="button" class="ghost-paper-btn" id="btnPosterPrivacyFlip">切换海报隐藏金额</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 有赞数据拉取口径与安全说明弹窗（演示给业务团队看） -->
+        <div class="sheet-backdrop" id="schemaModal" hidden aria-modal="true" role="dialog" aria-label="有赞数据拉取口径说明">
+          <div class="paper-sheet schema-sheet">
+            <div class="sheet-header">
+              <div>
+                <span class="sheet-kicker">TECHNICAL BRIEF · YOUZAN + CRM</span>
+                <h3 class="sheet-title">有赞数据拉取与安全口径说明</h3>
+              </div>
+              <button type="button" class="sheet-close" data-close-sheet="schemaModal" aria-label="关闭">✕</button>
+            </div>
+            <div class="schema-list scrollable-zone" id="schemaList"></div>
+          </div>
+        </div>
+
+        <!-- 实时访问埋点监控弹窗（演示：谁看了、停留多久、看了几页、上报 JSON） -->
+        <div class="sheet-backdrop" id="telemetryModal" hidden aria-modal="true" role="dialog" aria-label="实时访问埋点监控">
+          <div class="paper-sheet telemetry-sheet">
+            <div class="sheet-header">
+              <div>
+                <span class="sheet-kicker">LIVE TELEMETRY · 后期统计采集演示</span>
+                <h3 class="sheet-title">客户 H5 访问轨迹实时采集</h3>
+              </div>
+              <button type="button" class="sheet-close" data-close-sheet="telemetryModal" aria-label="关闭">✕</button>
+            </div>
+
+            <div class="telemetry-tabs" role="tablist" aria-label="埋点监控视图">
+              <button type="button" class="t-tab is-active" data-t-tab="session">当前会话</button>
+              <button type="button" class="t-tab" data-t-tab="summary">客户统计</button>
+              <button type="button" class="t-tab" data-t-tab="payload">上报报文</button>
+            </div>
+
+            <!-- Tab 1: 当前会话实时采集 -->
+            <div class="telemetry-panel scrollable-zone" id="tPanelSession">
+              <div class="t-visitor-bar">
+                <div>
+                  <strong id="tVisitorName">林清晚</strong>
+                  <span class="mono t-visitor-id" id="tVisitorMeta">CUS-DEMO-8801 · 本人已校验</span>
+                </div>
+                <span class="t-live-pill">前台计时中</span>
+              </div>
+
+              <div class="t-kpi-grid">
+                <div class="t-kpi-box">
+                  <span>有效停留时长</span>
+                  <strong class="mono" id="tTotalDuration">0s</strong>
+                </div>
+                <div class="t-kpi-box">
+                  <span>已看页数 / 完读率</span>
+                  <strong class="mono" id="tPagesRead">1/6 · 17%</strong>
+                </div>
+                <div class="t-kpi-box">
+                  <span>最深到达</span>
+                  <strong class="mono" id="tMaxScene">第 1 幕</strong>
+                </div>
+              </div>
+
+              <div class="sheet-section-label">各幕精确停留时长（切后台/锁屏自动暂停）</div>
+              <div class="t-scene-bars" id="tSceneBars"></div>
+
+              <div class="sheet-section-label">高意向转化动作捕捉</div>
+              <div class="t-action-chips" id="tActionChips"></div>
+            </div>
+
+            <!-- Tab 2: 多客户汇总统计预览 -->
+            <div class="telemetry-panel scrollable-zone" id="tPanelSummary" hidden>
+              <p class="t-panel-tip">切换不同示例客户并翻页后，下方会实时累计「谁看过、打开几次、总停留、看过几页」，模拟 CRM 运营统计看板：</p>
+              <div class="t-summary-list" id="tSummaryList"></div>
+              <button type="button" class="ghost-paper-btn t-reset-btn" id="btnResetTelemetry">清空本地演示统计记录</button>
+            </div>
+
+            <!-- Tab 3: 标准后端上报 JSON & 触发流水 -->
+            <div class="telemetry-panel scrollable-zone" id="tPanelPayload" hidden>
+              <div class="t-payload-head">
+                <span class="mono">POST /api/v1/public/annual-report/telemetry</span>
+                <button type="button" class="t-copy-btn" id="btnCopyPayload">复制 JSON</button>
+              </div>
+              <pre class="t-json-pre mono" id="tJsonPreview"></pre>
+              <div class="sheet-section-label">最近上报触发流水（切页 / 10s心跳 / sendBeacon）</div>
+              <ul class="t-event-log" id="tEventLog"></ul>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <script src="./js/mock-customers.js"></script>
+  <script src="./js/copy-engine.js"></script>
+  <script src="./js/analytics-tracker.js"></script>
+  <script src="./js/paper-engine.js"></script>
+  <script src="./js/poster-exporter.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>

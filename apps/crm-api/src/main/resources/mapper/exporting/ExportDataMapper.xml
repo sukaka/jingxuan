@@ -71,7 +71,7 @@
     <if test="q.filter.to != null">AND c.created_at&lt;=#{q.filter.to}</if>
   </sql>
   <sql id="customerWhere">
-    FROM crm_customer c LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
+    FROM crm_customer c
     <include refid="customerConditions"/>
   </sql>
   <sql id="orderConditions">
@@ -110,7 +110,6 @@
   </sql>
   <sql id="followupWhere">
     FROM crm_followup f INNER JOIN crm_customer c ON c.tenant_id=f.tenant_id AND c.id=f.customer_id AND c.deleted=0
-    LEFT JOIN sys_user o ON o.tenant_id=f.tenant_id AND o.id=f.owner_staff_id
     <include refid="followupConditions"/>
   </sql>
 

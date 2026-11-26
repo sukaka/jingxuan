@@ -88,9 +88,7 @@
     </choose>
   </sql>
 
-  <sql id="scopedWhere">
-    WHERE c.tenant_id = #{tenantId} AND c.deleted = 0
-    <include refid="customerScopeFilter"/>
+  <sql id="customerSearchConditions">
     <if test="ownerId != null">
       AND c.owner_staff_id = #{ownerId}
     </if>
@@ -123,6 +121,12 @@
     </if>
   </sql>
 
+  <sql id="scopedWhere">
+    WHERE c.tenant_id = #{tenantId} AND c.deleted = 0
+    <include refid="customerScopeFilter"/>
+    <include refid="customerSearchConditions"/>
+  </sql>
+
   <select id="search" resultMap="CustomerListRowMap">
     SELECT c.id, c.tenant_id, c.owner_staff_id, o.display_name AS owner_name, c.team_id, c.customer_no,
            c.display_name, c.nickname, c.mobile_cipher, c.city_code, c.customer_status, c.tier_code,
@@ -137,9 +141,28 @@
   </select>
 
   <select id="countSearch" resultType="long">
-    SELECT COUNT(*)
-    FROM crm_customer c
-    <include refid="scopedWhere"/>
+    <choose>
+      <when test="scopeType == 'TEAM' and teamIds != null and teamIds.size() > 0">
+        SELECT COUNT(*) FROM (
+          SELECT c.id
+          FROM crm_customer c
+          WHERE c.tenant_id = #{tenantId} AND c.deleted = 0
+            AND c.owner_staff_id = #{selfId}
+            <include refid="customerSearchConditions"/>
+          UNION
+          SELECT c.id
+          FROM crm_customer c
+          WHERE c.tenant_id = #{tenantId} AND c.deleted = 0
+            AND c.team_id IN <foreach collection="teamIds" item="t" open="(" separator="," close=")">#{t}</foreach>
+            <include refid="customerSearchConditions"/>
+        ) t
+      </when>
+      <otherwise>
+        SELECT COUNT(*)
+        FROM crm_customer c
+        <include refid="scopedWhere"/>
+      </otherwise>
+    </choose>
   </select>
 
   <select id="selectById" resultMap="CustomerMap">
