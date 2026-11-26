@@ -131,6 +131,7 @@ app:
       read-timeout-ms: 10000
       page-size: 100
       max-pages: 10000
+      default-tag-group-name: ${WECOM_DEFAULT_TAG_GROUP_NAME:鲸选CRM标签}
     archive:
       allowed-tenant-id: ${WECOM_ARCHIVE_ALLOWED_TENANT_ID:1}
       corp-id: ${WECOM_ARCHIVE_CORP_ID:}

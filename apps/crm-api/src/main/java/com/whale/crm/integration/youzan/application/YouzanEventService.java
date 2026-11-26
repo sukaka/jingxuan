@@ -45,6 +45,8 @@ import java.util.Set;
 
 @Service
 public class YouzanEventService {
+    private static final List<String> ISSUE_TYPES = List.of(
+            "MAPPING_FAILED", "CUSTOMER_UNRESOLVED", "PAYMENT_MISMATCH", "RETRY");
     private static final Set<String> SENSITIVE_FIELDS = Set.of("mobile", "phone", "nickname", "name", "displayName",
             "contactName", "address", "idCard", "buyerName", "buyer_phone", "fans_nickname", "receiver_name",
             "receiver_tel", "receiver_phone", "delivery_address", "self_fetch_info", "buyer_name", "id_card_number",
@@ -401,13 +403,33 @@ public class YouzanEventService {
     }
 
     private void resolveOpenIssues(long tenantId, long eventId, long actorUserId) {
-        for (String type : List.of("MAPPING_FAILED", "CUSTOMER_UNRESOLVED", "PAYMENT_MISMATCH", "RETRY")) {
+        for (String type : ISSUE_TYPES) {
             repository.findIssueByEventAndType(tenantId, eventId, type).ifPresent(issue -> {
                 if (!"RESOLVED".equals(issue.status())) {
                     repository.updateIssueStatus(tenantId, issue.id(), issue.version(), "RESOLVED", issue.attempts(),
                             null, null, Instant.now(), actorUserId);
                 }
             });
+        }
+    }
+
+    private void resolveSupersededIssues(long tenantId, long eventId, String currentType) {
+        Instant now = null;
+        Long resolvedBy = null;
+        for (String otherType : ISSUE_TYPES) {
+            if (otherType.equals(currentType)) {
+                continue;
+            }
+            YouzanSyncIssue issue = repository.findIssueByEventAndType(tenantId, eventId, otherType).orElse(null);
+            if (issue != null && ("OPEN".equals(issue.status()) || "RETRYING".equals(issue.status()))) {
+                if (now == null) {
+                    now = Instant.now();
+                    resolvedBy = currentUserService.loadFirstActiveByRole(tenantId, "ADMIN")
+                            .map(CurrentUser::userId).orElse(null);
+                }
+                repository.updateIssueStatus(tenantId, issue.id(), issue.version(), "RESOLVED", issue.attempts(),
+                        null, null, now, resolvedBy);
+            }
         }
     }
 
@@ -418,6 +440,7 @@ public class YouzanEventService {
                 Instant.now(), raw.orderId()) == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "原始事件状态已变化");
         }
+        resolveSupersededIssues(tenantId, eventId, type);
         YouzanSyncIssue existing = repository.findIssueByEventAndType(tenantId, eventId, type).orElse(null);
         if (existing == null) {
             repository.insertIssue(tenantId, new YouzanSyncIssue(null, eventId, type, "OPEN", detail, 1, detail,

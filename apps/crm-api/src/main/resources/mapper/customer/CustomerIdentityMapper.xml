@@ -42,6 +42,17 @@
     ORDER BY id ASC
   </select>
 
+  <select id="selectByIdentity" resultMap="CustomerIdentityMap">
+    SELECT id, tenant_id, customer_id, identity_type, source_app, external_id, verified_at, status,
+           created_at, updated_at, version
+    FROM crm_customer_identity
+    WHERE tenant_id = #{tenantId}
+      AND identity_type = #{identityType}
+      AND source_app = #{sourceApp}
+      AND external_id = #{externalId}
+    LIMIT 1
+  </select>
+
   <insert id="insertIdentity" parameterType="com.whale.crm.customer.domain.CustomerIdentity"
           useGeneratedKeys="true" keyProperty="id">
     INSERT INTO crm_customer_identity (tenant_id, customer_id, identity_type, source_app, external_id,

@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
+import { routeLocationKey } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import type { YouzanCustomerLink, YouzanOrderView, YouzanReconcileReport, YouzanShopConfig, YouzanSkuMapping, YouzanSyncIssue } from '../api/youzan'
+import type { YouzanCustomerLink, YouzanOrderView, YouzanReconcileReport, YouzanShopConfig, YouzanSkuCandidate, YouzanSkuMapping, YouzanSyncIssue } from '../api/youzan'
 import {
+  batchRetryYouzanSyncIssues,
   getYouzanReconcileReport,
   listYouzanCustomerLinks,
   listYouzanOrders,
   listYouzanShops,
+  listYouzanSkuCandidates,
   listYouzanSkuMappings,
   listYouzanSyncIssues,
   reconcileYouzanOrders,
@@ -22,13 +25,14 @@ import { useAuthStore } from '../stores/auth'
 import { formatDateTime } from './customer/shared'
 import StatusPill from './customer/StatusPill.vue'
 import YouzanCustomerLinkPanel from './youzan/YouzanCustomerLinkPanel.vue'
+import YouzanCustomerPullPanel from './youzan/YouzanCustomerPullPanel.vue'
 import YouzanOrderDetailDrawer from './youzan/YouzanOrderDetailDrawer.vue'
 import YouzanShopConfigPanel from './youzan/YouzanShopConfigPanel.vue'
 import YouzanSkuMappingPanel from './youzan/YouzanSkuMappingPanel.vue'
 import YouzanSyncIssuePanel from './youzan/YouzanSyncIssuePanel.vue'
 import YouzanSyncJobPanel from './youzan/YouzanSyncJobPanel.vue'
 import YouzanSyncPolicyPanel from './youzan/YouzanSyncPolicyPanel.vue'
-import { createYouzanKey, isMappingSuccess, mappingStatusLabel, mappingStatusTone } from './youzan/youzanUi'
+import { createYouzanKey, extractUnmappedExternalSkuId, isMappingSuccess, mappingStatusLabel, mappingStatusTone } from './youzan/youzanUi'
 import { orderTypeLabel, tradingErrorText } from './trading/tradingUi'
 import { orderTypeTone } from '../utils/tagTone'
 import { fenToYuan } from '../utils/money'
@@ -37,15 +41,119 @@ import './trading/trading.css'
 import './fulfillment/fulfillment.css'
 import './youzan/youzan.css'
 
+const DEFAULT_MOCK_SHOP_ID = 'MOCK-SHOP-001'
+const PULL_COUNT_PRESETS = [10, 20, 50, 100, 500] as const
+
+const route = inject(routeLocationKey, null)
 const auth = useAuthStore()
 const canReadOrders = computed(() => auth.hasPermission('order:read'))
 const canRead = computed(() => canReadOrders.value || auth.hasPermission('integration:youzan:manage'))
 const canWrite = computed(() => auth.hasPermission('campaign:write') || auth.hasPermission('integration:youzan:manage'))
 const canManage = computed(() => auth.hasPermission('integration:youzan:manage'))
 const canManageRuntime = computed(() => auth.hasPermission('integration:runtime:manage'))
-const activeTab = ref('orders')
+
+function resolveTabFromQuery(rawTab: unknown): string | null {
+  const value = Array.isArray(rawTab) ? rawTab[0] : rawTab
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  const publicTabs = new Set(['orders', 'mappings', 'customers', 'issues'])
+  const manageTabs = new Set(['shops', 'policy', 'jobs', 'customer-pull'])
+  if (publicTabs.has(normalized)) return normalized
+  if (manageTabs.has(normalized) && canManage.value) return normalized
+  return null
+}
+
+function readInitialTab(): string {
+  const fromRoute = resolveTabFromQuery(route?.query?.tab)
+  if (fromRoute) return fromRoute
+  try {
+    const fromWindow = typeof window !== 'undefined'
+      ? resolveTabFromQuery(new URLSearchParams(window.location.search).get('tab'))
+      : null
+    if (fromWindow) return fromWindow
+  } catch {
+    // 忽略地址解析异常
+  }
+  return 'orders'
+}
+
+const activeTab = ref(readInitialTab())
 const showPrerequisites = ref(false)
-const shopId = ref('MOCK-SHOP-001')
+
+if (route) {
+  watch(() => route.query.tab, (nextTab) => {
+    const resolved = resolveTabFromQuery(nextTab)
+    if (resolved) activeTab.value = resolved
+  })
+}
+
+function handleCustomerPullLinkExternal(externalCustomerId: string) {
+  pendingCustomerExternalId.value = externalCustomerId.trim()
+  activeTab.value = 'customers'
+}
+
+function shopStorageKey(): string {
+  return `whale.crm.youzan.shopId:${auth.user?.userId ?? 'default'}`
+}
+
+function pullCountStorageKey(): string {
+  return `whale.crm.youzan.pullCount:${auth.user?.userId ?? 'default'}`
+}
+
+function readPersistedShopId(): string | null {
+  try {
+    const fromUrl = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('shopId')?.trim()
+      : ''
+    if (fromUrl) return fromUrl
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saved = window.localStorage.getItem(shopStorageKey())?.trim()
+      if (saved) return saved
+    }
+  } catch {
+    // 忽略本地存储异常
+  }
+  return null
+}
+
+function persistShopId(id: string) {
+  const trimmed = id.trim()
+  if (!trimmed) return
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(shopStorageKey(), trimmed)
+    }
+  } catch {
+    // 忽略本地存储异常
+  }
+}
+
+function readPersistedPullCount(): number {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const rawValue = window.localStorage.getItem(pullCountStorageKey())
+      if (rawValue != null && rawValue !== '') {
+        const parsed = Math.floor(Number(rawValue))
+        if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 500) return parsed
+      }
+    }
+  } catch {
+    // 忽略本地存储异常
+  }
+  return 50
+}
+
+function persistPullCount(count: number) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(pullCountStorageKey(), String(count))
+    }
+  } catch {
+    // 忽略本地存储异常
+  }
+}
+
+const shopId = ref(DEFAULT_MOCK_SHOP_ID)
 const normalizedShopId = computed(() => shopId.value.trim())
 const isMockShop = computed(() => normalizedShopId.value.startsWith('MOCK-'))
 const currentShop = computed(() => shops.value.find((item) => item.shopId === normalizedShopId.value) ?? null)
@@ -53,6 +161,17 @@ const activeRealShops = computed(() => shops.value.filter((item) => item.syncEna
 const hasActiveRealIntegration = computed(() => (!isMockShop.value && Boolean(normalizedShopId.value)) || activeRealShops.value.length > 0)
 const pendingCustomerExternalId = ref('')
 const pendingSkuExternalId = ref('')
+const skuAutoOpenRequest = ref<{ externalSkuId: string; nonce: number } | null>(null)
+let skuAutoOpenNonce = 0
+const pullCount = ref<number>(readPersistedPullCount())
+const effectivePullCount = computed(() => {
+  const parsed = Math.floor(Number(pullCount.value))
+  return Number.isFinite(parsed) ? Math.min(500, Math.max(1, parsed)) : 50
+})
+
+function applyPullPreset(count: number) {
+  pullCount.value = count
+}
 function shopStatusNote(shop: YouzanShopConfig): string {
   if (shop.connectionStatus === 'CONNECTED') return '连接通过，同步未启用'
   if (shop.connectionStatus === 'FAILED') return '连接失败'
@@ -110,6 +229,20 @@ function linkedCustomer(row: YouzanOrderView) {
   const link = extId ? links.value.find((item) => item.externalCustomerId === extId) : undefined
   return link ? customerNames.value[link.customerId] || `客户 #${link.customerId}` : '—'
 }
+function openSkuMappingWithPrefill(externalSkuId: string) {
+  const normalized = externalSkuId.trim()
+  pendingSkuExternalId.value = normalized
+  if (normalized && canWrite.value) {
+    skuAutoOpenNonce += 1
+    skuAutoOpenRequest.value = { externalSkuId: normalized, nonce: skuAutoOpenNonce }
+  }
+  activeTab.value = 'mappings'
+}
+function handleAutoOpenConsumed(nonce: number) {
+  if (skuAutoOpenRequest.value?.nonce === nonce) {
+    skuAutoOpenRequest.value = null
+  }
+}
 function matchAndSync(row: YouzanOrderView) {
   if (row.mappingStatus === 'CUSTOMER_UNRESOLVED') {
     pendingCustomerExternalId.value = externalCustomerIdOf(row) ?? ''
@@ -119,8 +252,12 @@ function matchAndSync(row: YouzanOrderView) {
   const activeMapped = new Set(mappings.value.filter((item) => item.status === 'ACTIVE').map((item) => item.externalSkuId))
   const items = orderItemsOf(row)
   const missing = items.find((line) => typeof line.external_sku_id === 'string' && !activeMapped.has(line.external_sku_id))
-  const skuId = missing?.external_sku_id ?? items[0]?.external_sku_id
-  pendingSkuExternalId.value = typeof skuId === 'string' ? skuId : ''
+  const skuId = missing?.external_sku_id ?? items[0]?.external_sku_id ?? extractUnmappedExternalSkuId(row.errorReason)
+  if (typeof skuId === 'string' && skuId.trim()) {
+    openSkuMappingWithPrefill(skuId)
+    return
+  }
+  pendingSkuExternalId.value = ''
   activeTab.value = 'mappings'
 }
 
@@ -134,6 +271,12 @@ const report = ref<YouzanReconcileReport | null>(null)
 const reportError = ref('')
 const mappings = ref<YouzanSkuMapping[]>([])
 const mappingsLoading = ref(false)
+const skuCandidates = ref<YouzanSkuCandidate[]>([])
+const skuCandidatesLoading = ref(false)
+const skuCandidatesError = ref('')
+let skuCandidatesSeq = 0
+const activeMappedSkuIds = computed(() => new Set(mappings.value.filter((item) => item.status === 'ACTIVE').map((item) => item.externalSkuId)))
+const readyRetryCandidatesCount = computed(() => skuCandidates.value.filter((item) => item.mapped && item.pendingIssueCount > 0).length)
 const links = ref<YouzanCustomerLink[]>([])
 const linksLoading = ref(false)
 const shops = ref<YouzanShopConfig[]>([])
@@ -183,6 +326,36 @@ async function loadMappings() {
   } finally {
     mappingsLoading.value = false
   }
+}
+
+async function loadSkuCandidates() {
+  const sequence = ++skuCandidatesSeq
+  const targetShopId = normalizedShopId.value
+  skuCandidatesError.value = ''
+  if (!targetShopId) {
+    skuCandidates.value = []
+    skuCandidatesLoading.value = false
+    return
+  }
+  skuCandidatesLoading.value = true
+  try {
+    const result = await listYouzanSkuCandidates(targetShopId)
+    if (sequence !== skuCandidatesSeq || normalizedShopId.value !== targetShopId) return
+    skuCandidates.value = Array.isArray(result) ? result : []
+  } catch (error) {
+    if (sequence !== skuCandidatesSeq || normalizedShopId.value !== targetShopId) return
+    skuCandidates.value = []
+    skuCandidatesError.value = tradingErrorText(error)
+  } finally {
+    if (sequence === skuCandidatesSeq) skuCandidatesLoading.value = false
+  }
+}
+
+function handleSkuMappingSaved() {
+  pendingSkuExternalId.value = ''
+  skuAutoOpenRequest.value = null
+  batchRetryAttempt = null
+  void Promise.allSettled([loadMappings(), loadSkuCandidates()])
 }
 
 async function loadLinks() {
@@ -238,19 +411,46 @@ function selectShop(id: string) {
   reconcileHasMore.value = false
   pendingCustomerExternalId.value = ''
   pendingSkuExternalId.value = ''
+  skuAutoOpenRequest.value = null
   syncAttempt = null
+  batchRetryAttempt = null
   shopId.value = id.trim()
+  persistShopId(shopId.value)
   search()
 }
 
-function loadAll() {
+function loadAll(includeShops = true) {
   if (!canRead.value) return
-  void Promise.allSettled([loadOrders(), loadIssues(), loadMappings(), loadLinks(), loadReport(), loadShops()])
+  const tasks: Array<Promise<unknown>> = [loadOrders(), loadIssues(), loadMappings(), loadSkuCandidates(), loadLinks(), loadReport()]
+  if (includeShops) tasks.push(loadShops())
+  void Promise.allSettled(tasks)
 }
 
 function search() {
+  if (normalizedShopId.value) persistShopId(normalizedShopId.value)
   orderQuery.page = 1
   issueQuery.page = 1
+  loadAll()
+}
+
+async function initializePage() {
+  if (!canRead.value) return
+  const persisted = readPersistedShopId()
+  if (persisted) {
+    shopId.value = persisted
+    loadAll()
+    return
+  }
+  if (canManage.value) {
+    await loadShops()
+    const preferred = activeRealShops.value[0] ?? shops.value[0]
+    if (preferred?.shopId) {
+      shopId.value = preferred.shopId
+      persistShopId(preferred.shopId)
+    }
+    loadAll(false)
+    return
+  }
   loadAll()
 }
 
@@ -294,25 +494,48 @@ watch(shopId, () => {
   reconcileHasMore.value = false
   pendingCustomerExternalId.value = ''
   pendingSkuExternalId.value = ''
+  skuAutoOpenRequest.value = null
   syncAttempt = null
+  batchRetryAttempt = null
+}, { flush: 'sync' })
+
+watch(effectivePullCount, (next) => {
+  syncCursor.value = ''
+  reconcileCursor.value = ''
+  reconcileHasMore.value = false
+  syncAttempt = null
+  persistPullCount(next)
 }, { flush: 'sync' })
 
 async function runSync(mode: 'sync' | 'reconcile') {
   if (syncing.value) return
   const targetShopId = normalizedShopId.value
+  if (!targetShopId) {
+    ElMessage.warning('请先输入或选择有赞店铺编号（kdt_id）')
+    return
+  }
+  persistShopId(targetShopId)
+  const count = effectivePullCount.value
+  const syncLimit = Math.min(count, 100)
+  const reconcileLimit = count <= 100 ? count : undefined
   const cursor = mode === 'sync' ? syncCursor.value : (reconcileHasMore.value ? reconcileCursor.value : '')
-  const signature = `${targetShopId}:${mode}:${cursor}`
+  const signature = `${targetShopId}:${mode}:${cursor}:${count}`
   if (syncAttempt?.signature !== signature) syncAttempt = { signature, key: createYouzanKey(`youzan.${mode}`) }
   const key = syncAttempt.key
   syncing.value = true
   try {
     const result = mode === 'sync'
-      ? await syncYouzanOrders({ shopId: targetShopId, cursor: cursor || undefined, limit: 50 }, key)
-      : await reconcileYouzanOrders({ shopId: targetShopId, cursor: cursor || undefined, limit: 50 }, key)
+      ? await syncYouzanOrders({ shopId: targetShopId, cursor: cursor || undefined, limit: syncLimit }, key)
+      : await reconcileYouzanOrders({
+        shopId: targetShopId,
+        cursor: cursor || undefined,
+        ...(reconcileLimit != null ? { limit: reconcileLimit } : {}),
+        maxOrders: count,
+      }, key)
     syncAttempt = null
     if (normalizedShopId.value === targetShopId) {
       if (mode === 'sync') {
-        syncCursor.value = result.nextCursor ?? ''
+        syncCursor.value = result.hasMore && result.nextCursor ? result.nextCursor : ''
       } else if (result.hasMore && result.nextCursor) {
         reconcileCursor.value = result.nextCursor
         reconcileHasMore.value = true
@@ -321,7 +544,8 @@ async function runSync(mode: 'sync' | 'reconcile') {
         reconcileHasMore.value = false
       }
     }
-    await Promise.allSettled([loadOrders(), loadIssues(), loadReport()])
+    orderQuery.page = 1
+    await Promise.allSettled([loadOrders(), loadIssues(), loadSkuCandidates(), loadReport()])
     const syncLabel = targetShopId.startsWith('MOCK-') ? '模拟演示同步' : '同步'
     const moreHint = result.hasMore ? '；仍有后续页，请继续拉取' : ''
     if (result.issues > 0) {
@@ -338,6 +562,8 @@ async function runSync(mode: 'sync' | 'reconcile') {
 
 const retryingId = ref<number | null>(null)
 let retryAttempt: { signature: string; key: string } | null = null
+const batchRetryingSku = ref<string | null>(null)
+let batchRetryAttempt: { signature: string; key: string } | null = null
 
 async function retryIssue(issue: YouzanSyncIssue) {
   const signature = `${issue.id}:${issue.version}`
@@ -347,7 +573,7 @@ async function retryIssue(issue: YouzanSyncIssue) {
   try {
     const result = await retryYouzanSyncIssue(issue.id, key)
     retryAttempt = null
-    await Promise.allSettled([loadOrders(), loadIssues(), loadReport()])
+    await Promise.allSettled([loadOrders(), loadIssues(), loadSkuCandidates(), loadReport()])
     if (isMappingSuccess(result.processStatus)) {
       ElMessage.success('补偿处理已完成，未重复创建内部订单')
     } else {
@@ -360,15 +586,92 @@ async function retryIssue(issue: YouzanSyncIssue) {
   }
 }
 
+async function batchRetryIssues(externalSkuId?: string) {
+  if (batchRetryingSku.value) return
+  const targetShopId = normalizedShopId.value
+  if (!targetShopId) {
+    ElMessage.warning('请先输入或选择有赞店铺编号（kdt_id）')
+    return
+  }
+  const normalizedSku = externalSkuId?.trim() || ''
+  const token = normalizedSku || '__ALL__'
+  const signature = `${targetShopId}:${token}`
+  if (batchRetryAttempt?.signature !== signature) {
+    batchRetryAttempt = { signature, key: createYouzanKey('youzan.issue.batch-retry') }
+  }
+  const key = batchRetryAttempt.key
+  batchRetryingSku.value = token
+  try {
+    const result = await batchRetryYouzanSyncIssues({
+      shopId: targetShopId,
+      ...(normalizedSku ? { externalSkuId: normalizedSku } : {}),
+      limit: 50,
+    }, key)
+    batchRetryAttempt = null
+    await Promise.allSettled([loadOrders(), loadIssues(), loadSkuCandidates(), loadReport()])
+    if (result.matched === 0) {
+      ElMessage.info('当前没有可批量重试的已映射 SKU 异常')
+      return
+    }
+    const parts = [`已尝试 ${result.attempted} 条：处理完成 ${result.processed} 条`]
+    if (result.advanced > 0) parts.push(`SKU 已通过待继续处理（客户匹配/支付核验）${result.advanced} 条`)
+    if (result.stillFailed > 0) parts.push(`仍失败 ${result.stillFailed} 条`)
+    if (result.skipped > 0) parts.push(`跳过 ${result.skipped} 条`)
+    const suffix = result.remaining > 0 ? `；剩余 ${result.remaining} 条可再次点击继续重试` : ''
+    const message = `${parts.join('，')}${suffix}`
+    if (result.stillFailed === 0 && result.skipped === 0 && result.remaining === 0 && result.advanced === 0 && result.attempted > 0) {
+      ElMessage.success(message)
+    } else {
+      ElMessage.warning(message)
+    }
+  } catch (error) {
+    ElMessage.error(`${tradingErrorText(error)}；重新提交不会重复建单`)
+  } finally {
+    batchRetryingSku.value = null
+  }
+}
+
 onMounted(() => {
-  loadAll()
+  void initializePage()
 })
 </script>
 
 <template>
   <div class="proto-page">
     <PageHeader title="有赞订单同步中心" description="线上订单自动进入 CRM：去重 → 匹配客户 → 识别套餐 → 保留活动归属 → 生成订单/权益">
-      <template #actions><el-button type="info" plain @click="showPrerequisites = true">接口前置条件</el-button><el-button v-if="canManage" text data-testid="youzan-sync" @click="runSync('sync')">手动单页同步</el-button><el-button v-if="canManage" type="primary" :loading="syncing" data-testid="youzan-reconcile" @click="runSync('reconcile')">{{ reconcileHasMore ? '继续拉取订单' : '立即拉取订单' }}</el-button></template>
+      <template #actions>
+        <el-button type="info" plain @click="showPrerequisites = true">接口前置条件</el-button>
+        <div v-if="canManage" class="youzan-pull-control" data-testid="youzan-pull-control">
+          <span class="youzan-pull-label">拉取条数</span>
+          <div class="youzan-pull-presets" role="group" aria-label="快捷拉取条数">
+            <button
+              v-for="preset in PULL_COUNT_PRESETS"
+              :key="preset"
+              type="button"
+              class="youzan-pull-preset"
+              :class="{ 'is-active': effectivePullCount === preset }"
+              :data-testid="`youzan-pull-preset-${preset}`"
+              @click="applyPullPreset(preset)"
+            >
+              {{ preset }}
+            </button>
+          </div>
+          <el-input-number
+            v-model="pullCount"
+            :min="1"
+            :max="500"
+            :step="10"
+            :precision="0"
+            size="small"
+            controls-position="right"
+            class="youzan-pull-input"
+            data-testid="youzan-pull-count"
+            aria-label="自定义拉取条数"
+          />
+        </div>
+        <el-button v-if="canManage" text :disabled="syncing" data-testid="youzan-sync" @click="runSync('sync')">手动单页同步</el-button>
+        <el-button v-if="canManage" type="primary" :loading="syncing" data-testid="youzan-reconcile" @click="runSync('reconcile')">{{ reconcileHasMore ? '继续拉取订单' : '立即拉取订单' }}</el-button>
+      </template>
     </PageHeader>
     <div v-if="isMockShop && activeRealShops.length === 0" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟演示</span><strong>真实接入功能已预建 · 默认禁用 · 待授权联调</strong><p>模拟演示数据不代表真实资金到账；真实店铺须完成授权与验收后另行启用。</p></div>
     <div v-else-if="isMockShop" class="youzan-mock-banner" data-testid="youzan-mock-banner"><span class="youzan-mock-badge">模拟演示</span><strong>当前查看模拟演示店铺（{{ normalizedShopId }}）；已存在 {{ activeRealShops.length }} 个已连接并启用的真实店铺</strong><p>模拟演示数据不代表真实资金到账；如需操作真实店铺，请切换为对应有赞店铺编号（kdt_id）或在「店铺接入」中选择。</p></div>
@@ -382,12 +685,33 @@ onMounted(() => {
     <template v-else>
       <IntegrationRuntimeSettings v-if="canManageRuntime" provider="youzan" />
       <div class="proto-stat-grid"><StatCard label="今日拉取" :value="`${report?.todayEvents ?? 0} 单`" sub="按实际接收时间" icon="bag" /><StatCard label="待匹配" :value="`${pendingMatches} 单`" sub="需要确认 CRM 客户" icon="users" /><StatCard label="同步异常" :value="`${syncErrors} 单`" sub="商品映射或支付核验异常" icon="shield" /><StatCard label="活动订单" :value="`${report?.campaignOrders ?? 0} 单`" sub="保留活动与批次归属" icon="activity" /></div>
-      <div class="proto-toolbar shop-card"><div class="proto-toolbar-left"><el-input v-model="shopId" placeholder="请输入有赞店铺编号（kdt_id）" data-testid="youzan-shop-id" @keyup.enter="search" /><el-button @click="search">查询</el-button></div><span class="proto-note">{{ isMockShop ? '当前为模拟演示店铺；未授权真实店铺不会伪造同步结果' : '当前按真实有赞店铺编号（kdt_id）查询与同步；未授权店铺不会伪造同步结果' }}</span></div>
+      <div class="proto-toolbar shop-card">
+        <div class="proto-toolbar-left">
+          <el-input v-model="shopId" placeholder="请输入有赞店铺编号（kdt_id）" data-testid="youzan-shop-id" @keyup.enter="search" />
+          <el-button @click="search">查询</el-button>
+          <div v-if="shops.length > 0" class="youzan-quick-shops" data-testid="youzan-quick-shops">
+            <span class="youzan-quick-shops__label">已配置店铺：</span>
+            <button
+              v-for="item in shops"
+              :key="item.shopId"
+              type="button"
+              class="youzan-quick-shop-chip"
+              :class="{ 'is-active': normalizedShopId === item.shopId }"
+              :data-testid="`youzan-quick-shop-${item.shopId}`"
+              @click="selectShop(item.shopId)"
+            >
+              {{ item.shopName }}（{{ item.shopId }}）
+            </button>
+          </div>
+        </div>
+        <span class="proto-note">{{ isMockShop ? '当前为模拟演示店铺；未授权真实店铺不会伪造同步结果' : '当前按真实有赞店铺编号（kdt_id）查询与同步；未授权店铺不会伪造同步结果' }}</span>
+      </div>
       <el-alert v-if="reportError" type="error" :title="reportError" :closable="false" />
 
       <el-card shadow="never">
         <el-tabs v-model="activeTab" class="fulfillment-status-tabs">
           <el-tab-pane label="订单与原始状态" name="orders" />
+          <el-tab-pane v-if="canManage" label="客户拉取与建档" name="customer-pull" />
           <el-tab-pane v-if="canManage" label="店铺接入" name="shops" />
           <el-tab-pane v-if="canManage" label="同步策略" name="policy" />
           <el-tab-pane v-if="canManage" label="同步任务" name="jobs" />
@@ -416,6 +740,14 @@ onMounted(() => {
           <el-pagination v-model:current-page="orderQuery.page" v-model:page-size="orderQuery.size" :total="orderTotal" :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next" class="crm-pager" @current-change="loadOrders" @size-change="orderQuery.page = 1; loadOrders()" />
         </template>
 
+        <template v-else-if="activeTab === 'customer-pull' && canManage">
+          <YouzanCustomerPullPanel
+            :shop-id="normalizedShopId"
+            @link-external="handleCustomerPullLinkExternal"
+            @imported="loadLinks"
+          />
+        </template>
+
         <template v-else-if="activeTab === 'shops'">
           <YouzanShopConfigPanel :shops="shops" :loading="shopsLoading" :can-write="canManage" @saved="loadShops" @select="selectShop" />
         </template>
@@ -429,7 +761,22 @@ onMounted(() => {
         </template>
 
         <template v-else-if="activeTab === 'mappings'">
-          <YouzanSkuMappingPanel :mappings="mappings" :shop-id="normalizedShopId" :can-write="canWrite" :loading="mappingsLoading" :suggested-external-id="pendingSkuExternalId" @saved="pendingSkuExternalId = ''; loadMappings()" />
+          <YouzanSkuMappingPanel
+            :mappings="mappings"
+            :candidates="skuCandidates"
+            :candidates-loading="skuCandidatesLoading"
+            :candidates-error="skuCandidatesError"
+            :shop-id="normalizedShopId"
+            :can-write="canWrite"
+            :loading="mappingsLoading"
+            :suggested-external-id="pendingSkuExternalId"
+            :auto-open-request="skuAutoOpenRequest"
+            :batch-retrying-sku="batchRetryingSku"
+            @saved="handleSkuMappingSaved"
+            @batch-retry="batchRetryIssues"
+            @auto-open-consumed="handleAutoOpenConsumed"
+            @reload-candidates="loadSkuCandidates"
+          />
         </template>
 
         <template v-else-if="activeTab === 'customers'">
@@ -446,9 +793,31 @@ onMounted(() => {
             </el-select>
             <el-button type="primary" :loading="issueLoading" @click="issueQuery.page = 1; loadIssues()">查询</el-button>
             <el-button @click="issueQuery.status = ''; issueQuery.page = 1; loadIssues()">重置</el-button>
+            <el-button
+              v-if="canWrite && readyRetryCandidatesCount > 0"
+              type="success"
+              plain
+              :loading="batchRetryingSku === '__ALL__'"
+              :disabled="batchRetryingSku !== null && batchRetryingSku !== '__ALL__'"
+              :title="`仅批量重试当前所选店铺（${normalizedShopId}）下已完成 SKU 映射的异常`"
+              data-testid="issues-batch-retry"
+              @click="batchRetryIssues()"
+            >
+              批量重试已映射异常（{{ readyRetryCandidatesCount }} 个 SKU）
+            </el-button>
+            <span v-if="canWrite && readyRetryCandidatesCount > 0" class="proto-note">批量重试仅作用于当前店铺（{{ normalizedShopId }}）</span>
           </div>
           <el-alert v-if="issueError" type="error" :title="`异常队列加载失败：${issueError}`" :closable="false" class="crm-table-alert" />
-          <YouzanSyncIssuePanel :issues="issues" :loading="issueLoading" :can-write="canWrite" :processing-id="retryingId" @retry="retryIssue" />
+          <YouzanSyncIssuePanel
+            :issues="issues"
+            :loading="issueLoading"
+            :can-write="canWrite"
+            :processing-id="retryingId"
+            :mapped-sku-ids="activeMappedSkuIds"
+            :batch-retrying="batchRetryingSku !== null"
+            @retry="retryIssue"
+            @map-sku="openSkuMappingWithPrefill"
+          />
           <el-pagination v-model:current-page="issueQuery.page" v-model:page-size="issueQuery.size" :total="issueTotal" :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next" class="crm-pager" @current-change="loadIssues" @size-change="issueQuery.page = 1; loadIssues()" />
         </template>
       </el-card>

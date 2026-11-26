@@ -52,7 +52,13 @@ const ACTION_LABELS: Record<string, string> = {
   QUICK_REPLY_DELETE: '停用话术模板',
   AI_SETTINGS_UPDATE: '更新 AI 配置',
   WECOM_CONFIG_UPDATE: '更新企微配置',
+  WECOM_TAG_CATALOG_SYNC: '企微标签库同步',
+  WECOM_TAG_MAPPING_UPDATE: '更新企微标签映射',
+  WECOM_CUSTOMER_TAG_PULL: '企微客户标签拉取',
+  WECOM_CUSTOMER_TAG_PUSH: '企微客户标签推送',
   YOUZAN_CONFIG_UPDATE: '更新有赞配置',
+  YOUZAN_CUSTOMER_SYNC: '有赞客户拉取建档',
+  YOUZAN_CUSTOMER_CURSOR_RESET: '重置有赞客户同步游标',
 }
 
 const TARGET_TYPE_LABELS: Record<string, string> = {

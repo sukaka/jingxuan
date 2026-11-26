@@ -478,6 +478,122 @@ class YouzanManagementWindowTest {
                 any(), any(), any(), any());
     }
 
+    @Test
+    void reconcileRespectsMaxOrdersSkipsEmptyWindowsAndStopsWithoutChangingPageSize() throws Exception {
+        YouzanRepository repository = mock(YouzanRepository.class);
+        YouzanConfigRepository configs = mock(YouzanConfigRepository.class);
+        YouzanEventService eventService = mock(YouzanEventService.class);
+        YouzanAdapterRouter router = mock(YouzanAdapterRouter.class);
+        RealYouzanAdapter adapter = mock(RealYouzanAdapter.class);
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+
+        when(configs.findShopConfig(2L, "123")).thenReturn(Optional.empty());
+        when(router.adapter(2L, "123")).thenReturn(adapter);
+        when(repository.findCursorForUpdate(2L, "123")).thenReturn(Optional.empty());
+
+        Instant t0 = Instant.parse("2026-01-01T00:00:00Z");
+        Instant t1 = Instant.parse("2026-04-01T00:00:00Z");
+        Instant t2 = Instant.parse("2026-05-01T00:00:00Z");
+        String emptyWin = mapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", t0, t1, t2, 1));
+        String win2Page1 = mapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", t1, t2, t2, 1));
+        String win2Page2 = mapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", t1, t2, t2, 2));
+
+        List<YouzanOrderEvent> tenOrders = new ArrayList<>();
+        for (int i = 1; i <= 10; i++) {
+            String evId = "EV-CAP-" + i;
+            String ordNo = "ORD-CAP-" + i;
+            tenOrders.add(sampleEvent(evId, ordNo, Instant.parse("2026-04-10T00:00:00Z").plusSeconds(i)));
+            long dbId = 800L + i;
+            when(repository.findEventByKey(2L, "123", evId)).thenReturn(Optional.of(rawEvent(dbId, evId, ordNo)));
+            when(eventService.process(2L, dbId)).thenReturn(new YouzanEventResponse(dbId, evId, "ORDER_PAID", ordNo,
+                    "PROCESSED", 1, null, 9000L + i, t1, t1, false));
+        }
+        when(adapter.pullOrders(2L, "123", emptyWin, 10))
+                .thenReturn(new YouzanPullPage(List.of(), emptyWin, false, Map.of()));
+        when(adapter.pullOrders(2L, "123", win2Page1, 10))
+                .thenReturn(new YouzanPullPage(tenOrders, win2Page2, true, Map.of()));
+
+        YouzanManagementService service = managementService(repository, configs, eventService, router, mapper,
+                transactionManager());
+
+        YouzanSyncResponse response = service.reconcile(admin(1, 2),
+                new YouzanSyncRequest("123", emptyWin, 10, 10), "reconcile-cap-10");
+
+        assertThat(response.received()).isEqualTo(10);
+        assertThat(response.processed()).isEqualTo(10);
+        assertThat(response.hasMore()).isTrue();
+        assertThat(response.nextCursor()).isEqualTo(win2Page2);
+        verify(adapter, times(1)).pullOrders(2L, "123", emptyWin, 10);
+        verify(adapter, times(1)).pullOrders(2L, "123", win2Page1, 10);
+        verify(adapter, never()).pullOrders(2L, "123", win2Page2, 10);
+    }
+
+    @Test
+    void reconcileStopsBeforePartialNextPageWhenRemainingLessThanPageLimit() throws Exception {
+        YouzanRepository repository = mock(YouzanRepository.class);
+        YouzanConfigRepository configs = mock(YouzanConfigRepository.class);
+        YouzanEventService eventService = mock(YouzanEventService.class);
+        YouzanAdapterRouter router = mock(YouzanAdapterRouter.class);
+        RealYouzanAdapter adapter = mock(RealYouzanAdapter.class);
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+
+        when(configs.findShopConfig(2L, "123")).thenReturn(Optional.empty());
+        when(router.adapter(2L, "123")).thenReturn(adapter);
+        when(repository.findCursorForUpdate(2L, "123")).thenReturn(Optional.empty());
+
+        Instant t0 = Instant.parse("2026-01-01T00:00:00Z");
+        Instant t1 = Instant.parse("2026-04-01T00:00:00Z");
+        Instant t2 = Instant.parse("2026-05-01T00:00:00Z");
+        String win1 = mapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", t0, t1, t2, 1));
+        String win2 = mapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", t1, t2, t2, 1));
+
+        List<YouzanOrderEvent> threeOrders = List.of(
+                sampleEvent("EV-P-1", "ORD-P-1", Instant.parse("2026-02-01T00:00:00Z")),
+                sampleEvent("EV-P-2", "ORD-P-2", Instant.parse("2026-02-02T00:00:00Z")),
+                sampleEvent("EV-P-3", "ORD-P-3", Instant.parse("2026-02-03T00:00:00Z")));
+        for (int i = 1; i <= 3; i++) {
+            String evId = "EV-P-" + i;
+            String ordNo = "ORD-P-" + i;
+            long dbId = 850L + i;
+            when(repository.findEventByKey(2L, "123", evId)).thenReturn(Optional.of(rawEvent(dbId, evId, ordNo)));
+            when(eventService.process(2L, dbId)).thenReturn(new YouzanEventResponse(dbId, evId, "ORDER_PAID", ordNo,
+                    "PROCESSED", 1, null, 9500L + i, t0, t0, false));
+        }
+        when(adapter.pullOrders(2L, "123", win1, 10))
+                .thenReturn(new YouzanPullPage(threeOrders, win1, false, Map.of()));
+
+        YouzanManagementService service = managementService(repository, configs, eventService, router, mapper,
+                transactionManager());
+
+        YouzanSyncResponse response = service.reconcile(admin(1, 2),
+                new YouzanSyncRequest("123", win1, 10, 10), "reconcile-no-overshoot");
+
+        assertThat(response.received()).isEqualTo(3);
+        assertThat(response.hasMore()).isTrue();
+        assertThat(response.nextCursor()).isEqualTo(win2);
+        verify(adapter, times(1)).pullOrders(2L, "123", win1, 10);
+        verify(adapter, never()).pullOrders(eq(2L), eq("123"), eq(win2), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void resolvePageLimitsChoosesSafeDivisorForMultiPageMaxOrders() {
+        assertThat(YouzanManagementService.resolveSyncPageLimit(null, null)).isEqualTo(50);
+        assertThat(YouzanManagementService.resolveSyncPageLimit(20, null)).isEqualTo(20);
+        assertThat(YouzanManagementService.resolveSyncPageLimit(null, 10)).isEqualTo(10);
+        assertThat(YouzanManagementService.resolveSyncPageLimit(50, 10)).isEqualTo(10);
+        assertThat(YouzanManagementService.resolveSyncPageLimit(null, 200)).isEqualTo(100);
+
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(null, null)).isEqualTo(50);
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(50, null)).isEqualTo(50);
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(null, 10)).isEqualTo(10);
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(null, 20)).isEqualTo(20);
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(50, 20)).isEqualTo(20);
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(null, 150)).isEqualTo(75);
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(null, 200)).isEqualTo(100);
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(null, 500)).isEqualTo(100);
+        assertThat(YouzanManagementService.resolveReconcilePageLimit(null, 127)).isEqualTo(50);
+    }
+
     private static YouzanManagementService managementService(YouzanRepository repository,
                                                              YouzanConfigRepository configs,
                                                              YouzanEventService eventService,

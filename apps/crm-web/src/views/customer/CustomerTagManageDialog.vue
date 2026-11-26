@@ -9,7 +9,10 @@ import {
   listCustomerTags,
   updateCustomerTag,
 } from '../../api/customer'
+import type { WecomTagMappingItem } from '../../api/wecom'
+import { getWecomTagMappings, syncWecomTagCatalog } from '../../api/wecom'
 import { ApiError } from '../../types/api'
+import { createWecomKey } from '../wecom/wecomUi'
 
 const props = defineProps<{
   modelValue: boolean
@@ -30,6 +33,9 @@ const editorVisible = ref(false)
 const editingTag = ref<CustomerTagItem | null>(null)
 const saving = ref(false)
 const togglingId = ref<number | null>(null)
+const wecomMappings = ref<Record<string, WecomTagMappingItem>>({})
+const wecomAvailable = ref(false)
+const syncingWecom = ref(false)
 const form = reactive({
   optionLabel: '',
   sortNo: 0,
@@ -71,6 +77,37 @@ async function loadTags() {
   }
 }
 
+async function loadWecomMappings() {
+  try {
+    const overview = await getWecomTagMappings()
+    wecomMappings.value = Object.fromEntries(overview.items.map((item) => [item.crmTagCode, item]))
+    wecomAvailable.value = true
+  } catch {
+    wecomMappings.value = {}
+    wecomAvailable.value = false
+  }
+}
+
+async function syncWithWecom() {
+  if (syncingWecom.value) return
+  syncingWecom.value = true
+  try {
+    const run = await syncWecomTagCatalog('BIDIRECTIONAL', createWecomKey('wecom.tag.catalog'))
+    await Promise.all([loadTags(), loadWecomMappings()])
+    emit('changed')
+    const summary = `拉取 ${run.pulledCount} 个，推送 ${run.pushedCount} 个，跳过 ${run.skippedCount} 个`
+    if (run.status === 'ERROR' || run.status === 'PARTIAL' || run.failedCount > 0) {
+      ElMessage.warning(`企微标签同步存在异常：${summary}，失败 ${run.failedCount} 个${run.errorMasked ? `（${run.errorMasked}）` : ''}`)
+    } else {
+      ElMessage.success(`企微标签双向同步完成：${summary}`)
+    }
+  } catch (error) {
+    ElMessage.error(errorText(error))
+  } finally {
+    syncingWecom.value = false
+  }
+}
+
 watch(
   () => props.modelValue,
   (visible) => {
@@ -78,6 +115,7 @@ watch(
       keyword.value = ''
       statusFilter.value = 'ALL'
       void loadTags()
+      void loadWecomMappings()
     }
   },
   { immediate: true },
@@ -123,7 +161,7 @@ async function saveEditor() {
       ElMessage.success('标签内容已新增')
     }
     editorVisible.value = false
-    await loadTags()
+    await Promise.all([loadTags(), wecomAvailable.value ? loadWecomMappings() : Promise.resolve()])
     emit('changed')
   } catch (error) {
     ElMessage.error(errorText(error))
@@ -146,7 +184,7 @@ async function disableTag(item: CustomerTagItem) {
   try {
     await disableCustomerTag(item.id)
     ElMessage.success('标签已停用')
-    await loadTags()
+    await Promise.all([loadTags(), wecomAvailable.value ? loadWecomMappings() : Promise.resolve()])
     emit('changed')
   } catch (error) {
     ElMessage.error(errorText(error))
@@ -160,7 +198,7 @@ async function enableTag(item: CustomerTagItem) {
   try {
     await enableCustomerTag(item.id)
     ElMessage.success('标签已重新启用')
-    await loadTags()
+    await Promise.all([loadTags(), wecomAvailable.value ? loadWecomMappings() : Promise.resolve()])
     emit('changed')
   } catch (error) {
     ElMessage.error(errorText(error))
@@ -212,15 +250,43 @@ async function enableTag(item: CustomerTagItem) {
         </el-select>
         <span class="tag-manage-count">启用 {{ activeCount }} / 共 {{ tags.length }} 个</span>
       </div>
-      <el-button type="primary" data-testid="customer-tag-create-btn" @click="openCreate">
-        ＋ 新增标签
-      </el-button>
+      <div class="tag-manage-actions">
+        <el-button
+          v-if="wecomAvailable"
+          :loading="syncingWecom"
+          data-testid="customer-tag-wecom-sync-btn"
+          @click="syncWithWecom"
+        >
+          双向同步企微标签
+        </el-button>
+        <el-button type="primary" data-testid="customer-tag-create-btn" @click="openCreate">
+          ＋ 新增标签
+        </el-button>
+      </div>
     </div>
 
     <el-table v-loading="loading" :data="filteredTags" size="small" max-height="380">
       <el-table-column label="标签内容" min-width="180">
         <template #default="{ row }">
           <strong>{{ row.optionLabel }}</strong>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="wecomAvailable" label="企微同步" min-width="150">
+        <template #default="{ row }">
+          <span
+            v-if="wecomMappings[row.optionCode]?.syncStatus === 'ACTIVE'"
+            class="proto-pill info"
+            :data-testid="`customer-tag-wecom-status-${row.optionCode}`"
+          >
+            已映射 · {{ wecomMappings[row.optionCode]?.wecomTagName || wecomMappings[row.optionCode]?.wecomTagId }}
+          </span>
+          <span
+            v-else
+            class="tag-wecom-unmapped"
+            :data-testid="`customer-tag-wecom-status-${row.optionCode}`"
+          >
+            未映射
+          </span>
         </template>
       </el-table-column>
       <el-table-column prop="sortNo" label="排序" width="80" />
@@ -334,6 +400,18 @@ async function enableTag(item: CustomerTagItem) {
 
 .tag-manage-count {
   color: #7c9288;
+  font-size: 12px;
+}
+
+.tag-manage-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tag-wecom-unmapped {
+  color: #8c9c95;
   font-size: 12px;
 }
 </style>

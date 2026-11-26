@@ -550,4 +550,119 @@ class CustomerApiIT extends AbstractMysqlIT {
                 Integer.class, Long.toString(customerId));
         assertThat(tagAuditCount).isGreaterThanOrEqualTo(1);
     }
+
+    @Test
+    void searchWithTagCodes_supportsSingleAnyAllValidationAndScopeIsolation() throws Exception {
+        AuthCookies admin = login("admin");
+        AuthCookies lead1 = login("lead1");
+        AuthCookies manager1 = login("manager1");
+        AuthCookies manager2 = login("manager2");
+        String prefix = "ITTF-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 6);
+
+        // manager1 (team 1): cBoth=[VIP, HIGH_INTENT], cNew=[NEW_7D]
+        String cBothBody = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-BOTH\",\"tagCodes\":[\"VIP\",\"HIGH_INTENT\"]}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long cBothId = objectMapper.readTree(cBothBody).at("/data/id").asLong();
+
+        String cNewBody = mockMvc.perform(manager1.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-NEW\",\"tagCodes\":[\"NEW_7D\"]}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long cNewId = objectMapper.readTree(cNewBody).at("/data/id").asLong();
+
+        // manager2 (team 2): cTeam2=[VIP, HIGH_INTENT]
+        String cTeam2Body = mockMvc.perform(manager2.withAuth(post("/api/v1/customers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"" + prefix + "-T2\",\"tagCodes\":[\"VIP\",\"HIGH_INTENT\"]}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long cTeam2Id = objectMapper.readTree(cTeam2Body).at("/data/id").asLong();
+
+        // 1. 单标签筛选（admin 全部范围命中 cBoth + cTeam2）
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("keyword", prefix)
+                        .param("tagCodes", "VIP")
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andExpect(jsonPath("$.data.items[*].id", hasItem((int) cBothId)))
+                .andExpect(jsonPath("$.data.items[*].id", hasItem((int) cTeam2Id)));
+
+        // 2. 多标签 ANY（重复参数 & 逗号分隔均命中全部 3 条）
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("keyword", prefix)
+                        .param("tagCodes", "VIP", "NEW_7D")
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(3))
+                .andExpect(jsonPath("$.data.items[*].id", hasItem((int) cNewId)));
+
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("keyword", prefix)
+                        .param("tagCodes", "VIP, NEW_7D")
+                        .param("tagMatchMode", "any")
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(3));
+
+        // 3. 多标签 ALL（大小写不敏感，仅命中同时有 VIP + HIGH_INTENT 的 2 条）
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("keyword", prefix)
+                        .param("tagCodes", "VIP", "HIGH_INTENT")
+                        .param("tagMatchMode", "all")
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andExpect(jsonPath("$.data.items[*].id", hasItem((int) cBothId)))
+                .andExpect(jsonPath("$.data.items[*].id", hasItem((int) cTeam2Id)));
+
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("keyword", prefix)
+                        .param("tagCodes", "VIP", "NEW_7D")
+                        .param("tagMatchMode", "ALL")
+                        .cookie(admin.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+
+        // 4. SELF（manager1）与 TEAM（lead1）数据范围隔离：均看不到 team 2 的 cTeam2
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("keyword", prefix)
+                        .param("tagCodes", "VIP", "HIGH_INTENT")
+                        .param("tagMatchMode", "ALL")
+                        .cookie(manager1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value((int) cBothId));
+
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("keyword", prefix)
+                        .param("tagCodes", "VIP")
+                        .cookie(lead1.cookies()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value((int) cBothId));
+
+        // 5. 非法 tagMatchMode / 超 20 个标签 / 超 64 字符编码 → 400 VALIDATION_FAILED
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("tagCodes", "VIP")
+                        .param("tagMatchMode", "XOR")
+                        .cookie(admin.cookies()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        String tooMany = java.util.stream.IntStream.rangeClosed(1, 21)
+                .mapToObj(i -> "T" + i).collect(java.util.stream.Collectors.joining(","));
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("tagCodes", tooMany)
+                        .cookie(admin.cookies()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        mockMvc.perform(get("/api/v1/customers")
+                        .param("tagCodes", "A".repeat(65))
+                        .cookie(admin.cookies()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
 }

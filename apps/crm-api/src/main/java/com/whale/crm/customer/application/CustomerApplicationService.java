@@ -35,17 +35,23 @@ import com.whale.crm.platform.user.domain.UserRepository;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -60,6 +66,11 @@ public class CustomerApplicationService {
     public static final String IDEMPOTENCY_SCOPE_CREATE = "customer:create";
     public static final String IDEMPOTENCY_SCOPE_POINTS = "customer:points_adjust";
     public static final String POINTS_SOURCE_MANUAL = "MANUAL_ADJUST";
+    public static final String TAG_MATCH_MODE_ANY = "ANY";
+    public static final String TAG_MATCH_MODE_ALL = "ALL";
+    private static final int MAX_FILTER_TAG_CODES = 20;
+    private static final int MAX_TAG_CODE_LENGTH = 64;
+    private static final Logger log = LoggerFactory.getLogger(CustomerApplicationService.class);
 
     private final CustomerRepository customerRepository;
     private final CustomerIdentityRepository identityRepository;
@@ -78,6 +89,7 @@ public class CustomerApplicationService {
     private final CustomerAttentionProjectRepository attentionProjectRepository;
     private final CustomerProjectSupport projectSupport;
     private final CustomerUniquenessService uniquenessService;
+    private final ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider;
 
     public CustomerApplicationService(CustomerRepository customerRepository,
                                       CustomerIdentityRepository identityRepository,
@@ -97,7 +109,31 @@ public class CustomerApplicationService {
                                       CustomerProjectSupport projectSupport) {
         this(customerRepository, identityRepository, tagRepository, ownerHistoryRepository, pointsLedgerRepository,
                 userRepository, scopeSupport, mobileSupport, auditService, dictionaryService, idempotencyService,
-                objectMapper, stewardDirectory, tierReviewService, attentionProjectRepository, projectSupport, null);
+                objectMapper, stewardDirectory, tierReviewService, attentionProjectRepository, projectSupport,
+                null, null);
+    }
+
+    public CustomerApplicationService(CustomerRepository customerRepository,
+                                      CustomerIdentityRepository identityRepository,
+                                      CustomerTagRepository tagRepository,
+                                      CustomerOwnerHistoryRepository ownerHistoryRepository,
+                                      PointsLedgerRepository pointsLedgerRepository,
+                                      UserRepository userRepository,
+                                      CustomerScopeSupport scopeSupport,
+                                      MobileSupport mobileSupport,
+                                      AuditService auditService,
+                                      DictionaryApplicationService dictionaryService,
+                                      IdempotencyService idempotencyService,
+                                      ObjectMapper objectMapper,
+                                      StewardDirectory stewardDirectory,
+                                      CustomerTierReviewService tierReviewService,
+                                      CustomerAttentionProjectRepository attentionProjectRepository,
+                                      CustomerProjectSupport projectSupport,
+                                      CustomerUniquenessService uniquenessService) {
+        this(customerRepository, identityRepository, tagRepository, ownerHistoryRepository, pointsLedgerRepository,
+                userRepository, scopeSupport, mobileSupport, auditService, dictionaryService, idempotencyService,
+                objectMapper, stewardDirectory, tierReviewService, attentionProjectRepository, projectSupport,
+                uniquenessService, null);
     }
 
     @Autowired
@@ -117,7 +153,8 @@ public class CustomerApplicationService {
                                       CustomerTierReviewService tierReviewService,
                                       CustomerAttentionProjectRepository attentionProjectRepository,
                                       CustomerProjectSupport projectSupport,
-                                      CustomerUniquenessService uniquenessService) {
+                                      CustomerUniquenessService uniquenessService,
+                                      ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider) {
         this.customerRepository = customerRepository;
         this.identityRepository = identityRepository;
         this.tagRepository = tagRepository;
@@ -135,6 +172,7 @@ public class CustomerApplicationService {
         this.attentionProjectRepository = attentionProjectRepository;
         this.projectSupport = projectSupport;
         this.uniquenessService = uniquenessService;
+        this.tagSyncPortProvider = tagSyncPortProvider;
     }
 
     @Transactional(readOnly = true)
@@ -142,6 +180,18 @@ public class CustomerApplicationService {
                                                          String status, String cityCode, String sourceCode,
                                                          String channelCode, String tierCode, Long ownerId,
                                                          Instant followupDueBefore, int page, int size) {
+        return search(tenantId, user, keyword, status, cityCode, sourceCode, channelCode, tierCode, ownerId,
+                followupDueBefore, null, null, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<CustomerListItemResponse> search(long tenantId, CurrentUser user, String keyword,
+                                                         String status, String cityCode, String sourceCode,
+                                                         String channelCode, String tierCode, Long ownerId,
+                                                         Instant followupDueBefore, List<String> tagCodes,
+                                                         String tagMatchMode, int page, int size) {
+        List<String> normalizedTagCodes = normalizeFilterTagCodes(tagCodes);
+        String normalizedTagMatchMode = normalizeTagMatchMode(tagMatchMode);
         DataScope scope = scopeSupport.scope(user);
         if (scopeSupport.isEmptyScope(scope)) {
             return new PageResponse<>(List.of(), 0, page, size);
@@ -152,7 +202,7 @@ public class CustomerApplicationService {
         int offset = (page - 1) * size;
         List<CustomerListRow> rows = customerRepository.search(tenantId, query.scopeType(), query.teamIds(),
                 query.selfId(), keyword, mobileHashKeyword, status, cityCode, sourceCode, channelCode, tierCode,
-                ownerId, followupDueBefore, offset, size);
+                ownerId, followupDueBefore, normalizedTagCodes, normalizedTagMatchMode, offset, size);
         Map<Long, CustomerStewardSummaryResponse> stewardSummaries = Map.of();
         if (uniquenessService != null && uniquenessService.canView(user) && !rows.isEmpty()) {
             List<Long> rowIds = rows.stream().map(CustomerListRow::getId).toList();
@@ -165,7 +215,7 @@ public class CustomerApplicationService {
                 .toList();
         long total = customerRepository.countSearch(tenantId, query.scopeType(), query.teamIds(), query.selfId(),
                 keyword, mobileHashKeyword, status, cityCode, sourceCode, channelCode, tierCode, ownerId,
-                followupDueBefore);
+                followupDueBefore, normalizedTagCodes, normalizedTagMatchMode);
         return new PageResponse<>(items, total, page, size);
     }
 
@@ -248,6 +298,9 @@ public class CustomerApplicationService {
         Customer persisted = customerRepository.findById(tenantId, customer.getId()).orElseThrow();
         auditService.record(tenantId, user.userId(), AuditService.ACTION_CUSTOMER_CREATE, "CUSTOMER",
                 Long.toString(customer.getId()), null, customerSnapshot(persisted), null);
+        if (!persistedTags.isEmpty()) {
+            notifyTagSync(tenantId, customer.getId(), List.of(), persistedTags, user.userId(), "CRM_WRITE");
+        }
         return toDetail(persisted, owner.getDisplayName(), persistedTags, List.of());
     }
 
@@ -351,6 +404,7 @@ public class CustomerApplicationService {
                 auditService.record(tenantId, user.userId(), AuditService.ACTION_CUSTOMER_TAGS_UPDATE, "CUSTOMER",
                         Long.toString(customerId), Map.of("tagCodes", beforeTags), Map.of("tagCodes", afterTags),
                         null);
+                notifyTagSync(tenantId, customerId, beforeTags, afterTags, user.userId(), "CRM_WRITE");
             }
         } else {
             afterTags = tagRepository.findTagCodes(tenantId, customerId);
@@ -387,8 +441,105 @@ public class CustomerApplicationService {
         List<String> after = tagRepository.findTagCodes(tenantId, customerId);
         auditService.record(tenantId, user.userId(), AuditService.ACTION_CUSTOMER_TAGS_UPDATE, "CUSTOMER",
                 Long.toString(customerId), Map.of("tagCodes", before), Map.of("tagCodes", after), null);
+        if (!before.equals(after)) {
+            notifyTagSync(tenantId, customerId, before, after, user.userId(), "CRM_WRITE");
+        }
         return toDetail(existing, ownerNameOf(tenantId, existing), after,
                 identityRepository.findByCustomerId(tenantId, customerId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<String> getCustomerTagCodesInternal(long tenantId, long customerId) {
+        return tagRepository.findTagCodes(tenantId, customerId);
+    }
+
+    /**
+     * 批量过滤当前用户在 CUSTOMER 数据范围内可见的客户 ID（供跨模块应用服务执行行级隔离，严禁跨模块偷查 Mapper）。
+     */
+    @Transactional(readOnly = true)
+    public Set<Long> filterVisibleCustomerIds(long tenantId, CurrentUser user, Collection<Long> customerIds) {
+        if (user == null || customerIds == null || customerIds.isEmpty()) {
+            return Set.of();
+        }
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return Set.of();
+        }
+        List<Long> distinctIds = customerIds.stream()
+                .filter(id -> id != null && id > 0)
+                .distinct()
+                .toList();
+        if (distinctIds.isEmpty()) {
+            return Set.of();
+        }
+        if (scope.type() == DataScope.ScopeType.ALL) {
+            return new LinkedHashSet<>(distinctIds);
+        }
+        Set<Long> visible = new LinkedHashSet<>();
+        final int batchSize = 500;
+        for (int start = 0; start < distinctIds.size(); start += batchSize) {
+            List<Long> slice = distinctIds.subList(start, Math.min(start + batchSize, distinctIds.size()));
+            for (Customer customer : customerRepository.findActiveByIds(tenantId, slice)) {
+                if (!customer.isDeleted() && scopeSupport.isVisible(scope, user, customer)) {
+                    visible.add(customer.getId());
+                }
+            }
+        }
+        return visible;
+    }
+
+    /**
+     * 企微 → CRM 标签回流同步：仅更新已纳入企微映射管理的标签子集（managedTagCodes），
+     * 完整保留未映射的 CRM 本地标签；写入 WECOM_CUSTOMER_TAG_PULL 审计且绝不反向触发 CustomerTagSyncPort，彻底杜绝回声循环。
+     */
+    @Transactional
+    public WecomTagPullOutcome syncTagsFromWecom(long tenantId, long customerId, Set<String> managedTagCodes,
+                                                 Set<String> wecomTargetTagCodes, Long actorUserId, String reason) {
+        if (managedTagCodes == null || managedTagCodes.isEmpty()) {
+            return new WecomTagPullOutcome(false, List.of(), List.of());
+        }
+        Optional<Customer> customerOpt = customerRepository.findById(tenantId, customerId);
+        if (customerOpt.isEmpty() || customerOpt.get().isDeleted()) {
+            return new WecomTagPullOutcome(false, List.of(), List.of());
+        }
+        Set<String> activeCatalogCodes = new LinkedHashSet<>();
+        dictionaryService.listActiveOptions(tenantId, CustomerTagAdminService.CUSTOMER_TAGS_DICT_CODE)
+                .forEach(opt -> activeCatalogCodes.add(opt.optionCode()));
+        Set<String> effectiveManaged = new LinkedHashSet<>();
+        for (String code : managedTagCodes) {
+            if (code != null && activeCatalogCodes.contains(code)) {
+                effectiveManaged.add(code);
+            }
+        }
+        if (effectiveManaged.isEmpty()) {
+            return new WecomTagPullOutcome(false, List.of(), List.of());
+        }
+        List<String> before = tagRepository.findTagCodes(tenantId, customerId);
+        Set<String> targetManaged = new LinkedHashSet<>();
+        if (wecomTargetTagCodes != null) {
+            for (String code : wecomTargetTagCodes) {
+                if (code != null && effectiveManaged.contains(code)) {
+                    targetManaged.add(code);
+                }
+            }
+        }
+        for (String existingCode : before) {
+            if (effectiveManaged.contains(existingCode) && !targetManaged.contains(existingCode)) {
+                tagRepository.delete(tenantId, customerId, existingCode);
+            }
+        }
+        for (String targetCode : targetManaged) {
+            if (!before.contains(targetCode)) {
+                tagRepository.insertIfAbsent(tenantId, customerId, targetCode, actorUserId);
+            }
+        }
+        List<String> after = tagRepository.findTagCodes(tenantId, customerId);
+        boolean changed = !before.equals(after);
+        if (changed) {
+            auditService.record(tenantId, actorUserId, AuditService.ACTION_WECOM_CUSTOMER_TAG_PULL, "CUSTOMER",
+                    Long.toString(customerId), Map.of("tagCodes", before), Map.of("tagCodes", after), reason);
+        }
+        return new WecomTagPullOutcome(changed, before, after);
     }
 
     @Transactional(readOnly = true)
@@ -628,6 +779,59 @@ public class CustomerApplicationService {
         }
     }
 
+    private List<String> normalizeFilterTagCodes(List<String> input) {
+        if (input == null || input.isEmpty()) {
+            return null;
+        }
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        for (String raw : input) {
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            for (String part : raw.split(",")) {
+                String trimmed = part.strip();
+                if (trimmed.isEmpty()) {
+                    continue;
+                }
+                if (trimmed.length() > MAX_TAG_CODE_LENGTH) {
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签编码最长 64 字符");
+                }
+                codes.add(trimmed);
+                if (codes.size() > MAX_FILTER_TAG_CODES) {
+                    throw new BusinessException(ErrorCode.VALIDATION_FAILED, "单次最多按 20 个标签筛选");
+                }
+            }
+        }
+        return codes.isEmpty() ? null : List.copyOf(codes);
+    }
+
+    private String normalizeTagMatchMode(String tagMatchMode) {
+        if (tagMatchMode == null || tagMatchMode.isBlank()) {
+            return TAG_MATCH_MODE_ANY;
+        }
+        String normalized = tagMatchMode.strip().toUpperCase(Locale.ROOT);
+        if (!TAG_MATCH_MODE_ANY.equals(normalized) && !TAG_MATCH_MODE_ALL.equals(normalized)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签匹配模式仅支持 ANY 或 ALL");
+        }
+        return normalized;
+    }
+
+    private void notifyTagSync(long tenantId, long customerId, List<String> beforeTagCodes,
+                               List<String> afterTagCodes, Long actorUserId, String triggerSource) {
+        if (tagSyncPortProvider == null) {
+            return;
+        }
+        CustomerTagSyncPort port = tagSyncPortProvider.getIfAvailable();
+        if (port == null) {
+            return;
+        }
+        try {
+            port.onCustomerTagsChanged(tenantId, customerId, beforeTagCodes, afterTagCodes, actorUserId, triggerSource);
+        } catch (RuntimeException ex) {
+            log.warn("企微客户标签异步同步入队失败，已忽略以保护本地写入: customerId={}", customerId);
+        }
+    }
+
     private List<String> normalizeTagCodes(List<String> input) {
         if (input == null) {
             return List.of();
@@ -658,5 +862,12 @@ public class CustomerApplicationService {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    public record WecomTagPullOutcome(boolean changed, List<String> beforeTagCodes, List<String> afterTagCodes) {
+        public WecomTagPullOutcome {
+            beforeTagCodes = beforeTagCodes == null ? List.of() : List.copyOf(beforeTagCodes);
+            afterTagCodes = afterTagCodes == null ? List.of() : List.copyOf(afterTagCodes);
+        }
     }
 }

@@ -20,6 +20,11 @@ import {
 } from '../src/api/customer'
 import { listProjects } from '../src/api/catalog'
 import { getDictionaryOptions } from '../src/api/dictionary'
+import {
+  getWecomTagMappings,
+  pushCustomerTagsToWecom,
+  syncWecomTagCatalog,
+} from '../src/api/wecom'
 import { useAuthStore } from '../src/stores/auth'
 import { ApiError } from '../src/types/api'
 import CustomersView from '../src/views/CustomersView.vue'
@@ -64,6 +69,13 @@ vi.mock('../src/api/catalog', () => ({
 
 vi.mock('../src/api/dictionary', () => ({
   getDictionaryOptions: vi.fn(),
+}))
+
+vi.mock('../src/api/wecom', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/wecom')>()),
+  getWecomTagMappings: vi.fn(),
+  syncWecomTagCatalog: vi.fn(),
+  pushCustomerTagsToWecom: vi.fn(),
 }))
 
 const managerUser: AuthUser = {
@@ -160,6 +172,61 @@ beforeEach(() => {
   vi.mocked(updateCustomer).mockResolvedValue(sampleDetail)
   vi.mocked(updateCustomerTags).mockResolvedValue(sampleDetail)
   vi.mocked(listMergeCandidates).mockResolvedValue({ items: [], total: 0, page: 1, size: 1 })
+  vi.mocked(getWecomTagMappings).mockResolvedValue({
+    corpId: 'ww-mock-corp',
+    adapterName: 'MOCK_WECOM_TAG_DEV_ONLY',
+    officialEnabled: false,
+    items: [
+      {
+        crmTagCode: 'VIP',
+        crmTagLabel: '核心贵宾',
+        crmTagStatus: 'ACTIVE',
+        wecomGroupId: 'grp-1',
+        wecomGroupName: '鲸选CRM标签',
+        wecomTagId: 'et-vip',
+        wecomTagName: '企微贵宾',
+        syncStatus: 'ACTIVE',
+        lastSyncedAt: '2026-11-26T00:00:00Z',
+      },
+      {
+        crmTagCode: 'TAG_SENSITIVE01',
+        crmTagLabel: '敏感肌',
+        crmTagStatus: 'ACTIVE',
+        wecomGroupId: null,
+        wecomGroupName: null,
+        wecomTagId: null,
+        wecomTagName: null,
+        syncStatus: 'UNMAPPED',
+        lastSyncedAt: null,
+      },
+    ],
+  })
+  vi.mocked(syncWecomTagCatalog).mockResolvedValue({
+    id: 9,
+    corpId: 'ww-mock-corp',
+    syncScope: 'CATALOG',
+    direction: 'BIDIRECTIONAL',
+    triggerSource: 'MANUAL',
+    adapterName: 'MOCK_WECOM_TAG_DEV_ONLY',
+    status: 'SUCCESS',
+    pulledCount: 1,
+    pushedCount: 2,
+    skippedCount: 0,
+    failedCount: 0,
+    errorMasked: null,
+    startedAt: '2026-11-26T00:00:00Z',
+    finishedAt: '2026-11-26T00:00:02Z',
+  })
+  vi.mocked(pushCustomerTagsToWecom).mockResolvedValue({
+    customerId: 11,
+    adapterName: 'MOCK_WECOM_TAG_DEV_ONLY',
+    officialEnabled: false,
+    matchedContacts: 1,
+    pushedCount: 1,
+    skippedCount: 0,
+    failedCount: 0,
+    errorMasked: null,
+  })
   vi.mocked(ElMessageBox.confirm).mockResolvedValue({ value: 'confirm', action: 'confirm' } as never)
 })
 
@@ -314,6 +381,125 @@ describe('客户详情标签上移与列表动态标签展示', () => {
     await flushPromises()
     expect(supervisorWrapper.find('[data-testid="customer-tag-manage-btn"]').exists()).toBe(true)
   })
+
+  it('客户中心支持按单标签/多标签及 ANY/ALL 匹配模式筛选，新建客户保存后重置标签筛选', async () => {
+    vi.mocked(listCustomers).mockResolvedValue({
+      items: [sampleDetail],
+      total: 1,
+      page: 1,
+      size: 20,
+    })
+
+    const wrapper = mount(CustomersView, {
+      global: {
+        plugins: [ElementPlus, createAuthPinia(managerUser)],
+        stubs: { RouterLink: { template: '<a><slot /></a>' } },
+      },
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    vi.mocked(listCustomers).mockClear()
+
+    const tagFilter = wrapper.findAllComponents({ name: 'ElSelect' })
+      .find((select) => select.attributes('data-testid') === 'customer-tag-filter')
+    expect(tagFilter).toBeDefined()
+    expect(wrapper.find('[data-testid="customer-tag-match-mode"]').exists()).toBe(false)
+
+    // 单标签：默认 ANY 且不展示匹配模式下拉
+    await tagFilter!.vm.$emit('update:modelValue', ['VIP'])
+    await tagFilter!.vm.$emit('change', ['VIP'])
+    await flushPromises()
+    expect(wrapper.find('[data-testid="customer-tag-match-mode"]').exists()).toBe(false)
+    expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      tagCodes: ['VIP'],
+      tagMatchMode: 'ANY',
+    }))
+
+    // 多标签：展示 ANY/ALL 切换并支持 ALL
+    vi.mocked(listCustomers).mockClear()
+    await tagFilter!.vm.$emit('update:modelValue', ['VIP', 'TAG_SENSITIVE01'])
+    await tagFilter!.vm.$emit('change', ['VIP', 'TAG_SENSITIVE01'])
+    await flushPromises()
+    const modeSelect = wrapper.findAllComponents({ name: 'ElSelect' })
+      .find((select) => select.attributes('data-testid') === 'customer-tag-match-mode')
+    expect(modeSelect).toBeDefined()
+    expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      tagCodes: ['VIP', 'TAG_SENSITIVE01'],
+      tagMatchMode: 'ANY',
+    }))
+
+    vi.mocked(listCustomers).mockClear()
+    await modeSelect!.vm.$emit('update:modelValue', 'ALL')
+    await modeSelect!.vm.$emit('change', 'ALL')
+    await flushPromises()
+    expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      tagCodes: ['VIP', 'TAG_SENSITIVE01'],
+      tagMatchMode: 'ALL',
+    }))
+
+    // 新建客户保存后重置标签筛选
+    vi.mocked(listCustomers).mockClear()
+    const createBtn = wrapper.findAll('button').find((b) => b.text().includes('新建客户'))
+    await createBtn?.trigger('click')
+    const formDrawer = wrapper.findComponent({ name: 'CustomerFormDrawer' })
+    await formDrawer.vm.$emit('saved')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="customer-tag-match-mode"]').exists()).toBe(false)
+    expect(listCustomers).toHaveBeenCalledWith(expect.not.objectContaining({ tagCodes: expect.anything() }))
+  })
+
+  it('客户详情仅在存在 WECOM 身份时展示“同步到企微”按钮并可触发同步', async () => {
+    vi.mocked(getCustomer).mockResolvedValueOnce(sampleDetail)
+    const noWecom = mount(CustomerDetailDrawer, {
+      props: { modelValue: false, customerId: 11 },
+      global: {
+        plugins: [ElementPlus, createAuthPinia(managerUser)],
+        stubs: {
+          ElDrawer: { template: '<section><slot name="header" /><slot /></section>' },
+          CustomerBusinessPanel: true,
+          FollowupPanel: true,
+          OwnershipPanel: true,
+          PointsPanel: true,
+        },
+      },
+      attachTo: document.body,
+    })
+    wrappers.push(noWecom)
+    await noWecom.setProps({ modelValue: true })
+    await flushPromises()
+    expect(noWecom.find('[data-testid="detail-push-wecom-tags-btn"]').exists()).toBe(false)
+
+    vi.mocked(getCustomer).mockResolvedValueOnce({
+      ...sampleDetail,
+      identities: [{ identityType: 'WECOM', sourceApp: 'WECOM', externalIdMasked: 'wm***11', status: 'LINKED' }],
+    })
+    const withWecom = mount(CustomerDetailDrawer, {
+      props: { modelValue: false, customerId: 11 },
+      global: {
+        plugins: [ElementPlus, createAuthPinia(managerUser)],
+        stubs: {
+          ElDrawer: { template: '<section><slot name="header" /><slot /></section>' },
+          CustomerBusinessPanel: true,
+          FollowupPanel: true,
+          OwnershipPanel: true,
+          PointsPanel: true,
+        },
+      },
+      attachTo: document.body,
+    })
+    wrappers.push(withWecom)
+    await withWecom.setProps({ modelValue: true })
+    await flushPromises()
+
+    const pushBtn = withWecom.get('[data-testid="detail-push-wecom-tags-btn"]')
+    await pushBtn.trigger('click')
+    await flushPromises()
+    expect(pushCustomerTagsToWecom).toHaveBeenCalledWith(11, expect.stringContaining('wecom.tag.push:'))
+    expect(ElMessage.success).toHaveBeenCalledWith(expect.stringContaining('已同步到企微'))
+  })
 })
 
 describe('CustomerTagManageDialog 管家主管标签内容维护', () => {
@@ -402,5 +588,39 @@ describe('CustomerTagManageDialog 管家主管标签内容维护', () => {
     await drawer.findAll('button').find((b) => b.text() === '建档')?.trigger('click')
     await flushPromises()
     expect(ElMessage.error).toHaveBeenCalledWith('客户标签不存在或已停用：TAG_OLD_01')
+  })
+
+  it('展示企微映射状态并支持一键双向同步企微标签；映射接口无权限或失败时优雅降级', async () => {
+    const dialog = mount(CustomerTagManageDialog, {
+      props: { modelValue: true },
+      global: { plugins: [ElementPlus, createAuthPinia(supervisorUser)] },
+      attachTo: document.body,
+    })
+    wrappers.push(dialog)
+    await flushPromises()
+
+    expect(document.body.querySelector('[data-testid="customer-tag-wecom-status-VIP"]')?.textContent).toContain('已映射 · 企微贵宾')
+    expect(document.body.querySelector('[data-testid="customer-tag-wecom-status-TAG_SENSITIVE01"]')?.textContent).toContain('未映射')
+
+    const syncBtn = document.body.querySelector<HTMLButtonElement>('[data-testid="customer-tag-wecom-sync-btn"]')
+    expect(syncBtn).not.toBeNull()
+    syncBtn?.click()
+    await flushPromises()
+    expect(syncWecomTagCatalog).toHaveBeenCalledWith('BIDIRECTIONAL', expect.stringContaining('wecom.tag.catalog:'))
+    expect(ElMessage.success).toHaveBeenCalledWith(expect.stringContaining('企微标签双向同步完成'))
+    expect(dialog.emitted('changed')).toHaveLength(1)
+
+    // 优雅降级：getWecomTagMappings 失败时不阻塞本地标签展示
+    dialog.unmount()
+    vi.mocked(getWecomTagMappings).mockRejectedValueOnce(new ApiError({ status: 403, code: 'FORBIDDEN', message: '无权限' }))
+    const fallbackDialog = mount(CustomerTagManageDialog, {
+      props: { modelValue: true },
+      global: { plugins: [ElementPlus, createAuthPinia(supervisorUser)] },
+      attachTo: document.body,
+    })
+    wrappers.push(fallbackDialog)
+    await flushPromises()
+    expect(document.body.textContent).toContain('核心贵宾')
+    expect(document.body.querySelector('[data-testid="customer-tag-wecom-sync-btn"]')).toBeNull()
   })
 })

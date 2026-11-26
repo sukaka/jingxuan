@@ -22,6 +22,29 @@
 .crm-ui .youzan-filter-keyword { width: min(280px,100%); }
 .crm-ui .youzan-filter-select { width: 175px; }
 .crm-ui .youzan-retry-note { color: #79909f; font-size: 11px; line-height: 1.6; }
+.crm-ui .youzan-pull-control { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid #d5e4e2; border-radius: 10px; background: #f6fbfa; flex-wrap: wrap; }
+.crm-ui .youzan-pull-label { color: #476664; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.crm-ui .youzan-pull-presets { display: inline-flex; align-items: center; gap: 4px; }
+.crm-ui .youzan-pull-preset { padding: 2px 7px; border: 1px solid #d2e2e0; border-radius: 6px; background: #fff; color: #365755; font-size: 11px; font-weight: 600; line-height: 1.5; cursor: pointer; transition: all .15s ease; }
+.crm-ui .youzan-pull-preset:hover { border-color: #1e6b63; color: #1e6b63; }
+.crm-ui .youzan-pull-preset.is-active { border-color: #1e6b63; background: #1e6b63; color: #fff; }
+.crm-ui .youzan-pull-input { width: 88px; }
+.crm-ui .youzan-quick-shops { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.crm-ui .youzan-quick-shops__label { color: #6a8382; font-size: 12px; white-space: nowrap; }
+.crm-ui .youzan-quick-shop-chip { padding: 4px 10px; border: 1px solid #cfe0dd; border-radius: 999px; background: #f6fbfa; color: #24504c; font-size: 12px; line-height: 1.4; cursor: pointer; transition: all .15s ease; }
+.crm-ui .youzan-quick-shop-chip:hover { border-color: #1e6b63; background: #eaf5f3; }
+.crm-ui .youzan-quick-shop-chip.is-active { border-color: #1e6b63; background: #1e6b63; color: #fff; font-weight: 600; }
+.crm-ui .youzan-candidates-block { margin-bottom: 18px; padding: 14px 16px; border: 1px solid #d5e6e3; border-radius: 12px; background: #f8fcfb; }
+.crm-ui .youzan-candidates-block .youzan-section-head { margin-top: 0; }
+.crm-ui .youzan-ready-retry-banner { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; padding: 12px 16px; border: 1px solid #bce0d6; border-radius: 12px; background: #eef9f5; }
+.crm-ui .youzan-ready-retry-banner strong { display: block; margin-bottom: 4px; color: #164f47; font-size: 13px; }
+.crm-ui .youzan-ready-retry-banner p { margin: 0; color: #476e67; font-size: 12px; line-height: 1.6; }
+.crm-ui .youzan-candidate-meta { margin-bottom: 14px; padding: 10px 12px; border: 1px solid #d7e7e4; border-radius: 10px; background: #f5fbfa; }
+.crm-ui .youzan-candidate-meta__title { margin-bottom: 4px; color: #183d4a; font-size: 13px; font-weight: 600; }
+.crm-ui .youzan-candidate-meta__sub { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #5b7882; font-size: 12px; }
+.crm-ui .youzan-mono-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #183d4a; }
+.crm-ui .youzan-mapped-hint { display: inline-flex; align-items: center; margin-right: 6px; padding: 1px 6px; border-radius: 5px; background: #e8f6f2; color: #1e6b63; font-size: 11px; font-weight: 600; }
+.crm-ui .youzan-dialog-shop { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 12px; padding: 8px 12px; border: 1px solid #d7e7e4; border-radius: 8px; background: #f8fcfb; color: #183d4a; font-size: 12px; }
 @media (max-width: 760px) {
   .crm-ui .youzan-summary { grid-template-columns: 1fr; }
   .crm-ui .youzan-detail-grid,

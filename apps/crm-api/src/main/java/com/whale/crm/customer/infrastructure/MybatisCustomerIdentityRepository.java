@@ -6,6 +6,7 @@ import com.whale.crm.customer.infrastructure.mapper.CustomerIdentityMapper;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class MybatisCustomerIdentityRepository implements CustomerIdentityRepository {
@@ -35,6 +36,13 @@ public class MybatisCustomerIdentityRepository implements CustomerIdentityReposi
             return List.of();
         }
         return customerIdentityMapper.selectByExternalIds(tenantId, externalIds);
+    }
+
+    @Override
+    public Optional<CustomerIdentity> findByIdentity(long tenantId, String identityType,
+                                                     String sourceApp, String externalId) {
+        return Optional.ofNullable(
+                customerIdentityMapper.selectByIdentity(tenantId, identityType, sourceApp, externalId));
     }
 
     @Override

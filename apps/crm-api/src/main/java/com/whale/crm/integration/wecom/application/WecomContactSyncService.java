@@ -6,10 +6,14 @@ import com.whale.crm.integration.wecom.domain.WecomContactProfile;
 import com.whale.crm.integration.wecom.domain.WecomContactSyncRepository;
 import com.whale.crm.integration.wecom.domain.WecomContactSyncRun;
 import com.whale.crm.integration.wecom.domain.WecomStaffAccount;
+import com.whale.crm.integration.wecom.tag.application.WecomTagSyncService;
 import com.whale.crm.platform.audit.application.AuditService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -17,33 +21,45 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class WecomContactSyncService {
     private static final int MAX_PAGES = 10000;
     private static final long DEFAULT_LEASE_SECONDS = 300L;
+    private static final Logger log = LoggerFactory.getLogger(WecomContactSyncService.class);
     private final WecomContactSyncRepository repository;
     private final WecomContactClientRouter clients;
     private final AuditService auditService;
     private final TransactionTemplate transactions;
     private final long syncLeaseSeconds;
+    private final ObjectProvider<WecomTagSyncService> tagSyncProvider;
 
     @Autowired
     public WecomContactSyncService(WecomContactSyncRepository repository, WecomContactClientRouter clients,
                                    AuditService auditService, PlatformTransactionManager transactionManager,
-                                   @Value("${app.wecom.official.sync-lease-seconds:300}") long syncLeaseSeconds) {
+                                   @Value("${app.wecom.official.sync-lease-seconds:300}") long syncLeaseSeconds,
+                                   ObjectProvider<WecomTagSyncService> tagSyncProvider) {
         this.repository = repository;
         this.clients = clients;
         this.auditService = auditService;
         this.transactions = new TransactionTemplate(transactionManager);
         this.syncLeaseSeconds = syncLeaseSeconds > 0 ? syncLeaseSeconds : DEFAULT_LEASE_SECONDS;
+        this.tagSyncProvider = tagSyncProvider;
+    }
+
+    public WecomContactSyncService(WecomContactSyncRepository repository, WecomContactClientRouter clients,
+                                   AuditService auditService, PlatformTransactionManager transactionManager,
+                                   long syncLeaseSeconds) {
+        this(repository, clients, auditService, transactionManager, syncLeaseSeconds, null);
     }
 
     public WecomContactSyncService(WecomContactSyncRepository repository, WecomContactClientRouter clients,
                                    AuditService auditService, PlatformTransactionManager transactionManager) {
-        this(repository, clients, auditService, transactionManager, DEFAULT_LEASE_SECONDS);
+        this(repository, clients, auditService, transactionManager, DEFAULT_LEASE_SECONDS, null);
     }
 
     public WecomContactSyncRun sync(CurrentUser user, String requestedType) {
@@ -55,8 +71,12 @@ public class WecomContactSyncService {
         if (runId == 0) {
             throw new BusinessException(ErrorCode.CONFLICT, "该企业已有客户同步正在运行");
         }
+        Set<String> syncedExternalUserids = new LinkedHashSet<>();
         try {
-            return transactions.execute(status -> executeFull(user.tenantId(), client, type, runId));
+            WecomContactSyncRun run = transactions.execute(status ->
+                    executeFull(user.tenantId(), client, type, runId, syncedExternalUserids));
+            pullTagsForContactsSafely(user.tenantId(), syncedExternalUserids, "CONTACT_SYNC");
+            return run;
         } catch (RuntimeException ex) {
             repository.finishRun(user.tenantId(), runId, "ERROR", null, 0, 0, 0,
                     masked(ex), Instant.now());
@@ -67,7 +87,8 @@ public class WecomContactSyncService {
         }
     }
 
-    private WecomContactSyncRun executeFull(long tenantId, WecomContactClient client, String type, long runId) {
+    private WecomContactSyncRun executeFull(long tenantId, WecomContactClient client, String type, long runId,
+                                            Set<String> syncedExternalUserids) {
         List<WecomStaffAccount> staff = repository.enabledStaff(tenantId, client.corpId());
         if (staff.isEmpty()) {
             throw new BusinessException(ErrorCode.PENDING_BUSINESS_RULE, "没有启用的企微成员映射，拒绝执行全量或对账");
@@ -86,6 +107,7 @@ public class WecomContactSyncService {
                             .filter(WecomStaffAccount::enabled)
                             .orElseThrow(() -> new BusinessException(ErrorCode.CONFLICT, "企微成员未映射到启用的CRM员工"));
                     repository.upsertContact(tenantId, mapping.staffUserId(), runId, Instant.now(), profile);
+                    syncedExternalUserids.add(profile.externalUserid());
                     received++;
                 }
                 cursor = page.nextCursor();
@@ -127,9 +149,27 @@ public class WecomContactSyncService {
                     throw new BusinessException(ErrorCode.CONFLICT, "企微回调同步租约已过期，本次结果未提交");
                 }
             });
+            pullTagsForContactsSafely(tenantId, Set.of(externalUserid), "CALLBACK");
         } catch (RuntimeException ex) {
             repository.finishRun(tenantId, runId, "ERROR", null, 0, 0, 0, masked(ex), Instant.now());
             throw ex;
+        }
+    }
+
+    private void pullTagsForContactsSafely(long tenantId, Set<String> externalUserids, String triggerSource) {
+        if (tagSyncProvider == null || externalUserids == null || externalUserids.isEmpty()) {
+            return;
+        }
+        WecomTagSyncService tagSync = tagSyncProvider.getIfAvailable();
+        if (tagSync == null) {
+            return;
+        }
+        for (String externalUserid : externalUserids) {
+            try {
+                tagSync.pullCustomerTagsForExternalUser(tenantId, externalUserid, triggerSource);
+            } catch (RuntimeException ex) {
+                log.warn("联系人同步后回流企微客户标签失败，已忽略以保护联系人同步: tenantId={}", tenantId);
+            }
         }
     }
 

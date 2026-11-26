@@ -60,6 +60,12 @@ public class AuditService {
     public static final String ACTION_FOLLOWUP_UPDATE = "FOLLOWUP_UPDATE";
     public static final String ACTION_TASK_CREATE = "TASK_CREATE";
     public static final String ACTION_TASK_UPDATE = "TASK_UPDATE";
+    public static final String ACTION_WECOM_TAG_CATALOG_SYNC = "WECOM_TAG_CATALOG_SYNC";
+    public static final String ACTION_WECOM_TAG_MAPPING_UPDATE = "WECOM_TAG_MAPPING_UPDATE";
+    public static final String ACTION_WECOM_CUSTOMER_TAG_PULL = "WECOM_CUSTOMER_TAG_PULL";
+    public static final String ACTION_WECOM_CUSTOMER_TAG_PUSH = "WECOM_CUSTOMER_TAG_PUSH";
+    public static final String ACTION_YOUZAN_CUSTOMER_SYNC = "YOUZAN_CUSTOMER_SYNC";
+    public static final String ACTION_YOUZAN_CUSTOMER_CURSOR_RESET = "YOUZAN_CUSTOMER_CURSOR_RESET";
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 

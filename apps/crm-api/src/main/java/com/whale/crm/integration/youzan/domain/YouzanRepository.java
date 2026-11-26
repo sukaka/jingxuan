@@ -60,6 +60,10 @@ public interface YouzanRepository {
     List<Long> findIssueIdsByEventOrOrder(long tenantId, String shopId, String externalOrderNo, long eventId);
     List<YouzanSyncIssue> findOpenUnpaidIssuesByExternalOrderForUpdate(long tenantId, String shopId,
                                                                        String externalOrderNo, long excludeEventId);
+    default List<YouzanMappingIssueEvent> findOpenMappingIssueEvents(long tenantId, String shopId,
+                                                                     CustomerScopeSupport.ScopeQuery scope, int limit) {
+        return List.of();
+    }
     List<YouzanSyncIssue> findIssues(long tenantId, String status, int offset, int size);
     List<YouzanSyncIssue> findScopedIssues(long tenantId, String status, CustomerScopeSupport.ScopeQuery scope,
                                            int offset, int size);

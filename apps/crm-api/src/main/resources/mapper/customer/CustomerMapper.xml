@@ -119,6 +119,25 @@
     <if test="followupDueBefore != null">
       AND c.next_followup_at IS NOT NULL AND c.next_followup_at &lt;= #{followupDueBefore}
     </if>
+    <if test="tagCodes != null and tagCodes.size() > 0">
+      <choose>
+        <when test="tagMatchMode == 'ALL'">
+          <foreach collection="tagCodes" item="tagCode">
+            AND EXISTS (
+              SELECT 1 FROM crm_customer_tag ct
+              WHERE ct.tenant_id = c.tenant_id AND ct.customer_id = c.id AND ct.tag_code = #{tagCode}
+            )
+          </foreach>
+        </when>
+        <otherwise>
+          AND EXISTS (
+            SELECT 1 FROM crm_customer_tag ct
+            WHERE ct.tenant_id = c.tenant_id AND ct.customer_id = c.id
+              AND ct.tag_code IN <foreach collection="tagCodes" item="tagCode" open="(" separator="," close=")">#{tagCode}</foreach>
+          )
+        </otherwise>
+      </choose>
+    </if>
   </sql>
 
   <sql id="scopedWhere">

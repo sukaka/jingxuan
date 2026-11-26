@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.integration.wecom.tag.infrastructure.mapper.WecomTagSyncMapper">
+
+  <sql id="mappingColumns">
+    id, tenant_id AS tenantId, corp_id AS corpId, crm_tag_code AS crmTagCode,
+    wecom_group_id AS wecomGroupId, wecom_group_name AS wecomGroupName,
+    wecom_tag_id AS wecomTagId, wecom_tag_name AS wecomTagName,
+    sync_status AS syncStatus, last_synced_at AS lastSyncedAt,
+    created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt, version
+  </sql>
+
+  <sql id="runColumns">
+    id, tenant_id AS tenantId, corp_id AS corpId, sync_scope AS syncScope, direction,
+    trigger_source AS triggerSource, adapter_name AS adapterName, status,
+    pulled_count AS pulledCount, pushed_count AS pushedCount,
+    skipped_count AS skippedCount, failed_count AS failedCount,
+    error_masked AS errorMasked, lease_until AS leaseUntil,
+    started_at AS startedAt, finished_at AS finishedAt, created_by AS createdBy
+  </sql>
+
+  <sql id="pushTaskColumns">
+    id, tenant_id AS tenantId, corp_id AS corpId, customer_id AS customerId,
+    wecom_contact_id AS wecomContactId, wecom_userid AS wecomUserid, external_userid AS externalUserid,
+    add_tag_ids_json AS addTagIdsJson, remove_tag_ids_json AS removeTagIdsJson,
+    status, attempts, max_attempts AS maxAttempts, next_retry_at AS nextRetryAt,
+    lease_until AS leaseUntil, error_masked AS errorMasked, trigger_source AS triggerSource,
+    created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt, version
+  </sql>
+
+  <select id="selectMappings" resultType="com.whale.crm.integration.wecom.tag.domain.WecomTagMapping">
+    SELECT <include refid="mappingColumns"/>
+    FROM crm_wecom_tag_mapping
+    WHERE tenant_id = #{tenantId} AND corp_id = #{corpId}
+    ORDER BY id ASC
+  </select>
+
+  <select id="selectMappingByCrmTagCode" resultType="com.whale.crm.integration.wecom.tag.domain.WecomTagMapping">
+    SELECT <include refid="mappingColumns"/>
+    FROM crm_wecom_tag_mapping
+    WHERE tenant_id = #{tenantId} AND corp_id = #{corpId} AND crm_tag_code = #{crmTagCode}
+  </select>
+
+  <insert id="upsertMapping">
+    INSERT INTO crm_wecom_tag_mapping (
+      tenant_id, corp_id, crm_tag_code, wecom_group_id, wecom_group_name,
+      wecom_tag_id, wecom_tag_name, sync_status, last_synced_at, created_by
+    ) VALUES (
+      #{tenantId}, #{corpId}, #{crmTagCode}, #{wecomGroupId}, #{wecomGroupName},
+      #{wecomTagId}, #{wecomTagName}, #{syncStatus}, #{lastSyncedAt}, #{actorUserId}
+    )
+    ON DUPLICATE KEY UPDATE
+      wecom_group_id = VALUES(wecom_group_id),
+      wecom_group_name = VALUES(wecom_group_name),
+      wecom_tag_id = VALUES(wecom_tag_id),
+      wecom_tag_name = VALUES(wecom_tag_name),
+      sync_status = VALUES(sync_status),
+      last_synced_at = VALUES(last_synced_at),
+      created_by = COALESCE(VALUES(created_by), created_by),
+      version = version + 1
+  </insert>
+
+  <update id="expireStaleRuns">
+    UPDATE crm_wecom_tag_sync_run
+    SET status = 'ERROR', error_masked = #{error}, finished_at = #{now}
+    WHERE tenant_id = #{tenantId}
+      AND corp_id = #{corpId}
+      AND sync_scope = #{syncScope}
+      AND status = 'RUNNING'
+      AND ((lease_until IS NOT NULL AND lease_until &lt; #{now})
+        OR (lease_until IS NULL AND started_at &lt; #{legacyCutoff}))
+  </update>
+
+  <insert id="insertRun" parameterType="com.whale.crm.integration.wecom.tag.infrastructure.mapper.WecomTagSyncMapper$StartRunParam"
+          useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO crm_wecom_tag_sync_run (
+      tenant_id, corp_id, sync_scope, direction, trigger_source, adapter_name,
+      status, started_at, lease_until, created_by
+    ) VALUES (
+      #{tenantId}, #{corpId}, #{syncScope}, #{direction}, #{triggerSource}, #{adapterName},
+      'RUNNING', #{startedAt}, #{leaseUntil}, #{actorUserId}
+    )
+  </insert>
+
+  <update id="finishRun">
+    UPDATE crm_wecom_tag_sync_run
+    SET status = #{status},
+        pulled_count = #{pulledCount},
+        pushed_count = #{pushedCount},
+        skipped_count = #{skippedCount},
+        failed_count = #{failedCount},
+        error_masked = #{errorMasked},
+        lease_until = NULL,
+        finished_at = #{finishedAt}
+    WHERE tenant_id = #{tenantId} AND id = #{runId} AND status = 'RUNNING'
+  </update>
+
+  <select id="selectRunById" resultType="com.whale.crm.integration.wecom.tag.domain.WecomTagSyncRun">
+    SELECT <include refid="runColumns"/>
+    FROM crm_wecom_tag_sync_run
+    WHERE tenant_id = #{tenantId} AND id = #{runId}
+  </select>
+
+  <select id="selectRecentRuns" resultType="com.whale.crm.integration.wecom.tag.domain.WecomTagSyncRun">
+    SELECT <include refid="runColumns"/>
+    FROM crm_wecom_tag_sync_run
+    WHERE tenant_id = #{tenantId} AND corp_id = #{corpId}
+    ORDER BY started_at DESC, id DESC
+    LIMIT #{limit}
+  </select>
+
+  <insert id="insertPushTask" parameterType="com.whale.crm.integration.wecom.tag.infrastructure.mapper.WecomTagSyncMapper$PushTaskInsertParam"
+          useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO crm_wecom_customer_tag_push_task (
+      tenant_id, corp_id, customer_id, wecom_contact_id, wecom_userid, external_userid,
+      add_tag_ids_json, remove_tag_ids_json, status, attempts, max_attempts, next_retry_at,
+      trigger_source, created_by
+    ) VALUES (
+      #{tenantId}, #{corpId}, #{customerId}, #{wecomContactId}, #{wecomUserid}, #{externalUserid},
+      #{addTagIdsJson}, #{removeTagIdsJson}, 'PENDING', 0, #{maxAttempts}, #{nextRetryAt},
+      #{triggerSource}, #{actorUserId}
+    )
+  </insert>
+
+  <select id="selectPushTaskById" resultType="com.whale.crm.integration.wecom.tag.domain.WecomCustomerTagPushTask">
+    SELECT <include refid="pushTaskColumns"/>
+    FROM crm_wecom_customer_tag_push_task
+    WHERE tenant_id = #{tenantId} AND id = #{taskId}
+  </select>
+
+  <select id="selectPushTasks" resultType="com.whale.crm.integration.wecom.tag.domain.WecomCustomerTagPushTask">
+    SELECT <include refid="pushTaskColumns"/>
+    FROM crm_wecom_customer_tag_push_task
+    WHERE tenant_id = #{tenantId} AND corp_id = #{corpId}
+    <if test="status != null and status != ''">
+      AND status = #{status}
+    </if>
+    ORDER BY updated_at DESC, id DESC
+    LIMIT #{limit}
+  </select>
+
+  <update id="recoverExpiredPushTasks">
+    UPDATE crm_wecom_customer_tag_push_task
+    SET status = CASE WHEN attempts &gt;= max_attempts THEN 'FAILED' ELSE 'RETRYABLE' END,
+        next_retry_at = CASE WHEN attempts &gt;= max_attempts THEN NULL ELSE #{now} END,
+        lease_until = NULL,
+        error_masked = #{errorMasked},
+        version = version + 1
+    WHERE status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until &lt; #{now}
+  </update>
+
+  <select id="selectPendingPushTasks" resultType="com.whale.crm.integration.wecom.tag.domain.WecomCustomerTagPushTask">
+    SELECT <include refid="pushTaskColumns"/>
+    FROM crm_wecom_customer_tag_push_task
+    WHERE status IN ('PENDING', 'RETRYABLE')
+      AND (next_retry_at IS NULL OR next_retry_at &lt;= #{now})
+    ORDER BY id ASC
+    LIMIT #{limit}
+  </select>
+
+  <update id="claimPushTask">
+    UPDATE crm_wecom_customer_tag_push_task
+    SET status = 'PROCESSING',
+        attempts = attempts + 1,
+        lease_until = #{leaseUntil},
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND id = #{taskId}
+      AND status IN ('PENDING', 'RETRYABLE')
+      AND (next_retry_at IS NULL OR next_retry_at &lt;= #{now})
+      AND attempts = #{expectedAttempts}
+  </update>
+
+  <update id="finishPushTask">
+    UPDATE crm_wecom_customer_tag_push_task
+    SET status = #{status},
+        next_retry_at = #{nextRetryAt},
+        lease_until = NULL,
+        error_masked = #{errorMasked},
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND id = #{taskId}
+      AND status = 'PROCESSING'
+      AND attempts = #{expectedAttempts}
+  </update>
+
+  <update id="resetPushTaskForRetry">
+    UPDATE crm_wecom_customer_tag_push_task
+    SET status = 'PENDING',
+        next_retry_at = NULL,
+        lease_until = NULL,
+        error_masked = NULL,
+        max_attempts = GREATEST(max_attempts, attempts + 1),
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND id = #{taskId}
+      AND status IN ('FAILED', 'RETRYABLE')
+  </update>
+
+  <select id="selectLinkedContactsByCustomerId"
+          resultType="com.whale.crm.integration.wecom.tag.domain.WecomLinkedContactForTagSync">
+    SELECT c.id AS wecomContactId, c.corp_id AS corpId, c.customer_id AS customerId,
+           c.staff_user_id AS staffUserId, sa.wecom_userid AS wecomUserid,
+           c.external_userid AS externalUserid, c.tag_snapshot_json AS tagSnapshotJson
+    FROM crm_wecom_contact c
+    INNER JOIN crm_wecom_staff_account sa
+      ON sa.tenant_id = c.tenant_id AND sa.corp_id = c.corp_id
+     AND sa.staff_user_id = c.staff_user_id AND sa.enabled = 1
+    WHERE c.tenant_id = #{tenantId}
+      AND c.corp_id = #{corpId}
+      AND c.customer_id = #{customerId}
+      AND c.follow_status = 'ACTIVE'
+    ORDER BY c.id ASC
+  </select>
+
+  <select id="selectLinkedContactsByExternalUserid"
+          resultType="com.whale.crm.integration.wecom.tag.domain.WecomLinkedContactForTagSync">
+    SELECT c.id AS wecomContactId, c.corp_id AS corpId, c.customer_id AS customerId,
+           c.staff_user_id AS staffUserId, sa.wecom_userid AS wecomUserid,
+           c.external_userid AS externalUserid, c.tag_snapshot_json AS tagSnapshotJson
+    FROM crm_wecom_contact c
+    INNER JOIN crm_wecom_staff_account sa
+      ON sa.tenant_id = c.tenant_id AND sa.corp_id = c.corp_id
+     AND sa.staff_user_id = c.staff_user_id AND sa.enabled = 1
+    WHERE c.tenant_id = #{tenantId}
+      AND c.corp_id = #{corpId}
+      AND c.external_userid = #{externalUserid}
+      AND c.customer_id IS NOT NULL
+      AND c.follow_status = 'ACTIVE'
+    ORDER BY c.id ASC
+  </select>
+
+  <select id="selectAllLinkedContacts"
+          resultType="com.whale.crm.integration.wecom.tag.domain.WecomLinkedContactForTagSync">
+    SELECT c.id AS wecomContactId, c.corp_id AS corpId, c.customer_id AS customerId,
+           c.staff_user_id AS staffUserId, sa.wecom_userid AS wecomUserid,
+           c.external_userid AS externalUserid, c.tag_snapshot_json AS tagSnapshotJson
+    FROM crm_wecom_contact c
+    INNER JOIN crm_wecom_staff_account sa
+      ON sa.tenant_id = c.tenant_id AND sa.corp_id = c.corp_id
+     AND sa.staff_user_id = c.staff_user_id AND sa.enabled = 1
+    WHERE c.tenant_id = #{tenantId}
+      AND c.corp_id = #{corpId}
+      AND c.customer_id IS NOT NULL
+      AND c.follow_status = 'ACTIVE'
+    ORDER BY c.customer_id ASC, c.id ASC
+  </select>
+
+  <update id="updateContactTagSnapshot">
+    UPDATE crm_wecom_contact
+    SET tag_snapshot_json = #{tagSnapshotJson}, version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{wecomContactId}
+  </update>
+
+</mapper>

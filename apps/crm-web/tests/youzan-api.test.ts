@@ -1,12 +1,19 @@
 import type { AxiosAdapter } from 'axios'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  batchRetryYouzanSyncIssues,
+  getYouzanCustomerSyncStatus,
   getYouzanReconcileReport,
   listYouzanCustomerLinks,
+  listYouzanCustomerSyncRunItems,
+  listYouzanCustomerSyncRuns,
   listYouzanOrders,
+  listYouzanSkuCandidates,
   listYouzanSkuMappings,
   listYouzanSyncIssues,
+  pullYouzanCustomers,
   reconcileYouzanOrders,
+  resetYouzanCustomerSyncCursor,
   retryYouzanSyncIssue,
   saveYouzanCustomerLink,
   saveYouzanSkuMapping,
@@ -52,14 +59,14 @@ describe('P1-1 有赞 Mock API 契约', () => {
     const { adapter, calls } = capture()
     http.defaults.adapter = adapter
 
-    await syncYouzanOrders({ shopId: 'MOCK-SHOP-001', cursor: '2', limit: 50 }, 'sync-key')
-    await reconcileYouzanOrders({ shopId: 'MOCK-SHOP-001', limit: 50 }, 'reconcile-key')
+    await syncYouzanOrders({ shopId: 'MOCK-SHOP-001', cursor: '2', limit: 20 }, 'sync-key')
+    await reconcileYouzanOrders({ shopId: 'MOCK-SHOP-001', limit: 10, maxOrders: 10 }, 'reconcile-key')
 
     expect(calls[0]?.url).toBe('/integrations/youzan/sync')
-    expect(calls[0]?.data).toEqual({ shopId: 'MOCK-SHOP-001', cursor: '2', limit: 50 })
+    expect(calls[0]?.data).toEqual({ shopId: 'MOCK-SHOP-001', cursor: '2', limit: 20 })
     expect(calls[0]?.key).toBe('sync-key')
     expect(calls[1]?.url).toBe('/integrations/youzan/reconcile')
-    expect(calls[1]?.data).toEqual({ shopId: 'MOCK-SHOP-001', limit: 50 })
+    expect(calls[1]?.data).toEqual({ shopId: 'MOCK-SHOP-001', limit: 10, maxOrders: 10 })
     expect(calls[1]?.key).toBe('reconcile-key')
   })
 
@@ -79,5 +86,92 @@ describe('P1-1 有赞 Mock API 契约', () => {
     expect(calls[2]?.url).toBe('/integrations/youzan/customer-links')
     expect(calls[2]?.data).toMatchObject({ customerId: 42, version: 1, reason: '人工核对订单与CRM档案' })
     expect(calls[2]?.key).toBe('customer-key')
+  })
+
+  it('待映射 SKU 候选查询与手动批量重试异常使用真实端点、参数与幂等键', async () => {
+    const { adapter, calls } = capture()
+    http.defaults.adapter = adapter
+
+    await listYouzanSkuCandidates('40880001')
+    await batchRetryYouzanSyncIssues({ shopId: '40880001', externalSkuId: '5505085839:26076889518', limit: 50 }, 'batch-retry-sku-key')
+    await batchRetryYouzanSyncIssues({ shopId: '40880001', limit: 50 }, 'batch-retry-all-key')
+
+    expect(calls[0]).toMatchObject({
+      method: 'get',
+      url: '/integrations/youzan/sku-candidates',
+      params: { shopId: '40880001' },
+    })
+    expect(calls[1]).toMatchObject({
+      method: 'post',
+      url: '/integrations/youzan/sync-issues/batch-retry',
+      data: { shopId: '40880001', externalSkuId: '5505085839:26076889518', limit: 50 },
+      key: 'batch-retry-sku-key',
+    })
+    expect(calls[2]).toMatchObject({
+      method: 'post',
+      url: '/integrations/youzan/sync-issues/batch-retry',
+      data: { shopId: '40880001', limit: 50 },
+      key: 'batch-retry-all-key',
+    })
+  })
+
+  it('有赞客户拉取建档 5 个端点使用契约路径、参数与幂等键', async () => {
+    const { adapter, calls } = capture()
+    http.defaults.adapter = adapter
+
+    await getYouzanCustomerSyncStatus('MOCK-SHOP-001')
+    await pullYouzanCustomers({
+      shopId: 'MOCK-SHOP-001',
+      sourceMode: 'SCRM_LIST',
+      pullMode: 'BATCH',
+      limit: 10,
+      ownerStaffId: 9,
+      sourceCode: 'YOUZAN_MALL',
+      channelCode: 'MINI_PROGRAM',
+      startDate: '2026-10-01',
+      endDate: '2026-11-26',
+      enrichProfile: true,
+    }, 'customer-pull-key-1')
+    await resetYouzanCustomerSyncCursor({ shopId: 'MOCK-SHOP-001', sourceMode: 'ORDER_BUYERS' })
+    await listYouzanCustomerSyncRuns({ shopId: 'MOCK-SHOP-001', sourceMode: 'SCRM_LIST', page: 1, size: 10 })
+    await listYouzanCustomerSyncRunItems(501, { outcome: 'MOBILE_CONFLICT', page: 2, size: 20 })
+
+    expect(calls[0]).toMatchObject({
+      method: 'get',
+      url: '/integrations/youzan/customer-sync/status',
+      params: { shopId: 'MOCK-SHOP-001' },
+    })
+    expect(calls[1]).toMatchObject({
+      method: 'post',
+      url: '/integrations/youzan/customer-sync/pull',
+      data: {
+        shopId: 'MOCK-SHOP-001',
+        sourceMode: 'SCRM_LIST',
+        pullMode: 'BATCH',
+        limit: 10,
+        ownerStaffId: 9,
+        sourceCode: 'YOUZAN_MALL',
+        channelCode: 'MINI_PROGRAM',
+        startDate: '2026-10-01',
+        endDate: '2026-11-26',
+        enrichProfile: true,
+      },
+      key: 'customer-pull-key-1',
+    })
+    expect(calls[2]).toMatchObject({
+      method: 'post',
+      url: '/integrations/youzan/customer-sync/cursor/reset',
+      data: { shopId: 'MOCK-SHOP-001', sourceMode: 'ORDER_BUYERS' },
+    })
+    expect(calls[3]).toMatchObject({
+      method: 'get',
+      url: '/integrations/youzan/customer-sync/runs',
+      params: { shopId: 'MOCK-SHOP-001', sourceMode: 'SCRM_LIST', page: 1, size: 10 },
+    })
+    expect(calls[4]).toMatchObject({
+      method: 'get',
+      url: '/integrations/youzan/customer-sync/runs/501/items',
+      params: { outcome: 'MOBILE_CONFLICT', page: 2, size: 20 },
+    })
   })
 })

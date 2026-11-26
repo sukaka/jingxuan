@@ -1,23 +1,30 @@
 package com.whale.crm.integration.youzan.application;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.integration.youzan.adapter.RealYouzanAdapter;
 import com.whale.crm.integration.youzan.adapter.YouzanAdapterRouter;
 import com.whale.crm.integration.youzan.adapter.YouzanOrderEvent;
+import com.whale.crm.integration.youzan.adapter.YouzanOrderLine;
 import com.whale.crm.integration.youzan.adapter.YouzanPullPage;
 import com.whale.crm.integration.youzan.adapter.YouzanSyncCursorValue;
 import com.whale.crm.integration.youzan.adapter.YouzanWindowTooLargeException;
+import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryRequest;
+import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryResponse;
 import com.whale.crm.integration.youzan.api.dto.YouzanCustomerLinkRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanEventResponse;
 import com.whale.crm.integration.youzan.api.dto.YouzanOrderView;
 import com.whale.crm.integration.youzan.api.dto.YouzanReconcileReport;
+import com.whale.crm.integration.youzan.api.dto.YouzanSkuCandidateView;
 import com.whale.crm.integration.youzan.api.dto.YouzanSkuMappingRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanSyncRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanSyncResponse;
 import com.whale.crm.integration.youzan.domain.YouzanConfigRepository;
 import com.whale.crm.integration.youzan.domain.YouzanCustomerLink;
 import com.whale.crm.integration.youzan.domain.YouzanEvent;
+import com.whale.crm.integration.youzan.domain.YouzanMappingIssueEvent;
 import com.whale.crm.integration.youzan.domain.YouzanOrderMap;
 import com.whale.crm.integration.youzan.domain.YouzanRepository;
 import com.whale.crm.integration.youzan.domain.YouzanSkuMapping;
@@ -46,16 +53,24 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -63,6 +78,9 @@ public class YouzanManagementService {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private static final Duration MAX_WINDOW = Duration.ofDays(90);
     private static final int MAX_SCHEDULED_PAGES = 100;
+    private static final int MAX_SKU_CANDIDATE_SCAN_ISSUES = 500;
+    private static final int DEFAULT_BATCH_RETRY_LIMIT = 50;
+    private static final int MAX_BATCH_RETRY_LIMIT = 100;
     private final YouzanRepository repository;
     private final YouzanConfigRepository configRepository;
     private final YouzanEventService eventService;
@@ -246,8 +264,9 @@ public class YouzanManagementService {
         requireKey(idempotencyKey);
         YouzanSyncJob job = startJob(user.tenantId(), request.shopId(), "FULL");
         try {
+            int pageLimit = resolveSyncPageLimit(request.limit(), request.maxOrders());
             YouzanSyncResponse response = syncOnce(user.tenantId(), request.shopId(), request.cursor(),
-                    request.limit() == null ? 50 : request.limit(), job);
+                    pageLimit, job);
             finishJob(user.tenantId(), job, response, null);
             auditService.record(user.tenantId(), user.userId(), "YOUZAN_SYNC", "YOUZAN", request.shopId(), null, response, null);
             return response;
@@ -262,15 +281,25 @@ public class YouzanManagementService {
         YouzanSyncJob job = startJob(user.tenantId(), request.shopId(), "RECONCILE");
         try {
             String cursor = request.cursor();
+            Integer maxOrders = request.maxOrders();
+            int pageLimit = resolveReconcilePageLimit(request.limit(), maxOrders);
             YouzanSyncResponse total = new YouzanSyncResponse(0, 0, 0, 0, cursor, false);
             for (int i = 0; i < 10; i++) {
-                YouzanSyncResponse current = syncOnce(user.tenantId(), request.shopId(), cursor,
-                        request.limit() == null ? 50 : request.limit(), job);
+                if (maxOrders != null) {
+                    int remaining = maxOrders - total.received();
+                    if (remaining <= 0 || (total.received() > 0 && remaining < pageLimit)) {
+                        break;
+                    }
+                }
+                YouzanSyncResponse current = syncOnce(user.tenantId(), request.shopId(), cursor, pageLimit, job);
                 total = new YouzanSyncResponse(total.received() + current.received(),
                         total.processed() + current.processed(), total.duplicates() + current.duplicates(),
                         total.issues() + current.issues(), current.nextCursor(), current.hasMore());
                 cursor = current.nextCursor();
                 if (!current.hasMore()) {
+                    break;
+                }
+                if (maxOrders != null && total.received() >= maxOrders) {
                     break;
                 }
             }
@@ -281,6 +310,31 @@ public class YouzanManagementService {
             finishJob(user.tenantId(), job, null, ex.getMessage());
             throw ex;
         }
+    }
+
+    static int resolveSyncPageLimit(Integer requestedLimit, Integer maxOrders) {
+        if (maxOrders == null) {
+            return requestedLimit == null ? 50 : requestedLimit;
+        }
+        return requestedLimit == null ? Math.min(maxOrders, 100) : Math.min(requestedLimit, maxOrders);
+    }
+
+    static int resolveReconcilePageLimit(Integer requestedLimit, Integer maxOrders) {
+        if (maxOrders == null) {
+            return requestedLimit == null ? 50 : requestedLimit;
+        }
+        if (requestedLimit != null) {
+            return Math.min(requestedLimit, maxOrders);
+        }
+        if (maxOrders <= 100) {
+            return maxOrders;
+        }
+        for (int candidate = 100; candidate >= 1; candidate--) {
+            if (maxOrders % candidate == 0 && maxOrders / candidate <= 10) {
+                return candidate;
+            }
+        }
+        return 50;
     }
 
     public YouzanSyncResponse syncScheduled(long tenantId, String shopId, String cursor, int limit) {
@@ -396,6 +450,436 @@ public class YouzanManagementService {
             return List.of();
         }
         return repository.findSkuMappings(tenantId, shopId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<YouzanSkuCandidateView> skuCandidates(long tenantId, CurrentUser user, String shopId) {
+        String normalizedShopId = shopId == null ? "" : shopId.strip();
+        if (normalizedShopId.isEmpty() || user.isInstitutionUser()) {
+            return List.of();
+        }
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return List.of();
+        }
+        CustomerScopeSupport.ScopeQuery scopeQuery = (scope.type() == DataScope.ScopeType.ALL
+                || user.permissions().contains("integration:youzan:manage"))
+                ? null : scopeQuery(scope, user);
+        Map<String, YouzanSkuMapping> activeMappings = activeSkuMappingMap(tenantId, normalizedShopId);
+        List<YouzanMappingIssueEvent> rows = repository.findOpenMappingIssueEvents(
+                tenantId, normalizedShopId, scopeQuery, MAX_SKU_CANDIDATE_SCAN_ISSUES);
+        if (rows == null || rows.isEmpty()) {
+            return List.of();
+        }
+        Map<String, SkuCandidateAccumulator> accumulators = new LinkedHashMap<>();
+        for (YouzanMappingIssueEvent row : rows) {
+            EventSkuInspection inspection = inspectEventSkus(row);
+            List<String> eventSkuIds = inspection.validExternalSkuIds();
+            if (eventSkuIds.isEmpty()) {
+                continue;
+            }
+            boolean allMapped = inspection.allMapped(activeMappings);
+            Map<String, ProductLineMeta> metaBySku = extractProductMetadata(row);
+            for (String externalSkuId : eventSkuIds) {
+                YouzanSkuMapping activeMapping = activeMappings.get(externalSkuId);
+                boolean mapped = activeMapping != null;
+                if (mapped && !allMapped) {
+                    continue;
+                }
+                SkuCandidateAccumulator acc = accumulators.computeIfAbsent(externalSkuId,
+                        key -> new SkuCandidateAccumulator(normalizedShopId, key, mapped,
+                                activeMapping == null ? null : activeMapping.crmSkuId()));
+                acc.record(row, metaBySku.get(externalSkuId));
+            }
+        }
+        return accumulators.values().stream()
+                .map(SkuCandidateAccumulator::toView)
+                .sorted(Comparator
+                        .comparing(YouzanSkuCandidateView::mapped)
+                        .thenComparing(Comparator.comparingInt(YouzanSkuCandidateView::pendingIssueCount).reversed())
+                        .thenComparing(YouzanSkuCandidateView::latestEventAt,
+                                Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(YouzanSkuCandidateView::externalSkuId))
+                .toList();
+    }
+
+    public YouzanBatchRetryResponse batchRetryMappingIssues(CurrentUser user, YouzanBatchRetryRequest request,
+                                                            String idempotencyKey) {
+        requireKey(idempotencyKey);
+        long tenantId = user.tenantId();
+        String shopId = request.shopId() == null ? "" : request.shopId().strip();
+        if (shopId.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "店铺编号不能为空");
+        }
+        String targetExternalSkuId = request.externalSkuId() == null || request.externalSkuId().isBlank()
+                ? null : request.externalSkuId().strip();
+        int maxToAttempt = request.limit() == null ? DEFAULT_BATCH_RETRY_LIMIT
+                : Math.min(MAX_BATCH_RETRY_LIMIT, Math.max(1, request.limit()));
+        if (user.isInstitutionUser()) {
+            return new YouzanBatchRetryResponse(shopId, targetExternalSkuId, 0, 0, 0, 0, 0, 0, 0);
+        }
+        DataScope scope = scopeSupport.scope(user);
+        if (scopeSupport.isEmptyScope(scope)) {
+            return new YouzanBatchRetryResponse(shopId, targetExternalSkuId, 0, 0, 0, 0, 0, 0, 0);
+        }
+        Map<String, YouzanSkuMapping> activeMappings = activeSkuMappingMap(tenantId, shopId);
+        if (targetExternalSkuId != null && !activeMappings.containsKey(targetExternalSkuId)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "该外部SKU尚未建立有效映射，请先保存映射后再批量重试");
+        }
+        CustomerScopeSupport.ScopeQuery scopeQuery = (scope.type() == DataScope.ScopeType.ALL
+                || user.permissions().contains("integration:youzan:manage"))
+                ? null : scopeQuery(scope, user);
+        List<YouzanMappingIssueEvent> rows = repository.findOpenMappingIssueEvents(
+                tenantId, shopId, scopeQuery, MAX_SKU_CANDIDATE_SCAN_ISSUES);
+        List<Long> matchedIssueIds = new ArrayList<>();
+        if (rows != null) {
+            for (YouzanMappingIssueEvent row : rows) {
+                if (row.issueId() == null) {
+                    continue;
+                }
+                EventSkuInspection inspection = inspectEventSkus(row);
+                if (!inspection.allMapped(activeMappings)) {
+                    continue;
+                }
+                if (targetExternalSkuId != null && !inspection.validExternalSkuIds().contains(targetExternalSkuId)) {
+                    continue;
+                }
+                matchedIssueIds.add(row.issueId());
+            }
+        }
+        int matched = matchedIssueIds.size();
+        int batchCount = Math.min(matched, maxToAttempt);
+        int remaining = Math.max(0, matched - batchCount);
+        int attempted = 0;
+        int processed = 0;
+        int advanced = 0;
+        int stillFailed = 0;
+        int skipped = 0;
+        for (int i = 0; i < batchCount; i++) {
+            long issueId = matchedIssueIds.get(i);
+            try {
+                YouzanEventResponse res = retryIssue(user, issueId);
+                attempted++;
+                if ("PROCESSED".equals(res.processStatus())) {
+                    processed++;
+                } else if ("CUSTOMER_UNRESOLVED".equals(res.processStatus())
+                        || "PAYMENT_MISMATCH".equals(res.processStatus())) {
+                    advanced++;
+                } else {
+                    stillFailed++;
+                }
+            } catch (BusinessException ex) {
+                if (ex.errorCode() == ErrorCode.CONFLICT || ex.errorCode() == ErrorCode.NOT_FOUND) {
+                    skipped++;
+                } else {
+                    throw ex;
+                }
+            }
+        }
+        YouzanBatchRetryResponse summary = new YouzanBatchRetryResponse(
+                shopId, targetExternalSkuId, matched, attempted, processed, advanced, stillFailed, skipped, remaining);
+        auditService.record(tenantId, user.userId(), "YOUZAN_ISSUE_BATCH_RETRY", "YOUZAN", shopId,
+                null, summary, null);
+        return summary;
+    }
+
+    private Map<String, YouzanSkuMapping> activeSkuMappingMap(long tenantId, String shopId) {
+        List<YouzanSkuMapping> mappings = repository.findSkuMappings(tenantId, shopId);
+        Map<String, YouzanSkuMapping> result = new HashMap<>();
+        if (mappings != null) {
+            for (YouzanSkuMapping mapping : mappings) {
+                if (mapping != null && "ACTIVE".equals(mapping.status())
+                        && mapping.externalSkuId() != null && !mapping.externalSkuId().isBlank()) {
+                    result.put(mapping.externalSkuId().strip(), mapping);
+                }
+            }
+        }
+        return result;
+    }
+
+    private EventSkuInspection inspectEventSkus(YouzanMappingIssueEvent row) {
+        if (row == null || row.payloadCipher() == null || row.payloadCipher().isBlank()) {
+            return EventSkuInspection.INVALID;
+        }
+        YouzanOrderEvent event;
+        try {
+            event = readEvent(row.payloadCipher());
+        } catch (IllegalStateException ex) {
+            return EventSkuInspection.INVALID;
+        }
+        if (event == null || event.items() == null || event.items().isEmpty()) {
+            return EventSkuInspection.INVALID;
+        }
+        Set<String> skuIds = new LinkedHashSet<>();
+        boolean hasInvalidLine = false;
+        for (YouzanOrderLine line : event.items()) {
+            if (line == null || line.externalSkuId() == null || line.externalSkuId().isBlank()
+                    || line.quantity() == null || line.quantity() <= 0) {
+                hasInvalidLine = true;
+                continue;
+            }
+            skuIds.add(line.externalSkuId().strip());
+        }
+        return new EventSkuInspection(List.copyOf(skuIds), hasInvalidLine);
+    }
+
+    private Map<String, ProductLineMeta> extractProductMetadata(YouzanMappingIssueEvent row) {
+        Map<String, ProductLineMeta> parsed = extractProductMetadataFromJson(row.providerPayloadMaskedJson());
+        if (!parsed.isEmpty()) {
+            return parsed;
+        }
+        return extractProductMetadataFromJson(row.payloadMaskedJson());
+    }
+
+    private Map<String, ProductLineMeta> extractProductMetadataFromJson(String jsonText) {
+        if (jsonText == null || jsonText.isBlank()) {
+            return Map.of();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(jsonText);
+            JsonNode lines = resolveOrderLinesNode(root);
+            if (lines == null || !lines.isArray() || lines.isEmpty()) {
+                return Map.of();
+            }
+            Map<String, ProductLineMeta> result = new HashMap<>();
+            for (JsonNode item : lines) {
+                if (item == null || !item.isObject()) {
+                    continue;
+                }
+                String externalSkuId = resolveExternalSkuId(item);
+                if (externalSkuId == null) {
+                    continue;
+                }
+                String title = truncate(firstNonBlank(jsonText(item, "title"),
+                        jsonText(item, "item_title"), jsonText(item, "goods_title")), 200);
+                String skuSpec = truncate(parseSkuSpec(item.path("sku_properties_name"), item.path("sku_spec")), 200);
+                Long priceFen = parsePriceFen(item);
+                String outerSkuCode = truncate(firstNonBlank(jsonText(item, "outer_sku_id"),
+                        jsonText(item, "outer_item_id")), 128);
+                ProductLineMeta meta = new ProductLineMeta(title, skuSpec, priceFen, outerSkuCode);
+                result.merge(externalSkuId, meta, ProductLineMeta::merge);
+            }
+            return result;
+        } catch (JsonProcessingException ex) {
+            return Map.of();
+        }
+    }
+
+    private static JsonNode resolveOrderLinesNode(JsonNode root) {
+        if (root == null || !root.isObject()) {
+            return null;
+        }
+        JsonNode[] candidates = new JsonNode[] {
+                root.path("data").path("full_order_info").path("orders"),
+                root.path("full_order_info").path("orders"),
+                root.path("orders"),
+                root.path("items")
+        };
+        for (JsonNode candidate : candidates) {
+            if (candidate != null && candidate.isArray() && !candidate.isEmpty()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static String resolveExternalSkuId(JsonNode item) {
+        String itemId = jsonText(item, "item_id");
+        if (itemId != null) {
+            String skuId = jsonText(item, "sku_id");
+            return itemId + ":" + (skuId == null ? "0" : skuId);
+        }
+        return jsonText(item, "external_sku_id");
+    }
+
+    private String parseSkuSpec(JsonNode propertiesNode, JsonNode fallbackSpecNode) {
+        String parsed = parseSkuPropertiesNode(propertiesNode);
+        if (parsed != null) {
+            return parsed;
+        }
+        return parseSkuPropertiesNode(fallbackSpecNode);
+    }
+
+    private String parseSkuPropertiesNode(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (node.isArray()) {
+            return formatSkuPropertyArray(node);
+        }
+        if (node.isTextual()) {
+            String text = node.asText().strip();
+            if (text.isEmpty() || "[]".equals(text)) {
+                return null;
+            }
+            if (text.startsWith("[")) {
+                try {
+                    JsonNode array = objectMapper.readTree(text);
+                    if (array.isArray()) {
+                        return formatSkuPropertyArray(array);
+                    }
+                } catch (JsonProcessingException ignored) {
+                    // 回退按原字符串展示
+                }
+            }
+            return text;
+        }
+        return null;
+    }
+
+    private static String formatSkuPropertyArray(JsonNode array) {
+        List<String> parts = new ArrayList<>();
+        for (JsonNode entry : array) {
+            if (entry == null || entry.isNull()) {
+                continue;
+            }
+            if (entry.isObject()) {
+                String k = firstNonBlank(jsonText(entry, "k"), jsonText(entry, "key"), jsonText(entry, "name"));
+                String v = firstNonBlank(jsonText(entry, "v"), jsonText(entry, "value"));
+                if (k != null && v != null) {
+                    parts.add(k + "：" + v);
+                } else if (v != null) {
+                    parts.add(v);
+                } else if (k != null) {
+                    parts.add(k);
+                }
+            } else if (entry.isValueNode()) {
+                String val = entry.asText().strip();
+                if (!val.isEmpty()) {
+                    parts.add(val);
+                }
+            }
+        }
+        return parts.isEmpty() ? null : String.join(" / ", parts);
+    }
+
+    private static Long parsePriceFen(JsonNode item) {
+        JsonNode fenNode = item.path("price_fen");
+        if (fenNode.isIntegralNumber()) {
+            long value = fenNode.asLong();
+            return value >= 0 ? value : null;
+        }
+        Long price = parseYuanToFen(jsonText(item, "price"));
+        if (price != null) {
+            return price;
+        }
+        return parseYuanToFen(jsonText(item, "discount_price"));
+    }
+
+    private static Long parseYuanToFen(String yuanText) {
+        if (yuanText == null) {
+            return null;
+        }
+        try {
+            BigDecimal fen = new BigDecimal(yuanText).movePointRight(2).setScale(0, RoundingMode.HALF_UP);
+            long value = fen.longValueExact();
+            return value >= 0 ? value : null;
+        } catch (ArithmeticException | NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private static String jsonText(JsonNode node, String field) {
+        JsonNode child = node.path(field);
+        if (child.isMissingNode() || child.isNull() || !child.isValueNode()) {
+            return null;
+        }
+        String value = child.asText().strip();
+        return value.isEmpty() ? null : value;
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.strip();
+            }
+        }
+        return null;
+    }
+
+    private static String truncate(String value, int maxLen) {
+        if (value == null || value.length() <= maxLen) {
+            return value;
+        }
+        return value.substring(0, maxLen);
+    }
+
+    private record EventSkuInspection(List<String> validExternalSkuIds, boolean hasInvalidLine) {
+        private static final EventSkuInspection INVALID = new EventSkuInspection(List.of(), true);
+
+        private boolean allMapped(Map<String, YouzanSkuMapping> activeMappings) {
+            return !hasInvalidLine && !validExternalSkuIds.isEmpty()
+                    && validExternalSkuIds.stream().allMatch(activeMappings::containsKey);
+        }
+    }
+
+    private record ProductLineMeta(String itemTitle, String skuSpec, Long priceFen, String outerSkuCode) {
+        private ProductLineMeta merge(ProductLineMeta other) {
+            if (other == null) {
+                return this;
+            }
+            return new ProductLineMeta(
+                    itemTitle != null ? itemTitle : other.itemTitle,
+                    skuSpec != null ? skuSpec : other.skuSpec,
+                    priceFen != null ? priceFen : other.priceFen,
+                    outerSkuCode != null ? outerSkuCode : other.outerSkuCode
+            );
+        }
+    }
+
+    private static final class SkuCandidateAccumulator {
+        private final String shopId;
+        private final String externalSkuId;
+        private final boolean mapped;
+        private final Long crmSkuId;
+        private final Set<Long> issueIds = new LinkedHashSet<>();
+        private String itemTitle;
+        private String skuSpec;
+        private Long priceFen;
+        private String outerSkuCode;
+        private String sampleOrderNo;
+        private Instant latestEventAt;
+
+        private SkuCandidateAccumulator(String shopId, String externalSkuId, boolean mapped, Long crmSkuId) {
+            this.shopId = shopId;
+            this.externalSkuId = externalSkuId;
+            this.mapped = mapped;
+            this.crmSkuId = crmSkuId;
+        }
+
+        private void record(YouzanMappingIssueEvent row, ProductLineMeta meta) {
+            if (row.issueId() != null) {
+                issueIds.add(row.issueId());
+            }
+            if (meta != null) {
+                if (itemTitle == null && meta.itemTitle() != null) {
+                    itemTitle = meta.itemTitle();
+                }
+                if (skuSpec == null && meta.skuSpec() != null) {
+                    skuSpec = meta.skuSpec();
+                }
+                if (priceFen == null && meta.priceFen() != null) {
+                    priceFen = meta.priceFen();
+                }
+                if (outerSkuCode == null && meta.outerSkuCode() != null) {
+                    outerSkuCode = meta.outerSkuCode();
+                }
+            }
+            if (row.receivedAt() != null && (latestEventAt == null || row.receivedAt().isAfter(latestEventAt))) {
+                latestEventAt = row.receivedAt();
+                if (row.externalOrderNo() != null && !row.externalOrderNo().isBlank()) {
+                    sampleOrderNo = row.externalOrderNo();
+                }
+            } else if (sampleOrderNo == null && row.externalOrderNo() != null && !row.externalOrderNo().isBlank()) {
+                sampleOrderNo = row.externalOrderNo();
+            }
+        }
+
+        private YouzanSkuCandidateView toView() {
+            return new YouzanSkuCandidateView(
+                    shopId, externalSkuId, itemTitle, skuSpec, priceFen, outerSkuCode,
+                    issueIds.size(), sampleOrderNo, latestEventAt, mapped, crmSkuId);
+        }
     }
 
     public YouzanSkuMapping upsertSkuMapping(CurrentUser user, YouzanSkuMappingRequest request, String idempotencyKey) {

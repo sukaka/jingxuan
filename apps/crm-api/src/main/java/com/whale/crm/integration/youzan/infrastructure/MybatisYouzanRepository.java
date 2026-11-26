@@ -3,6 +3,7 @@ package com.whale.crm.integration.youzan.infrastructure;
 import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.integration.youzan.domain.YouzanCustomerLink;
 import com.whale.crm.integration.youzan.domain.YouzanEvent;
+import com.whale.crm.integration.youzan.domain.YouzanMappingIssueEvent;
 import com.whale.crm.integration.youzan.domain.YouzanOrderMap;
 import com.whale.crm.integration.youzan.domain.YouzanRepository;
 import com.whale.crm.integration.youzan.domain.YouzanSkuMapping;
@@ -97,6 +98,10 @@ public class MybatisYouzanRepository implements YouzanRepository {
     }
     public List<YouzanSyncIssue> findOpenUnpaidIssuesByExternalOrderForUpdate(long tenantId, String shopId, String externalOrderNo, long excludeEventId) {
         return mapper.selectOpenUnpaidIssuesByExternalOrderForUpdate(tenantId, shopId, externalOrderNo, excludeEventId);
+    }
+    public List<YouzanMappingIssueEvent> findOpenMappingIssueEvents(long tenantId, String shopId,
+                                                                    CustomerScopeSupport.ScopeQuery scope, int limit) {
+        return mapper.selectOpenMappingIssueEvents(tenantId, shopId, scope, limit);
     }
     public List<YouzanSyncIssue> findIssues(long tenantId, String status, int offset, int size) { return mapper.selectIssues(tenantId, status, offset, size); }
     public List<YouzanSyncIssue> findScopedIssues(long tenantId, String status, CustomerScopeSupport.ScopeQuery scope, int offset, int size) { return mapper.selectScopedIssues(tenantId, status, scope, offset, size); }

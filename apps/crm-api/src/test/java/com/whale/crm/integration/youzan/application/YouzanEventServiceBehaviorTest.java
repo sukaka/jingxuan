@@ -510,6 +510,77 @@ class YouzanEventServiceBehaviorTest {
         verify(repository, never()).setOrderLatest(eq(TENANT_ID), eq(SHOP), eq("ORD-OLD-2"), anyLong(), anyLong());
     }
 
+    @Test
+    void markFailureResolvesSupersededRetryingMappingIssueWhenAdvancingToCustomerUnresolved() throws Exception {
+        YouzanRepository repository = mock(YouzanRepository.class);
+        AesGcmCipher cipher = mock(AesGcmCipher.class);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        Instant now = Instant.parse("2026-11-26T12:00:00Z");
+
+        CurrentUser actor = new CurrentUser(1L, TENANT_ID, "admin", "管理员", "EMPLOYEE", null,
+                Set.of("ADMIN"), Set.of("order:write"), Set.of());
+        when(currentUserService.loadFirstActiveByRole(TENANT_ID, "ADMIN")).thenReturn(Optional.of(actor));
+
+        YouzanOrderEvent ev = new YouzanOrderEvent("EV-ADV-1", "ORDER_PAID", SHOP, "EXT-ADV-1",
+                "EXT-CUST-UNLINKED", "TR-ADV-1", "PAID", 181100L, now, now, "REGULAR", null, null,
+                "PLATFORM", LocalDate.parse("2027-12-31"), List.of(new YouzanOrderLine("5505:100", 1)));
+        String json = mapper.writeValueAsString(ev);
+        YouzanEvent raw = new YouzanEvent(210L, SHOP, "EV-ADV-1", "ORDER_PAID", "EXT-ADV-1",
+                "{}", "cipher-adv-1", true, "PULL", "MAPPING_FAILED", 1, "外部SKU未映射", null, now, null, null, 1L);
+        YouzanEvent updated = new YouzanEvent(210L, SHOP, "EV-ADV-1", "ORDER_PAID", "EXT-ADV-1",
+                "{}", "cipher-adv-1", true, "PULL", "CUSTOMER_UNRESOLVED", 2, "客户尚未人工确认映射", null, now, now, null, 2L);
+        YouzanSyncIssue retryingMappingIssue = new YouzanSyncIssue(890L, 210L, "MAPPING_FAILED", "RETRYING",
+                "外部SKU未映射", 2, "外部SKU未映射", null, now, null, null, 1L);
+
+        when(repository.findEventForUpdate(TENANT_ID, 210L)).thenReturn(Optional.of(raw));
+        when(cipher.decrypt("cipher-adv-1")).thenReturn(json);
+        when(repository.findOrderMap(TENANT_ID, SHOP, "EXT-ADV-1")).thenReturn(Optional.empty());
+        when(repository.findSkuMapping(TENANT_ID, SHOP, "5505:100"))
+                .thenReturn(Optional.of(new YouzanSkuMapping(1L, SHOP, "5505:100", 301L, "ACTIVE", now, 0L)));
+        when(repository.findCustomerLink(TENANT_ID, SHOP, "EXT-CUST-UNLINKED")).thenReturn(Optional.empty());
+        when(repository.updateEventStatus(eq(TENANT_ID), eq(210L), eq(1L), eq("CUSTOMER_UNRESOLVED"),
+                anyString(), eq(null), any(Instant.class), eq(null))).thenReturn(1);
+        when(repository.findIssueByEventAndType(TENANT_ID, 210L, "MAPPING_FAILED"))
+                .thenReturn(Optional.of(retryingMappingIssue));
+        when(repository.findIssueByEventAndType(TENANT_ID, 210L, "CUSTOMER_UNRESOLVED")).thenReturn(Optional.empty());
+        when(repository.findEvent(TENANT_ID, 210L)).thenReturn(Optional.of(updated));
+
+        YouzanEventService service = new YouzanEventService(repository, mapper, cipher,
+                mock(OrderApplicationService.class), mock(PaymentApplicationService.class),
+                mock(CustomerScopeSupport.class), currentUserService, mock(AuditService.class),
+                mock(OutboxService.class), txManager(), mock(TaskExecutor.class));
+
+        YouzanEventResponse response = service.process(TENANT_ID, 210L);
+        assertThat(response.processStatus()).isEqualTo("CUSTOMER_UNRESOLVED");
+        verify(repository).updateIssueStatus(eq(TENANT_ID), eq(890L), eq(1L), eq("RESOLVED"), eq(2),
+                eq(null), eq(null), any(Instant.class), eq(1L));
+        verify(repository).insertIssue(eq(TENANT_ID), argThat(issue ->
+                "CUSTOMER_UNRESOLVED".equals(issue.issueType()) && "OPEN".equals(issue.status())));
+
+        // 租户无 ADMIN 时不抛异常，仍能以 resolvedBy=null 收敛旧异常
+        when(currentUserService.loadFirstActiveByRole(TENANT_ID, "ADMIN")).thenReturn(Optional.empty());
+        YouzanEvent rawNoAdmin = new YouzanEvent(211L, SHOP, "EV-ADV-2", "ORDER_PAID", "EXT-ADV-2",
+                "{}", "cipher-adv-2", true, "PULL", "MAPPING_FAILED", 1, "外部SKU未映射", null, now, null, null, 1L);
+        YouzanEvent updatedNoAdmin = new YouzanEvent(211L, SHOP, "EV-ADV-2", "ORDER_PAID", "EXT-ADV-2",
+                "{}", "cipher-adv-2", true, "PULL", "CUSTOMER_UNRESOLVED", 2, "客户尚未人工确认映射", null, now, now, null, 2L);
+        YouzanSyncIssue openMappingIssue = new YouzanSyncIssue(891L, 211L, "MAPPING_FAILED", "OPEN",
+                "外部SKU未映射", 1, "外部SKU未映射", null, now, null, null, 0L);
+        when(repository.findEventForUpdate(TENANT_ID, 211L)).thenReturn(Optional.of(rawNoAdmin));
+        when(cipher.decrypt("cipher-adv-2")).thenReturn(json.replace("EV-ADV-1", "EV-ADV-2").replace("EXT-ADV-1", "EXT-ADV-2"));
+        when(repository.findOrderMap(TENANT_ID, SHOP, "EXT-ADV-2")).thenReturn(Optional.empty());
+        when(repository.updateEventStatus(eq(TENANT_ID), eq(211L), eq(1L), eq("CUSTOMER_UNRESOLVED"),
+                anyString(), eq(null), any(Instant.class), eq(null))).thenReturn(1);
+        when(repository.findIssueByEventAndType(TENANT_ID, 211L, "MAPPING_FAILED"))
+                .thenReturn(Optional.of(openMappingIssue));
+        when(repository.findIssueByEventAndType(TENANT_ID, 211L, "CUSTOMER_UNRESOLVED")).thenReturn(Optional.empty());
+        when(repository.findEvent(TENANT_ID, 211L)).thenReturn(Optional.of(updatedNoAdmin));
+
+        YouzanEventResponse noAdminResponse = service.process(TENANT_ID, 211L);
+        assertThat(noAdminResponse.processStatus()).isEqualTo("CUSTOMER_UNRESOLVED");
+        verify(repository).updateIssueStatus(eq(TENANT_ID), eq(891L), eq(0L), eq("RESOLVED"), eq(1),
+                eq(null), eq(null), any(Instant.class), eq(null));
+    }
+
     private static Order order(long id, long customerId, String status, long payableFen, long paidFen, long version) {
         return new Order(id, "J00000000000" + id, customerId, "测试客户", 8L, 8L, "EXT-ORD-" + id,
                 "YOUZAN", SHOP, "REGULAR", null, null, null, null, null, null, null, null, null,

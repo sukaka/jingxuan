@@ -18,6 +18,7 @@ public interface CustomerMapper {
                                  @Param("sourceCode") String sourceCode, @Param("channelCode") String channelCode,
                                  @Param("tierCode") String tierCode, @Param("ownerId") Long ownerId,
                                  @Param("followupDueBefore") Instant followupDueBefore,
+                                 @Param("tagCodes") List<String> tagCodes, @Param("tagMatchMode") String tagMatchMode,
                                  @Param("offset") int offset, @Param("size") int size);
 
     long countSearch(@Param("tenantId") long tenantId, @Param("scopeType") String scopeType,
@@ -26,7 +27,8 @@ public interface CustomerMapper {
                      @Param("status") String status, @Param("cityCode") String cityCode,
                      @Param("sourceCode") String sourceCode, @Param("channelCode") String channelCode,
                      @Param("tierCode") String tierCode, @Param("ownerId") Long ownerId,
-                     @Param("followupDueBefore") Instant followupDueBefore);
+                     @Param("followupDueBefore") Instant followupDueBefore,
+                     @Param("tagCodes") List<String> tagCodes, @Param("tagMatchMode") String tagMatchMode);
 
     Customer selectById(@Param("tenantId") long tenantId, @Param("id") long id);
 

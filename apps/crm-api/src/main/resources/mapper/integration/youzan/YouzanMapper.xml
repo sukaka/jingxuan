@@ -289,6 +289,28 @@
       AND i.issue_type IN ('MAPPING_FAILED', 'CUSTOMER_UNRESOLVED', 'RETRY')
     ORDER BY i.id FOR UPDATE OF i
   </select>
+  <select id="selectOpenMappingIssueEvents" resultType="com.whale.crm.integration.youzan.domain.YouzanMappingIssueEvent">
+    SELECT i.id AS issueId,
+           e.id AS eventId,
+           e.shop_id AS shopId,
+           e.external_order_no AS externalOrderNo,
+           e.payload_masked_json AS payloadMaskedJson,
+           e.payload_cipher AS payloadCipher,
+           e.provider_payload_masked_json AS providerPayloadMaskedJson,
+           e.received_at AS receivedAt,
+           i.status AS issueStatus,
+           i.version AS issueVersion
+    FROM crm_youzan_sync_issue i
+    INNER JOIN crm_youzan_event e ON e.tenant_id=i.tenant_id AND e.id=i.event_id
+    WHERE i.tenant_id=#{tenantId}
+      AND i.status IN ('OPEN', 'RETRYING')
+      AND i.issue_type='MAPPING_FAILED'
+      AND e.shop_id=#{shopId}
+      AND e.process_status='MAPPING_FAILED'
+    <if test="scope != null and scope.scopeType != 'ALL'"><include refid="eventScopeCondition"/></if>
+    ORDER BY i.id DESC
+    LIMIT #{limit}
+  </select>
   <select id="selectIssues" resultType="com.whale.crm.integration.youzan.domain.YouzanSyncIssue">
     SELECT <include refid="issueColumns"/> FROM crm_youzan_sync_issue WHERE tenant_id=#{tenantId}
     <if test="status != null and status != ''">AND status=#{status}</if>

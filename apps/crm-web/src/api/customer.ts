@@ -121,6 +121,8 @@ export interface CustomerListQuery {
   tierCode?: string
   ownerId?: number
   followupDueBefore?: string
+  tagCodes?: string[]
+  tagMatchMode?: 'ANY' | 'ALL'
 }
 
 /** nickname/displayName 至少其一;mobile 可空(C01);MANAGER/MANAGER_LEAD 缺省归属本人，其他角色必须选择合格管家 */
@@ -373,6 +375,7 @@ export interface ScopedOwnershipTransferQuery {
 }
 
 export async function listCustomers(query: CustomerListQuery): Promise<PageResult<CustomerListItem>> {
+  const normalizedTags = query.tagCodes?.map((code) => code.trim()).filter(Boolean) ?? []
   const res = await http.get<ApiResponse<PageResult<CustomerListItem>>>('/customers', {
     params: {
       page: query.page,
@@ -385,6 +388,8 @@ export async function listCustomers(query: CustomerListQuery): Promise<PageResul
       tierCode: query.tierCode || undefined,
       ownerId: query.ownerId ?? undefined,
       followupDueBefore: query.followupDueBefore || undefined,
+      tagCodes: normalizedTags.length ? normalizedTags.join(',') : undefined,
+      tagMatchMode: normalizedTags.length ? (query.tagMatchMode ?? 'ANY') : undefined,
     },
   })
   return res.data.data

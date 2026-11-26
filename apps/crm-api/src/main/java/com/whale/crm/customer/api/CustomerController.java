@@ -80,10 +80,12 @@ public class CustomerController {
             @RequestParam(required = false) @Size(max = 16) String tierCode,
             @RequestParam(required = false) Long ownerId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant followupDueBefore,
+            @RequestParam(required = false) List<String> tagCodes,
+            @RequestParam(required = false) @Size(max = 16) String tagMatchMode,
             HttpServletRequest request) {
         return ApiResponse.ok(customerService.search(TenantContext.currentTenantId(),
                 SecuritySupport.requireCurrentUser(), keyword, status, cityCode, sourceCode, channelCode, tierCode,
-                ownerId, followupDueBefore, page, size), requestId(request));
+                ownerId, followupDueBefore, tagCodes, tagMatchMode, page, size), requestId(request));
     }
 
     @PostMapping

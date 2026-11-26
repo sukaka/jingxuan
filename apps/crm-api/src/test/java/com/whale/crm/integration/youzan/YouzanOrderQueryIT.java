@@ -533,6 +533,211 @@ class YouzanOrderQueryIT extends AbstractMysqlIT {
                 + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shop, ord)).isZero();
     }
 
+    @Test
+    void skuCandidatesAndBatchRetryWorkEndToEndAgainstMysqlWithScopeAndSupersededIssueResolution() throws Exception {
+        String shop = shop("sku-cand");
+        String otherShop = shop("sku-other");
+        String linkedCustomer = "IT-YZ-CAND-CUST-" + suffix();
+        String unlinkedCustomer = "IT-YZ-CAND-UNLINKED-" + suffix();
+        linkCustomer(shop, linkedCustomer, 1010L);
+        Instant t0 = Instant.parse("2026-11-26T08:00:00Z");
+
+        String rawMobile = "13900001234";
+        String rawNickname = "FICTIONAL-BUYER-NAME";
+        String providerSku101 = """
+                {"full_order_info":{"order_info":{"tid":"%s"},"buyer_info":{"buyer_phone":"%s","fans_nickname":"%s"},
+                "orders":[{"item_id":5505,"sku_id":101,"title":"超光子嫩肤",
+                "sku_properties_name":"[{\\"k\\":\\"疗程\\",\\"v\\":\\"3次卡\\"}]","price":"1811.00","outer_sku_id":"CRM-OPT-3"}]}}
+                """;
+        String providerMultiSku = """
+                {"full_order_info":{"order_info":{"tid":"%s"},"buyer_info":{"buyer_phone":"%s","fans_nickname":"%s"},
+                "orders":[
+                  {"item_id":5505,"sku_id":101,"title":"超光子嫩肤","sku_properties_name":"[{\\"k\\":\\"疗程\\",\\"v\\":\\"3次卡\\"}]","price":"1811.00","outer_sku_id":"CRM-OPT-3"},
+                  {"item_id":5505,"sku_id":202,"title":"水光体验","sku_properties_name":"单次","price":"599.50"}
+                ]}}
+                """;
+
+        // Order 1: linked customer, single SKU 5505:101 -> after mapping + batch retry becomes PROCESSED
+        String ord1 = "IT-YZ-CAND-ORD1-" + suffix();
+        YouzanOrderEvent ev1 = event(shop, "IT-YZ-CAND-E1-" + suffix(), ord1, linkedCustomer,
+                "IT-YZ-CAND-TR1-" + suffix(), "5505:101", 181100L, t0);
+        long ev1Id = ingestAndProcess(1L, ev1, providerSku101.formatted(ord1, rawMobile, rawNickname), "MAPPING_FAILED");
+
+        // Order 2: unlinked customer, single SKU 5505:101 -> advances to CUSTOMER_UNRESOLVED & resolves old MAPPING_FAILED
+        String ord2 = "IT-YZ-CAND-ORD2-" + suffix();
+        YouzanOrderEvent ev2 = event(shop, "IT-YZ-CAND-E2-" + suffix(), ord2, unlinkedCustomer,
+                "IT-YZ-CAND-TR2-" + suffix(), "5505:101", 181100L, t0.plusSeconds(10));
+        long ev2Id = ingestAndProcess(1L, ev2, providerSku101.formatted(ord2, rawMobile, rawNickname), "MAPPING_FAILED");
+
+        // Order 3: linked customer, multi-SKU (5505:101 + 5505:202) -> stays excluded until 5505:202 is mapped
+        String ord3 = "IT-YZ-CAND-ORD3-" + suffix();
+        YouzanOrderEvent ev3 = new YouzanOrderEvent("IT-YZ-CAND-E3-" + suffix(), "ORDER_PAID", shop, ord3,
+                linkedCustomer, "IT-YZ-CAND-TR3-" + suffix(), "PAID", 241050L, t0.plusSeconds(20), t0.plusSeconds(20),
+                "REGULAR", 1L, 1L, "PLATFORM", LocalDate.parse("2027-12-31"),
+                List.of(new YouzanOrderLine("5505:101", 1), new YouzanOrderLine("5505:202", 1)));
+        long ev3Id = ingestAndProcess(1L, ev3, providerMultiSku.formatted(ord3, rawMobile, rawNickname), "MAPPING_FAILED");
+
+        // Order 4: linked customer, valid SKU line + invalid qty=0 line -> must NOT become ready-to-retry
+        String ord4 = "IT-YZ-CAND-ORD4-" + suffix();
+        YouzanOrderEvent ev4 = new YouzanOrderEvent("IT-YZ-CAND-E4-" + suffix(), "ORDER_PAID", shop, ord4,
+                linkedCustomer, "IT-YZ-CAND-TR4-" + suffix(), "PAID", 181100L, t0.plusSeconds(30), t0.plusSeconds(30),
+                "REGULAR", 1L, 1L, "PLATFORM", LocalDate.parse("2027-12-31"),
+                List.of(new YouzanOrderLine("5505:101", 1), new YouzanOrderLine("5505:101", 0)));
+        long ev4Id = ingestAndProcess(1L, ev4, providerSku101.formatted(ord4, rawMobile, rawNickname), "MAPPING_FAILED");
+
+        // Order 5 (tenant 2, same shop) & Order 6 (tenant 1, otherShop): must stay isolated
+        String ord5 = "IT-YZ-CAND-T2-" + suffix();
+        YouzanOrderEvent ev5 = event(shop, "IT-YZ-CAND-E5-" + suffix(), ord5, linkedCustomer,
+                "IT-YZ-CAND-TR5-" + suffix(), "5505:101", 181100L, t0.plusSeconds(40));
+        long ev5Id = ingestAndProcess(2L, ev5, providerSku101.formatted(ord5, rawMobile, rawNickname), "MAPPING_FAILED");
+
+        String ord6 = "IT-YZ-CAND-OTHER-" + suffix();
+        YouzanOrderEvent ev6 = event(otherShop, "IT-YZ-CAND-E6-" + suffix(), ord6, linkedCustomer,
+                "IT-YZ-CAND-TR6-" + suffix(), "5505:101", 181100L, t0.plusSeconds(50));
+        long ev6Id = ingestAndProcess(1L, ev6, providerSku101.formatted(ord6, rawMobile, rawNickname), "MAPPING_FAILED");
+
+        // 1. Before mapping: verify /sku-candidates metadata, zero PII leakage, tenant/shop/dataScope filtering
+        JsonNode adminBefore = data(admin.withAuth(
+                get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop)));
+        assertThat(adminBefore.size()).isEqualTo(2);
+        assertThat(adminBefore.toString()).doesNotContain(rawMobile, rawNickname, ord5, ord6);
+        assertThat(adminBefore.at("/0/externalSkuId").asText()).isEqualTo("5505:101");
+        assertThat(adminBefore.at("/0/mapped").asBoolean()).isFalse();
+        assertThat(adminBefore.at("/0/crmSkuId").isNull()).isTrue();
+        assertThat(adminBefore.at("/0/pendingIssueCount").asInt()).isEqualTo(4);
+        assertThat(adminBefore.at("/0/itemTitle").asText()).isEqualTo("超光子嫩肤");
+        assertThat(adminBefore.at("/0/skuSpec").asText()).isEqualTo("疗程：3次卡");
+        assertThat(adminBefore.at("/0/priceFen").asLong()).isEqualTo(181100L);
+        assertThat(adminBefore.at("/0/outerSkuCode").asText()).isEqualTo("CRM-OPT-3");
+        assertThat(adminBefore.at("/1/externalSkuId").asText()).isEqualTo("5505:202");
+        assertThat(adminBefore.at("/1/mapped").asBoolean()).isFalse();
+        assertThat(adminBefore.at("/1/pendingIssueCount").asInt()).isEqualTo(1);
+        assertThat(adminBefore.at("/1/itemTitle").asText()).isEqualTo("水光体验");
+        assertThat(adminBefore.at("/1/skuSpec").asText()).isEqualTo("单次");
+        assertThat(adminBefore.at("/1/priceFen").asLong()).isEqualTo(59950L);
+
+        AuthCookies lead1 = login("lead1");
+        AuthCookies lead2 = login("lead2");
+        AuthCookies business1 = login("business1");
+        AuthCookies operator1 = login("operator1");
+
+        JsonNode lead1Candidates = data(lead1.withAuth(
+                get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop)));
+        assertThat(lead1Candidates.size()).isEqualTo(2);
+        assertThat(lead1Candidates.at("/0/pendingIssueCount").asInt()).isEqualTo(3);
+
+        JsonNode manager1Candidates = data(manager1.withAuth(
+                get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop)));
+        assertThat(manager1Candidates.size()).isEqualTo(2);
+        assertThat(manager1Candidates.at("/0/pendingIssueCount").asInt()).isEqualTo(3);
+
+        assertThat(data(lead2.withAuth(get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop))))
+                .isEmpty();
+        assertThat(data(manager2.withAuth(get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop))))
+                .isEmpty();
+        assertThat(data(business1.withAuth(get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop))))
+                .isEmpty();
+        mockMvc.perform(get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop)
+                        .cookie(operator1.cookies()))
+                .andExpect(status().isForbidden());
+
+        // Unmapped target SKU rejected with 400 VALIDATION_FAILED
+        String batchBody = json(Map.of("shopId", shop, "externalSkuId", "5505:101", "limit", 50));
+        mockMvc.perform(admin.withAuth(post("/api/v1/integrations/youzan/sync-issues/batch-retry")
+                        .header("Idempotency-Key", "it-batch-unmapped-" + suffix())
+                        .contentType(MediaType.APPLICATION_JSON).content(batchBody)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        // 2. Save SKU mapping 5505:101 -> 301: must NOT auto-retry or auto-confirm orders
+        mockMvc.perform(admin.withAuth(post("/api/v1/integrations/youzan/sku-mappings")
+                        .header("Idempotency-Key", "it-sku-map-" + suffix())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("shopId", shop, "externalSkuId", "5505:101", "crmSkuId", 301)))))
+                .andExpect(status().isOk());
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_youzan_order_map WHERE tenant_id=1 AND shop_id=?", shop))
+                .isZero();
+        assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=1 AND id=?", ev1Id))
+                .isEqualTo("MAPPING_FAILED");
+
+        // After mapping 5505:101: ready count is 2 (Order 1 + Order 2); Order 3 (partial) & Order 4 (qty=0) excluded
+        JsonNode adminAfterMap = data(admin.withAuth(
+                get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop)));
+        assertThat(adminAfterMap.size()).isEqualTo(2);
+        assertThat(adminAfterMap.at("/0/externalSkuId").asText()).isEqualTo("5505:202");
+        assertThat(adminAfterMap.at("/0/mapped").asBoolean()).isFalse();
+        assertThat(adminAfterMap.at("/1/externalSkuId").asText()).isEqualTo("5505:101");
+        assertThat(adminAfterMap.at("/1/mapped").asBoolean()).isTrue();
+        assertThat(adminAfterMap.at("/1/crmSkuId").asLong()).isEqualTo(301L);
+        assertThat(adminAfterMap.at("/1/pendingIssueCount").asInt()).isEqualTo(2);
+
+        // 3. Permission & empty-scope guards on /sync-issues/batch-retry
+        mockMvc.perform(manager1.withAuth(post("/api/v1/integrations/youzan/sync-issues/batch-retry")
+                        .header("Idempotency-Key", "it-batch-m1-" + suffix())
+                        .contentType(MediaType.APPLICATION_JSON).content(batchBody)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(operator1.withAuth(post("/api/v1/integrations/youzan/sync-issues/batch-retry")
+                        .header("Idempotency-Key", "it-batch-op1-" + suffix())
+                        .contentType(MediaType.APPLICATION_JSON).content(batchBody)))
+                .andExpect(status().isForbidden());
+        JsonNode businessBatch = data(business1.withAuth(post("/api/v1/integrations/youzan/sync-issues/batch-retry")
+                .header("Idempotency-Key", "it-batch-biz-" + suffix())
+                .contentType(MediaType.APPLICATION_JSON).content(batchBody)));
+        assertThat(businessBatch.at("/matched").asInt()).isZero();
+        assertThat(businessBatch.at("/attempted").asInt()).isZero();
+
+        // 4. Manual batch retry as admin -> Order 1 PROCESSED, Order 2 CUSTOMER_UNRESOLVED (old MAPPING_FAILED RESOLVED)
+        JsonNode batchRes = data(admin.withAuth(post("/api/v1/integrations/youzan/sync-issues/batch-retry")
+                .header("Idempotency-Key", "it-batch-admin-" + suffix())
+                .contentType(MediaType.APPLICATION_JSON).content(batchBody)));
+        assertThat(batchRes.at("/shopId").asText()).isEqualTo(shop);
+        assertThat(batchRes.at("/externalSkuId").asText()).isEqualTo("5505:101");
+        assertThat(batchRes.at("/matched").asInt()).isEqualTo(2);
+        assertThat(batchRes.at("/attempted").asInt()).isEqualTo(2);
+        assertThat(batchRes.at("/processed").asInt()).isEqualTo(1);
+        assertThat(batchRes.at("/advanced").asInt()).isEqualTo(1);
+        assertThat(batchRes.at("/stillFailed").asInt()).isZero();
+        assertThat(batchRes.at("/skipped").asInt()).isZero();
+        assertThat(batchRes.at("/remaining").asInt()).isZero();
+
+        assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=1 AND id=?", ev1Id))
+                .isEqualTo("PROCESSED");
+        assertThat(queryLong("SELECT order_id FROM crm_youzan_event WHERE tenant_id=1 AND id=?", ev1Id)).isPositive();
+        assertThat(queryString("SELECT status FROM crm_youzan_sync_issue WHERE tenant_id=1 AND event_id=? "
+                + "AND issue_type='MAPPING_FAILED'", ev1Id)).isEqualTo("RESOLVED");
+
+        assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=1 AND id=?", ev2Id))
+                .isEqualTo("CUSTOMER_UNRESOLVED");
+        assertThat(queryString("SELECT status FROM crm_youzan_sync_issue WHERE tenant_id=1 AND event_id=? "
+                + "AND issue_type='MAPPING_FAILED'", ev2Id)).isEqualTo("RESOLVED");
+        assertThat(queryString("SELECT status FROM crm_youzan_sync_issue WHERE tenant_id=1 AND event_id=? "
+                + "AND issue_type='CUSTOMER_UNRESOLVED'", ev2Id)).isEqualTo("OPEN");
+
+        assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=1 AND id=?", ev3Id))
+                .isEqualTo("MAPPING_FAILED");
+        assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=1 AND id=?", ev4Id))
+                .isEqualTo("MAPPING_FAILED");
+        assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=2 AND id=?", ev5Id))
+                .isEqualTo("MAPPING_FAILED");
+        assertThat(queryString("SELECT process_status FROM crm_youzan_event WHERE tenant_id=1 AND id=?", ev6Id))
+                .isEqualTo("MAPPING_FAILED");
+        assertThat(queryInt("SELECT COUNT(*) FROM crm_audit_log WHERE tenant_id=1 "
+                + "AND action_code='YOUZAN_ISSUE_BATCH_RETRY' AND target_id=?", shop)).isEqualTo(1);
+
+        JsonNode adminAfterBatch = data(admin.withAuth(
+                get("/api/v1/integrations/youzan/sku-candidates").param("shopId", shop)));
+        assertThat(adminAfterBatch.size()).isEqualTo(1);
+        assertThat(adminAfterBatch.at("/0/externalSkuId").asText()).isEqualTo("5505:202");
+        assertThat(adminAfterBatch.at("/0/mapped").asBoolean()).isFalse();
+    }
+
+    private long ingestAndProcess(long tenantId, YouzanOrderEvent event, String providerRaw, String expectedStatus) {
+        var ingested = youzanEventService.ingest(tenantId, event, "PULL", providerRaw);
+        var processed = youzanEventService.process(tenantId, ingested.id());
+        assertThat(processed.processStatus()).isEqualTo(expectedStatus);
+        return ingested.id();
+    }
+
     private long insertRawAt(long tenantId, String shop, YouzanOrderEvent event, Instant receivedAtUtc) throws Exception {
         String raw = json(event);
         String receivedAtSql = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")

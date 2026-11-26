@@ -18,6 +18,7 @@ import WecomContactPanel from './wecom/WecomContactPanel.vue'
 import WecomContentDrawer from './wecom/WecomContentDrawer.vue'
 import WecomSyncPolicyPanel from './wecom/WecomSyncPolicyPanel.vue'
 import WecomRoomPanel from './wecom/WecomRoomPanel.vue'
+import WecomTagSyncPanel from './wecom/WecomTagSyncPanel.vue'
 import IntegrationRuntimeSettings from '../components/IntegrationRuntimeSettings.vue'
 import {
   consentStatusLabel,
@@ -38,9 +39,11 @@ const { customerLabel, loadCustomerNames } = useReferenceNames()
 const auth = useAuthStore()
 const isInstitution = computed(() => auth.user?.userType.startsWith('INSTITUTION') ?? false)
 const canRead = computed(() => !isInstitution.value && auth.hasPermission('wecom:read'))
+const canManageTagCatalog = computed(() => !isInstitution.value && auth.hasPermission('customer:tag:manage'))
+const canViewTagSync = computed(() => canRead.value || canManageTagCatalog.value)
 const canMonitor = computed(() => canRead.value && auth.hasPermission('wecom:monitor'))
 const canManageRuntime = computed(() => canRead.value && auth.hasPermission('integration:runtime:manage'))
-const activeTab = ref('messages')
+const activeTab = ref(canRead.value ? 'messages' : 'tags')
 const corpId = ref('MOCK-CORP-001')
 
 const messages = ref<WecomMessageView[]>([])
@@ -267,68 +270,71 @@ onMounted(() => {
     </div>
 
     <el-alert v-if="isInstitution" type="error" :closable="false" title="机构用户无企业微信归档访问入口" data-testid="wecom-forbidden" />
-    <el-alert v-else-if="!canRead" type="error" :closable="false" title="当前账号暂无企业微信归档查看权限" data-testid="wecom-forbidden" />
+    <el-alert v-else-if="!canViewTagSync" type="error" :closable="false" title="当前账号暂无企业微信归档查看权限" data-testid="wecom-forbidden" />
     <template v-else>
-      <IntegrationRuntimeSettings v-if="canManageRuntime" provider="wecom" />
-      <el-card shadow="never" class="wecom-control-card">
-        <div class="crm-toolbar">
-          <el-input v-model="corpId" class="wecom-corp-input" placeholder="企业标识（CorpID）" data-testid="wecom-corp-id" @keyup.enter="search" />
-          <el-button type="primary" @click="search">查询归档状态</el-button>
-          <span class="wecom-readonly-note">默认仅展示当前已配置的企业；查询不到不代表真实企业没有数据。</span>
-        </div>
-      </el-card>
-
-      <section v-loading="monitorLoading" class="wecom-monitor-panel" data-testid="wecom-monitor">
-        <div>
-          <div class="wecom-monitor-heading">
-            <div><h3>同步进度与采集覆盖监控</h3><p>已确认序号只代表连续同步成功的最新位置；历史缺口不会因后续成功而被抹除。</p></div>
-            <StatusPill v-if="monitor" :text="monitorStatusLabel(monitor.status)" :tone="monitorStatusTone(monitor.status)" />
+      <template v-if="canRead">
+        <IntegrationRuntimeSettings v-if="canManageRuntime" provider="wecom" />
+        <el-card shadow="never" class="wecom-control-card">
+          <div class="crm-toolbar">
+            <el-input v-model="corpId" class="wecom-corp-input" placeholder="企业标识（CorpID）" data-testid="wecom-corp-id" @keyup.enter="search" />
+            <el-button type="primary" @click="search">查询归档状态</el-button>
+            <span class="wecom-readonly-note">默认仅展示当前已配置的企业；查询不到不代表真实企业没有数据。</span>
           </div>
-          <el-alert v-if="monitorError" type="error" :closable="false" :title="`采集监控加载失败：${monitorError}；无法判断沟通情况`" class="wecom-monitor-alert" data-testid="wecom-monitor-error" />
-          <template v-else-if="monitor">
-            <el-alert
-              v-if="monitor.dataGap"
-              type="error"
-              :closable="false"
-              title="采集覆盖缺口：无法判断沟通情况"
-              :description="monitor.gapReason || '存在未覆盖成员、同意或同步区间缺口'"
-              class="wecom-monitor-alert"
-              data-testid="wecom-data-gap"
-              show-icon
-            />
-            <el-alert v-else type="info" :closable="false" title="当前同步进度未报告覆盖缺口；不代表真实企业微信已接入或沟通完整" class="wecom-monitor-alert" />
-            <dl class="wecom-monitor-facts">
-              <div><dt>归档范围</dt><dd>{{ ({ MOCK_ARCHIVE: '模拟演示归档', OFFICIAL_ARCHIVE: '官方归档' } as Record<string, string>)[monitor.archiveScope] || '未知归档范围' }}</dd></div>
-              <div><dt>最后完整成功的归档序号</dt><dd>{{ monitor.lastSeq }}</dd></div>
-              <div><dt>最近成功 / 最近尝试</dt><dd>{{ formatDateTime(monitor.lastSuccessAt) }} / {{ formatDateTime(monitor.lastAttemptAt) }}</dd></div>
-              <div><dt>可见归档消息数</dt><dd>{{ monitor.messageCount }} 条（不等于沟通总量）</dd></div>
-              <div><dt>未关联联系人</dt><dd>{{ monitor.unmatchedCount }}</dd></div>
-              <div><dt>当前缺口 / 历史已恢复缺口</dt><dd>{{ monitor.activeGaps }} / {{ monitor.historicalGaps }}</dd></div>
-            </dl>
-          </template>
-          <el-empty v-else-if="!monitorLoading" description="监控尚未返回，无法判断沟通情况" />
-        </div>
-        <div v-if="canMonitor" class="wecom-sync-panel">
-          <h3>模拟演示归档同步</h3>
-          <el-form label-position="top" @submit.prevent>
-            <el-form-item label="起始序号（不得超过已确认成功位置）">
-              <el-input-number v-model="syncCursor" :min="0" :precision="0" :controls="false" data-testid="wecom-sync-cursor" @change="cursorTouched = true" />
-            </el-form-item>
-            <el-form-item label="每页拉取条数">
-              <el-input-number v-model="syncLimit" :min="1" :max="100" :precision="0" data-testid="wecom-sync-limit" />
-            </el-form-item>
-            <el-button type="primary" :loading="syncing" :disabled="!corpId.trim()" data-testid="wecom-sync" @click="runSync">执行模拟演示同步</el-button>
-          </el-form>
-          <p>失败重试不会重复写入数据；失败后请先刷新缺口状态，不跳过未成功区间。</p>
-        </div>
-        <div v-else class="wecom-sync-note">当前为只读视图。执行同步与人工客户匹配需要企业微信监管权限；系统仍会独立校验权限与数据范围。</div>
-      </section>
+        </el-card>
+
+        <section v-loading="monitorLoading" class="wecom-monitor-panel" data-testid="wecom-monitor">
+          <div>
+            <div class="wecom-monitor-heading">
+              <div><h3>同步进度与采集覆盖监控</h3><p>已确认序号只代表连续同步成功的最新位置；历史缺口不会因后续成功而被抹除。</p></div>
+              <StatusPill v-if="monitor" :text="monitorStatusLabel(monitor.status)" :tone="monitorStatusTone(monitor.status)" />
+            </div>
+            <el-alert v-if="monitorError" type="error" :closable="false" :title="`采集监控加载失败：${monitorError}；无法判断沟通情况`" class="wecom-monitor-alert" data-testid="wecom-monitor-error" />
+            <template v-else-if="monitor">
+              <el-alert
+                v-if="monitor.dataGap"
+                type="error"
+                :closable="false"
+                title="采集覆盖缺口：无法判断沟通情况"
+                :description="monitor.gapReason || '存在未覆盖成员、同意或同步区间缺口'"
+                class="wecom-monitor-alert"
+                data-testid="wecom-data-gap"
+                show-icon
+              />
+              <el-alert v-else type="info" :closable="false" title="当前同步进度未报告覆盖缺口；不代表真实企业微信已接入或沟通完整" class="wecom-monitor-alert" />
+              <dl class="wecom-monitor-facts">
+                <div><dt>归档范围</dt><dd>{{ ({ MOCK_ARCHIVE: '模拟演示归档', OFFICIAL_ARCHIVE: '官方归档' } as Record<string, string>)[monitor.archiveScope] || '未知归档范围' }}</dd></div>
+                <div><dt>最后完整成功的归档序号</dt><dd>{{ monitor.lastSeq }}</dd></div>
+                <div><dt>最近成功 / 最近尝试</dt><dd>{{ formatDateTime(monitor.lastSuccessAt) }} / {{ formatDateTime(monitor.lastAttemptAt) }}</dd></div>
+                <div><dt>可见归档消息数</dt><dd>{{ monitor.messageCount }} 条（不等于沟通总量）</dd></div>
+                <div><dt>未关联联系人</dt><dd>{{ monitor.unmatchedCount }}</dd></div>
+                <div><dt>当前缺口 / 历史已恢复缺口</dt><dd>{{ monitor.activeGaps }} / {{ monitor.historicalGaps }}</dd></div>
+              </dl>
+            </template>
+            <el-empty v-else-if="!monitorLoading" description="监控尚未返回，无法判断沟通情况" />
+          </div>
+          <div v-if="canMonitor" class="wecom-sync-panel">
+            <h3>模拟演示归档同步</h3>
+            <el-form label-position="top" @submit.prevent>
+              <el-form-item label="起始序号（不得超过已确认成功位置）">
+                <el-input-number v-model="syncCursor" :min="0" :precision="0" :controls="false" data-testid="wecom-sync-cursor" @change="cursorTouched = true" />
+              </el-form-item>
+              <el-form-item label="每页拉取条数">
+                <el-input-number v-model="syncLimit" :min="1" :max="100" :precision="0" data-testid="wecom-sync-limit" />
+              </el-form-item>
+              <el-button type="primary" :loading="syncing" :disabled="!corpId.trim()" data-testid="wecom-sync" @click="runSync">执行模拟演示同步</el-button>
+            </el-form>
+            <p>失败重试不会重复写入数据；失败后请先刷新缺口状态，不跳过未成功区间。</p>
+          </div>
+          <div v-else class="wecom-sync-note">当前为只读视图。执行同步与人工客户匹配需要企业微信监管权限；系统仍会独立校验权限与数据范围。</div>
+        </section>
+      </template>
 
       <el-card shadow="never">
         <el-tabs v-model="activeTab" class="wecom-tabs">
-          <el-tab-pane label="消息记录" name="messages" />
-          <el-tab-pane label="联系人与人工匹配" name="contacts" />
-          <el-tab-pane label="群聊授权" name="rooms" />
+          <el-tab-pane v-if="canRead" label="消息记录" name="messages" />
+          <el-tab-pane v-if="canRead" label="联系人与人工匹配" name="contacts" />
+          <el-tab-pane v-if="canRead" label="群聊授权" name="rooms" />
+          <el-tab-pane v-if="canViewTagSync" label="标签双向同步" name="tags" />
           <el-tab-pane v-if="canMonitor" label="同步设置" name="policy" />
         </el-tabs>
         <template v-if="activeTab === 'messages'">
@@ -367,6 +373,9 @@ onMounted(() => {
         </template>
         <template v-else-if="activeTab === 'rooms'">
           <WecomRoomPanel :corp-id="corpId.trim()" :can-write="canMonitor" @saved="handleLinked" />
+        </template>
+        <template v-else-if="activeTab === 'tags'">
+          <WecomTagSyncPanel />
         </template>
         <template v-else-if="activeTab === 'policy'">
           <WecomSyncPolicyPanel :corp-id="corpId.trim()" :can-write="canMonitor" />

@@ -3,8 +3,11 @@ package com.whale.crm.integration.wecom.application;
 import com.whale.crm.integration.wecom.adapter.WecomOfficialProperties;
 import com.whale.crm.integration.wecom.domain.WecomCallbackEvent;
 import com.whale.crm.integration.wecom.infrastructure.mapper.WecomCallbackMapper;
+import com.whale.crm.integration.wecom.tag.application.WecomTagSyncService;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -19,17 +22,27 @@ public class WecomCallbackService {
     private static final int MAX_ATTEMPTS = 5;
     private static final long LEASE_SECONDS = 60L;
     private static final Set<String> REFRESH = Set.of("add_external_contact", "edit_external_contact");
+    private static final Set<String> TAG_CHANGES = Set.of("create", "update", "delete", "shuffle");
     private final WecomCallbackMapper mapper;
     private final WecomCallbackCryptoService crypto;
     private final WecomContactSyncService contacts;
     private final WecomOfficialProperties officialProperties;
+    private final ObjectProvider<WecomTagSyncService> tagSyncProvider;
 
     public WecomCallbackService(WecomCallbackMapper mapper, WecomCallbackCryptoService crypto,
                                 WecomContactSyncService contacts, WecomOfficialProperties officialProperties) {
+        this(mapper, crypto, contacts, officialProperties, null);
+    }
+
+    @Autowired
+    public WecomCallbackService(WecomCallbackMapper mapper, WecomCallbackCryptoService crypto,
+                                WecomContactSyncService contacts, WecomOfficialProperties officialProperties,
+                                ObjectProvider<WecomTagSyncService> tagSyncProvider) {
         this.mapper = mapper;
         this.crypto = crypto;
         this.contacts = contacts;
         this.officialProperties = officialProperties;
+        this.tagSyncProvider = tagSyncProvider;
     }
 
     public void accept(String plainXml) {
@@ -78,6 +91,15 @@ public class WecomCallbackService {
     }
 
     private void process(long tenantId, WecomCallbackEvent event) {
+        if ("change_external_tag".equals(event.eventType())) {
+            if (event.changeType() != null && TAG_CHANGES.contains(event.changeType()) && tagSyncProvider != null) {
+                WecomTagSyncService tagSync = tagSyncProvider.getIfAvailable();
+                if (tagSync != null) {
+                    tagSync.handleTagCatalogCallback(tenantId, event.changeType());
+                }
+            }
+            return;
+        }
         if (!"change_external_contact".equals(event.eventType()) || event.changeType() == null) {
             return;
         }

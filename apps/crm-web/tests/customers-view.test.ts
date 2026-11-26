@@ -411,4 +411,32 @@ describe('CustomersView 客户中心', () => {
     expect(assignDialog.props('modelValue')).toBe(true)
     expect(assignDialog.props('customers')).toHaveLength(1)
   })
+
+  it('同时具备 integration:youzan:manage 与 customer:write 时显示从有赞拉取客户入口，缺其一时隐藏', async () => {
+    vi.mocked(listCustomers).mockResolvedValue(samplePage)
+
+    const withBoth = mountView({
+      ...managerUser,
+      permissions: [...managerUser.permissions, 'integration:youzan:manage'],
+    })
+    await flushPromises()
+    const link = withBoth.find('[data-testid="customer-youzan-pull-link"]')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toBe('从有赞拉取客户')
+    expect(link.attributes('to')).toBe('/integrations/youzan?tab=customer-pull')
+    withBoth.unmount()
+
+    const onlyManage = mountView({
+      ...readonlyUser,
+      permissions: ['customer:read', 'integration:youzan:manage'],
+    })
+    await flushPromises()
+    expect(onlyManage.find('[data-testid="customer-youzan-pull-link"]').exists()).toBe(false)
+    onlyManage.unmount()
+
+    const onlyWrite = mountView(managerUser)
+    await flushPromises()
+    expect(onlyWrite.find('[data-testid="customer-youzan-pull-link"]').exists()).toBe(false)
+    onlyWrite.unmount()
+  })
 })

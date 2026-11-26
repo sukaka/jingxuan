@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.integration.youzan.customer.infrastructure.mapper.YouzanCustomerSyncMapper">
+
+  <sql id="cursorColumns">
+    id, tenant_id AS tenantId, shop_id AS shopId, source_mode AS sourceMode,
+    cursor_json AS cursorJson, has_more AS hasMore, last_anchor_at AS lastAnchorAt,
+    last_synced_at AS lastSyncedAt, total_imported_count AS totalImportedCount,
+    created_at AS createdAt, updated_at AS updatedAt, version
+  </sql>
+
+  <sql id="runColumns">
+    id, tenant_id AS tenantId, shop_id AS shopId, source_mode AS sourceMode,
+    pull_mode AS pullMode, requested_limit AS requestedLimit, owner_staff_id AS ownerStaffId,
+    adapter_name AS adapterName, status, fetched_count AS fetchedCount,
+    created_count AS createdCount, skipped_existing_count AS skippedExistingCount,
+    mobile_conflict_count AS mobileConflictCount, failed_count AS failedCount,
+    has_more AS hasMore, cursor_after_json AS cursorAfterJson, warnings_json AS warningsJson,
+    error_masked AS errorMasked, lease_until AS leaseUntil, created_by AS createdBy,
+    started_at AS startedAt, finished_at AS finishedAt
+  </sql>
+
+  <sql id="itemColumns">
+    id, tenant_id AS tenantId, run_id AS runId, shop_id AS shopId,
+    external_customer_id AS externalCustomerId, outcome,
+    display_name_masked AS displayNameMasked, mobile_masked AS mobileMasked,
+    crm_customer_id AS crmCustomerId, crm_customer_no AS crmCustomerNo,
+    conflict_customer_ids_json AS conflictCustomerIdsJson,
+    conflict_customer_nos_json AS conflictCustomerNosJson,
+    detail_masked AS detailMasked, created_at AS createdAt
+  </sql>
+
+  <select id="selectCursor" resultType="com.whale.crm.integration.youzan.customer.domain.YouzanCustomerSyncCursor">
+    SELECT <include refid="cursorColumns"/>
+    FROM crm_youzan_customer_sync_cursor
+    WHERE tenant_id = #{tenantId} AND shop_id = #{shopId} AND source_mode = #{sourceMode}
+  </select>
+
+  <select id="selectCursorForUpdate" resultType="com.whale.crm.integration.youzan.customer.domain.YouzanCustomerSyncCursor">
+    SELECT <include refid="cursorColumns"/>
+    FROM crm_youzan_customer_sync_cursor
+    WHERE tenant_id = #{tenantId} AND shop_id = #{shopId} AND source_mode = #{sourceMode}
+    FOR UPDATE
+  </select>
+
+  <insert id="upsertCursor">
+    INSERT INTO crm_youzan_customer_sync_cursor (
+      tenant_id, shop_id, source_mode, cursor_json, has_more, last_anchor_at,
+      last_synced_at, total_imported_count
+    ) VALUES (
+      #{tenantId}, #{shopId}, #{sourceMode}, #{cursorJson}, #{hasMore}, #{lastAnchorAt},
+      #{lastSyncedAt}, #{totalImportedCount}
+    )
+    ON DUPLICATE KEY UPDATE
+      cursor_json = VALUES(cursor_json),
+      has_more = VALUES(has_more),
+      last_anchor_at = COALESCE(VALUES(last_anchor_at), last_anchor_at),
+      last_synced_at = VALUES(last_synced_at),
+      total_imported_count = total_imported_count + VALUES(total_imported_count),
+      version = version + 1
+  </insert>
+
+  <delete id="deleteCursor">
+    DELETE FROM crm_youzan_customer_sync_cursor
+    WHERE tenant_id = #{tenantId} AND shop_id = #{shopId} AND source_mode = #{sourceMode}
+  </delete>
+
+  <update id="expireStaleRuns">
+    UPDATE crm_youzan_customer_sync_run
+    SET status = 'FAILED',
+        error_masked = '同步任务租约已超时，已自动释放并发锁',
+        finished_at = #{now}
+    WHERE tenant_id = #{tenantId}
+      AND shop_id = #{shopId}
+      AND source_mode = #{sourceMode}
+      AND status = 'RUNNING'
+      AND lease_until IS NOT NULL
+      AND lease_until &lt; #{now}
+  </update>
+
+  <insert id="insertRun" useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO crm_youzan_customer_sync_run (
+      tenant_id, shop_id, source_mode, pull_mode, requested_limit, owner_staff_id,
+      adapter_name, status, lease_until, created_by, started_at
+    ) VALUES (
+      #{tenantId}, #{shopId}, #{sourceMode}, #{pullMode}, #{requestedLimit}, #{ownerStaffId},
+      #{adapterName}, #{status}, #{leaseUntil}, #{createdBy}, #{startedAt}
+    )
+  </insert>
+
+  <update id="finishRun">
+    UPDATE crm_youzan_customer_sync_run
+    SET status = #{status},
+        fetched_count = #{fetchedCount},
+        created_count = #{createdCount},
+        skipped_existing_count = #{skippedExistingCount},
+        mobile_conflict_count = #{mobileConflictCount},
+        failed_count = #{failedCount},
+        has_more = #{hasMore},
+        cursor_after_json = #{cursorAfterJson},
+        warnings_json = #{warningsJson},
+        error_masked = #{errorMasked},
+        finished_at = #{finishedAt}
+    WHERE tenant_id = #{tenantId} AND id = #{runId} AND status = 'RUNNING'
+  </update>
+
+  <select id="selectRun" resultType="com.whale.crm.integration.youzan.customer.domain.YouzanCustomerSyncRun">
+    SELECT <include refid="runColumns"/>
+    FROM crm_youzan_customer_sync_run
+    WHERE tenant_id = #{tenantId} AND id = #{runId}
+  </select>
+
+  <select id="selectRuns" resultType="com.whale.crm.integration.youzan.customer.domain.YouzanCustomerSyncRun">
+    SELECT <include refid="runColumns"/>
+    FROM crm_youzan_customer_sync_run
+    WHERE tenant_id = #{tenantId}
+      AND shop_id = #{shopId}
+      <if test="sourceMode != null and sourceMode != ''">
+        AND source_mode = #{sourceMode}
+      </if>
+    ORDER BY id DESC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countRuns" resultType="long">
+    SELECT COUNT(*)
+    FROM crm_youzan_customer_sync_run
+    WHERE tenant_id = #{tenantId}
+      AND shop_id = #{shopId}
+      <if test="sourceMode != null and sourceMode != ''">
+        AND source_mode = #{sourceMode}
+      </if>
+  </select>
+
+  <insert id="insertItem">
+    INSERT INTO crm_youzan_customer_sync_item (
+      tenant_id, run_id, shop_id, external_customer_id, outcome,
+      display_name_masked, mobile_masked, crm_customer_id, crm_customer_no,
+      conflict_customer_ids_json, conflict_customer_nos_json, detail_masked
+    ) VALUES (
+      #{tenantId}, #{runId}, #{shopId}, #{externalCustomerId}, #{outcome},
+      #{displayNameMasked}, #{mobileMasked}, #{crmCustomerId}, #{crmCustomerNo},
+      #{conflictCustomerIdsJson}, #{conflictCustomerNosJson}, #{detailMasked}
+    )
+  </insert>
+
+  <select id="selectItems" resultType="com.whale.crm.integration.youzan.customer.domain.YouzanCustomerSyncItem">
+    SELECT <include refid="itemColumns"/>
+    FROM crm_youzan_customer_sync_item
+    WHERE tenant_id = #{tenantId}
+      AND run_id = #{runId}
+      <if test="outcome != null and outcome != ''">
+        AND outcome = #{outcome}
+      </if>
+    ORDER BY id ASC
+    LIMIT #{size} OFFSET #{offset}
+  </select>
+
+  <select id="countItems" resultType="long">
+    SELECT COUNT(*)
+    FROM crm_youzan_customer_sync_item
+    WHERE tenant_id = #{tenantId}
+      AND run_id = #{runId}
+      <if test="outcome != null and outcome != ''">
+        AND outcome = #{outcome}
+      </if>
+  </select>
+
+</mapper>

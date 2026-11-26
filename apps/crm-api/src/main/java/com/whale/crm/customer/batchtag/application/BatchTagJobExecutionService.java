@@ -1,6 +1,7 @@
 package com.whale.crm.customer.batchtag.application;
 
 import com.whale.crm.customer.application.CustomerScopeSupport;
+import com.whale.crm.customer.application.CustomerTagSyncPort;
 import com.whale.crm.customer.batchtag.domain.BatchTagJob;
 import com.whale.crm.customer.batchtag.domain.BatchTagJobAttempt;
 import com.whale.crm.customer.batchtag.domain.BatchTagJobCounts;
@@ -21,6 +22,10 @@ import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.security.DataScope;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -37,6 +42,8 @@ import java.util.UUID;
 
 @Service
 public class BatchTagJobExecutionService {
+    private static final Logger log = LoggerFactory.getLogger(BatchTagJobExecutionService.class);
+
     private final BatchTagJobRepository repository;
     private final CustomerRepository customerRepository;
     private final CustomerTagRepository tagRepository;
@@ -49,6 +56,7 @@ public class BatchTagJobExecutionService {
     private final BatchTagJson json;
     private final TransactionTemplate transactions;
     private final long leaseMs;
+    private final ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider;
 
     public BatchTagJobExecutionService(BatchTagJobRepository repository, CustomerRepository customerRepository,
             CustomerTagRepository tagRepository, CustomerScopeSupport scopeSupport,
@@ -57,6 +65,19 @@ public class BatchTagJobExecutionService {
             NotificationRequestService notificationService, BatchTagJson json,
             PlatformTransactionManager transactionManager,
             @Value("${app.batch-tag.lease-ms:60000}") long leaseMs) {
+        this(repository, customerRepository, tagRepository, scopeSupport, currentUserService, dictionaryService,
+                auditService, idempotencyService, notificationService, json, transactionManager, leaseMs, null);
+    }
+
+    @Autowired
+    public BatchTagJobExecutionService(BatchTagJobRepository repository, CustomerRepository customerRepository,
+            CustomerTagRepository tagRepository, CustomerScopeSupport scopeSupport,
+            CurrentUserService currentUserService, DictionaryApplicationService dictionaryService,
+            AuditService auditService, IdempotencyService idempotencyService,
+            NotificationRequestService notificationService, BatchTagJson json,
+            PlatformTransactionManager transactionManager,
+            @Value("${app.batch-tag.lease-ms:60000}") long leaseMs,
+            ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider) {
         this.repository = repository;
         this.customerRepository = customerRepository;
         this.tagRepository = tagRepository;
@@ -69,6 +90,7 @@ public class BatchTagJobExecutionService {
         this.json = json;
         this.transactions = new TransactionTemplate(transactionManager);
         this.leaseMs = leaseMs;
+        this.tagSyncPortProvider = tagSyncPortProvider;
     }
 
     @jakarta.annotation.PostConstruct
@@ -168,6 +190,25 @@ public class BatchTagJobExecutionService {
         String status = changedTags.isEmpty() ? BatchTagJobItem.NO_CHANGE : BatchTagJobItem.SUCCEEDED;
         String reason = changedTags.isEmpty() ? "目标标签状态已符合，未重复变更" : "按请求增量更新，其他历史标签保持不变";
         completeResult(running, item, status, null, reason, before, after, changedTags);
+        if (!changedTags.isEmpty()) {
+            notifyTagSync(running.tenantId(), item.customerId(), before, after, running.requestedBy());
+        }
+    }
+
+    private void notifyTagSync(long tenantId, long customerId, List<String> before, List<String> after,
+                               Long actorUserId) {
+        if (tagSyncPortProvider == null) {
+            return;
+        }
+        CustomerTagSyncPort port = tagSyncPortProvider.getIfAvailable();
+        if (port == null) {
+            return;
+        }
+        try {
+            port.onCustomerTagsChanged(tenantId, customerId, before, after, actorUserId, "BATCH_TAG");
+        } catch (RuntimeException ex) {
+            log.warn("批量打标后企微标签推送入队失败，已忽略以保护批量任务: customerId={}", customerId);
+        }
     }
 
     private void completeResult(BatchTagJob running, BatchTagJobItem item, String resultStatus, String failureCode,

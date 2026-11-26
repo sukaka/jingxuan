@@ -1,6 +1,7 @@
 package com.whale.crm.customer.domain;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * crm_customer_identity 存取。
@@ -12,6 +13,8 @@ public interface CustomerIdentityRepository {
     List<CustomerIdentity> findByCustomerIds(long tenantId, List<Long> customerIds);
 
     List<CustomerIdentity> findByExternalIds(long tenantId, List<String> externalIds);
+
+    Optional<CustomerIdentity> findByIdentity(long tenantId, String identityType, String sourceApp, String externalId);
 
     void insert(CustomerIdentity identity);
 

@@ -112,6 +112,20 @@ describe('customer api 契约', () => {
     })
   })
 
+  it('listCustomers 将 tagCodes 序列化为逗号分隔字符串并附带 tagMatchMode（空标签不下发）', async () => {
+    const { adapter, calls } = captureAdapter({ items: [], total: 0, page: 1, size: 20 })
+    http.defaults.adapter = adapter
+
+    await listCustomers({ page: 1, size: 20, tagCodes: ['VIP', 'HIGH_INTENT'] })
+    await listCustomers({ page: 1, size: 20, tagCodes: ['VIP', 'HIGH_INTENT'], tagMatchMode: 'ALL' })
+    await listCustomers({ page: 1, size: 20, tagCodes: [], tagMatchMode: 'ALL' })
+
+    expect(calls[0]?.params).toMatchObject({ tagCodes: 'VIP,HIGH_INTENT', tagMatchMode: 'ANY' })
+    expect(calls[1]?.params).toMatchObject({ tagCodes: 'VIP,HIGH_INTENT', tagMatchMode: 'ALL' })
+    expect(calls[2]?.params.tagCodes).toBeUndefined()
+    expect(calls[2]?.params.tagMatchMode).toBeUndefined()
+  })
+
   it('createCustomer 携带 Idempotency-Key 头(防重复建档)', async () => {
     const { adapter, calls } = captureAdapter({ id: 1, customerNo: 'C0000000001' }, 201)
     http.defaults.adapter = adapter

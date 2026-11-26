@@ -24,6 +24,7 @@ const canMerge = computed(() => auth.hasPermission('customer:merge'))
 const canTransfer = computed(() => auth.hasPermission('customer:transfer'))
 const canManageTagCatalog = computed(() => auth.hasPermission('customer:tag:manage'))
 const canManageSourceChannel = computed(() => auth.hasPermission('customer:source_channel:manage'))
+const canPullYouzanCustomers = computed(() => auth.hasPermission('integration:youzan:manage') && auth.hasPermission('customer:write'))
 const keywordInput = ref<{ focus?: () => void } | null>(null)
 const tableRef = ref<{ clearSelection?: () => void } | null>(null)
 const query = reactive({
@@ -31,6 +32,8 @@ const query = reactive({
   tierCode: '',
   needsAttention: false,
   ownerId: undefined as number | undefined,
+  tagCodes: [] as string[],
+  tagMatchMode: 'ANY' as 'ANY' | 'ALL',
   page: 1,
   size: 20,
 })
@@ -87,6 +90,10 @@ async function load(page = query.page) {
     if (query.ownerId !== undefined) {
       params.ownerId = query.ownerId
     }
+    if (query.tagCodes.length > 0) {
+      params.tagCodes = [...query.tagCodes]
+      params.tagMatchMode = query.tagMatchMode
+    }
     const result = await listCustomers(params)
     customers.value = result.items
     total.value = result.total
@@ -112,6 +119,7 @@ async function loadSummary() {
 async function onSourceChannelCatalogChanged() {
   await dicts.load('customerSources', 'customerChannels')
 }
+function onSearch() { void load(1) }
 function reload() { void load(); void loadSummary() }
 function onFormSaved() {
   void dicts.load('customerTags', 'customerSources', 'customerChannels')
@@ -120,6 +128,8 @@ function onFormSaved() {
     query.tierCode = ''
     query.needsAttention = false
     query.ownerId = undefined
+    query.tagCodes = []
+    query.tagMatchMode = 'ANY'
     query.page = 1
     void load(1)
     void loadSummary()
@@ -173,7 +183,7 @@ onMounted(() => {
 <template>
   <div class="proto-page customers-page">
     <PageHeader title="客户中心" description="客户等级（S/A/B/C/D）+ 基础档案 + 跟进节奏；与意向/消费能力分开管理">
-      <template #actions><el-button v-if="canManageTagCatalog" data-testid="customer-tag-manage-btn" @click="tagManageVisible = true">标签管理</el-button><el-button v-if="canManageSourceChannel" data-testid="customer-source-channel-manage-btn" @click="sourceChannelManageVisible = true">来源与渠道管理</el-button><RouterLink v-if="canMerge" to="/customers/merge" class="el-button" data-testid="customer-merge-link">多管家排查</RouterLink><button class="el-button" disabled title="批量导出功能暂未开放">数据导出（暂未开放）</button><el-button v-if="auth.hasPermission('customer:write')" type="primary" @click="openCreate">＋ 新建客户</el-button></template>
+      <template #actions><el-button v-if="canManageTagCatalog" data-testid="customer-tag-manage-btn" @click="tagManageVisible = true">标签管理</el-button><el-button v-if="canManageSourceChannel" data-testid="customer-source-channel-manage-btn" @click="sourceChannelManageVisible = true">来源与渠道管理</el-button><RouterLink v-if="canMerge" to="/customers/merge" class="el-button" data-testid="customer-merge-link">多管家排查</RouterLink><RouterLink v-if="canPullYouzanCustomers" to="/integrations/youzan?tab=customer-pull" class="el-button" data-testid="customer-youzan-pull-link">从有赞拉取客户</RouterLink><button class="el-button" disabled title="批量导出功能暂未开放">数据导出（暂未开放）</button><el-button v-if="auth.hasPermission('customer:write')" type="primary" @click="openCreate">＋ 新建客户</el-button></template>
     </PageHeader>
     <div class="proto-stat-grid"><StatCard label="S 级客户" :value="`${summary.s} 位`" sub="高消费 / 重点维护" icon="users" /><StatCard label="A 级客户" :value="`${summary.a} 位`" sub="较高消费 / 持续维护" icon="heart" /><StatCard label="今天需跟进" :value="`${summary.due} 条`" sub="按下次跟进时间提醒" icon="calendar" /><StatCard v-if="canMerge" label="多管家客户" :value="`${summary.multiSteward} 位`" sub="同一顾客已加多位管家 · 无需合并" icon="users" /></div>
     <PageCard>
@@ -192,6 +202,30 @@ onMounted(() => {
             @change="load(1)"
           >
             <el-option v-for="option in ownerOptions" :key="option.id" :label="ownerOptionLabel(option)" :value="option.id" />
+          </el-select>
+          <el-select
+            v-model="query.tagCodes"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            clearable
+            filterable
+            placeholder="按标签筛选"
+            style="width:210px"
+            data-testid="customer-tag-filter"
+            @change="onSearch"
+          >
+            <el-option v-for="option in dicts.options('customerTags')" :key="option.code" :label="option.label" :value="option.code" />
+          </el-select>
+          <el-select
+            v-if="query.tagCodes.length > 1"
+            v-model="query.tagMatchMode"
+            style="width:110px"
+            data-testid="customer-tag-match-mode"
+            @change="onSearch"
+          >
+            <el-option label="满足任一" value="ANY" />
+            <el-option label="同时满足" value="ALL" />
           </el-select>
           <el-button type="primary" :loading="loading" @click="load(1)">查询</el-button>
         </div>

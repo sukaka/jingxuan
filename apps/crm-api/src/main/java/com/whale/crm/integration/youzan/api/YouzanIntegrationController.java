@@ -1,9 +1,12 @@
 package com.whale.crm.integration.youzan.api;
 
+import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryRequest;
+import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryResponse;
 import com.whale.crm.integration.youzan.api.dto.YouzanCustomerLinkRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanEventResponse;
 import com.whale.crm.integration.youzan.api.dto.YouzanOrderView;
 import com.whale.crm.integration.youzan.api.dto.YouzanReconcileReport;
+import com.whale.crm.integration.youzan.api.dto.YouzanSkuCandidateView;
 import com.whale.crm.integration.youzan.api.dto.YouzanSkuMappingRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanSyncRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanSyncResponse;
@@ -101,6 +104,23 @@ public class YouzanIntegrationController extends YouzanBaseController {
             @RequestHeader(name = "Idempotency-Key", required = true) @Size(min = 1, max = 128) String key,
             HttpServletRequest request) {
         return ApiResponse.ok(managementService.retryIssue(SecuritySupport.requireCurrentUser(), id), requestId(request));
+    }
+
+    @PostMapping("/sync-issues/batch-retry")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'campaign:write')")
+    public ApiResponse<YouzanBatchRetryResponse> batchRetry(@Valid @RequestBody YouzanBatchRetryRequest body,
+            @RequestHeader(name = "Idempotency-Key", required = true) @Size(min = 1, max = 128) String key,
+            HttpServletRequest request) {
+        return ApiResponse.ok(managementService.batchRetryMappingIssues(SecuritySupport.requireCurrentUser(), body, key),
+                requestId(request));
+    }
+
+    @GetMapping("/sku-candidates")
+    @PreAuthorize("hasAnyAuthority('integration:youzan:manage', 'order:read')")
+    public ApiResponse<List<YouzanSkuCandidateView>> skuCandidates(@RequestParam String shopId,
+            HttpServletRequest request) {
+        CurrentUser user = SecuritySupport.requireCurrentUser();
+        return ApiResponse.ok(managementService.skuCandidates(user.tenantId(), user, shopId), requestId(request));
     }
 
     @GetMapping("/sku-mappings")

@@ -199,3 +199,130 @@ export async function saveWecomSyncPolicy(corpId: string, body: WecomSyncPolicyI
   const res = await http.put<ApiResponse<WecomSyncPolicy>>('/integrations/wecom/sync-policy', body, { params: { corpId }, headers: { 'Idempotency-Key': key } })
   return res.data.data
 }
+
+export type WecomTagSyncDirection = 'PULL' | 'PUSH' | 'BIDIRECTIONAL'
+
+export interface WecomTagMappingItem {
+  crmTagCode: string
+  crmTagLabel: string
+  crmTagStatus: string
+  wecomGroupId: string | null
+  wecomGroupName: string | null
+  wecomTagId: string | null
+  wecomTagName: string | null
+  syncStatus: 'ACTIVE' | 'UNLINKED' | 'DISABLED' | 'UNMAPPED'
+  lastSyncedAt: string | null
+}
+
+export interface WecomTagMappingOverview {
+  corpId: string
+  adapterName: string
+  officialEnabled: boolean
+  items: WecomTagMappingItem[]
+}
+
+export interface UpdateWecomTagMappingInput {
+  action: 'BIND' | 'UNLINK'
+  wecomGroupId?: string | null
+  wecomGroupName?: string | null
+  wecomTagId?: string | null
+  wecomTagName?: string | null
+}
+
+export interface WecomTagSyncRun {
+  id: number
+  corpId: string
+  syncScope: 'CATALOG' | 'CUSTOMER'
+  direction: WecomTagSyncDirection
+  triggerSource: string
+  adapterName: string
+  status: 'RUNNING' | 'SUCCESS' | 'PARTIAL' | 'ERROR'
+  pulledCount: number
+  pushedCount: number
+  skippedCount: number
+  failedCount: number
+  errorMasked: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+
+export interface WecomTagPushTask {
+  id: number
+  corpId: string
+  customerId: number
+  externalUseridMasked: string
+  wecomUserid: string
+  addTagCount: number
+  removeTagCount: number
+  status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'RETRYABLE' | 'FAILED'
+  attempts: number
+  maxAttempts: number
+  triggerSource: string
+  errorMasked: string | null
+  nextRetryAt: string | null
+  updatedAt: string
+}
+
+export interface WecomCustomerTagPushResult {
+  customerId: number
+  adapterName: string
+  officialEnabled: boolean
+  matchedContacts: number
+  pushedCount: number
+  skippedCount: number
+  failedCount: number
+  errorMasked: string | null
+}
+
+export async function getWecomTagMappings(): Promise<WecomTagMappingOverview> {
+  const res = await http.get<ApiResponse<WecomTagMappingOverview>>('/integrations/wecom/tag-sync/mappings')
+  return res.data.data
+}
+
+export async function updateWecomTagMapping(
+  crmTagCode: string,
+  body: UpdateWecomTagMappingInput,
+): Promise<WecomTagMappingItem> {
+  const res = await http.put<ApiResponse<WecomTagMappingItem>>(
+    `/integrations/wecom/tag-sync/mappings/${encodeURIComponent(crmTagCode)}`,
+    body,
+  )
+  return res.data.data
+}
+
+export function syncWecomTagCatalog(direction: WecomTagSyncDirection, key: string): Promise<WecomTagSyncRun> {
+  return postWithKey('/integrations/wecom/tag-sync/catalog', { direction }, key)
+}
+
+export function syncWecomCustomerTags(direction: WecomTagSyncDirection, key: string): Promise<WecomTagSyncRun> {
+  return postWithKey('/integrations/wecom/tag-sync/customers', { direction }, key)
+}
+
+export async function pushCustomerTagsToWecom(
+  customerId: number,
+  key?: string,
+): Promise<WecomCustomerTagPushResult> {
+  const res = await http.post<ApiResponse<WecomCustomerTagPushResult>>(
+    `/integrations/wecom/tag-sync/customers/${customerId}/push`,
+    undefined,
+    { headers: key ? { 'Idempotency-Key': key } : undefined },
+  )
+  return res.data.data
+}
+
+export async function listWecomTagSyncRuns(): Promise<WecomTagSyncRun[]> {
+  const res = await http.get<ApiResponse<WecomTagSyncRun[]>>('/integrations/wecom/tag-sync/runs')
+  return res.data.data
+}
+
+export async function listWecomTagPushTasks(status?: string): Promise<WecomTagPushTask[]> {
+  const res = await http.get<ApiResponse<WecomTagPushTask[]>>('/integrations/wecom/tag-sync/tasks', {
+    params: status ? { status } : undefined,
+  })
+  return res.data.data
+}
+
+export async function retryWecomTagPushTask(taskId: number): Promise<WecomTagPushTask> {
+  const res = await http.post<ApiResponse<WecomTagPushTask>>(`/integrations/wecom/tag-sync/tasks/${taskId}/retry`)
+  return res.data.data
+}

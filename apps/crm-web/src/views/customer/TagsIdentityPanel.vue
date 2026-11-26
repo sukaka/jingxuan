@@ -3,8 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { CustomerIdentityItem } from '../../api/customer'
 import { updateCustomerTags } from '../../api/customer'
+import { pushCustomerTagsToWecom } from '../../api/wecom'
 import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../types/api'
+import { createWecomKey } from '../wecom/wecomUi'
 import CustomerTagManageDialog from './CustomerTagManageDialog.vue'
 import StatusPill from './StatusPill.vue'
 import { useDictionaries } from './shared'
@@ -24,11 +26,13 @@ const auth = useAuthStore()
 const dicts = useDictionaries()
 const editingTags = ref<string[]>([])
 const saving = ref(false)
+const pushingWecom = ref(false)
 const manageVisible = ref(false)
 
 const showTags = computed(() => props.section === 'all' || props.section === 'tags')
 const showIdentities = computed(() => props.section === 'all' || props.section === 'identities')
 const canWriteTags = computed(() => auth.hasPermission('customer:write') && !props.readonly)
+const hasWecomIdentity = computed(() => props.identities.some((item) => item.identityType === 'WECOM'))
 const canManageTagCatalog = computed(() => auth.hasPermission('customer:tag:manage'))
 const tagSelectOptions = computed(() => dicts.optionsWithHistoryList('customerTags', editingTags.value))
 
@@ -81,6 +85,29 @@ function errorText(error: unknown): string {
 async function onTagCatalogChanged() {
   await dicts.load('customerTags')
   emit('changed')
+}
+
+async function pushTagsToWecom() {
+  if (pushingWecom.value || !canWriteTags.value) return
+  pushingWecom.value = true
+  try {
+    const result = await pushCustomerTagsToWecom(props.customerId, createWecomKey('wecom.tag.push'))
+    if (result.failedCount > 0) {
+      ElMessage.warning(
+        `同步到企微部分失败：成功 ${result.pushedCount}，失败 ${result.failedCount}${result.errorMasked ? `（${result.errorMasked}）` : ''}`,
+      )
+    } else if (result.matchedContacts === 0) {
+      ElMessage.warning('当前客户暂无可同步的活跃企微联系人')
+    } else {
+      ElMessage.success(
+        `已同步到企微（匹配 ${result.matchedContacts} 位联系人，推送 ${result.pushedCount} 次，跳过 ${result.skippedCount} 次）`,
+      )
+    }
+  } catch (error) {
+    ElMessage.error(errorText(error))
+  } finally {
+    pushingWecom.value = false
+  }
 }
 
 async function saveTags() {
@@ -143,6 +170,15 @@ async function saveTags() {
       <div v-if="canWriteTags" class="tag-footer">
         <el-button type="primary" size="small" :loading="saving" data-testid="detail-save-tags-btn" @click="saveTags">
           保存标签
+        </el-button>
+        <el-button
+          v-if="hasWecomIdentity"
+          size="small"
+          :loading="pushingWecom"
+          data-testid="detail-push-wecom-tags-btn"
+          @click="pushTagsToWecom"
+        >
+          同步到企微
         </el-button>
         <span v-if="!canManageTagCatalog" class="tag-hint">
           标签内容由管家主管统一维护，当前仅可选择已有标签

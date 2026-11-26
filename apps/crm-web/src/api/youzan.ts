@@ -75,6 +75,38 @@ export interface YouzanSkuMapping {
   version: number
 }
 
+export interface YouzanSkuCandidate {
+  shopId: string
+  externalSkuId: string
+  itemTitle: string | null
+  skuSpec: string | null
+  priceFen: number | null
+  outerSkuCode: string | null
+  pendingIssueCount: number
+  sampleOrderNo: string | null
+  latestEventAt: string | null
+  mapped: boolean
+  crmSkuId: number | null
+}
+
+export interface YouzanBatchRetryInput {
+  shopId: string
+  externalSkuId?: string
+  limit?: number
+}
+
+export interface YouzanBatchRetryResponse {
+  shopId: string
+  externalSkuId: string | null
+  matched: number
+  attempted: number
+  processed: number
+  advanced: number
+  stillFailed: number
+  skipped: number
+  remaining: number
+}
+
 export interface YouzanCustomerLink {
   id: number
   shopId: string
@@ -106,6 +138,7 @@ export interface YouzanSyncInput {
   shopId: string
   cursor?: string
   limit?: number
+  maxOrders?: number
 }
 
 export interface YouzanSkuMappingInput {
@@ -153,6 +186,15 @@ export async function listYouzanSyncIssues(query: { status?: string; page: numbe
 
 export function retryYouzanSyncIssue(id: number, key: string): Promise<YouzanEventResponse> {
   return postWithKey(`/integrations/youzan/sync-issues/${id}/retry`, undefined, key)
+}
+
+export function batchRetryYouzanSyncIssues(body: YouzanBatchRetryInput, key: string): Promise<YouzanBatchRetryResponse> {
+  return postWithKey('/integrations/youzan/sync-issues/batch-retry', body, key)
+}
+
+export async function listYouzanSkuCandidates(shopId: string): Promise<YouzanSkuCandidate[]> {
+  const res = await http.get<ApiResponse<YouzanSkuCandidate[]>>('/integrations/youzan/sku-candidates', { params: { shopId } })
+  return res.data.data
 }
 
 export async function listYouzanSkuMappings(shopId: string): Promise<YouzanSkuMapping[]> {
@@ -264,5 +306,135 @@ export async function saveYouzanSyncPolicy(shopId: string, body: YouzanSyncPolic
 
 export async function listYouzanSyncJobs(query: { shopId: string; page: number; size: number }): Promise<PageResult<YouzanSyncJob>> {
   const res = await http.get<ApiResponse<PageResult<YouzanSyncJob>>>('/integrations/youzan/sync-jobs', { params: query })
+  return res.data.data
+}
+
+export type YouzanCustomerSourceMode = 'SCRM_LIST' | 'ORDER_BUYERS'
+export type YouzanCustomerPullMode = 'BATCH' | 'ALL'
+export type YouzanCustomerSyncOutcome = 'CREATED' | 'SKIPPED_EXISTING' | 'MOBILE_CONFLICT' | 'FAILED'
+
+export interface YouzanCustomerCursorSummary {
+  sourceMode: YouzanCustomerSourceMode
+  hasCursor: boolean
+  hasMore: boolean
+  pageNo: number | null
+  itemOffset: number | null
+  windowStart: string | null
+  windowEnd: string | null
+  lastAnchorAt: string | null
+  lastSyncedAt: string | null
+  totalImportedCount: number
+}
+
+export interface YouzanCustomerSyncStatus {
+  shopId: string
+  adapterName: string
+  officialEnabled: boolean
+  scrmCursor: YouzanCustomerCursorSummary
+  orderBuyersCursor: YouzanCustomerCursorSummary
+}
+
+export interface YouzanCustomerPullInput {
+  shopId: string
+  sourceMode: YouzanCustomerSourceMode
+  pullMode: YouzanCustomerPullMode
+  limit?: number
+  ownerStaffId: number
+  sourceCode?: string
+  channelCode?: string
+  startDate?: string
+  endDate?: string
+  enrichProfile?: boolean
+  resetCursor?: boolean
+}
+
+export interface YouzanCustomerSyncItem {
+  id: number
+  runId: number
+  shopId: string
+  externalCustomerId: string
+  outcome: YouzanCustomerSyncOutcome
+  displayNameMasked: string | null
+  mobileMasked: string | null
+  crmCustomerId: number | null
+  crmCustomerNo: string | null
+  conflictCustomerIds: number[]
+  conflictCustomerNos: string[]
+  detailMasked: string | null
+  createdAt: string
+}
+
+export interface YouzanCustomerSyncRun {
+  id: number
+  shopId: string
+  sourceMode: YouzanCustomerSourceMode
+  pullMode: YouzanCustomerPullMode
+  requestedLimit: number | null
+  ownerStaffId: number
+  ownerName: string | null
+  adapterName: string
+  status: string
+  fetchedCount: number
+  createdCount: number
+  skippedExistingCount: number
+  mobileConflictCount: number
+  failedCount: number
+  hasMore: boolean
+  warnings: string[]
+  errorMasked: string | null
+  startedAt: string
+  finishedAt: string | null
+  items?: YouzanCustomerSyncItem[]
+}
+
+export interface YouzanCustomerCursorResetInput {
+  shopId: string
+  sourceMode: YouzanCustomerSourceMode
+}
+
+export async function getYouzanCustomerSyncStatus(shopId: string): Promise<YouzanCustomerSyncStatus> {
+  const res = await http.get<ApiResponse<YouzanCustomerSyncStatus>>('/integrations/youzan/customer-sync/status', {
+    params: { shopId },
+  })
+  return res.data.data
+}
+
+export function pullYouzanCustomers(body: YouzanCustomerPullInput, key: string): Promise<YouzanCustomerSyncRun> {
+  return postWithKey('/integrations/youzan/customer-sync/pull', body, key)
+}
+
+export async function resetYouzanCustomerSyncCursor(body: YouzanCustomerCursorResetInput): Promise<YouzanCustomerSyncStatus> {
+  const res = await http.post<ApiResponse<YouzanCustomerSyncStatus>>('/integrations/youzan/customer-sync/cursor/reset', body)
+  return res.data.data
+}
+
+export async function listYouzanCustomerSyncRuns(query: {
+  shopId: string
+  sourceMode?: YouzanCustomerSourceMode
+  page: number
+  size: number
+}): Promise<PageResult<YouzanCustomerSyncRun>> {
+  const res = await http.get<ApiResponse<PageResult<YouzanCustomerSyncRun>>>('/integrations/youzan/customer-sync/runs', {
+    params: {
+      shopId: query.shopId,
+      sourceMode: query.sourceMode || undefined,
+      page: query.page,
+      size: query.size,
+    },
+  })
+  return res.data.data
+}
+
+export async function listYouzanCustomerSyncRunItems(
+  runId: number,
+  query: { outcome?: YouzanCustomerSyncOutcome; page: number; size: number },
+): Promise<PageResult<YouzanCustomerSyncItem>> {
+  const res = await http.get<ApiResponse<PageResult<YouzanCustomerSyncItem>>>(`/integrations/youzan/customer-sync/runs/${runId}/items`, {
+    params: {
+      outcome: query.outcome || undefined,
+      page: query.page,
+      size: query.size,
+    },
+  })
   return res.data.data
 }

@@ -155,6 +155,30 @@ class Wave1Wave2ExplainIT {
                     .contains("Using index")
                     .doesNotContain("Using filesort");
 
+            // 2b. CustomerMapper#search & countSearch with tagCodes (ANY & ALL) — crm_customer_tag 必须走索引
+            Map<String, Object> tagAnyParams = customerSearchParams("TEAM", List.of(11L), 10L, null);
+            tagAnyParams.put("tagCodes", List.of("VIP", "HIGH_INTENT"));
+            tagAnyParams.put("tagMatchMode", "ANY");
+            List<Map<String, Object>> tagAnyRows = assertNoFullTableScans(
+                    conn, "CustomerMapper.search(TEAM, tagCodes=ANY)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerMapper.search",
+                    tagAnyParams);
+            assertThat(String.valueOf(rowForTable(tagAnyRows, "ct").get("key")))
+                    .isIn("uk_customer_tag_1", "idx_customer_tag_reverse");
+
+            Map<String, Object> tagAllParams = customerSearchParams("SELF", List.of(), 10L, null);
+            tagAllParams.put("tagCodes", List.of("VIP", "HIGH_INTENT"));
+            tagAllParams.put("tagMatchMode", "ALL");
+            List<Map<String, Object>> tagAllRows = assertNoFullTableScans(
+                    conn, "CustomerMapper.countSearch(SELF, tagCodes=ALL)",
+                    "com.whale.crm.customer.infrastructure.mapper.CustomerMapper.countSearch",
+                    tagAllParams);
+            List<Map<String, Object>> ctAllRows = tagAllRows.stream()
+                    .filter(r -> "ct".equals(String.valueOf(r.get("table"))))
+                    .toList();
+            assertThat(ctAllRows).isNotEmpty().allSatisfy(r ->
+                    assertThat(String.valueOf(r.get("key"))).isIn("uk_customer_tag_1", "idx_customer_tag_reverse"));
+
             // 3. CustomerMapper#selectCustomerIdsByExternalId
             List<Map<String, Object>> extIdRows = assertNoFullTableScans(
                     conn, "CustomerMapper.selectCustomerIdsByExternalId",

@@ -54,6 +54,14 @@ export function isMappingSuccess(status: string): boolean {
   return status === 'PROCESSED'
 }
 
+export function extractUnmappedExternalSkuId(text: string | null | undefined): string | null {
+  if (!text) return null
+  const match = text.match(/外部\s*SKU\s*未映射(?:或数量无效)?\s*[:：]\s*([^\s,，;；。]+)/)
+  const value = match?.[1]?.trim() ?? ''
+  if (!value || value.toLowerCase() === 'null') return null
+  return value
+}
+
 export function createYouzanKey(scope: string): string {
   const suffix = typeof globalThis.crypto.randomUUID === 'function'
     ? globalThis.crypto.randomUUID()

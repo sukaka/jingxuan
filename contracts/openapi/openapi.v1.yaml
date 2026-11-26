@@ -56,6 +56,10 @@ info:
     V60: Youzan read-only historical order & buyer profile snapshots (strictly isolated from crm_order
     and entitlement ledger) plus unified C-end auto-login entry via WeChat Service Account silent OAuth2
     (snsapi_base, /sns/oauth2/access_token only) and optional SMS fallback verification with blind indexes.
+    V64: Youzan customer pull & official CRM customer onboarding with dual source modes (SCRM_LIST /
+    ORDER_BUYERS), persisted resumable breakpoint cursors, automatic incremental catch-up, steward scope
+    validation, mobile blind-index conflict protection (never overwriting existing CRM customers) and
+    masked per-item audit trails.
 servers:
   - url: http://localhost:8080/api/v1
 security:
@@ -821,12 +825,25 @@ paths:
         - {name: tierCode, in: query, required: false, schema: {type: string}}
         - {name: ownerId, in: query, required: false, schema: {type: integer, format: int64}}
         - {name: followupDueBefore, in: query, required: false, schema: {type: string, format: date-time}}
+        - name: tagCodes
+          in: query
+          required: false
+          style: form
+          explode: false
+          schema:
+            type: array
+            maxItems: 20
+            items: {type: string, maxLength: 64}
+          description: 客户标签编码筛选（支持重复参数 tagCodes=A&tagCodes=B 或逗号分隔 tagCodes=A,B；最多 20 个，单个不超过 64 字符）
+        - {name: tagMatchMode, in: query, required: false, schema: {type: string, enum: [ANY, ALL], default: ANY},
+           description: 多标签匹配模式：ANY 满足任一（默认），ALL 同时满足}
       responses:
         '200':
           description: 范围内客户分页
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CustomerPageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
     post:
@@ -2513,6 +2530,152 @@ paths:
               schema: {type: object, properties: {code: {type: string}, data: {type: array, items: {type: object}}, requestId: {type: string}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+  /integrations/wecom/tag-sync/mappings:
+    get:
+      tags: [WecomIntegration]
+      summary: 查询 CRM ↔ 企微企业标签映射明细与通道状态（customer:tag:manage 或 wecom:read）
+      description: 仅通过企业微信官方企业标签接口或开发模拟适配器同步，不接入个人微信。未建立映射关系的 CRM 标签返回 syncStatus=UNMAPPED。
+      responses:
+        '200':
+          description: 当前租户企业标签映射总览
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WecomTagMappingOverviewEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /integrations/wecom/tag-sync/mappings/{crmTagCode}:
+    put:
+      tags: [WecomIntegration]
+      summary: 人工绑定或解除 CRM 与企微标签映射（customer:tag:manage 或 wecom:monitor + CSRF）
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {name: crmTagCode, in: path, required: true, schema: {type: string, maxLength: 64}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateWecomTagMappingRequest'}
+      responses:
+        '200':
+          description: 更新后的标签映射项（记录 WECOM_TAG_MAPPING_UPDATE 审计日志）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WecomTagMappingItemEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /integrations/wecom/tag-sync/catalog:
+    post:
+      tags: [WecomIntegration]
+      summary: 触发 CRM ↔ 企微企业标签库同步（customer:tag:manage 或 wecom:monitor + CSRF + Idempotency-Key）
+      description: 支持 PULL/PUSH/BIDIRECTIONAL；拉取不会删除历史停用 CRM 标签，同企业同范围并发运行防重（409）。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WecomTagSyncDirectionRequest'}
+      responses:
+        '200':
+          description: 标签库同步运行结果（记录 WECOM_TAG_CATALOG_SYNC 审计日志）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WecomTagSyncRunEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /integrations/wecom/tag-sync/customers:
+    post:
+      tags: [WecomIntegration]
+      summary: 触发已关联客户标签批量同步（wecom:monitor + CSRF + Idempotency-Key）
+      description: 仅处理已人工关联的活跃企微联系人；WeCom→CRM 仅更新映射子集并保留未映射的 CRM 内部标签，不回声触发反向推送。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WecomTagSyncDirectionRequest'}
+      responses:
+        '200':
+          description: 客户标签批量同步运行结果
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WecomTagSyncRunEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /integrations/wecom/tag-sync/customers/{customerId}/push:
+    post:
+      tags: [WecomIntegration]
+      summary: 手动推送单客户已映射标签至企微（customer:write 或 wecom:monitor + DataScope + CSRF）
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {name: customerId, in: path, required: true, schema: {type: integer, format: int64}}
+        - {name: Idempotency-Key, in: header, required: false, schema: {type: string, maxLength: 128},
+           description: 可选幂等键}
+      responses:
+        '200':
+          description: 单客户标签推送结果（记录 WECOM_CUSTOMER_TAG_PUSH 审计日志）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WecomCustomerTagPushResultEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /integrations/wecom/tag-sync/runs:
+    get:
+      tags: [WecomIntegration]
+      summary: 查询企微标签同步批次记录（customer:tag:manage 或 wecom:read）
+      responses:
+        '200':
+          description: 最近标签库与客户标签同步运行记录（错误已脱敏）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WecomTagSyncRunListEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /integrations/wecom/tag-sync/tasks:
+    get:
+      tags: [WecomIntegration]
+      summary: 查询 CRM → 企微客户标签推送任务队列（wecom:monitor）
+      parameters:
+        - {name: status, in: query, required: false,
+           schema: {type: string, enum: [PENDING, PROCESSING, SUCCEEDED, RETRYABLE, FAILED]}}
+      responses:
+        '200':
+          description: 标签推送任务列表（externalUserid 严格脱敏展示）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WecomTagPushTaskListEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /integrations/wecom/tag-sync/tasks/{taskId}/retry:
+    post:
+      tags: [WecomIntegration]
+      summary: 人工重试失败或待重试的标签推送任务（wecom:monitor + CSRF）
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {name: taskId, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200':
+          description: 重试后的标签推送任务状态
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WecomTagPushTaskEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /integrations/wecom/callback:
     get:
       tags: [WecomIntegration]
@@ -3607,6 +3770,44 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /integrations/youzan/sync-issues/batch-retry:
+    post:
+      tags: [YouzanIntegration]
+      summary: 人工批量重试已映射 SKU 关联的待处理异常（integration:youzan:manage 或 campaign:write）
+      description: 仅在人工显式触发时执行，不会在保存映射时自动重试；支持按店铺与可选 externalSkuId 批量重试全部 SKU 已有效映射的 MAPPING_FAILED 异常（单次最多 100 条），仍严格执行租户、数据范围、乐观锁、客户与支付核验；header 未提供独立结果快照，业务幂等仍由事件、异常状态乐观锁与订单映射共同保证。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/YouzanBatchRetryRequest'}
+      responses:
+        '200':
+          description: 返回匹配数、尝试数、处理完成数、已进入后续阶段数（客户匹配/支付核验）、仍失败数、跳过数与剩余数
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanBatchRetryEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /integrations/youzan/sku-candidates:
+    get:
+      tags: [YouzanIntegration]
+      summary: 从待处理 SKU 映射异常自动提取外部 SKU 候选清单（order:read 或 integration:youzan:manage）
+      description: 汇总当前店铺待处理 MAPPING_FAILED 异常订单中的外部 SKU（附有赞商品标题、规格、参考单价、商家编码、异常条数、示例订单号及是否已有效映射），仅返回脱敏商品元数据，不返回密文或买家隐私。
+      parameters:
+        - {name: shopId, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: 待映射及已映射待重试的外部 SKU 候选列表
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanSkuCandidateListEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /integrations/youzan/sku-mappings:
     get:
       tags: [YouzanIntegration]
@@ -3797,6 +3998,113 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/YouzanSyncJobPageEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /integrations/youzan/customer-sync/status:
+    get:
+      tags: [YouzanIntegration]
+      summary: 查询有赞客户拉取通道状态与双模式断点游标（integration:youzan:manage）
+      description: 返回当前店铺生效的客户拉取适配器（YOUZAN_OFFICIAL / MOCK_DEV_ONLY / DISABLED）、真实开关状态及 SCRM_LIST / ORDER_BUYERS 各自持久化断点游标摘要；拒绝机构账号。
+      parameters:
+        - {name: shopId, in: query, required: true, schema: {type: string, minLength: 1, maxLength: 64}, description: 有赞店铺 kdt_id 或本地演示店铺 ID}
+      responses:
+        '200':
+          description: 客户拉取通道与断点游标状态
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanCustomerSyncStatusEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /integrations/youzan/customer-sync/pull:
+    post:
+      tags: [YouzanIntegration]
+      summary: 按断点游标拉取有赞客户并正式建档（integration:youzan:manage + customer:write + CSRF + Idempotency-Key）
+      description: >-
+        支持 SCRM_LIST（有赞全量客户，需开通 youzan.scrm.customer.search）与 ORDER_BUYERS（复用已有 4 个订单与买家接口）双数据源，
+        以及 BATCH（1–500 条，默认 20）与 ALL（单次最多拉取 500 条、默认 200 且最多扫 30 页，返回 hasMore 供前端分批续拉）模式。
+        底层固定页长（SCRM_LIST=20、ORDER_BUYERS=50）并持久化 (anchorStart, anchorEnd, windowStart, windowEnd, pageNo, itemOffset) 断点游标，
+        保障 10→10→20→全部 不重不漏，扫完后自动锁定 lastAnchorAt 转入增量模式。
+        强制校验目标管家为在职且可分配的 MANAGER/MANAGER_LEAD；已关联 yz_open_id 幂等跳过，手机号盲索引命中已有 CRM 客户返回 MOBILE_CONFLICT 绝不覆盖老客户；
+        同店铺同模式并发冲突返回 409，同 Idempotency-Key 幂等重放已有批次结果，写 YOUZAN_CUSTOMER_SYNC 审计日志。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/YouzanCustomerPullRequest'}
+      responses:
+        '200':
+          description: 本次客户拉取建档批次摘要与前 50 条脱敏逐条结果
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanCustomerSyncRunEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/BusinessRulePending'}
+  /integrations/youzan/customer-sync/cursor/reset:
+    post:
+      tags: [YouzanIntegration]
+      summary: 重置指定店铺与数据源模式的客户拉取断点游标（integration:youzan:manage + customer:write + CSRF）
+      description: 清空对应 tenant_id + shop_id + source_mode 的断点游标以便从头重扫（已关联客户仍按 yz_open_id 自动跳过，不会重复建档）；记录 YOUZAN_CUSTOMER_CURSOR_RESET 审计日志。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/YouzanCustomerCursorResetRequest'}
+      responses:
+        '200':
+          description: 重置后的客户拉取通道与双模式游标状态
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanCustomerSyncStatusEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /integrations/youzan/customer-sync/runs:
+    get:
+      tags: [YouzanIntegration]
+      summary: 分页查询有赞客户拉取建档历史批次（integration:youzan:manage）
+      parameters:
+        - {name: shopId, in: query, required: true, schema: {type: string, minLength: 1, maxLength: 64}, description: 有赞店铺 kdt_id 或本地演示店铺 ID}
+        - {name: sourceMode, in: query, required: false, schema: {type: string, enum: [SCRM_LIST, ORDER_BUYERS]}, description: 可选按数据源模式筛选}
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: 客户拉取建档历史批次分页列表
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanCustomerSyncRunPageEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /integrations/youzan/customer-sync/runs/{runId}/items:
+    get:
+      tags: [YouzanIntegration]
+      summary: 分页查询单次拉取批次的逐条脱敏结果明细（integration:youzan:manage）
+      description: 仅返回脱敏称呼、脱敏手机号、新建/已关联 CRM 客户编号及手机号冲突客户编号列表，绝不返回明文手机号或明文微信 OpenID。
+      parameters:
+        - {name: runId, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}, description: 拉取批次 ID}
+        - {name: outcome, in: query, required: false, schema: {type: string, enum: [CREATED, SKIPPED_EXISTING, MOBILE_CONFLICT, FAILED]}, description: 可选按处理结果筛选}
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: 批次逐条脱敏结果分页列表
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanCustomerSyncItemPageEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -11252,6 +11560,7 @@ components:
         shopId: {type: string, minLength: 1, maxLength: 64, description: Mock 店铺或有赞 kdt_id}
         cursor: {type: string, maxLength: 2048, nullable: true, description: Mock 页码或真实时间窗/页码 JSON；不是官方分页 token}
         limit: {type: integer, format: int32, minimum: 1, maximum: 100, nullable: true, description: 缺省 50，单页最多 100}
+        maxOrders: {type: integer, format: int32, minimum: 1, maximum: 500, nullable: true, description: 可选，本次手动拉取累计上限（1-500 条）；未传时 reconcile 按原逻辑最多拉取 10 页}
     YouzanSyncResponse:
       type: object
       required: [received, processed, duplicates, issues, nextCursor, hasMore]
@@ -11364,6 +11673,41 @@ components:
         status: {type: string, enum: [ACTIVE, INACTIVE]}
         createdAt: {type: string, format: date-time}
         version: {type: integer, format: int64, minimum: 0}
+    YouzanSkuCandidate:
+      type: object
+      required: [shopId, externalSkuId, pendingIssueCount, mapped]
+      properties:
+        shopId: {type: string}
+        externalSkuId: {type: string}
+        itemTitle: {type: string, nullable: true}
+        skuSpec: {type: string, nullable: true}
+        priceFen: {type: integer, format: int64, minimum: 0, nullable: true}
+        outerSkuCode: {type: string, nullable: true}
+        pendingIssueCount: {type: integer, format: int32, minimum: 0}
+        sampleOrderNo: {type: string, nullable: true}
+        latestEventAt: {type: string, format: date-time, nullable: true}
+        mapped: {type: boolean}
+        crmSkuId: {type: integer, format: int64, nullable: true}
+    YouzanBatchRetryRequest:
+      type: object
+      required: [shopId]
+      properties:
+        shopId: {type: string, minLength: 1, maxLength: 64}
+        externalSkuId: {type: string, maxLength: 128, nullable: true}
+        limit: {type: integer, format: int32, minimum: 1, maximum: 100, default: 50, nullable: true}
+    YouzanBatchRetryResponse:
+      type: object
+      required: [shopId, matched, attempted, processed, advanced, stillFailed, skipped, remaining]
+      properties:
+        shopId: {type: string}
+        externalSkuId: {type: string, nullable: true}
+        matched: {type: integer, format: int32, minimum: 0}
+        attempted: {type: integer, format: int32, minimum: 0}
+        processed: {type: integer, format: int32, minimum: 0}
+        advanced: {type: integer, format: int32, minimum: 0}
+        stillFailed: {type: integer, format: int32, minimum: 0}
+        skipped: {type: integer, format: int32, minimum: 0}
+        remaining: {type: integer, format: int32, minimum: 0}
     YouzanCustomerLinkRequest:
       type: object
       required: [shopId, externalCustomerId, customerId, reason]
@@ -11512,6 +11856,26 @@ components:
         data: {$ref: '#/components/schemas/YouzanSkuMapping'}
         requestId: {type: string}
         timestamp: {type: string, format: date-time}
+    YouzanSkuCandidateListEnvelope:
+      type: object
+      required: [code, message, data, requestId, timestamp]
+      properties:
+        code: {type: string, enum: [OK]}
+        message: {type: string, example: success}
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/YouzanSkuCandidate'}
+        requestId: {type: string}
+        timestamp: {type: string, format: date-time}
+    YouzanBatchRetryEnvelope:
+      type: object
+      required: [code, message, data, requestId, timestamp]
+      properties:
+        code: {type: string, enum: [OK]}
+        message: {type: string, example: success}
+        data: {$ref: '#/components/schemas/YouzanBatchRetryResponse'}
+        requestId: {type: string}
+        timestamp: {type: string, format: date-time}
     YouzanCustomerLinkListEnvelope:
       type: object
       required: [code, message, data, requestId, timestamp]
@@ -11593,6 +11957,133 @@ components:
         data: {$ref: '#/components/schemas/WecomSyncPolicy', nullable: true}
         requestId: {type: string}
         timestamp: {type: string, format: date-time}
+    WecomTagMappingItemResponse:
+      type: object
+      required: [crmTagCode, crmTagLabel, crmTagStatus, syncStatus]
+      properties:
+        crmTagCode: {type: string, maxLength: 64}
+        crmTagLabel: {type: string, maxLength: 64}
+        crmTagStatus: {type: string, enum: [ACTIVE, INACTIVE, ARCHIVED]}
+        wecomGroupId: {type: string, nullable: true}
+        wecomGroupName: {type: string, nullable: true}
+        wecomTagId: {type: string, nullable: true}
+        wecomTagName: {type: string, nullable: true}
+        syncStatus: {type: string, enum: [ACTIVE, UNLINKED, DISABLED, UNMAPPED]}
+        lastSyncedAt: {type: string, format: date-time, nullable: true}
+    WecomTagMappingOverviewResponse:
+      type: object
+      required: [corpId, adapterName, officialEnabled, items]
+      properties:
+        corpId: {type: string}
+        adapterName: {type: string, description: OFFICIAL_WECOM_TAG、MOCK_WECOM_TAG_DEV_ONLY 或 DISABLED}
+        officialEnabled: {type: boolean}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/WecomTagMappingItemResponse'}
+    UpdateWecomTagMappingRequest:
+      type: object
+      required: [action]
+      properties:
+        action: {type: string, enum: [BIND, UNLINK]}
+        wecomGroupId: {type: string, maxLength: 128, nullable: true}
+        wecomGroupName: {type: string, maxLength: 128, nullable: true}
+        wecomTagId: {type: string, maxLength: 128, nullable: true}
+        wecomTagName: {type: string, maxLength: 128, nullable: true}
+    WecomTagSyncDirectionRequest:
+      type: object
+      required: [direction]
+      properties:
+        direction: {type: string, enum: [PULL, PUSH, BIDIRECTIONAL]}
+    WecomTagSyncRunResponse:
+      type: object
+      required: [id, corpId, syncScope, direction, triggerSource, adapterName, status, pulledCount, pushedCount, skippedCount, failedCount, startedAt]
+      properties:
+        id: {type: integer, format: int64}
+        corpId: {type: string}
+        syncScope: {type: string, enum: [CATALOG, CUSTOMER]}
+        direction: {type: string, enum: [PULL, PUSH, BIDIRECTIONAL]}
+        triggerSource: {type: string, enum: [MANUAL, CALLBACK, SCHEDULED]}
+        adapterName: {type: string}
+        status: {type: string, enum: [RUNNING, SUCCESS, PARTIAL, ERROR]}
+        pulledCount: {type: integer, format: int32, minimum: 0}
+        pushedCount: {type: integer, format: int32, minimum: 0}
+        skippedCount: {type: integer, format: int32, minimum: 0}
+        failedCount: {type: integer, format: int32, minimum: 0}
+        errorMasked: {type: string, nullable: true}
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time, nullable: true}
+    WecomCustomerTagPushResultResponse:
+      type: object
+      required: [customerId, adapterName, officialEnabled, matchedContacts, pushedCount, skippedCount, failedCount]
+      properties:
+        customerId: {type: integer, format: int64}
+        adapterName: {type: string}
+        officialEnabled: {type: boolean}
+        matchedContacts: {type: integer, format: int32, minimum: 0}
+        pushedCount: {type: integer, format: int32, minimum: 0}
+        skippedCount: {type: integer, format: int32, minimum: 0}
+        failedCount: {type: integer, format: int32, minimum: 0}
+        errorMasked: {type: string, nullable: true}
+    WecomTagPushTaskResponse:
+      type: object
+      required: [id, corpId, customerId, externalUseridMasked, wecomUserid, addTagCount, removeTagCount, status, attempts, maxAttempts, triggerSource, updatedAt]
+      properties:
+        id: {type: integer, format: int64}
+        corpId: {type: string}
+        customerId: {type: integer, format: int64}
+        externalUseridMasked: {type: string, description: 脱敏后的企微外部联系人标识}
+        wecomUserid: {type: string}
+        addTagCount: {type: integer, format: int32, minimum: 0}
+        removeTagCount: {type: integer, format: int32, minimum: 0}
+        status: {type: string, enum: [PENDING, PROCESSING, SUCCEEDED, RETRYABLE, FAILED]}
+        attempts: {type: integer, format: int32, minimum: 0}
+        maxAttempts: {type: integer, format: int32, minimum: 1}
+        triggerSource: {type: string}
+        errorMasked: {type: string, nullable: true}
+        nextRetryAt: {type: string, format: date-time, nullable: true}
+        updatedAt: {type: string, format: date-time}
+    WecomTagMappingOverviewEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/WecomTagMappingOverviewResponse'}
+    WecomTagMappingItemEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/WecomTagMappingItemResponse'}
+    WecomTagSyncRunEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/WecomTagSyncRunResponse'}
+    WecomTagSyncRunListEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {type: array, items: {$ref: '#/components/schemas/WecomTagSyncRunResponse'}}
+    WecomCustomerTagPushResultEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/WecomCustomerTagPushResultResponse'}
+    WecomTagPushTaskEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/WecomTagPushTaskResponse'}
+    WecomTagPushTaskListEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {type: array, items: {$ref: '#/components/schemas/WecomTagPushTaskResponse'}}
     WecomSyncRequest:
       type: object
       required: [corpId]
@@ -13949,3 +14440,127 @@ components:
         - type: object
           properties:
             data: {$ref: '#/components/schemas/PublicAnnualBookingResponse'}
+    YouzanCustomerPullRequest:
+      type: object
+      required: [shopId, sourceMode, pullMode, ownerStaffId]
+      properties:
+        shopId: {type: string, minLength: 1, maxLength: 64, description: 有赞店铺 kdt_id 或本地演示店铺 ID}
+        sourceMode: {type: string, enum: [SCRM_LIST, ORDER_BUYERS], description: '数据源模式：SCRM_LIST（全量客户，需开通 youzan.scrm.customer.search）或 ORDER_BUYERS（按订单买家复用已有 4 个接口）'}
+        pullMode: {type: string, enum: [BATCH, ALL], description: '拉取模式：BATCH（按 limit 拉取一批）或 ALL（单次最多拉取 limit 默认 200 上限 500 且最多扫 30 页，配合 hasMore 续拉）'}
+        limit: {type: integer, format: int32, minimum: 1, maximum: 500, nullable: true, description: '可选目标拉取条数（1–500）；BATCH 缺省 20，ALL 缺省 200'}
+        ownerStaffId: {type: integer, format: int64, minimum: 1, description: '新建 CRM 客户默认归属管家 ID（须为在职 MANAGER 或 MANAGER_LEAD 且在当前操作人可分配范围内）'}
+        sourceCode: {type: string, maxLength: 64, nullable: true, description: '可选默认客户来源编码（须为启用中的 customerSources 字典项）'}
+        channelCode: {type: string, maxLength: 64, nullable: true, description: '可选默认客户渠道编码（须为启用中的 customerChannels 字典项）'}
+        startDate: {type: string, format: date, nullable: true, description: '可选起始日期（YYYY-MM-DD，按 Asia/Shanghai 解析）'}
+        endDate: {type: string, format: date, nullable: true, description: '可选截止日期（YYYY-MM-DD，按 Asia/Shanghai 解析）'}
+        enrichProfile: {type: boolean, nullable: true, default: true, description: '是否调用 youzan.users.info.query 与 youzan.scrm.customer.get 补全买家姓名、手机号与生日（默认 true）'}
+        resetCursor: {type: boolean, nullable: true, default: false, description: '是否在本次拉取前清空已有断点游标从头扫描（默认 false）'}
+    YouzanCustomerCursorResetRequest:
+      type: object
+      required: [shopId, sourceMode]
+      properties:
+        shopId: {type: string, minLength: 1, maxLength: 64, description: 有赞店铺 kdt_id 或本地演示店铺 ID}
+        sourceMode: {type: string, enum: [SCRM_LIST, ORDER_BUYERS], description: 要重置游标的数据源模式}
+    YouzanCustomerCursorSummary:
+      type: object
+      required: [sourceMode, hasCursor, hasMore, totalImportedCount]
+      properties:
+        sourceMode: {type: string, enum: [SCRM_LIST, ORDER_BUYERS]}
+        hasCursor: {type: boolean, description: 是否已存在持久化断点游标}
+        hasMore: {type: boolean, description: 当前扫描周期是否仍有未拉取记录}
+        pageNo: {type: integer, format: int32, minimum: 1, nullable: true, description: 当前时间窗内所在固定页码}
+        itemOffset: {type: integer, format: int32, minimum: 0, nullable: true, description: 当前页内下一条待处理偏移量}
+        windowStart: {type: string, format: date-time, nullable: true, description: 当前扫描时间窗起点 UTC}
+        windowEnd: {type: string, format: date-time, nullable: true, description: 当前扫描时间窗终点 UTC}
+        lastAnchorAt: {type: string, format: date-time, nullable: true, description: 上轮完整扫描锚点截止时间 UTC（完成后自动作为下轮增量起点减 60 秒）}
+        lastSyncedAt: {type: string, format: date-time, nullable: true, description: 最近一次拉取完成时间 UTC}
+        totalImportedCount: {type: integer, format: int64, minimum: 0, description: 累计通过该数据源模式新建的 CRM 客户总数}
+    YouzanCustomerSyncStatusResponse:
+      type: object
+      required: [shopId, adapterName, officialEnabled, scrmCursor, orderBuyersCursor]
+      properties:
+        shopId: {type: string}
+        adapterName: {type: string, description: '当前生效适配器名称（YOUZAN_OFFICIAL / MOCK_DEV_ONLY / DISABLED）'}
+        officialEnabled: {type: boolean, description: 当前租户真实有赞开关是否启用}
+        scrmCursor: {$ref: '#/components/schemas/YouzanCustomerCursorSummary'}
+        orderBuyersCursor: {$ref: '#/components/schemas/YouzanCustomerCursorSummary'}
+    YouzanCustomerSyncItemResponse:
+      type: object
+      required: [id, runId, shopId, externalCustomerId, outcome, conflictCustomerIds, conflictCustomerNos, createdAt]
+      description: 逐条脱敏客户拉取建档明细，绝不含明文手机号或明文微信 OpenID
+      properties:
+        id: {type: integer, format: int64}
+        runId: {type: integer, format: int64}
+        shopId: {type: string}
+        externalCustomerId: {type: string, description: 有赞买家 yz_open_id}
+        outcome: {type: string, enum: [CREATED, SKIPPED_EXISTING, MOBILE_CONFLICT, FAILED]}
+        displayNameMasked: {type: string, nullable: true, description: 脱敏展示称呼或昵称}
+        mobileMasked: {type: string, nullable: true, description: 脱敏手机号（如 138****5678）}
+        crmCustomerId: {type: integer, format: int64, nullable: true, description: 新建或已关联的 CRM 客户 ID}
+        crmCustomerNo: {type: string, nullable: true, description: 新建或已关联的 CRM 客户编号}
+        conflictCustomerIds: {type: array, items: {type: integer, format: int64}, description: 手机号盲索引命中的已有 CRM 客户 ID 列表}
+        conflictCustomerNos: {type: array, items: {type: string}, description: 手机号盲索引命中的已有 CRM 客户编号列表}
+        detailMasked: {type: string, nullable: true, description: 脱敏处理结果说明或失败原因}
+        createdAt: {type: string, format: date-time}
+    YouzanCustomerSyncRunResponse:
+      type: object
+      required: [id, shopId, sourceMode, pullMode, ownerStaffId, adapterName, status, fetchedCount, createdCount, skippedExistingCount, mobileConflictCount, failedCount, hasMore, warnings, startedAt]
+      properties:
+        id: {type: integer, format: int64}
+        shopId: {type: string}
+        sourceMode: {type: string, enum: [SCRM_LIST, ORDER_BUYERS]}
+        pullMode: {type: string, enum: [BATCH, ALL]}
+        requestedLimit: {type: integer, format: int32, nullable: true, description: BATCH 模式目标条数；ALL 模式可为空}
+        ownerStaffId: {type: integer, format: int64}
+        ownerName: {type: string, nullable: true, description: 归属管家显示姓名}
+        adapterName: {type: string}
+        status: {type: string, enum: [RUNNING, SUCCEEDED, PARTIAL, FAILED]}
+        fetchedCount: {type: integer, format: int32, minimum: 0}
+        createdCount: {type: integer, format: int32, minimum: 0}
+        skippedExistingCount: {type: integer, format: int32, minimum: 0}
+        mobileConflictCount: {type: integer, format: int32, minimum: 0}
+        failedCount: {type: integer, format: int32, minimum: 0}
+        hasMore: {type: boolean, description: 本次结束后是否仍有更多可继续拉取客户}
+        warnings: {type: array, items: {type: string}, description: 非致命告警列表}
+        errorMasked: {type: string, nullable: true, description: 脱敏错误摘要}
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time, nullable: true}
+        items: {type: array, nullable: true, items: {$ref: '#/components/schemas/YouzanCustomerSyncItemResponse'}, description: 'POST /pull 返回前 50 条逐条明细；GET /runs 分页列表可省略或为空'}
+    YouzanCustomerSyncStatusEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/YouzanCustomerSyncStatusResponse'}
+    YouzanCustomerSyncRunEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/YouzanCustomerSyncRunResponse'}
+    YouzanCustomerSyncRunPageEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [items, total, page, size]
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/YouzanCustomerSyncRunResponse'}}
+                total: {type: integer, format: int64, minimum: 0}
+                page: {type: integer, format: int32, minimum: 1}
+                size: {type: integer, format: int32, minimum: 1}
+    YouzanCustomerSyncItemPageEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [items, total, page, size]
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/YouzanCustomerSyncItemResponse'}}
+                total: {type: integer, format: int64, minimum: 0}
+                page: {type: integer, format: int32, minimum: 1}
+                size: {type: integer, format: int32, minimum: 1}

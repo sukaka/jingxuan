@@ -7,5 +7,9 @@ import jakarta.validation.constraints.Size;
 
 public record YouzanSyncRequest(@NotBlank @Size(max = 64) String shopId,
                                 @Size(max = 2048) String cursor,
-                                @Min(1) @Max(100) Integer limit) {
+                                @Min(1) @Max(100) Integer limit,
+                                @Min(1) @Max(500) Integer maxOrders) {
+    public YouzanSyncRequest(String shopId, String cursor, Integer limit) {
+        this(shopId, cursor, limit, null);
+    }
 }

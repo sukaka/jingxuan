@@ -3,6 +3,7 @@ package com.whale.crm.integration.youzan.infrastructure.mapper;
 import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.integration.youzan.domain.YouzanCustomerLink;
 import com.whale.crm.integration.youzan.domain.YouzanEvent;
+import com.whale.crm.integration.youzan.domain.YouzanMappingIssueEvent;
 import com.whale.crm.integration.youzan.domain.YouzanOrderMap;
 import com.whale.crm.integration.youzan.domain.YouzanSkuMapping;
 import com.whale.crm.integration.youzan.domain.YouzanSyncCursor;
@@ -112,6 +113,10 @@ public interface YouzanMapper {
                                                                          @Param("shopId") String shopId,
                                                                          @Param("externalOrderNo") String externalOrderNo,
                                                                          @Param("excludeEventId") long excludeEventId);
+    List<YouzanMappingIssueEvent> selectOpenMappingIssueEvents(@Param("tenantId") long tenantId,
+                                                               @Param("shopId") String shopId,
+                                                               @Param("scope") CustomerScopeSupport.ScopeQuery scope,
+                                                               @Param("limit") int limit);
     List<YouzanSyncIssue> selectIssues(@Param("tenantId") long tenantId, @Param("status") String status,
                                        @Param("offset") int offset, @Param("size") int size);
     List<YouzanSyncIssue> selectScopedIssues(@Param("tenantId") long tenantId, @Param("status") String status,

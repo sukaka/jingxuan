@@ -13,15 +13,32 @@ public interface CustomerRepository {
      * 范围过滤搜索。scopeType: ALL/TEAM/SELF；TEAM 传 teamIds 且含本人客户；SELF 仅 owner=selfId。
      * ownerId 只允许在范围之上继续收窄；mobileHashKeyword 命中盲索引做等值查（不明文 LIKE）。
      */
+    default List<CustomerListRow> search(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                         String keyword, String mobileHashKeyword, String status, String cityCode,
+                                         String sourceCode, String channelCode, String tierCode, Long ownerId,
+                                         java.time.Instant followupDueBefore, int offset, int size) {
+        return search(tenantId, scopeType, teamIds, selfId, keyword, mobileHashKeyword, status, cityCode,
+                sourceCode, channelCode, tierCode, ownerId, followupDueBefore, null, null, offset, size);
+    }
+
     List<CustomerListRow> search(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                                  String keyword, String mobileHashKeyword, String status, String cityCode,
                                  String sourceCode, String channelCode, String tierCode, Long ownerId,
-                                 java.time.Instant followupDueBefore, int offset, int size);
+                                 java.time.Instant followupDueBefore, List<String> tagCodes, String tagMatchMode,
+                                 int offset, int size);
+
+    default long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                             String keyword, String mobileHashKeyword, String status, String cityCode,
+                             String sourceCode, String channelCode, String tierCode, Long ownerId,
+                             java.time.Instant followupDueBefore) {
+        return countSearch(tenantId, scopeType, teamIds, selfId, keyword, mobileHashKeyword, status, cityCode,
+                sourceCode, channelCode, tierCode, ownerId, followupDueBefore, null, null);
+    }
 
     long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                      String keyword, String mobileHashKeyword, String status, String cityCode,
                      String sourceCode, String channelCode, String tierCode, Long ownerId,
-                     java.time.Instant followupDueBefore);
+                     java.time.Instant followupDueBefore, List<String> tagCodes, String tagMatchMode);
 
     Optional<Customer> findById(long tenantId, long id);
 

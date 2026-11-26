@@ -6,8 +6,10 @@ import com.whale.crm.integration.wecom.application.WecomCallbackService;
 import com.whale.crm.integration.wecom.application.WecomContactSyncService;
 import com.whale.crm.integration.wecom.domain.WecomCallbackEvent;
 import com.whale.crm.integration.wecom.infrastructure.mapper.WecomCallbackMapper;
+import com.whale.crm.integration.wecom.tag.application.WecomTagSyncService;
 import com.whale.crm.platform.web.BusinessException;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.Instant;
 import java.util.List;
@@ -16,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -64,5 +67,37 @@ class WecomCallbackServiceTest {
                 .isInstanceOf(BusinessException.class);
         service.processPending();
         verify(mapper, never()).selectPending(anyLong(), any(), anyInt());
+    }
+
+    @Test
+    void handlesChangeExternalTagAndPullsCustomerTagsOnEditExternalContact() {
+        WecomCallbackMapper mapper = mock(WecomCallbackMapper.class);
+        WecomOfficialProperties properties = new WecomOfficialProperties(1L, true, "corp-1", "secret",
+                "https://qyapi.weixin.qq.com", "token", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+                1000, 1000, 100, 10);
+        WecomCallbackCryptoService crypto = new WecomCallbackCryptoService(properties);
+        WecomContactSyncService contacts = mock(WecomContactSyncService.class);
+        WecomTagSyncService tagSync = mock(WecomTagSyncService.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WecomTagSyncService> tagProvider = mock(ObjectProvider.class);
+        when(tagProvider.getIfAvailable()).thenReturn(tagSync);
+
+        WecomCallbackEvent tagEvent = new WecomCallbackEvent(101L, "corp-1", "fp-tag", "change_external_tag",
+                "update", null, null, Instant.now(), "RECEIVED", 0);
+        WecomCallbackEvent contactEvent = new WecomCallbackEvent(102L, "corp-1", "fp-contact",
+                "change_external_contact", "edit_external_contact", "staff-2", "WECOM-EXT-1010",
+                Instant.now(), "RECEIVED", 0);
+        when(mapper.selectPending(eq(1L), any(), eq(50))).thenReturn(List.of(tagEvent, contactEvent));
+        when(mapper.claimWithLease(eq(1L), eq(101L), eq(0), any(), any())).thenReturn(1);
+        when(mapper.claimWithLease(eq(1L), eq(102L), eq(0), any(), any())).thenReturn(1);
+
+        WecomCallbackService service = new WecomCallbackService(mapper, crypto, contacts, properties, tagProvider);
+        service.processPending();
+
+        verify(tagSync).handleTagCatalogCallback(1L, "update");
+        verify(contacts).refreshContact(1L, "WECOM-EXT-1010");
+        verify(tagSync, never()).pullCustomerTagsForExternalUser(anyLong(), anyString(), anyString());
+        verify(mapper).finishClaimed(eq(1L), eq(101L), eq(1), eq("SUCCEEDED"), any(), any(), any());
+        verify(mapper).finishClaimed(eq(1L), eq(102L), eq(1), eq("SUCCEEDED"), any(), any(), any());
     }
 }
