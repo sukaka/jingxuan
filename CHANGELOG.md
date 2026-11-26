@@ -2,6 +2,21 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [V59-ANNUAL-REPORT-H5] 客户年终购买轨迹 H5 正式版（CRM 真实聚合、千人千面文案、埋点统计与管家跟进闭环） — 2026-11-26
+- **数据库迁移与受控回滚（`V59`）**：
+  - 新增 `apps/crm-api/src/main/resources/db/migration/V59__annual_report_h5.sql` 与受控回滚脚本 `apps/crm-api/src/main/resources/db/rollback/V59__annual_report_h5_rollback.sql`：新增 `crm_annual_report`（不可变脱敏快照 + 43 位高熵 `share_key` + `ACTIVE -> DISABLED` 状态机，MySQL `BEFORE UPDATE` 触发器 `trg_annual_report_snapshot_guard` 锁定快照与状态转换）、`crm_annual_report_visit_session`（单会话可见停留时长、已看幕集合、逐幕停留、转化标记）与 `crm_annual_report_visit_event`（只增埋点事件流水，触发器 `trg_annual_visit_event_no_update` / `trg_annual_visit_event_no_delete` 禁止篡改与物理删除）。回滚脚本通过 `DELIMITER $$` 存储过程守卫，表非空时 `SIGNAL SQLSTATE '45000'` 拒绝 `DROP`。
+- **后端领域聚合、千人千面文案、访问埋点与安全边界（`apps/crm-api`）**：
+  - 新增 `com.whale.crm.annualreport` 模块（`AnnualReportController`、`AnnualReportService`、`AnnualReportTelemetryService`、`AnnualReportCopyEngine`、`AnnualReportMapper` + `AnnualReportMapper.xml` 及领域记录/DTO）：实时聚合真实 `crm_order`（同时覆盖已同步的 `YOUZAN` 与 `CRM` 已支付订单，金额整数分）、`crm_order_item`、`crm_entitlement`、`crm_redemption`（排除已审批冲正）、`crm_project`、`crm_institution`、`crm_followup`、`crm_customer_tag` 与员工信息，按 `Asia/Shanghai` 口径冻结年度脱敏快照。
+  - 服务端内置差异化文案引擎（`POETIC` 诗意松弛 / `CLINICAL` 清醒专业 / `MINIMAL` 极简高效），支持基于客龄、单量、标签与性别称谓自动推断或人工指定，全量经过 `QuickReplyTextMasker` 隐私脱敏与医美禁用承诺词过滤。
+  - C 端公开接口（`GET /api/v1/public/annual-reports/{shareKey}`、`POST .../telemetry`、`POST .../booking-intent`）零暴露 `tenantId/customerId/ownerStaffId/手机号/企微外部ID`；埋点服务端强校验单次增量上限（30s）与会话总时长上限（1h）；「通知专属管家预约」通过 `TaskApplicationService#createFromAnnualReportBookingIntent` 幂等创建 1 条归属 `owner_staff_id` 的 `FOLLOWUP` 跟进任务，绝不自动确认订单、预约或机构核销。
+  - B 端管理与统计接口（单客生成、最多 200 人批量生成、分页检索、运营漏斗与 6 幕留存汇总、单份报告会话明细、停用链接）强制 `customer:read` / `customer:write`、`CustomerScopeSupport`（`ALL`/`TEAM`/`SELF`，拒绝 `INSTITUTION` 账号）、显式 `tenant_id`、CSRF、`Idempotency-Key`、乐观锁 `version` 与审计日志；`SecurityConfig` 与 `CsrfValidationFilter` 仅精确放行上述公开路径。
+- **前端正式版 C 端 H5 与 B 端运营台（`apps/crm-web`）**：
+  - 新增 `src/api/annualReport.ts`、`src/utils/paperLightboxEngine.ts`、`src/utils/annualPosterExporter.ts`、`src/views/PublicAnnualReportView.vue`（公开路由 `/h5/annual-reports/:shareKey`，完整保留纸雕灯影 6 幕交互、实时可见计时心跳 + `sendBeacon` 兜底、真实管家预约意向提交与 `750×1334` 离屏 PNG 海报导出）与 `src/views/AnnualReportsView.vue`（B 端路由 `/customers/annual-reports`，提供运营漏斗卡片、6 幕到达留存条、单客/批量生成弹窗、访问明细抽屉与停用链接）；更新 `src/api/http.ts`、`src/router/index.ts`、`src/router/menu.ts` 及 `contracts/openapi/openapi.v1.yaml`（新增 9 个路径与对应 Schema）。
+- **验证证据与未确认依赖（Q11）**：
+  - 后端单测 + 真实 MySQL 8.4 集成/回滚测试 + 静态门禁：`./mvnw -B -pl apps/crm-api -am -Dtest=AnnualReportCopyEngineTest -Dit.test=AnnualReportApiIT,AnnualReportMigrationRollbackIT,WecomH5CardApiIT,TaskApiIT -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false verify` 全部通过（Surefire `3/3`：`AnnualReportCopyEngineTest` 3/3；Failsafe `9/9`：`AnnualReportApiIT` 1/1、`AnnualReportMigrationRollbackIT` 2/2、`WecomH5CardApiIT` 2/2、`TaskApiIT` 4/4；Checkstyle `0 violations`、SpotBugs `0 bugs / 0 errors`、Spotless `1323 files clean`）；静态 SQL 门禁 0 命中；OpenAPI YAML 解析通过（298 paths / 563 schemas）。
+  - 前端验证：修复 `tests/menu.test.ts` 预期导航列表前全量 `vitest --maxWorkers=2` 运行 `157/157` 文件 `736/736` 用例全部通过；修复 3 处构建期 TS 类型问题后运行 `npm run typecheck && npm run lint && npx vitest run tests/annual-report-api.test.ts tests/public-annual-report.test.ts tests/menu.test.ts && npm run build` 全部通过（`typecheck` 0 错误、`eslint --max-warnings 0` 0 警告、目标 Vitest `3/3` 文件 `22/22` 用例通过、`vue-tsc -b && vite build` `3.57s` 成功产出 `AnnualReportsView` 与 `PublicAnnualReportView` 分包）。
+  - 未运行项：非本次涉及领域的其他后端全量 `*IT`、Kafka 集成测试、全站浏览器 E2E 未运行；Q11 真实有赞线上密钥与沙盒联调仍未确认（`FEATURE_REAL_YOUZAN=false`，当前已兼容 `YOUZAN` 与 `CRM` 已支付订单，待 Q11 开放后自动贯通）。
+
 ## [USER-DATASCOPE-CUSTOMER-LIST-FIX] 修复新建管家建档后列表不可见、客户列表倒序与建档后筛选重置 — 2026-11-26
 - **用户生命周期自动同步默认 `sys_data_scope`（保持 `sys_data_scope` 为行级权限唯一事实来源）**：
   - 新增 `DataScopeGrant`、`DefaultDataScopePolicy`，并在 `DataScopeRepository` / `MybatisDataScopeRepository` / `DataScopeMapper` / `DataScopeMapper.xml` 新增显式 `tenant_id` 隔离的 `replaceResourceScopes`（先按资源清理再写入）。

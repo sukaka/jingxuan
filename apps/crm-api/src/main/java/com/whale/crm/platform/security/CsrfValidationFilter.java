@@ -33,6 +33,9 @@ public class CsrfValidationFilter extends OncePerRequestFilter {
     private static final String WECOM_CALLBACK_PATH = "/api/v1/integrations/wecom/callback";
     private static final String REFUND_CALLBACK_PREFIX = "/api/v1/integrations/refunds/";
     private static final String REFUND_CALLBACK_SUFFIX = "/callback";
+    private static final String PUBLIC_ANNUAL_REPORT_PREFIX = "/api/v1/public/annual-reports/";
+    private static final String PUBLIC_ANNUAL_TELEMETRY_SUFFIX = "/telemetry";
+    private static final String PUBLIC_ANNUAL_BOOKING_SUFFIX = "/booking-intent";
     private static final String API_PREFIX = "/api/";
 
     private final ObjectMapper objectMapper;
@@ -53,7 +56,8 @@ public class CsrfValidationFilter extends OncePerRequestFilter {
                 || YOUZAN_WEBHOOK_PATH.equals(path)
                 || YOUZAN_OFFICIAL_WEBHOOK_PATH.equals(path)
                 || WECOM_CALLBACK_PATH.equals(path)
-                || (path.startsWith(REFUND_CALLBACK_PREFIX) && path.endsWith(REFUND_CALLBACK_SUFFIX))) {
+                || (path.startsWith(REFUND_CALLBACK_PREFIX) && path.endsWith(REFUND_CALLBACK_SUFFIX))
+                || isPublicAnnualReportPost(path)) {
             chain.doFilter(request, response);
             return;
         }
@@ -65,6 +69,11 @@ public class CsrfValidationFilter extends OncePerRequestFilter {
         }
         chain.doFilter(request, response);
     }
+    private boolean isPublicAnnualReportPost(String path) {
+        return path.startsWith(PUBLIC_ANNUAL_REPORT_PREFIX)
+                && (path.endsWith(PUBLIC_ANNUAL_TELEMETRY_SUFFIX) || path.endsWith(PUBLIC_ANNUAL_BOOKING_SUFFIX));
+    }
+
     private String readCookie(HttpServletRequest request, String name) {
         if (request.getCookies() != null) {
             for (Cookie cookie : request.getCookies()) {

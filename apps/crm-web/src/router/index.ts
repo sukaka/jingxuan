@@ -48,6 +48,12 @@ export const routes: RouteRecordRaw[] = [
     meta: { title: '批量标签', section: '客户管理', permission: 'customer:read' },
   },
   {
+    path: '/customers/annual-reports',
+    name: 'annual-reports',
+    component: () => import('../views/AnnualReportsView.vue'),
+    meta: { title: '年终盘点 H5', section: '客户管理', permission: 'customer:read' },
+  },
+  {
     path: '/followups',
     name: 'followups',
     component: () => import('../views/FollowupsView.vue'),
@@ -320,6 +326,12 @@ export const routes: RouteRecordRaw[] = [
     name: 'public-h5-card',
     component: () => import('../views/PublicH5CardView.vue'),
     meta: { title: '项目介绍', public: true, display: true },
+  },
+  {
+    path: '/h5/annual-reports/:shareKey',
+    name: 'public-annual-report',
+    component: () => import('../views/PublicAnnualReportView.vue'),
+    meta: { title: '年度光采轨迹', public: true, display: true },
   },
   {
     path: '/wecom/sidebar',

@@ -58,6 +58,7 @@ describe('分角色权限菜单', () => {
       '/customers/segments',
       '/customers/tier-reviews',
       '/customers/batch-tag-jobs',
+      '/customers/annual-reports',
     ])
     expect(flatten(items).filter((item) => !item.disabled).map((item) => item.title)).toEqual([
       '我的工作台',
@@ -69,6 +70,7 @@ describe('分角色权限菜单', () => {
       '客户分组',
       '等级复核',
       '批量标签',
+      '年终盘点 H5',
     ])
     expect(futureTitles(items)).toEqual([])
     expect(enabledPaths(items)).not.toContain('/users')

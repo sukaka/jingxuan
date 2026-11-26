@@ -20,10 +20,14 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler
 }
 
+function isCsrfExemptPath(path: string): boolean {
+  return CSRF_EXEMPT_PATHS.has(path) || path.startsWith('/public/annual-reports/')
+}
+
 function isIgnoredUnauthorizedPath(url?: string): boolean {
   const path = (url ?? '').split('?')[0] ?? ''
   const normalized = path.startsWith('/api/v1') ? path.slice('/api/v1'.length) : path
-  return UNAUTHORIZED_IGNORED_PATHS.has(normalized)
+  return UNAUTHORIZED_IGNORED_PATHS.has(normalized) || normalized.startsWith('/public/')
 }
 
 /** 统一 axios 实例,后端 API 前缀 /api/v1 */
@@ -37,7 +41,7 @@ http.interceptors.request.use((config) => {
   config.headers['X-Request-Id'] = createRequestId()
   const method = (config.method ?? 'get').toLowerCase()
   const path = (config.url ?? '').split('?')[0] ?? ''
-  if (WRITE_METHODS.has(method) && !CSRF_EXEMPT_PATHS.has(path)) {
+  if (WRITE_METHODS.has(method) && !isCsrfExemptPath(path)) {
     const csrfToken = getCookie(CSRF_COOKIE_NAME)
     if (csrfToken) {
       config.headers[CSRF_HEADER_NAME] = csrfToken

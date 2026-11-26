@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.annualreport.infrastructure.mapper.YouzanAnnualSnapshotMapper">
+
+    <resultMap id="YouzanAnnualProfileMap" type="com.whale.crm.annualreport.domain.YouzanAnnualProfile">
+        <constructor>
+            <arg column="id" javaType="java.lang.Long"/>
+            <arg column="tenant_id" javaType="long"/>
+            <arg column="shop_id" javaType="java.lang.String"/>
+            <arg column="yz_open_id" javaType="java.lang.String"/>
+            <arg column="customer_id" javaType="java.lang.Long"/>
+            <arg column="display_name" javaType="java.lang.String"/>
+            <arg column="gender_hint" javaType="java.lang.String"/>
+            <arg column="weixin_open_id_hash" javaType="java.lang.String"/>
+            <arg column="weixin_union_id_hash" javaType="java.lang.String"/>
+            <arg column="mobile_hash" javaType="java.lang.String"/>
+            <arg column="mobile_masked" javaType="java.lang.String"/>
+            <arg column="order_count" javaType="int"/>
+            <arg column="total_payment_fen" javaType="long"/>
+            <arg column="first_order_at" javaType="java.time.Instant"/>
+            <arg column="last_order_at" javaType="java.time.Instant"/>
+            <arg column="synced_at" javaType="java.time.Instant"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="YouzanAnnualOrderSnapshotMap" type="com.whale.crm.annualreport.domain.YouzanAnnualOrderSnapshot">
+        <constructor>
+            <arg column="id" javaType="java.lang.Long"/>
+            <arg column="tenant_id" javaType="long"/>
+            <arg column="shop_id" javaType="java.lang.String"/>
+            <arg column="tid" javaType="java.lang.String"/>
+            <arg column="yz_open_id" javaType="java.lang.String"/>
+            <arg column="order_status" javaType="java.lang.String"/>
+            <arg column="is_paid" javaType="boolean"/>
+            <arg column="ordered_at" javaType="java.time.Instant"/>
+            <arg column="paid_at" javaType="java.time.Instant"/>
+            <arg column="payment_fen" javaType="long"/>
+            <arg column="refunded_fen" javaType="long"/>
+            <arg column="title_summary" javaType="java.lang.String"/>
+            <arg column="items_json" javaType="java.lang.String"/>
+            <arg column="synced_at" javaType="java.time.Instant"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="H5ClientIdentityBindingMap" type="com.whale.crm.annualreport.domain.H5ClientIdentityBinding">
+        <constructor>
+            <arg column="id" javaType="java.lang.Long"/>
+            <arg column="tenant_id" javaType="long"/>
+            <arg column="channel_type" javaType="java.lang.String"/>
+            <arg column="openid_hash" javaType="java.lang.String"/>
+            <arg column="unionid_hash" javaType="java.lang.String"/>
+            <arg column="shop_id" javaType="java.lang.String"/>
+            <arg column="yz_open_id" javaType="java.lang.String"/>
+            <arg column="customer_id" javaType="java.lang.Long"/>
+            <arg column="mobile_hash" javaType="java.lang.String"/>
+            <arg column="bound_via" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="H5SmsVerificationMap" type="com.whale.crm.annualreport.domain.H5SmsVerification">
+        <constructor>
+            <arg column="id" javaType="java.lang.Long"/>
+            <arg column="tenant_id" javaType="long"/>
+            <arg column="mobile_hash" javaType="java.lang.String"/>
+            <arg column="code_hash" javaType="java.lang.String"/>
+            <arg column="attempt_count" javaType="int"/>
+            <arg column="expires_at" javaType="java.time.Instant"/>
+            <arg column="consumed_at" javaType="java.time.Instant"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="H5UnifiedVisitSessionMap" type="com.whale.crm.annualreport.domain.H5UnifiedVisitSession">
+        <constructor>
+            <arg column="id" javaType="java.lang.Long"/>
+            <arg column="tenant_id" javaType="long"/>
+            <arg column="shop_id" javaType="java.lang.String"/>
+            <arg column="yz_open_id" javaType="java.lang.String"/>
+            <arg column="customer_id" javaType="java.lang.Long"/>
+            <arg column="display_name_snapshot" javaType="java.lang.String"/>
+            <arg column="report_year" javaType="int"/>
+            <arg column="session_key" javaType="java.lang.String"/>
+            <arg column="entry_channel" javaType="java.lang.String"/>
+            <arg column="first_open_at" javaType="java.time.Instant"/>
+            <arg column="last_active_at" javaType="java.time.Instant"/>
+            <arg column="visible_duration_ms" javaType="long"/>
+            <arg column="max_scene_reached" javaType="int"/>
+            <arg column="viewed_scene_count" javaType="int"/>
+            <arg column="viewed_scenes_json" javaType="java.lang.String"/>
+            <arg column="scene_durations_json" javaType="java.lang.String"/>
+            <arg column="ignited_lamp" javaType="boolean"/>
+            <arg column="opened_order_count" javaType="int"/>
+            <arg column="toggled_privacy" javaType="boolean"/>
+            <arg column="generated_poster" javaType="boolean"/>
+            <arg column="clicked_book_butler" javaType="boolean"/>
+            <arg column="client_device" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="SnapshotSummaryRowMap"
+               type="com.whale.crm.annualreport.domain.YouzanAnnualSnapshotRepository$SnapshotSummaryRow">
+        <constructor>
+            <arg column="shop_count" javaType="long"/>
+            <arg column="profile_count" javaType="long"/>
+            <arg column="linked_customer_count" javaType="long"/>
+            <arg column="open_id_bound_count" javaType="long"/>
+            <arg column="union_id_bound_count" javaType="long"/>
+            <arg column="mobile_bound_count" javaType="long"/>
+            <arg column="paid_order_count" javaType="long"/>
+            <arg column="total_payment_fen" javaType="long"/>
+            <arg column="unified_visit_sessions" javaType="long"/>
+            <arg column="last_synced_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="ProfileColumns">
+        id, tenant_id, shop_id, yz_open_id, customer_id, display_name, gender_hint,
+        weixin_open_id_hash, weixin_union_id_hash, mobile_hash, mobile_masked,
+        order_count, total_payment_fen, first_order_at, last_order_at, synced_at, created_at, updated_at
+    </sql>
+
+    <sql id="OrderColumns">
+        id, tenant_id, shop_id, tid, yz_open_id, order_status, is_paid, ordered_at, paid_at,
+        payment_fen, refunded_fen, title_summary, items_json, synced_at, created_at, updated_at
+    </sql>
+
+    <insert id="upsertProfile">
+        INSERT INTO crm_youzan_annual_profile (
+            tenant_id, shop_id, yz_open_id, customer_id, display_name, gender_hint,
+            weixin_open_id_hash, weixin_union_id_hash, mobile_hash, mobile_masked,
+            order_count, total_payment_fen, first_order_at, last_order_at, synced_at
+        ) VALUES (
+            #{profile.tenantId}, #{profile.shopId}, #{profile.yzOpenId}, #{profile.customerId},
+            #{profile.displayName}, #{profile.genderHint},
+            #{profile.weixinOpenIdHash}, #{profile.weixinUnionIdHash},
+            #{profile.mobileHash}, #{profile.mobileMasked},
+            #{profile.orderCount}, #{profile.totalPaymentFen},
+            #{profile.firstOrderAt}, #{profile.lastOrderAt}, #{profile.syncedAt}
+        ) AS new_row
+        ON DUPLICATE KEY UPDATE
+            customer_id = COALESCE(new_row.customer_id, crm_youzan_annual_profile.customer_id),
+            display_name = CASE
+                WHEN new_row.display_name IS NOT NULL AND new_row.display_name != '' AND new_row.display_name != '鲸选贵宾'
+                THEN new_row.display_name
+                ELSE crm_youzan_annual_profile.display_name
+            END,
+            gender_hint = CASE
+                WHEN new_row.gender_hint != 'UNKNOWN' THEN new_row.gender_hint
+                ELSE crm_youzan_annual_profile.gender_hint
+            END,
+            weixin_open_id_hash = COALESCE(new_row.weixin_open_id_hash, crm_youzan_annual_profile.weixin_open_id_hash),
+            weixin_union_id_hash = COALESCE(new_row.weixin_union_id_hash, crm_youzan_annual_profile.weixin_union_id_hash),
+            mobile_hash = COALESCE(new_row.mobile_hash, crm_youzan_annual_profile.mobile_hash),
+            mobile_masked = COALESCE(new_row.mobile_masked, crm_youzan_annual_profile.mobile_masked),
+            synced_at = new_row.synced_at
+    </insert>
+
+    <insert id="upsertOrderSnapshot">
+        INSERT INTO crm_youzan_annual_order_snapshot (
+            tenant_id, shop_id, tid, yz_open_id, order_status, is_paid,
+            ordered_at, paid_at, payment_fen, refunded_fen, title_summary, items_json, synced_at
+        ) VALUES (
+            #{order.tenantId}, #{order.shopId}, #{order.tid}, #{order.yzOpenId},
+            #{order.orderStatus}, #{order.paid},
+            #{order.orderedAt}, #{order.paidAt}, #{order.paymentFen}, #{order.refundedFen},
+            #{order.titleSummary}, #{order.itemsJson}, #{order.syncedAt}
+        ) AS new_row
+        ON DUPLICATE KEY UPDATE
+            order_status = new_row.order_status,
+            is_paid = new_row.is_paid,
+            ordered_at = COALESCE(new_row.ordered_at, crm_youzan_annual_order_snapshot.ordered_at),
+            paid_at = COALESCE(new_row.paid_at, crm_youzan_annual_order_snapshot.paid_at),
+            payment_fen = new_row.payment_fen,
+            refunded_fen = new_row.refunded_fen,
+            title_summary = new_row.title_summary,
+            items_json = new_row.items_json,
+            synced_at = new_row.synced_at
+    </insert>
+
+    <update id="refreshProfileStats">
+        UPDATE crm_youzan_annual_profile p
+        LEFT JOIN (
+            SELECT
+                COUNT(*) AS cnt,
+                COALESCE(SUM(GREATEST(0, payment_fen - refunded_fen)), 0) AS total_fen,
+                MIN(COALESCE(paid_at, ordered_at)) AS first_at,
+                MAX(COALESCE(paid_at, ordered_at)) AS last_at
+            FROM crm_youzan_annual_order_snapshot
+            WHERE tenant_id = #{tenantId}
+              AND shop_id = #{shopId}
+              AND yz_open_id = #{yzOpenId}
+              AND is_paid = 1
+        ) agg ON 1 = 1
+        SET
+            p.order_count = COALESCE(agg.cnt, 0),
+            p.total_payment_fen = COALESCE(agg.total_fen, 0),
+            p.first_order_at = agg.first_at,
+            p.last_order_at = agg.last_at,
+            p.synced_at = #{syncedAt}
+        WHERE p.tenant_id = #{tenantId}
+          AND p.shop_id = #{shopId}
+          AND p.yz_open_id = #{yzOpenId}
+    </update>
+
+    <select id="findProfileByKey" resultMap="YouzanAnnualProfileMap">
+        SELECT <include refid="ProfileColumns"/>
+        FROM crm_youzan_annual_profile
+        WHERE tenant_id = #{tenantId}
+          AND shop_id = #{shopId}
+          AND yz_open_id = #{yzOpenId}
+        LIMIT 1
+    </select>
+
+    <select id="findProfileByUnionIdHash" resultMap="YouzanAnnualProfileMap">
+        SELECT <include refid="ProfileColumns"/>
+        FROM crm_youzan_annual_profile
+        WHERE tenant_id = #{tenantId}
+          AND weixin_union_id_hash = #{unionIdHash}
+          <if test="shopId != null and shopId != ''">
+              AND shop_id = #{shopId}
+          </if>
+        ORDER BY order_count DESC, id ASC
+        LIMIT 1
+    </select>
+
+    <select id="findProfileByOpenIdHash" resultMap="YouzanAnnualProfileMap">
+        SELECT <include refid="ProfileColumns"/>
+        FROM crm_youzan_annual_profile
+        WHERE tenant_id = #{tenantId}
+          AND weixin_open_id_hash = #{openIdHash}
+          <if test="shopId != null and shopId != ''">
+              AND shop_id = #{shopId}
+          </if>
+        ORDER BY order_count DESC, id ASC
+        LIMIT 1
+    </select>
+
+    <select id="findProfileByMobileHash" resultMap="YouzanAnnualProfileMap">
+        SELECT <include refid="ProfileColumns"/>
+        FROM crm_youzan_annual_profile
+        WHERE tenant_id = #{tenantId}
+          AND mobile_hash = #{mobileHash}
+          <if test="shopId != null and shopId != ''">
+              AND shop_id = #{shopId}
+          </if>
+        ORDER BY order_count DESC, id ASC
+        LIMIT 1
+    </select>
+
+    <select id="findProfileByCustomerId" resultMap="YouzanAnnualProfileMap">
+        SELECT <include refid="ProfileColumns"/>
+        FROM crm_youzan_annual_profile
+        WHERE tenant_id = #{tenantId}
+          AND customer_id = #{customerId}
+        ORDER BY order_count DESC, id ASC
+        LIMIT 1
+    </select>
+
+    <select id="searchProfiles" resultMap="YouzanAnnualProfileMap">
+        SELECT <include refid="ProfileColumns"/>
+        FROM crm_youzan_annual_profile
+        WHERE tenant_id = #{tenantId}
+        <if test="shopId != null and shopId != ''">
+            AND shop_id = #{shopId}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (display_name LIKE CONCAT('%', #{keyword}, '%') OR mobile_masked LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        ORDER BY order_count DESC, total_payment_fen DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countProfiles" resultType="long">
+        SELECT COUNT(*)
+        FROM crm_youzan_annual_profile
+        WHERE tenant_id = #{tenantId}
+        <if test="shopId != null and shopId != ''">
+            AND shop_id = #{shopId}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (display_name LIKE CONCAT('%', #{keyword}, '%') OR mobile_masked LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+    </select>
+
+    <select id="summarizeSnapshots" resultMap="SnapshotSummaryRowMap">
+        SELECT
+            (SELECT COUNT(DISTINCT p0.shop_id) FROM crm_youzan_annual_profile p0
+             WHERE p0.tenant_id = #{tenantId}
+             <if test="shopId != null and shopId != ''">AND p0.shop_id = #{shopId}</if>) AS shop_count,
+            COALESCE(COUNT(*), 0) AS profile_count,
+            COALESCE(SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS linked_customer_count,
+            COALESCE(SUM(CASE WHEN weixin_open_id_hash IS NOT NULL THEN 1 ELSE 0 END), 0) AS open_id_bound_count,
+            COALESCE(SUM(CASE WHEN weixin_union_id_hash IS NOT NULL THEN 1 ELSE 0 END), 0) AS union_id_bound_count,
+            COALESCE(SUM(CASE WHEN mobile_hash IS NOT NULL THEN 1 ELSE 0 END), 0) AS mobile_bound_count,
+            (SELECT COUNT(*) FROM crm_youzan_annual_order_snapshot o
+             WHERE o.tenant_id = #{tenantId} AND o.is_paid = 1
+             <if test="shopId != null and shopId != ''">AND o.shop_id = #{shopId}</if>) AS paid_order_count,
+            (SELECT COALESCE(SUM(GREATEST(0, o.payment_fen - o.refunded_fen)), 0)
+             FROM crm_youzan_annual_order_snapshot o
+             WHERE o.tenant_id = #{tenantId} AND o.is_paid = 1
+             <if test="shopId != null and shopId != ''">AND o.shop_id = #{shopId}</if>) AS total_payment_fen,
+            (SELECT COUNT(*) FROM crm_h5_c_visit_session v
+             WHERE v.tenant_id = #{tenantId}
+             <if test="shopId != null and shopId != ''">AND v.shop_id = #{shopId}</if>) AS unified_visit_sessions,
+            MAX(synced_at) AS last_synced_at
+        FROM crm_youzan_annual_profile
+        WHERE tenant_id = #{tenantId}
+        <if test="shopId != null and shopId != ''">
+            AND shop_id = #{shopId}
+        </if>
+    </select>
+
+    <select id="findPaidOrdersByBuyerYear" resultMap="YouzanAnnualOrderSnapshotMap">
+        SELECT <include refid="OrderColumns"/>
+        FROM crm_youzan_annual_order_snapshot
+        WHERE tenant_id = #{tenantId}
+          AND yz_open_id = #{yzOpenId}
+          AND is_paid = 1
+          <if test="shopId != null and shopId != ''">
+              AND shop_id = #{shopId}
+          </if>
+          AND COALESCE(paid_at, ordered_at) &gt;= #{yearStart}
+          AND COALESCE(paid_at, ordered_at) &lt; #{yearEnd}
+        ORDER BY COALESCE(paid_at, ordered_at) ASC, id ASC
+    </select>
+
+    <select id="findPaidOrdersByCustomerYear" resultMap="YouzanAnnualOrderSnapshotMap">
+        SELECT o.id, o.tenant_id, o.shop_id, o.tid, o.yz_open_id, o.order_status, o.is_paid,
+               o.ordered_at, o.paid_at, o.payment_fen, o.refunded_fen, o.title_summary, o.items_json,
+               o.synced_at, o.created_at, o.updated_at
+        FROM crm_youzan_annual_order_snapshot o
+        INNER JOIN crm_youzan_annual_profile p
+                ON p.tenant_id = o.tenant_id
+               AND p.shop_id = o.shop_id
+               AND p.yz_open_id = o.yz_open_id
+        WHERE o.tenant_id = #{tenantId}
+          AND p.customer_id = #{customerId}
+          AND o.is_paid = 1
+          AND COALESCE(o.paid_at, o.ordered_at) &gt;= #{yearStart}
+          AND COALESCE(o.paid_at, o.ordered_at) &lt; #{yearEnd}
+        ORDER BY COALESCE(o.paid_at, o.ordered_at) ASC, o.id ASC
+    </select>
+
+    <select id="findLinkedCustomerIdByYzOpenId" resultType="java.lang.Long">
+        SELECT customer_id
+        FROM crm_youzan_customer_link
+        WHERE tenant_id = #{tenantId}
+          AND shop_id = #{shopId}
+          AND external_customer_id = #{yzOpenId}
+        LIMIT 1
+    </select>
+
+    <select id="findCustomerIdsByMobileHash" resultType="java.lang.Long">
+        SELECT id
+        FROM crm_customer
+        WHERE tenant_id = #{tenantId}
+          AND mobile_hash = #{mobileHash}
+          AND deleted = 0
+        ORDER BY id ASC
+        LIMIT 2
+    </select>
+
+    <select id="findActiveReportShareKeyByCustomerYear" resultType="java.lang.String">
+        SELECT share_key
+        FROM crm_annual_report
+        WHERE tenant_id = #{tenantId}
+          AND customer_id = #{customerId}
+          AND report_year = #{reportYear}
+          AND status = 'ACTIVE'
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <insert id="upsertIdentityBinding">
+        INSERT INTO crm_h5_c_identity_binding (
+            tenant_id, channel_type, openid_hash, unionid_hash, shop_id, yz_open_id,
+            customer_id, mobile_hash, bound_via
+        ) VALUES (
+            #{binding.tenantId}, #{binding.channelType}, #{binding.openidHash}, #{binding.unionidHash},
+            #{binding.shopId}, #{binding.yzOpenId}, #{binding.customerId}, #{binding.mobileHash}, #{binding.boundVia}
+        ) AS new_row
+        ON DUPLICATE KEY UPDATE
+            unionid_hash = COALESCE(new_row.unionid_hash, crm_h5_c_identity_binding.unionid_hash),
+            shop_id = COALESCE(new_row.shop_id, crm_h5_c_identity_binding.shop_id),
+            yz_open_id = COALESCE(new_row.yz_open_id, crm_h5_c_identity_binding.yz_open_id),
+            customer_id = COALESCE(new_row.customer_id, crm_h5_c_identity_binding.customer_id),
+            mobile_hash = COALESCE(new_row.mobile_hash, crm_h5_c_identity_binding.mobile_hash),
+            bound_via = new_row.bound_via
+    </insert>
+
+    <select id="findIdentityBinding" resultMap="H5ClientIdentityBindingMap">
+        SELECT id, tenant_id, channel_type, openid_hash, unionid_hash, shop_id, yz_open_id,
+               customer_id, mobile_hash, bound_via, created_at, updated_at
+        FROM crm_h5_c_identity_binding
+        WHERE tenant_id = #{tenantId}
+          AND channel_type = #{channelType}
+          AND openid_hash = #{openidHash}
+        LIMIT 1
+    </select>
+
+    <select id="findIdentityBindingByUnionId" resultMap="H5ClientIdentityBindingMap">
+        SELECT id, tenant_id, channel_type, openid_hash, unionid_hash, shop_id, yz_open_id,
+               customer_id, mobile_hash, bound_via, created_at, updated_at
+        FROM crm_h5_c_identity_binding
+        WHERE tenant_id = #{tenantId}
+          AND unionid_hash = #{unionidHash}
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+    </select>
+
+    <insert id="insertSmsVerification">
+        INSERT INTO crm_h5_sms_verification (
+            tenant_id, mobile_hash, code_hash, attempt_count, expires_at, consumed_at
+        ) VALUES (
+            #{sms.tenantId}, #{sms.mobileHash}, #{sms.codeHash}, #{sms.attemptCount},
+            #{sms.expiresAt}, #{sms.consumedAt}
+        )
+    </insert>
+
+    <select id="findLatestSmsVerification" resultMap="H5SmsVerificationMap">
+        SELECT id, tenant_id, mobile_hash, code_hash, attempt_count, expires_at, consumed_at, created_at
+        FROM crm_h5_sms_verification
+        WHERE tenant_id = #{tenantId}
+          AND mobile_hash = #{mobileHash}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findLatestSmsVerificationForUpdate" resultMap="H5SmsVerificationMap">
+        SELECT id, tenant_id, mobile_hash, code_hash, attempt_count, expires_at, consumed_at, created_at
+        FROM crm_h5_sms_verification
+        WHERE tenant_id = #{tenantId}
+          AND mobile_hash = #{mobileHash}
+        ORDER BY id DESC
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <update id="incrementSmsAttempt">
+        UPDATE crm_h5_sms_verification
+        SET attempt_count = attempt_count + 1
+        WHERE tenant_id = #{tenantId}
+          AND id = #{id}
+    </update>
+
+    <update id="consumeSmsVerification">
+        UPDATE crm_h5_sms_verification
+        SET consumed_at = #{consumedAt}
+        WHERE tenant_id = #{tenantId}
+          AND id = #{id}
+    </update>
+
+    <select id="findUnifiedVisitForUpdate" resultMap="H5UnifiedVisitSessionMap">
+        SELECT id, tenant_id, shop_id, yz_open_id, customer_id, display_name_snapshot, report_year,
+               session_key, entry_channel, first_open_at, last_active_at, visible_duration_ms,
+               max_scene_reached, viewed_scene_count, viewed_scenes_json, scene_durations_json,
+               ignited_lamp, opened_order_count, toggled_privacy, generated_poster,
+               clicked_book_butler, client_device, created_at, updated_at
+        FROM crm_h5_c_visit_session
+        WHERE tenant_id = #{tenantId}
+          AND report_year = #{reportYear}
+          AND yz_open_id = #{yzOpenId}
+          AND session_key = #{sessionKey}
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <insert id="insertUnifiedVisit">
+        INSERT INTO crm_h5_c_visit_session (
+            tenant_id, shop_id, yz_open_id, customer_id, display_name_snapshot, report_year,
+            session_key, entry_channel, first_open_at, last_active_at, visible_duration_ms,
+            max_scene_reached, viewed_scene_count, viewed_scenes_json, scene_durations_json,
+            ignited_lamp, opened_order_count, toggled_privacy, generated_poster,
+            clicked_book_butler, client_device
+        ) VALUES (
+            #{session.tenantId}, #{session.shopId}, #{session.yzOpenId}, #{session.customerId},
+            #{session.displayNameSnapshot}, #{session.reportYear},
+            #{session.sessionKey}, #{session.entryChannel}, #{session.firstOpenAt}, #{session.lastActiveAt},
+            #{session.visibleDurationMs}, #{session.maxSceneReached}, #{session.viewedSceneCount},
+            #{session.viewedScenesJson}, #{session.sceneDurationsJson},
+            #{session.ignitedLamp}, #{session.openedOrderCount}, #{session.toggledPrivacy},
+            #{session.generatedPoster}, #{session.clickedBookButler}, #{session.clientDevice}
+        )
+    </insert>
+
+    <update id="updateUnifiedVisit">
+        UPDATE crm_h5_c_visit_session
+        SET
+            last_active_at = #{session.lastActiveAt},
+            visible_duration_ms = #{session.visibleDurationMs},
+            max_scene_reached = #{session.maxSceneReached},
+            viewed_scene_count = #{session.viewedSceneCount},
+            viewed_scenes_json = #{session.viewedScenesJson},
+            scene_durations_json = #{session.sceneDurationsJson},
+            ignited_lamp = #{session.ignitedLamp},
+            opened_order_count = #{session.openedOrderCount},
+            toggled_privacy = #{session.toggledPrivacy},
+            generated_poster = #{session.generatedPoster},
+            clicked_book_butler = #{session.clickedBookButler},
+            client_device = #{session.clientDevice}
+        WHERE tenant_id = #{session.tenantId}
+          AND id = #{session.id}
+    </update>
+
+</mapper>

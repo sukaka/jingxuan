@@ -92,6 +92,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/wecom/oauth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/integrations/refunds/*/callback").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/public/h5-cards/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/public/annual-reports/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/public/annual-reports/*/telemetry",
+                                "/api/v1/public/annual-reports/*/booking-intent").permitAll()
                         .requestMatchers(
                                 "/api/v1/auth/login", "/api/v1/auth/captcha",
                                 "/actuator/health", "/actuator/health/**", "/actuator/info",

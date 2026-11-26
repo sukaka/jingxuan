@@ -1,0 +1,468 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.annualreport.infrastructure.mapper.AnnualReportMapper">
+
+  <sql id="reportColumns">
+    id,
+    tenant_id AS tenantId,
+    customer_id AS customerId,
+    owner_staff_id AS ownerStaffId,
+    team_id AS teamId,
+    created_by AS createdBy,
+    report_year AS reportYear,
+    share_key AS shareKey,
+    tone_code AS toneCode,
+    tone_reason AS toneReason,
+    display_name_snapshot AS displayNameSnapshot,
+    tier_label_snapshot AS tierLabelSnapshot,
+    butler_name_snapshot AS butlerNameSnapshot,
+    order_count AS orderCount,
+    net_spend_fen AS netSpendFen,
+    redeem_count AS redeemCount,
+    remaining_entitlement_count AS remainingEntitlementCount,
+    snapshot_json AS snapshotJson,
+    status,
+    disable_reason AS disableReason,
+    disabled_by AS disabledBy,
+    disabled_at AS disabledAt,
+    created_at AS createdAt,
+    updated_at AS updatedAt,
+    version
+  </sql>
+
+  <sql id="sessionColumns">
+    id,
+    tenant_id AS tenantId,
+    report_id AS reportId,
+    customer_id AS customerId,
+    owner_staff_id AS ownerStaffId,
+    team_id AS teamId,
+    report_year AS reportYear,
+    session_key AS sessionKey,
+    first_open_at AS firstOpenAt,
+    last_active_at AS lastActiveAt,
+    visible_duration_ms AS visibleDurationMs,
+    max_scene_reached AS maxSceneReached,
+    viewed_scene_count AS viewedSceneCount,
+    viewed_scenes_json AS viewedScenesJson,
+    scene_durations_json AS sceneDurationsJson,
+    ignited_lamp AS ignitedLamp,
+    opened_order_count AS openedOrderCount,
+    toggled_privacy AS toggledPrivacy,
+    generated_poster AS generatedPoster,
+    clicked_book_butler AS clickedBookButler,
+    booking_task_id AS bookingTaskId,
+    client_device AS clientDevice,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+  </sql>
+
+  <sql id="reportScopeFilter">
+    <choose>
+      <when test="scopeType == 'ALL'">
+        AND 1 = 1
+      </when>
+      <when test="scopeType == 'TEAM'">
+        AND (
+          c.owner_staff_id = #{selfId}
+          <if test="teamIds != null and teamIds.size() > 0">
+            OR c.team_id IN
+            <foreach collection="teamIds" item="tid" open="(" separator="," close=")">
+              #{tid}
+            </foreach>
+          </if>
+        )
+      </when>
+      <when test="scopeType == 'SELF'">
+        AND c.owner_staff_id = #{selfId}
+      </when>
+      <otherwise>
+        AND 1 = 0
+      </otherwise>
+    </choose>
+  </sql>
+
+  <insert id="insertReport">
+    INSERT INTO crm_annual_report (
+      tenant_id, customer_id, owner_staff_id, team_id, created_by, report_year,
+      share_key, tone_code, tone_reason, display_name_snapshot, tier_label_snapshot,
+      butler_name_snapshot, order_count, net_spend_fen, redeem_count,
+      remaining_entitlement_count, snapshot_json, status
+    ) VALUES (
+      #{e.tenantId}, #{e.customerId}, #{e.ownerStaffId}, #{e.teamId,jdbcType=BIGINT},
+      #{e.createdBy}, #{e.reportYear}, #{e.shareKey}, #{e.toneCode}, #{e.toneReason},
+      #{e.displayNameSnapshot}, #{e.tierLabelSnapshot}, #{e.butlerNameSnapshot},
+      #{e.orderCount}, #{e.netSpendFen}, #{e.redeemCount},
+      #{e.remainingEntitlementCount}, #{e.snapshotJson}, #{e.status}
+    )
+  </insert>
+
+  <select id="findById" resultType="com.whale.crm.annualreport.domain.AnnualReport">
+    SELECT <include refid="reportColumns"/>
+    FROM crm_annual_report
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </select>
+
+  <select id="findByIdForUpdate" resultType="com.whale.crm.annualreport.domain.AnnualReport">
+    SELECT <include refid="reportColumns"/>
+    FROM crm_annual_report
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+    FOR UPDATE
+  </select>
+
+  <select id="findByShareKey" resultType="com.whale.crm.annualreport.domain.AnnualReport">
+    SELECT <include refid="reportColumns"/>
+    FROM crm_annual_report
+    WHERE share_key = #{shareKey}
+  </select>
+
+  <update id="disableReport">
+    UPDATE crm_annual_report
+    SET status = 'DISABLED',
+        disable_reason = #{reason},
+        disabled_by = #{disabledBy},
+        disabled_at = #{disabledAt},
+        updated_at = CURRENT_TIMESTAMP(3),
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND id = #{id}
+      AND version = #{version}
+      AND status = 'ACTIVE'
+  </update>
+
+  <update id="disableActiveForCustomerYear">
+    UPDATE crm_annual_report
+    SET status = 'DISABLED',
+        disable_reason = #{reason},
+        disabled_by = #{disabledBy},
+        disabled_at = #{disabledAt},
+        updated_at = CURRENT_TIMESTAMP(3),
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND customer_id = #{customerId}
+      AND report_year = #{reportYear}
+      AND status = 'ACTIVE'
+  </update>
+
+  <select id="searchReports" resultType="com.whale.crm.annualreport.domain.AnnualReportCustomerFact$ReportListRow">
+    SELECT
+      r.id AS id,
+      r.customer_id AS customerId,
+      r.owner_staff_id AS ownerStaffId,
+      r.team_id AS teamId,
+      r.report_year AS reportYear,
+      r.share_key AS shareKey,
+      r.tone_code AS toneCode,
+      r.tone_reason AS toneReason,
+      r.display_name_snapshot AS displayNameSnapshot,
+      r.tier_label_snapshot AS tierLabelSnapshot,
+      r.butler_name_snapshot AS butlerNameSnapshot,
+      r.order_count AS orderCount,
+      r.net_spend_fen AS netSpendFen,
+      r.redeem_count AS redeemCount,
+      r.remaining_entitlement_count AS remainingEntitlementCount,
+      r.status AS status,
+      r.created_at AS createdAt,
+      r.version AS version,
+      COALESCE(v.visit_count, 0) AS visitCount,
+      COALESCE(v.total_visible_duration_ms, 0) AS totalVisibleDurationMs,
+      COALESCE(v.max_scene_reached, 0) AS maxSceneReached,
+      COALESCE(v.max_viewed_scene_count, 0) AS maxViewedSceneCount,
+      COALESCE(v.generated_poster, 0) = 1 AS generatedPoster,
+      COALESCE(v.clicked_book_butler, 0) = 1 AS clickedBookButler,
+      v.last_active_at AS lastActiveAt
+    FROM crm_annual_report r
+    JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
+    LEFT JOIN (
+      SELECT
+        report_id,
+        COUNT(*) AS visit_count,
+        COALESCE(SUM(visible_duration_ms), 0) AS total_visible_duration_ms,
+        COALESCE(MAX(max_scene_reached), 0) AS max_scene_reached,
+        COALESCE(MAX(viewed_scene_count), 0) AS max_viewed_scene_count,
+        MAX(generated_poster) AS generated_poster,
+        MAX(clicked_book_butler) AS clicked_book_butler,
+        MAX(last_active_at) AS last_active_at
+      FROM crm_annual_report_visit_session
+      WHERE tenant_id = #{tenantId}
+      GROUP BY report_id
+    ) v ON v.report_id = r.id
+    WHERE r.tenant_id = #{tenantId}
+    <include refid="reportScopeFilter"/>
+    <if test="reportYear != null">
+      AND r.report_year = #{reportYear}
+    </if>
+    <if test="customerId != null">
+      AND r.customer_id = #{customerId}
+    </if>
+    <if test="status != null and status != ''">
+      AND r.status = #{status}
+    </if>
+    ORDER BY r.created_at DESC, r.id DESC
+    LIMIT #{limit} OFFSET #{offset}
+  </select>
+
+  <select id="countSearchReports" resultType="long">
+    SELECT COUNT(*)
+    FROM crm_annual_report r
+    JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
+    WHERE r.tenant_id = #{tenantId}
+    <include refid="reportScopeFilter"/>
+    <if test="reportYear != null">
+      AND r.report_year = #{reportYear}
+    </if>
+    <if test="customerId != null">
+      AND r.customer_id = #{customerId}
+    </if>
+    <if test="status != null and status != ''">
+      AND r.status = #{status}
+    </if>
+  </select>
+
+  <select id="summarizeReports" resultType="com.whale.crm.annualreport.domain.AnnualReportCustomerFact$ReportSummaryRow">
+    SELECT
+      COUNT(*) AS totalReports,
+      COALESCE(SUM(CASE WHEN r.status = 'ACTIVE' THEN 1 ELSE 0 END), 0) AS activeReports,
+      COALESCE(SUM(CASE WHEN COALESCE(v.visit_count, 0) > 0 THEN 1 ELSE 0 END), 0) AS openedReports,
+      COALESCE(SUM(CASE WHEN COALESCE(v.max_scene_reached, 0) >= 6 THEN 1 ELSE 0 END), 0) AS completedReports,
+      COALESCE(SUM(COALESCE(v.visit_count, 0)), 0) AS totalSessions,
+      COALESCE(SUM(COALESCE(v.total_visible_duration_ms, 0)), 0) AS totalVisibleDurationMs,
+      COALESCE(SUM(CASE WHEN COALESCE(v.generated_poster, 0) = 1 THEN 1 ELSE 0 END), 0) AS posterReports,
+      COALESCE(SUM(CASE WHEN COALESCE(v.clicked_book_butler, 0) = 1 THEN 1 ELSE 0 END), 0) AS bookingIntentReports,
+      COALESCE(SUM(CASE WHEN COALESCE(v.max_scene_reached, 0) >= 1 THEN 1 ELSE 0 END), 0) AS reachedScene1,
+      COALESCE(SUM(CASE WHEN COALESCE(v.max_scene_reached, 0) >= 2 THEN 1 ELSE 0 END), 0) AS reachedScene2,
+      COALESCE(SUM(CASE WHEN COALESCE(v.max_scene_reached, 0) >= 3 THEN 1 ELSE 0 END), 0) AS reachedScene3,
+      COALESCE(SUM(CASE WHEN COALESCE(v.max_scene_reached, 0) >= 4 THEN 1 ELSE 0 END), 0) AS reachedScene4,
+      COALESCE(SUM(CASE WHEN COALESCE(v.max_scene_reached, 0) >= 5 THEN 1 ELSE 0 END), 0) AS reachedScene5,
+      COALESCE(SUM(CASE WHEN COALESCE(v.max_scene_reached, 0) >= 6 THEN 1 ELSE 0 END), 0) AS reachedScene6
+    FROM crm_annual_report r
+    JOIN crm_customer c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id AND c.deleted = 0
+    LEFT JOIN (
+      SELECT
+        report_id,
+        COUNT(*) AS visit_count,
+        COALESCE(SUM(visible_duration_ms), 0) AS total_visible_duration_ms,
+        COALESCE(MAX(max_scene_reached), 0) AS max_scene_reached,
+        MAX(generated_poster) AS generated_poster,
+        MAX(clicked_book_butler) AS clicked_book_butler
+      FROM crm_annual_report_visit_session
+      WHERE tenant_id = #{tenantId}
+      GROUP BY report_id
+    ) v ON v.report_id = r.id
+    WHERE r.tenant_id = #{tenantId}
+      AND r.report_year = #{reportYear}
+    <include refid="reportScopeFilter"/>
+  </select>
+
+  <select id="findSessionByKeyForUpdate" resultType="com.whale.crm.annualreport.domain.AnnualReportVisitSession">
+    SELECT <include refid="sessionColumns"/>
+    FROM crm_annual_report_visit_session
+    WHERE tenant_id = #{tenantId}
+      AND report_id = #{reportId}
+      AND session_key = #{sessionKey}
+    FOR UPDATE
+  </select>
+
+  <insert id="insertSession">
+    INSERT INTO crm_annual_report_visit_session (
+      tenant_id, report_id, customer_id, owner_staff_id, team_id, report_year,
+      session_key, first_open_at, last_active_at, visible_duration_ms,
+      max_scene_reached, viewed_scene_count, viewed_scenes_json, scene_durations_json,
+      ignited_lamp, opened_order_count, toggled_privacy, generated_poster,
+      clicked_book_butler, booking_task_id, client_device
+    ) VALUES (
+      #{e.tenantId}, #{e.reportId}, #{e.customerId}, #{e.ownerStaffId},
+      #{e.teamId,jdbcType=BIGINT}, #{e.reportYear}, #{e.sessionKey},
+      #{e.firstOpenAt}, #{e.lastActiveAt}, #{e.visibleDurationMs},
+      #{e.maxSceneReached}, #{e.viewedSceneCount}, #{e.viewedScenesJson},
+      #{e.sceneDurationsJson}, #{e.ignitedLamp}, #{e.openedOrderCount},
+      #{e.toggledPrivacy}, #{e.generatedPoster}, #{e.clickedBookButler},
+      #{e.bookingTaskId,jdbcType=BIGINT}, #{e.clientDevice}
+    )
+  </insert>
+
+  <update id="updateSession">
+    UPDATE crm_annual_report_visit_session
+    SET last_active_at = #{e.lastActiveAt},
+        visible_duration_ms = #{e.visibleDurationMs},
+        max_scene_reached = #{e.maxSceneReached},
+        viewed_scene_count = #{e.viewedSceneCount},
+        viewed_scenes_json = #{e.viewedScenesJson},
+        scene_durations_json = #{e.sceneDurationsJson},
+        ignited_lamp = #{e.ignitedLamp},
+        opened_order_count = #{e.openedOrderCount},
+        toggled_privacy = #{e.toggledPrivacy},
+        generated_poster = #{e.generatedPoster},
+        clicked_book_butler = #{e.clickedBookButler},
+        booking_task_id = #{e.bookingTaskId,jdbcType=BIGINT},
+        client_device = #{e.clientDevice},
+        updated_at = CURRENT_TIMESTAMP(3)
+    WHERE tenant_id = #{e.tenantId}
+      AND id = #{e.id}
+  </update>
+
+  <select id="listSessions" resultType="com.whale.crm.annualreport.domain.AnnualReportVisitSession">
+    SELECT <include refid="sessionColumns"/>
+    FROM crm_annual_report_visit_session
+    WHERE tenant_id = #{tenantId}
+      AND report_id = #{reportId}
+    ORDER BY last_active_at DESC, id DESC
+    LIMIT #{limit}
+  </select>
+
+  <insert id="insertEvent">
+    INSERT INTO crm_annual_report_visit_event (
+      tenant_id, report_id, session_id, customer_id, event_type,
+      scene_index, delta_duration_ms, detail_json, occurred_at
+    ) VALUES (
+      #{e.tenantId}, #{e.reportId}, #{e.sessionId}, #{e.customerId},
+      #{e.eventType}, #{e.sceneIndex}, #{e.deltaDurationMs},
+      #{e.detailJson,jdbcType=VARCHAR}, #{e.occurredAt}
+    )
+  </insert>
+
+  <select id="findYearPaidOrders" resultType="com.whale.crm.annualreport.domain.AnnualReportCustomerFact$OrderRow">
+    SELECT
+      id AS orderId,
+      order_no AS orderNo,
+      external_order_no AS externalOrderNo,
+      source_system AS sourceSystem,
+      order_type_code AS orderTypeCode,
+      status AS status,
+      paid_fen AS paidFen,
+      refunded_fen AS refundedFen,
+      ordered_at AS orderedAt,
+      paid_at AS paidAt
+    FROM crm_order
+    WHERE tenant_id = #{tenantId}
+      AND customer_id = #{customerId}
+      AND status NOT IN ('DRAFT', 'CANCELED')
+      AND paid_fen > 0
+      AND COALESCE(paid_at, ordered_at, created_at) &gt;= #{startInclusive}
+      AND COALESCE(paid_at, ordered_at, created_at) &lt; #{endExclusive}
+    ORDER BY COALESCE(paid_at, ordered_at, created_at) ASC, id ASC
+  </select>
+
+  <select id="findOrderItemsByOrderIds" resultType="com.whale.crm.annualreport.domain.AnnualReportCustomerFact$OrderItemRow">
+    SELECT
+      order_id AS orderId,
+      sku_name_snapshot AS skuNameSnapshot,
+      purchase_quantity AS purchaseQuantity
+    FROM crm_order_item
+    WHERE tenant_id = #{tenantId}
+      AND order_id IN
+      <foreach collection="orderIds" item="oid" open="(" separator="," close=")">
+        #{oid}
+      </foreach>
+    ORDER BY id ASC
+  </select>
+
+  <select id="findYearOrderEntitlements" resultType="com.whale.crm.annualreport.domain.AnnualReportCustomerFact$EntitlementRow">
+    SELECT
+      e.id AS entitlementId,
+      oi.order_id AS orderId,
+      e.project_id AS projectId,
+      p.project_name AS projectName,
+      p.category_code AS categoryCode,
+      e.granted_count AS grantedCount,
+      e.available_count AS availableCount,
+      e.valid_to AS validTo,
+      e.status AS status
+    FROM crm_entitlement e
+    JOIN crm_order_item oi ON oi.tenant_id = e.tenant_id AND oi.id = e.order_item_id
+    JOIN crm_project p ON p.tenant_id = e.tenant_id AND p.id = e.project_id
+    WHERE e.tenant_id = #{tenantId}
+      AND e.customer_id = #{customerId}
+      AND oi.order_id IN
+      <foreach collection="orderIds" item="oid" open="(" separator="," close=")">
+        #{oid}
+      </foreach>
+    ORDER BY e.id ASC
+  </select>
+
+  <select id="findAvailableEntitlements" resultType="com.whale.crm.annualreport.domain.AnnualReportCustomerFact$EntitlementRow">
+    SELECT
+      e.id AS entitlementId,
+      oi.order_id AS orderId,
+      e.project_id AS projectId,
+      p.project_name AS projectName,
+      p.category_code AS categoryCode,
+      e.granted_count AS grantedCount,
+      e.available_count AS availableCount,
+      e.valid_to AS validTo,
+      e.status AS status
+    FROM crm_entitlement e
+    JOIN crm_order_item oi ON oi.tenant_id = e.tenant_id AND oi.id = e.order_item_id
+    JOIN crm_project p ON p.tenant_id = e.tenant_id AND p.id = e.project_id
+    WHERE e.tenant_id = #{tenantId}
+      AND e.customer_id = #{customerId}
+      AND e.status = 'AVAILABLE'
+      AND e.available_count > 0
+    ORDER BY COALESCE(e.valid_to, DATE('2099-12-31')) ASC, e.id ASC
+  </select>
+
+  <select id="findYearPostedRedemptions" resultType="com.whale.crm.annualreport.domain.AnnualReportCustomerFact$RedemptionRow">
+    SELECT
+      r.id AS redemptionId,
+      r.institution_id AS institutionId,
+      COALESCE(NULLIF(inst.short_name, ''), inst.full_name, '合作臻选机构') AS institutionName,
+      r.service_at AS serviceAt,
+      rl.project_id AS projectId,
+      p.project_name AS projectName,
+      p.category_code AS categoryCode,
+      rl.count AS count
+    FROM crm_redemption r
+    JOIN crm_redemption_line rl ON rl.tenant_id = r.tenant_id AND rl.redemption_id = r.id
+    JOIN crm_project p ON p.tenant_id = rl.tenant_id AND p.id = rl.project_id
+    LEFT JOIN crm_institution inst ON inst.tenant_id = r.tenant_id AND inst.id = r.institution_id
+    WHERE r.tenant_id = #{tenantId}
+      AND r.customer_id = #{customerId}
+      AND r.status = 'POSTED'
+      AND r.service_at &gt;= #{startInclusive}
+      AND r.service_at &lt; #{endExclusive}
+      AND NOT EXISTS (
+        SELECT 1 FROM crm_redemption_reversal rev
+        WHERE rev.tenant_id = r.tenant_id
+          AND rev.redemption_id = r.id
+          AND rev.status = 'APPROVED'
+      )
+    ORDER BY r.service_at ASC, r.id ASC
+  </select>
+
+  <select id="findYearFollowups" resultType="com.whale.crm.annualreport.domain.AnnualReportCustomerFact$FollowupRow">
+    SELECT
+      id,
+      COALESCE(contact_at, created_at) AS contactAt
+    FROM crm_followup
+    WHERE tenant_id = #{tenantId}
+      AND customer_id = #{customerId}
+      AND deleted = 0
+      AND COALESCE(contact_at, created_at) &gt;= #{startInclusive}
+      AND COALESCE(contact_at, created_at) &lt; #{endExclusive}
+    ORDER BY COALESCE(contact_at, created_at) ASC, id ASC
+  </select>
+
+  <select id="findCustomerTagCodes" resultType="string">
+    SELECT tag_code
+    FROM crm_customer_tag
+    WHERE tenant_id = #{tenantId}
+      AND customer_id = #{customerId}
+    ORDER BY id ASC
+  </select>
+
+  <select id="findUserDisplayName" resultType="string">
+    SELECT display_name
+    FROM sys_user
+    WHERE tenant_id = #{tenantId}
+      AND id = #{userId}
+  </select>
+
+  <select id="findEarliestPaidOrderAt" resultType="java.time.Instant">
+    SELECT MIN(COALESCE(paid_at, ordered_at, created_at))
+    FROM crm_order
+    WHERE tenant_id = #{tenantId}
+      AND customer_id = #{customerId}
+      AND status NOT IN ('DRAFT', 'CANCELED')
+      AND paid_fen > 0
+  </select>
+</mapper>

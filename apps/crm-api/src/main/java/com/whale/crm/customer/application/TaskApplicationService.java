@@ -253,6 +253,49 @@ public class TaskApplicationService {
     public record AutomaticTaskResult(TaskItemResponse task, boolean created) {
     }
 
+    public record AnnualReportTaskResult(long taskId, boolean created) {
+    }
+
+    /**
+     * 客户在年终 H5 权益页点击「通知专属管家预约」时，幂等创建一条 FOLLOWUP 待办，
+     * 绝不创建已确认预约、订单或核销。
+     */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public AnnualReportTaskResult createFromAnnualReportBookingIntent(long tenantId, long customerId,
+                                                                      long ownerStaffId, Long teamId,
+                                                                      String sourceRef, String title,
+                                                                      String description, Instant dueAt) {
+        Optional<CrmTask> existing = taskRepository.findBySource(tenantId, "ANNUAL_REPORT", sourceRef);
+        if (existing.isPresent()) {
+            return new AnnualReportTaskResult(existing.orElseThrow().getId(), false);
+        }
+        CurrentUser owner = currentUserService.loadById(ownerStaffId)
+                .filter(value -> value.tenantId() == tenantId && "EMPLOYEE".equals(value.userType()))
+                .orElse(null);
+        Long assigneeId = owner != null ? owner.userId() : ownerStaffId;
+        Long resolvedTeamId = teamId != null ? teamId : (owner != null ? owner.teamId() : null);
+
+        CrmTask task = new CrmTask();
+        task.setTenantId(tenantId);
+        task.setCustomerId(customerId);
+        task.setAssigneeUserId(assigneeId);
+        task.setOriginalAssigneeUserId(assigneeId);
+        task.setTaskTeamId(resolvedTeamId);
+        task.setTaskType("FOLLOWUP");
+        task.setPriority(CrmTask.PRIORITY_HIGH);
+        task.setStatus(CrmTask.STATUS_OPEN);
+        task.setTitle(title.length() <= 255 ? title : title.substring(0, 255));
+        task.setDescription(blankToNull(description));
+        task.setDueAt(dueAt);
+        task.setSourceType("ANNUAL_REPORT");
+        task.setSourceRef(sourceRef);
+        taskRepository.insertAutomatic(task);
+        CrmTask persisted = taskRepository.findBySource(tenantId, "ANNUAL_REPORT", sourceRef).orElseThrow();
+        auditService.record(tenantId, assigneeId, AuditService.ACTION_TASK_CREATE, "TASK",
+                Long.toString(persisted.getId()), null, taskSnapshot(persisted), "年终H5客户预约意向自动建单");
+        return new AnnualReportTaskResult(persisted.getId(), true);
+    }
+
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
     public long createFromAi(long tenantId, CurrentUser user, long customerId, String sourceRef,
                              String title, String description, java.time.Instant dueAt) {
