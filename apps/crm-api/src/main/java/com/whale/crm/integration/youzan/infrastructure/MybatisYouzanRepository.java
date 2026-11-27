@@ -61,6 +61,26 @@ public class MybatisYouzanRepository implements YouzanRepository {
     public long countScopedCampaignOrders(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countScopedCampaignOrders(tenantId, shopId, scope); }
     public List<YouzanEvent> findLatestOrderEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope, int offset, int size) { return mapper.selectLatestOrderEvents(tenantId, shopId, scope, offset, size); }
     public long countDistinctExternalOrders(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope) { return mapper.countDistinctExternalOrders(tenantId, shopId, scope); }
+    public List<YouzanEvent> findLatestOrderEventsFiltered(long tenantId, String shopId,
+                                                           CustomerScopeSupport.ScopeQuery scope,
+                                                           Long assignedStewardId, String assignmentStatus,
+                                                           String keyword, int offset, int size) {
+        return mapper.selectLatestOrderEventsFiltered(tenantId, shopId, scope, assignedStewardId,
+                assignmentStatus, keyword, offset, size);
+    }
+    public long countDistinctExternalOrdersFiltered(long tenantId, String shopId,
+                                                    CustomerScopeSupport.ScopeQuery scope,
+                                                    Long assignedStewardId, String assignmentStatus,
+                                                    String keyword) {
+        return mapper.countDistinctExternalOrdersFiltered(tenantId, shopId, scope, assignedStewardId,
+                assignmentStatus, keyword);
+    }
+    public Optional<YouzanEvent> findLatestEventByExternalOrder(long tenantId, String shopId, String externalOrderNo) {
+        return Optional.ofNullable(mapper.selectLatestEventByExternalOrder(tenantId, shopId, externalOrderNo));
+    }
+    public boolean isMappedCustomerActive(long tenantId, long crmOrderId) {
+        return mapper.countActiveCustomerByOrderId(tenantId, crmOrderId) > 0L;
+    }
     public int updateEventStatus(long tenantId, long id, long version, String status, String lastError,
                                  Instant nextRetryAt, Instant processedAt, Long orderId) {
         return mapper.updateEventStatus(tenantId, id, version, status, lastError, nextRetryAt, processedAt, orderId);

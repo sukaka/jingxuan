@@ -332,4 +332,45 @@ describe('YouzanOrderDetailDrawer 业务信息与脱敏原始详情', () => {
     expect(drawerSource).toContain('color: #0f443f;')
     expect(drawerSource).toContain('background-color: #eaf4f2;')
   })
+
+  it('展示商家备注结构化字段、脱敏下单人、有赞状态与归属管家分配信息', async () => {
+    const richOrder: YouzanOrderView = {
+      ...order,
+      providerOrderStatus: 'WAIT_BUYER_CONFIRM_GOODS',
+      providerStatusText: '已发货',
+      payWayDesc: '微信支付',
+      buyerFormNameMasked: '林*美',
+      buyerFormMobileMasked: '139****7633',
+      tradeMemoMasked: '业绩：陈顾问，渠道：koc，类型：新客，来源：koc小星，账号：紫紫模拟，到院：杭州示范院  可以延期核销申请半个月',
+      memoPerformanceOwner: '陈顾问',
+      memoChannel: 'koc',
+      memoCustomerType: '新客',
+      memoSource: 'koc小星',
+      memoAccountName: '紫紫模拟',
+      memoInstitutionName: '杭州示范院',
+      memoExtraNote: '可以延期核销申请半个月',
+      assignedStewardId: 9,
+      assignedStewardName: '测试管家',
+      assignmentStatus: 'ASSIGNED',
+      assignmentSource: 'AUTO_ALIAS',
+      assignmentReason: '通过账号别名「紫紫模拟」自动分配给 测试管家',
+    }
+    const wrapper = mountDrawer(['order:read'], richOrder)
+    await wrapper.setProps({ canAssign: true })
+    await settle()
+
+    expect(document.body.querySelector('[data-testid="youzan-detail-provider-status"]')?.textContent).toContain('已发货')
+    expect(document.body.querySelector('[data-testid="youzan-detail-pay-way"]')?.textContent).toContain('微信支付')
+    expect(document.body.querySelector('[data-testid="youzan-detail-buyer-form"]')?.textContent).toContain('林*美')
+    expect(document.body.querySelector('[data-testid="youzan-detail-buyer-form"]')?.textContent).toContain('139****7633')
+    expect(document.body.querySelector('[data-testid="youzan-detail-assigned-steward"]')?.textContent).toContain('测试管家')
+    expect(document.body.querySelector('[data-testid="youzan-detail-memo-account"]')?.textContent).toContain('紫紫模拟')
+    expect(document.body.querySelector('[data-testid="youzan-detail-memo-performance"]')?.textContent).toContain('陈顾问')
+    expect(document.body.querySelector('[data-testid="youzan-detail-memo-institution"]')?.textContent).toContain('杭州示范院')
+    expect(document.body.querySelector('[data-testid="youzan-detail-memo-extra"]')?.textContent).toContain('可以延期核销申请半个月')
+    expect(document.body.textContent).toContain('别名自动匹配')
+
+    await click('youzan-detail-assign-btn')
+    expect(wrapper.emitted('assign')).toHaveLength(1)
+  })
 })

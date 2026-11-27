@@ -36,6 +36,86 @@ export interface YouzanOrderView {
   campaignId?: number | null
   campaignBatchId?: number | null
   items?: YouzanOrderLineItem[]
+  providerOrderStatus?: string | null
+  providerStatusText?: string | null
+  payWayDesc?: string | null
+  orderedAt?: string | null
+  consignedAt?: string | null
+  buyerFormNameMasked?: string | null
+  buyerFormMobileMasked?: string | null
+  tradeMemoMasked?: string | null
+  memoPerformanceOwner?: string | null
+  memoChannel?: string | null
+  memoCustomerType?: string | null
+  memoSource?: string | null
+  memoAccountName?: string | null
+  memoInstitutionName?: string | null
+  memoExtraNote?: string | null
+  assignedStewardId?: number | null
+  assignedStewardName?: string | null
+  assignmentStatus?: string | null
+  assignmentSource?: string | null
+  assignmentReason?: string | null
+  assignedAt?: string | null
+  assignmentVersion?: number | null
+}
+
+export interface YouzanOrderListQuery {
+  shopId: string
+  page: number
+  size: number
+  assignedStewardId?: number
+  assignmentStatus?: string
+  keyword?: string
+}
+
+export interface YouzanPullOrderByTidInput {
+  shopId: string
+  tid: string
+}
+
+export interface YouzanOrderAssignInput {
+  stewardUserId: number
+  reason?: string
+  version?: number
+  saveAlias?: boolean
+  aliasName?: string
+}
+
+export interface YouzanStewardOption {
+  id: number
+  displayName: string
+  teamId: number | null
+  teamName: string | null
+}
+
+export interface YouzanStewardAlias {
+  id: number
+  aliasName: string
+  aliasKey: string
+  stewardUserId: number
+  stewardName: string | null
+  teamId: number | null
+  teamName: string | null
+  status: string
+  remark: string | null
+  createdAt: string
+  updatedAt: string
+  version: number
+}
+
+export interface YouzanStewardAliasInput {
+  aliasName: string
+  stewardUserId: number
+  status?: string
+  remark?: string
+  version?: number
+  backfillPending?: boolean
+}
+
+export interface YouzanStewardAliasSaveResponse {
+  alias: YouzanStewardAlias
+  backfilledOrderCount: number
 }
 
 export interface YouzanSyncResponse {
@@ -163,9 +243,56 @@ export interface YouzanCustomerLinkInput {
   reason: string
 }
 
-export async function listYouzanOrders(query: { shopId: string; page: number; size: number }): Promise<PageResult<YouzanOrderView>> {
-  const res = await http.get<ApiResponse<PageResult<YouzanOrderView>>>('/integrations/youzan/orders', { params: query })
+export async function listYouzanOrders(query: YouzanOrderListQuery): Promise<PageResult<YouzanOrderView>> {
+  const params: Record<string, unknown> = {
+    shopId: query.shopId,
+    page: query.page,
+    size: query.size,
+  }
+  if (query.assignedStewardId != null) params.assignedStewardId = query.assignedStewardId
+  if (query.assignmentStatus) params.assignmentStatus = query.assignmentStatus
+  if (query.keyword) params.keyword = query.keyword
+  const res = await http.get<ApiResponse<PageResult<YouzanOrderView>>>('/integrations/youzan/orders', { params })
   return res.data.data
+}
+
+export function pullYouzanOrderByTid(body: YouzanPullOrderByTidInput, key: string): Promise<YouzanOrderView> {
+  return postWithKey('/integrations/youzan/orders/pull-by-tid', body, key)
+}
+
+export async function assignYouzanOrderSteward(
+  shopId: string,
+  externalOrderNo: string,
+  body: YouzanOrderAssignInput,
+  key: string,
+): Promise<YouzanOrderView> {
+  const res = await http.put<ApiResponse<YouzanOrderView>>(
+    `/integrations/youzan/orders/${encodeURIComponent(externalOrderNo)}/assign`,
+    body,
+    { params: { shopId }, headers: { 'Idempotency-Key': key } },
+  )
+  return res.data.data
+}
+
+export async function listYouzanStewardOptions(): Promise<YouzanStewardOption[]> {
+  const res = await http.get<ApiResponse<YouzanStewardOption[]>>('/integrations/youzan/steward-options')
+  return res.data.data
+}
+
+export async function listYouzanStewardAliases(): Promise<YouzanStewardAlias[]> {
+  const res = await http.get<ApiResponse<YouzanStewardAlias[]>>('/integrations/youzan/steward-aliases')
+  return res.data.data
+}
+
+export function saveYouzanStewardAlias(
+  body: YouzanStewardAliasInput,
+  key: string,
+): Promise<YouzanStewardAliasSaveResponse> {
+  return postWithKey('/integrations/youzan/steward-aliases', body, key)
+}
+
+export async function deleteYouzanStewardAlias(id: number): Promise<void> {
+  await http.delete(`/integrations/youzan/steward-aliases/${id}`)
 }
 
 async function postWithKey<T>(url: string, body: unknown, idempotencyKey: string): Promise<T> {

@@ -18,15 +18,18 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 真实有赞云官方客户拉取适配器：
  * - SCRM_LIST 模式：调用 youzan.scrm.customer.list（默认 1.0.0，分页参数 page_no/page_size，按创建时间降序）；
  * - ORDER_BUYERS 模式：复用已实测验证的 youzan.trades.sold.get (4.0.2) / youzan.trade.get (4.0.2)；
- * - 资料补全：复用已实测验证的 youzan.users.info.query (1.0.0) 与 youzan.scrm.customer.get (3.0.0)。
+ * - 资料补全：调用 youzan.users.info.query (1.0.0)、youzan.scrm.customer.get (3.0.0) 与可选的
+ *   youzan.scrm.tag.relation.get (4.0.0)，补全姓名、昵称、手机号、生日、备注、省市与有赞原标签。
  */
 @Component
 public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClient {
@@ -39,14 +42,28 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
     private static final long SCRM_MAX_TOTAL = 10_000L;
     private static final int SCRM_MAX_PAGE_SIZE = 50;
     private static final int ORDER_MAX_PAGES = 100;
+    private static final int MAX_TAGS_PER_CUSTOMER = 30;
+    private static final int MAX_TAG_LABEL_LENGTH = 64;
+    private static final Set<String> GENERIC_CITY_PLACEHOLDERS = Set.of(
+            "市辖区", "县", "省直辖县级行政区划", "自治区直辖县级行政区划", "直辖市");
 
     private final YouzanTokenService tokenService;
     private final YouzanRemoteClient remoteClient;
     private final String scrmListVersion;
     private final String tradeDetailVersion;
+    private final String scrmTagRelationVersion;
     private final long minIntervalMs;
     private final Map<String, Object> rateLocks = new ConcurrentHashMap<>();
     private final Map<String, Long> nextCallAt = new ConcurrentHashMap<>();
+
+    public OfficialYouzanCustomerPullClient(
+            YouzanTokenService tokenService,
+            YouzanRemoteClient remoteClient,
+            String scrmListVersion,
+            String tradeDetailVersion,
+            long minIntervalMs) {
+        this(tokenService, remoteClient, scrmListVersion, tradeDetailVersion, "4.0.0", minIntervalMs);
+    }
 
     @Autowired
     public OfficialYouzanCustomerPullClient(
@@ -54,6 +71,7 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
             YouzanRemoteClient remoteClient,
             @Value("${YOUZAN_SCRM_CUSTOMER_LIST_VERSION:1.0.0}") String scrmListVersion,
             @Value("${YOUZAN_TRADE_DETAIL_VERSION:4.0.2}") String tradeDetailVersion,
+            @Value("${YOUZAN_SCRM_TAG_RELATION_VERSION:4.0.0}") String scrmTagRelationVersion,
             @Value("${YOUZAN_API_MIN_INTERVAL_MS:100}") long minIntervalMs) {
         this.tokenService = tokenService;
         this.remoteClient = remoteClient;
@@ -61,6 +79,8 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
                 ? "1.0.0" : scrmListVersion.trim();
         this.tradeDetailVersion = tradeDetailVersion == null || tradeDetailVersion.isBlank()
                 ? "4.0.2" : tradeDetailVersion.trim();
+        this.scrmTagRelationVersion = scrmTagRelationVersion == null || scrmTagRelationVersion.isBlank()
+                ? "4.0.0" : scrmTagRelationVersion.trim();
         this.minIntervalMs = Math.max(0L, minIntervalMs);
     }
 
@@ -155,6 +175,9 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
         String mobile = sanitizePlainMobile(plainMobile);
         String genderHint = "UNKNOWN";
         LocalDate birthday = null;
+        String remark = null;
+        String cityName = null;
+        Set<String> tagNames = new LinkedHashSet<>();
         List<String> warnings = new ArrayList<>();
 
         // 1. youzan.users.info.query (1.0.0)：实测 result_type_list=[0, 1, 2, 9]
@@ -178,13 +201,14 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
                     if ("UNKNOWN".equals(genderHint)) {
                         genderHint = parseGender(primitive.path("gender").asInt(0));
                     }
+                    cityName = firstNonBlank(cityName, extractCityName(primitive));
                 }
             }
         } catch (BusinessException ex) {
             warnings.add("youzan.users.info.query 未开通或暂不可用");
         }
 
-        // 2. youzan.scrm.customer.get (3.0.0)：按明文手机号或 fans_type + fans_id 获取真实客户姓名与生日
+        // 2. youzan.scrm.customer.get (3.0.0)：按明文手机号或 fans_type + fans_id 获取姓名、生日、备注、地区与标签
         List<Map<String, Object>> scrmQueries = new ArrayList<>(2);
         if (mobile != null) {
             scrmQueries.add(Map.of("mobile", mobile, "fans_type", 0, "fans_id", 0));
@@ -205,6 +229,9 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
                         String scrmMobile = sanitizePlainMobile(text(data, "mobile"));
                         String scrmGender = parseGender(data.path("gender").asInt(0));
                         LocalDate scrmBirthday = parseBirthday(text(data, "birthday"));
+                        String scrmRemark = firstNonBlank(plainText(data, "remark"), plainText(data, "memo"));
+                        String scrmCity = extractCityName(data);
+                        List<String> scrmTags = extractTagNames(data);
                         name = firstNonBlank(name, scrmName);
                         mobile = firstNonBlank(mobile, scrmMobile);
                         if ("UNKNOWN".equals(genderHint)) {
@@ -213,7 +240,11 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
                         if (birthday == null) {
                             birthday = scrmBirthday;
                         }
-                        if (scrmName != null || scrmMobile != null || scrmBirthday != null) {
+                        remark = firstNonBlank(remark, scrmRemark);
+                        cityName = firstNonBlank(scrmCity, cityName);
+                        addTagsBounded(tagNames, scrmTags);
+                        if (scrmName != null || scrmMobile != null || scrmBirthday != null
+                                || scrmRemark != null || scrmCity != null || !scrmTags.isEmpty()) {
                             break;
                         }
                     }
@@ -226,8 +257,27 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
             }
         }
 
+        // 3. 若上述接口未返回标签，尝试调用 youzan.scrm.tag.relation.get (默认 4.0.0) 按 YzOpenId 补拉客户标签
+        if (tagNames.isEmpty()) {
+            try {
+                Map<String, Object> tagQuery = Map.of(
+                        "account_type", "YzOpenId",
+                        "account_id", yzOpenId
+                );
+                JsonNode tagResp = callApi(tenantId, shopId, "youzan.scrm.tag.relation.get",
+                        scrmTagRelationVersion, tagQuery);
+                addTagsBounded(tagNames, extractTagNames(tagResp.path("data")));
+            } catch (BusinessException ex) {
+                String msg = ex.getMessage();
+                if (msg != null && (msg.contains("4204") || msg.contains("4005"))) {
+                    warnings.add("youzan.scrm.tag.relation.get 未开通或暂不可用");
+                }
+            }
+        }
+
         String warning = warnings.isEmpty() ? null : String.join("；", warnings);
-        return new YouzanCustomerEnrichment(name, nickname, mobile, genderHint, birthday, warning);
+        return new YouzanCustomerEnrichment(name, nickname, mobile, genderHint, birthday,
+                remark, cityName, List.copyOf(tagNames), warning);
     }
 
     private JsonNode callScrmList(long tenantId, String shopId, Map<String, Object> body) {
@@ -275,9 +325,11 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
         JsonNode fansInfo = item.path("fans_info");
         Integer fansType = firstPositiveInt(positiveInt(item, "fans_type"), positiveInt(fansInfo, "fans_type"));
         Long fansId = firstPositiveLong(positiveLong(item, "fans_id"), positiveLong(fansInfo, "fans_id"));
-        String remark = plainText(item, "remark");
+        String remark = firstNonBlank(plainText(item, "remark"), plainText(item, "memo"));
+        String cityName = extractCityName(item);
+        List<String> tagNames = extractTagNames(item);
         return new YouzanPulledCustomer(yzOpenId, name, nickname, mobile, genderHint, birthday, createdAt,
-                fansType, fansId, remark);
+                fansType, fansId, remark, cityName, tagNames);
     }
 
     private YouzanPulledCustomer parseOrderBuyer(JsonNode full) {
@@ -294,8 +346,145 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
         Instant createdAt = parseFlexibleTime(info.path("created"));
         Integer fansType = positiveInt(buyer, "fans_type");
         Long fansId = positiveLong(buyer, "fans_id");
+        // 仅提取省/市级别地域，绝不采集详细街道门牌地址
+        String cityName = extractCityName(address);
         return new YouzanPulledCustomer(yzOpenId, name, nickname, mobile, "UNKNOWN", null, createdAt,
-                fansType, fansId, null);
+                fansType, fansId, null, cityName, List.of());
+    }
+
+    private static String extractCityName(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (node.isTextual()) {
+            return cleanRegionCandidate(node.asText());
+        }
+        if (!node.isObject()) {
+            return null;
+        }
+        String city = firstNonBlank(
+                cleanCityCandidate(plainText(node, "city")),
+                cleanCityCandidate(plainText(node, "city_name")),
+                cleanCityCandidate(plainText(node, "delivery_city")),
+                cleanCityCandidate(plainText(node, "receiver_city")));
+        if (city != null) {
+            return city;
+        }
+        JsonNode contactAddress = node.path("contact_address");
+        if (contactAddress.isObject()) {
+            String nestedCity = extractCityName(contactAddress);
+            if (nestedCity != null) {
+                return nestedCity;
+            }
+        } else if (contactAddress.isTextual()) {
+            String nestedCity = cleanRegionCandidate(contactAddress.asText());
+            if (nestedCity != null) {
+                return nestedCity;
+            }
+        }
+        JsonNode area = node.path("area");
+        if (area.isObject()) {
+            String areaCity = firstNonBlank(
+                    extractCityName(area),
+                    cleanRegionCandidate(plainText(area, "area_name")));
+            if (areaCity != null) {
+                return areaCity;
+            }
+        } else if (area.isTextual()) {
+            String areaCity = cleanRegionCandidate(area.asText());
+            if (areaCity != null) {
+                return areaCity;
+            }
+        }
+        return firstNonBlank(
+                cleanRegionCandidate(plainText(node, "province")),
+                cleanRegionCandidate(plainText(node, "province_name")),
+                cleanRegionCandidate(plainText(node, "delivery_province")),
+                cleanRegionCandidate(plainText(node, "receiver_state")),
+                cleanRegionCandidate(plainText(node, "region")));
+    }
+
+    private static String cleanCityCandidate(String raw) {
+        String clean = cleanRegionCandidate(raw);
+        if (clean == null || GENERIC_CITY_PLACEHOLDERS.contains(clean)) {
+            return null;
+        }
+        return clean;
+    }
+
+    private static String cleanRegionCandidate(String raw) {
+        String plain = YouzanCustomerPullClient.stripCiphertext(raw);
+        if (plain == null || plain.length() > 64 || plain.matches("^\\d+$")) {
+            return null;
+        }
+        return plain;
+    }
+
+    private static List<String> extractTagNames(JsonNode container) {
+        if (container == null || container.isMissingNode() || container.isNull()) {
+            return List.of();
+        }
+        Set<String> tags = new LinkedHashSet<>();
+        if (container.isArray()) {
+            collectTagsFromArray(container, tags);
+            return List.copyOf(tags);
+        }
+        if (!container.isObject()) {
+            return List.of();
+        }
+        for (String field : List.of("tags", "tag_list", "customer_tags", "tag_names", "list")) {
+            JsonNode arr = container.path(field);
+            if (arr.isArray()) {
+                collectTagsFromArray(arr, tags);
+            }
+        }
+        return List.copyOf(tags);
+    }
+
+    private static void collectTagsFromArray(JsonNode array, Set<String> target) {
+        if (array == null || !array.isArray()) {
+            return;
+        }
+        for (JsonNode entry : array) {
+            if (target.size() >= MAX_TAGS_PER_CUSTOMER) {
+                return;
+            }
+            String label = null;
+            if (entry == null || entry.isNull()) {
+                continue;
+            }
+            if (entry.isTextual()) {
+                label = YouzanCustomerPullClient.stripCiphertext(entry.asText());
+            } else if (entry.isObject()) {
+                label = firstNonBlank(
+                        plainText(entry, "tag_name"),
+                        plainText(entry, "name"),
+                        plainText(entry, "label"));
+            }
+            if (label != null) {
+                String trimmed = label.length() > MAX_TAG_LABEL_LENGTH
+                        ? label.substring(0, MAX_TAG_LABEL_LENGTH) : label;
+                if (!trimmed.isBlank()) {
+                    target.add(trimmed);
+                }
+            }
+        }
+    }
+
+    private static void addTagsBounded(Set<String> target, List<String> additions) {
+        if (additions == null || additions.isEmpty()) {
+            return;
+        }
+        for (String tag : additions) {
+            if (target.size() >= MAX_TAGS_PER_CUSTOMER) {
+                return;
+            }
+            String clean = YouzanCustomerPullClient.stripCiphertext(tag);
+            if (clean != null) {
+                target.add(clean.length() > MAX_TAG_LABEL_LENGTH
+                        ? clean.substring(0, MAX_TAG_LABEL_LENGTH) : clean);
+            }
+        }
     }
 
     private JsonNode callApi(long tenantId, String shopId, String apiName, String version, Map<String, Object> body) {

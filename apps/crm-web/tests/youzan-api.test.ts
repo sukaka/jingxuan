@@ -1,7 +1,9 @@
 import type { AxiosAdapter } from 'axios'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  assignYouzanOrderSteward,
   batchRetryYouzanSyncIssues,
+  deleteYouzanStewardAlias,
   getYouzanCustomerSyncStatus,
   getYouzanReconcileReport,
   listYouzanCustomerLinks,
@@ -10,13 +12,17 @@ import {
   listYouzanOrders,
   listYouzanSkuCandidates,
   listYouzanSkuMappings,
+  listYouzanStewardAliases,
+  listYouzanStewardOptions,
   listYouzanSyncIssues,
   pullYouzanCustomers,
+  pullYouzanOrderByTid,
   reconcileYouzanOrders,
   resetYouzanCustomerSyncCursor,
   retryYouzanSyncIssue,
   saveYouzanCustomerLink,
   saveYouzanSkuMapping,
+  saveYouzanStewardAlias,
   syncYouzanOrders,
 } from '../src/api/youzan'
 import { http } from '../src/api/http'
@@ -173,5 +179,46 @@ describe('P1-1 有赞 Mock API 契约', () => {
       url: '/integrations/youzan/customer-sync/runs/501/items',
       params: { outcome: 'MOBILE_CONFLICT', page: 2, size: 20 },
     })
+  })
+
+  it('按单号拉取、管家筛选、人工分配与账号别名映射使用契约路径与幂等键', async () => {
+    const { adapter, calls } = capture()
+    http.defaults.adapter = adapter
+
+    await listYouzanOrders({ shopId: '92010731', page: 1, size: 20, assignedStewardId: 9, assignmentStatus: 'ASSIGNED', keyword: '紫紫' })
+    await pullYouzanOrderByTid({ shopId: '92010731', tid: 'E202611110001' }, 'pull-tid-key')
+    await assignYouzanOrderSteward('92010731', 'E202611110001', { stewardUserId: 9, reason: '人工确认', version: 0, saveAlias: true, aliasName: '紫紫' }, 'assign-key')
+    await listYouzanStewardOptions()
+    await listYouzanStewardAliases()
+    await saveYouzanStewardAlias({ aliasName: '紫紫', stewardUserId: 9, status: 'ACTIVE', backfillPending: true }, 'alias-key')
+    await deleteYouzanStewardAlias(12)
+
+    expect(calls[0]).toMatchObject({
+      method: 'get',
+      url: '/integrations/youzan/orders',
+      params: { shopId: '92010731', page: 1, size: 20, assignedStewardId: 9, assignmentStatus: 'ASSIGNED', keyword: '紫紫' },
+    })
+    expect(calls[1]).toMatchObject({
+      method: 'post',
+      url: '/integrations/youzan/orders/pull-by-tid',
+      data: { shopId: '92010731', tid: 'E202611110001' },
+      key: 'pull-tid-key',
+    })
+    expect(calls[2]).toMatchObject({
+      method: 'put',
+      url: '/integrations/youzan/orders/E202611110001/assign',
+      params: { shopId: '92010731' },
+      data: { stewardUserId: 9, reason: '人工确认', version: 0, saveAlias: true, aliasName: '紫紫' },
+      key: 'assign-key',
+    })
+    expect(calls[3]).toMatchObject({ method: 'get', url: '/integrations/youzan/steward-options' })
+    expect(calls[4]).toMatchObject({ method: 'get', url: '/integrations/youzan/steward-aliases' })
+    expect(calls[5]).toMatchObject({
+      method: 'post',
+      url: '/integrations/youzan/steward-aliases',
+      data: { aliasName: '紫紫', stewardUserId: 9, status: 'ACTIVE', backfillPending: true },
+      key: 'alias-key',
+    })
+    expect(calls[6]).toMatchObject({ method: 'delete', url: '/integrations/youzan/steward-aliases/12' })
   })
 })

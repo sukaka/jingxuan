@@ -299,6 +299,7 @@ public class YouzanCustomerSyncService {
         boolean finalized = false;
         Set<String> warnings = new LinkedHashSet<>();
         Set<String> seenInRun = new HashSet<>();
+        Map<String, Optional<String>> tagCodeCache = new HashMap<>();
         List<YouzanCustomerSyncItemResponse> inlineFallbackItems = new ArrayList<>();
 
         try {
@@ -352,7 +353,7 @@ public class YouzanCustomerSyncService {
                     YouzanCustomerPullClient.YouzanPulledCustomer pulled = items.get(i);
                     ItemProcessResult outcome = processSingleCustomer(
                             tenantId, operator, target, client, shopId, sourceMode, enrichProfile,
-                            runId, pulled, seenInRun, warnings, inlineFallbackItems);
+                            runId, pulled, seenInRun, tagCodeCache, warnings, inlineFallbackItems);
                     if (outcome.recorded()) {
                         fetchedCount++;
                         switch (outcome.outcome()) {
@@ -486,8 +487,8 @@ public class YouzanCustomerSyncService {
             long tenantId, CurrentUser operator, CustomerExternalImportService.ValidatedImportTarget target,
             YouzanCustomerPullClient client, String shopId, String sourceMode, boolean enrichProfile,
             long runId, YouzanCustomerPullClient.YouzanPulledCustomer pulled,
-            Set<String> seenInRun, Set<String> warnings,
-            List<YouzanCustomerSyncItemResponse> inlineFallbackItems) {
+            Set<String> seenInRun, Map<String, Optional<String>> tagCodeCache,
+            Set<String> warnings, List<YouzanCustomerSyncItemResponse> inlineFallbackItems) {
         String yzOpenId = pulled == null ? null : trimToNull(pulled.yzOpenId());
         if (yzOpenId == null) {
             String displayMasked = pulled == null ? null : maskDisplayName(pulled.name(), pulled.nickname());
@@ -509,10 +510,17 @@ public class YouzanCustomerSyncService {
                     tenantId, linkedCustomerId, IDENTITY_TYPE_YOUZAN, shopId, yzOpenId);
             if (refOpt.isPresent()) {
                 CustomerExternalImportService.ExistingCustomerRef ref = refOpt.get();
+                String detail = "该有赞客户已绑定 CRM 档案 " + ref.customerNo() + "，自动跳过";
+                if (enrichProfile) {
+                    ResolvedPulledProfile resolved = resolveProfile(tenantId, shopId, sourceMode, true,
+                            client, yzOpenId, pulled, warnings);
+                    detail = tryBackfillExisting(tenantId, operator, ref, shopId, sourceMode,
+                            resolved, tagCodeCache, detail);
+                }
                 persistItem(tenantId, runId, shopId, yzOpenId, CustomerExternalImportService.OUTCOME_SKIPPED_EXISTING,
                         maskDisplayName(ref.displayName(), null), ref.mobileMasked(),
                         ref.customerId(), ref.customerNo(), List.of(), List.of(),
-                        "该有赞客户已绑定 CRM 档案 " + ref.customerNo() + "，自动跳过", inlineFallbackItems);
+                        detail, inlineFallbackItems);
                 return new ItemProcessResult(true, CustomerExternalImportService.OUTCOME_SKIPPED_EXISTING);
             }
             persistItem(tenantId, runId, shopId, yzOpenId, CustomerExternalImportService.OUTCOME_FAILED,
@@ -522,32 +530,9 @@ public class YouzanCustomerSyncService {
             return new ItemProcessResult(true, CustomerExternalImportService.OUTCOME_FAILED);
         }
 
-        String name = pulled.name();
-        String nickname = pulled.nickname();
-        String mobile = pulled.mobile();
-        LocalDate birthday = pulled.birthday();
-
-        boolean needsEnrich = enrichProfile
-                && (SOURCE_MODE_ORDER_BUYERS.equals(sourceMode) || isBlank(name) || isBlank(mobile));
-        if (needsEnrich) {
-            try {
-                YouzanCustomerPullClient.YouzanCustomerEnrichment enriched = client.enrichCustomer(
-                        tenantId, shopId, yzOpenId, pulled.fansType(), pulled.fansId(), mobile);
-                if (enriched != null) {
-                    name = firstNonBlank(enriched.name(), name);
-                    nickname = firstNonBlank(nickname, enriched.nickname());
-                    mobile = firstNonBlank(mobile, enriched.mobile());
-                    if (birthday == null) {
-                        birthday = enriched.birthday();
-                    }
-                    if (!isBlank(enriched.warning())) {
-                        warnings.add(sanitizeText(enriched.warning()));
-                    }
-                }
-            } catch (RuntimeException ex) {
-                warnings.add("部分客户资料补全失败，已按基础信息继续建档");
-            }
-        }
+        ResolvedPulledProfile resolved = resolveProfile(tenantId, shopId, sourceMode, enrichProfile,
+                client, yzOpenId, pulled, warnings);
+        List<String> resolvedTagCodes = resolveTagCodesCached(tenantId, operator, resolved.tagNames(), tagCodeCache);
 
         try {
             CustomerExternalImportService.ExternalCustomerCommand cmd =
@@ -555,13 +540,15 @@ public class YouzanCustomerSyncService {
                             IDENTITY_TYPE_YOUZAN,
                             shopId,
                             yzOpenId,
-                            name,
-                            nickname,
-                            mobile,
-                            birthday,
+                            resolved.name(),
+                            resolved.nickname(),
+                            resolved.mobile(),
+                            resolved.birthday(),
                             pulled.createdAt(),
-                            pulled.remark(),
-                            "有赞客户拉取建档（shopId=" + shopId + ", mode=" + sourceMode + "）");
+                            resolved.remark(),
+                            "有赞客户拉取建档（shopId=" + shopId + ", mode=" + sourceMode + "）",
+                            resolved.cityName(),
+                            resolvedTagCodes);
             CustomerExternalImportService.ExternalImportResult result = importService.importCustomer(
                     tenantId, operator, target, cmd);
 
@@ -578,14 +565,23 @@ public class YouzanCustomerSyncService {
             }
 
             if (CustomerExternalImportService.OUTCOME_SKIPPED_EXISTING.equals(result.outcome())) {
+                String detail = sanitizeText(result.detailMasked());
                 if (result.crmCustomerId() != null) {
                     ensureYouzanCustomerLink(tenantId, shopId, yzOpenId, result.crmCustomerId(), operator.userId());
                     linkUnresolvedRiskIssues(tenantId, shopId, yzOpenId, result.crmCustomerId());
+                    if (enrichProfile) {
+                        CustomerExternalImportService.ExistingCustomerRef ref =
+                                new CustomerExternalImportService.ExistingCustomerRef(
+                                        result.crmCustomerId(), result.crmCustomerNo(),
+                                        result.displayNameMasked(), result.mobileMasked());
+                        detail = tryBackfillExisting(tenantId, operator, ref, shopId, sourceMode,
+                                resolved, tagCodeCache, detail);
+                    }
                 }
                 persistItem(tenantId, runId, shopId, yzOpenId, CustomerExternalImportService.OUTCOME_SKIPPED_EXISTING,
                         maskDisplayName(result.displayNameMasked(), null), result.mobileMasked(),
                         result.crmCustomerId(), result.crmCustomerNo(), List.of(), List.of(),
-                        sanitizeText(result.detailMasked()), inlineFallbackItems);
+                        detail, inlineFallbackItems);
                 return new ItemProcessResult(true, CustomerExternalImportService.OUTCOME_SKIPPED_EXISTING);
             }
 
@@ -608,10 +604,119 @@ public class YouzanCustomerSyncService {
                 reason = "客户建档处理失败";
             }
             persistItem(tenantId, runId, shopId, yzOpenId, CustomerExternalImportService.OUTCOME_FAILED,
-                    maskDisplayName(name, nickname), maskRawMobile(mobile),
+                    maskDisplayName(resolved.name(), resolved.nickname()), maskRawMobile(resolved.mobile()),
                     null, null, List.of(), List.of(), truncate(reason, 500), inlineFallbackItems);
             return new ItemProcessResult(true, CustomerExternalImportService.OUTCOME_FAILED);
         }
+    }
+
+    private ResolvedPulledProfile resolveProfile(long tenantId, String shopId, String sourceMode,
+                                                 boolean enrichProfile, YouzanCustomerPullClient client,
+                                                 String yzOpenId,
+                                                 YouzanCustomerPullClient.YouzanPulledCustomer pulled,
+                                                 Set<String> warnings) {
+        String name = pulled.name();
+        String nickname = pulled.nickname();
+        String mobile = pulled.mobile();
+        LocalDate birthday = pulled.birthday();
+        String remark = pulled.remark();
+        String cityName = pulled.cityName();
+        Set<String> tagNames = new LinkedHashSet<>(pulled.tagNames() == null ? List.of() : pulled.tagNames());
+
+        boolean needsEnrich = enrichProfile
+                && (SOURCE_MODE_ORDER_BUYERS.equals(sourceMode)
+                || isBlank(name) || isBlank(mobile) || isBlank(remark) || isBlank(cityName)
+                || birthday == null || tagNames.isEmpty());
+        if (needsEnrich) {
+            try {
+                YouzanCustomerPullClient.YouzanCustomerEnrichment enriched = client.enrichCustomer(
+                        tenantId, shopId, yzOpenId, pulled.fansType(), pulled.fansId(), mobile);
+                if (enriched != null) {
+                    name = firstNonBlank(enriched.name(), name);
+                    nickname = firstNonBlank(nickname, enriched.nickname());
+                    mobile = firstNonBlank(mobile, enriched.mobile());
+                    if (birthday == null) {
+                        birthday = enriched.birthday();
+                    }
+                    remark = firstNonBlank(remark, enriched.remark());
+                    cityName = firstNonBlank(cityName, enriched.cityName());
+                    if (enriched.tagNames() != null) {
+                        tagNames.addAll(enriched.tagNames());
+                    }
+                    if (!isBlank(enriched.warning())) {
+                        warnings.add(sanitizeText(enriched.warning()));
+                    }
+                }
+            } catch (RuntimeException ex) {
+                warnings.add("部分客户资料补全失败，已按基础信息继续建档");
+            }
+        }
+        return new ResolvedPulledProfile(name, nickname, mobile, birthday, remark, cityName, List.copyOf(tagNames));
+    }
+
+    private List<String> resolveTagCodesCached(long tenantId, CurrentUser operator, List<String> tagNames,
+                                               Map<String, Optional<String>> tagCodeCache) {
+        if (tagNames == null || tagNames.isEmpty()) {
+            return List.of();
+        }
+        Set<String> result = new LinkedHashSet<>();
+        List<String> misses = new ArrayList<>();
+        for (String tagName : tagNames) {
+            String clean = trimToNull(tagName);
+            if (clean == null) {
+                continue;
+            }
+            String key = clean.toLowerCase(Locale.ROOT);
+            Optional<String> cached = tagCodeCache.get(key);
+            if (cached != null) {
+                cached.ifPresent(result::add);
+            } else {
+                misses.add(clean);
+            }
+        }
+        if (!misses.isEmpty()) {
+            for (String miss : misses) {
+                String key = miss.toLowerCase(Locale.ROOT);
+                List<String> resolved = importService.resolveOrCreateTagCodes(tenantId, operator, List.of(miss));
+                if (resolved != null && !resolved.isEmpty()) {
+                    String code = resolved.get(0);
+                    tagCodeCache.put(key, Optional.of(code));
+                    result.add(code);
+                } else {
+                    tagCodeCache.put(key, Optional.empty());
+                }
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private String tryBackfillExisting(long tenantId, CurrentUser operator,
+                                       CustomerExternalImportService.ExistingCustomerRef ref,
+                                       String shopId, String sourceMode, ResolvedPulledProfile resolved,
+                                       Map<String, Optional<String>> tagCodeCache, String defaultDetail) {
+        boolean hasCandidate = !isBlank(resolved.cityName()) || !isBlank(resolved.remark())
+                || resolved.birthday() != null || !resolved.tagNames().isEmpty();
+        if (!hasCandidate) {
+            return defaultDetail;
+        }
+        try {
+            List<String> tagCodes = resolveTagCodesCached(tenantId, operator, resolved.tagNames(), tagCodeCache);
+            CustomerExternalImportService.BackfillProfileResult backfill = importService.backfillMissingProfile(
+                    tenantId, operator, ref.customerId(),
+                    new CustomerExternalImportService.BackfillProfileCommand(
+                            resolved.cityName(),
+                            resolved.remark(),
+                            resolved.birthday(),
+                            tagCodes,
+                            "有赞客户同步补全空缺资料（shopId=" + shopId + ", mode=" + sourceMode + "）"));
+            if (backfill != null && backfill.updated() && !backfill.updatedFields().isEmpty()) {
+                return "该有赞客户已绑定 CRM 档案 " + ref.customerNo()
+                        + "，已补全空缺资料（" + String.join("、", backfill.updatedFields()) + "）";
+            }
+        } catch (RuntimeException ex) {
+            LOG.warn("有赞已绑定客户补全空缺资料失败 customerId={}: {}", ref.customerId(), sanitizeText(ex.getMessage()));
+        }
+        return defaultDetail;
     }
 
     private void ensureYouzanCustomerLink(long tenantId, String shopId, String yzOpenId,
@@ -1147,5 +1252,19 @@ public class YouzanCustomerSyncService {
     }
 
     private record ItemProcessResult(boolean recorded, String outcome) {
+    }
+
+    private record ResolvedPulledProfile(
+            String name,
+            String nickname,
+            String mobile,
+            LocalDate birthday,
+            String remark,
+            String cityName,
+            List<String> tagNames
+    ) {
+        private ResolvedPulledProfile {
+            tagNames = tagNames == null ? List.of() : List.copyOf(tagNames);
+        }
     }
 }

@@ -105,6 +105,7 @@ class RealYouzanHttpFlowTest {
             respond(exchange, "{\"success\":true,\"code\":200,\"data\":{\"total_results\":1,\"full_order_info_list\":[{\"full_order_info\":{"
                     + "\"order_info\":{\"tid\":\"E-HTTP-FULL-1\",\"status\":\"TRADE_SUCCESS\",\"update_time\":\"2026-10-24 11:00:00\"},"
                     + "\"pay_info\":{\"payment\":\"36.22\",\"pay_time\":\"2026-10-24 10:59:00\",\"transaction\":[\"T-HTTP-FULL-1\"],\"phase_payments\":[]},"
+                    + "\"remark_info\":{\"trade_memo\":\"\"},"
                     + "\"buyer_info\":{\"yz_open_id\":\"yz-http-full-1\"},\"orders\":[{\"item_id\":301,\"sku_id\":9,\"num\":2}]}}]}}");
         });
         server.createContext("/api/youzan.trade.get/4.0.2", exchange -> {

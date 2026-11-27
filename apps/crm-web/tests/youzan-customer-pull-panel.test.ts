@@ -4,6 +4,7 @@ import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthUser } from '../src/api/auth'
+import { syncYouzanAnnualSnapshots } from '../src/api/annualReport'
 import type { CustomerOwnerOption } from '../src/api/customer'
 import { listCustomerOwnerOptions } from '../src/api/customer'
 import type {
@@ -41,6 +42,11 @@ vi.mock('../src/api/youzan', async (importOriginal) => ({
 
 vi.mock('../src/api/customer', () => ({
   listCustomerOwnerOptions: vi.fn(),
+}))
+
+vi.mock('../src/api/annualReport', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/annualReport')>()),
+  syncYouzanAnnualSnapshots: vi.fn(),
 }))
 
 vi.mock('../src/api/dictionary', () => ({
@@ -668,5 +674,50 @@ describe('YouzanCustomerPullPanel 有赞客户拉取与建档', () => {
     expect(itemsSection.text()).toContain('yz_open_inline_1')
     expect(itemsSection.text()).not.toContain('yz_open_inline_21')
     expect(listYouzanCustomerSyncRunItems).not.toHaveBeenCalled()
+  })
+
+  it('管理员可从客户拉取面板打开「拉取历史订单只读快照」弹窗并触发只读快照同步', async () => {
+    vi.mocked(syncYouzanAnnualSnapshots).mockResolvedValue({
+      shopId: '40880001',
+      startDate: '2025-01-01',
+      endDate: '2025-12-31',
+      windowsPulled: 5,
+      ordersSynced: 8,
+      paidOrdersSynced: 7,
+      buyersSynced: 3,
+      buyersEnriched: 0,
+      openIdBoundCount: 0,
+      unionIdBoundCount: 0,
+      linkedCustomerCount: 2,
+      warnings: [],
+      syncedAt: '2026-11-27T02:00:00Z',
+    })
+
+    const wrapper = mountPanel(['integration:youzan:manage', 'customer:write'], '40880001')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="yz-open-history-snapshot"]').trigger('click')
+    await flushPromises()
+
+    const preset2025 = document.body.querySelector('[data-testid="yz-snap-preset-2025"]') as HTMLButtonElement | null
+    expect(preset2025).not.toBeNull()
+    preset2025!.click()
+    await flushPromises()
+
+    const submitBtn = document.body.querySelector('[data-testid="yz-snap-submit"]') as HTMLButtonElement | null
+    expect(submitBtn).not.toBeNull()
+    submitBtn!.click()
+    await flushPromises()
+
+    expect(syncYouzanAnnualSnapshots).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shopId: '40880001',
+        startDate: '2025-01-01',
+        endDate: '2025-12-31',
+        enrichBuyerProfile: false,
+      }),
+      expect.stringMatching(/^youzan\.history\.snapshot:/),
+    )
+    expect(ElMessage.success).toHaveBeenCalledWith(expect.stringContaining('共同步 8 笔'))
   })
 })

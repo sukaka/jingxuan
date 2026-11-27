@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.whale.crm.integration.youzan.infrastructure.mapper.YouzanOrderAssignmentMapper">
+  <sql id="assignmentColumns">
+    id,
+    tenant_id AS tenantId,
+    shop_id AS shopId,
+    external_order_no AS externalOrderNo,
+    latest_event_id AS latestEventId,
+    provider_order_status AS providerOrderStatus,
+    provider_status_text AS providerStatusText,
+    pay_way_desc AS payWayDesc,
+    ordered_at AS orderedAt,
+    consigned_at AS consignedAt,
+    buyer_form_name_masked AS buyerFormNameMasked,
+    buyer_form_mobile_masked AS buyerFormMobileMasked,
+    trade_memo_masked AS tradeMemoMasked,
+    memo_performance_owner AS memoPerformanceOwner,
+    memo_channel AS memoChannel,
+    memo_customer_type AS memoCustomerType,
+    memo_source AS memoSource,
+    memo_account_name AS memoAccountName,
+    memo_account_key AS memoAccountKey,
+    memo_institution_name AS memoInstitutionName,
+    memo_extra_note AS memoExtraNote,
+    assigned_steward_id AS assignedStewardId,
+    assigned_team_id AS assignedTeamId,
+    assignment_status AS assignmentStatus,
+    assignment_source AS assignmentSource,
+    assignment_reason AS assignmentReason,
+    assigned_by AS assignedBy,
+    assigned_at AS assignedAt,
+    created_at AS createdAt,
+    updated_at AS updatedAt,
+    version
+  </sql>
+
+  <sql id="aliasColumns">
+    id,
+    tenant_id AS tenantId,
+    alias_name AS aliasName,
+    alias_key AS aliasKey,
+    steward_user_id AS stewardUserId,
+    status,
+    remark,
+    created_by AS createdBy,
+    updated_by AS updatedBy,
+    created_at AS createdAt,
+    updated_at AS updatedAt,
+    version
+  </sql>
+
+  <select id="selectByOrder" resultType="com.whale.crm.integration.youzan.domain.YouzanOrderAssignment">
+    SELECT <include refid="assignmentColumns"/>
+    FROM crm_youzan_order_assignment
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND external_order_no=#{externalOrderNo}
+  </select>
+
+  <select id="selectByOrderForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanOrderAssignment">
+    SELECT <include refid="assignmentColumns"/>
+    FROM crm_youzan_order_assignment
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId} AND external_order_no=#{externalOrderNo}
+    FOR UPDATE
+  </select>
+
+  <select id="selectByOrders" resultType="com.whale.crm.integration.youzan.domain.YouzanOrderAssignment">
+    SELECT <include refid="assignmentColumns"/>
+    FROM crm_youzan_order_assignment
+    WHERE tenant_id=#{tenantId} AND shop_id=#{shopId}
+      AND external_order_no IN
+      <foreach collection="externalOrderNos" item="orderNo" open="(" separator="," close=")">
+        #{orderNo}
+      </foreach>
+  </select>
+
+  <insert id="upsertOrderAssignment">
+    INSERT INTO crm_youzan_order_assignment (
+      tenant_id, shop_id, external_order_no, latest_event_id,
+      provider_order_status, provider_status_text, pay_way_desc, ordered_at, consigned_at,
+      buyer_form_name_masked, buyer_form_mobile_masked,
+      trade_memo_masked, memo_performance_owner, memo_channel, memo_customer_type,
+      memo_source, memo_account_name, memo_account_key, memo_institution_name, memo_extra_note,
+      assigned_steward_id, assigned_team_id, assignment_status, assignment_source,
+      assignment_reason, assigned_by, assigned_at
+    )
+    VALUES (
+      #{tenantId}, #{entity.shopId}, #{entity.externalOrderNo}, #{entity.latestEventId},
+      #{entity.providerOrderStatus}, #{entity.providerStatusText}, #{entity.payWayDesc},
+      #{entity.orderedAt}, #{entity.consignedAt},
+      #{entity.buyerFormNameMasked}, #{entity.buyerFormMobileMasked},
+      #{entity.tradeMemoMasked}, #{entity.memoPerformanceOwner}, #{entity.memoChannel},
+      #{entity.memoCustomerType}, #{entity.memoSource}, #{entity.memoAccountName},
+      #{entity.memoAccountKey}, #{entity.memoInstitutionName}, #{entity.memoExtraNote},
+      #{entity.assignedStewardId}, #{entity.assignedTeamId}, #{entity.assignmentStatus},
+      #{entity.assignmentSource}, #{entity.assignmentReason}, #{entity.assignedBy}, #{entity.assignedAt}
+    )
+    ON DUPLICATE KEY UPDATE
+      latest_event_id = COALESCE(VALUES(latest_event_id), latest_event_id),
+      provider_order_status = COALESCE(VALUES(provider_order_status), provider_order_status),
+      provider_status_text = COALESCE(VALUES(provider_status_text), provider_status_text),
+      pay_way_desc = COALESCE(VALUES(pay_way_desc), pay_way_desc),
+      ordered_at = COALESCE(VALUES(ordered_at), ordered_at),
+      consigned_at = COALESCE(VALUES(consigned_at), consigned_at),
+      buyer_form_name_masked = COALESCE(VALUES(buyer_form_name_masked), buyer_form_name_masked),
+      buyer_form_mobile_masked = COALESCE(VALUES(buyer_form_mobile_masked), buyer_form_mobile_masked),
+      trade_memo_masked = VALUES(trade_memo_masked),
+      memo_performance_owner = VALUES(memo_performance_owner),
+      memo_channel = VALUES(memo_channel),
+      memo_customer_type = VALUES(memo_customer_type),
+      memo_source = VALUES(memo_source),
+      memo_account_name = VALUES(memo_account_name),
+      memo_account_key = VALUES(memo_account_key),
+      memo_institution_name = VALUES(memo_institution_name),
+      memo_extra_note = VALUES(memo_extra_note),
+      assigned_steward_id = CASE
+        WHEN assignment_source = 'MANUAL' AND assigned_steward_id IS NOT NULL THEN assigned_steward_id
+        ELSE VALUES(assigned_steward_id)
+      END,
+      assigned_team_id = CASE
+        WHEN assignment_source = 'MANUAL' AND assigned_steward_id IS NOT NULL THEN assigned_team_id
+        ELSE VALUES(assigned_team_id)
+      END,
+      assignment_status = CASE
+        WHEN assignment_source = 'MANUAL' AND assigned_steward_id IS NOT NULL THEN assignment_status
+        ELSE VALUES(assignment_status)
+      END,
+      assignment_source = CASE
+        WHEN assignment_source = 'MANUAL' AND assigned_steward_id IS NOT NULL THEN assignment_source
+        ELSE VALUES(assignment_source)
+      END,
+      assignment_reason = CASE
+        WHEN assignment_source = 'MANUAL' AND assigned_steward_id IS NOT NULL THEN assignment_reason
+        ELSE VALUES(assignment_reason)
+      END,
+      assigned_by = CASE
+        WHEN assignment_source = 'MANUAL' AND assigned_steward_id IS NOT NULL THEN assigned_by
+        ELSE VALUES(assigned_by)
+      END,
+      assigned_at = CASE
+        WHEN assignment_source = 'MANUAL' AND assigned_steward_id IS NOT NULL THEN assigned_at
+        ELSE VALUES(assigned_at)
+      END,
+      version = version + 1
+  </insert>
+
+  <update id="updateManualAssignment">
+    UPDATE crm_youzan_order_assignment
+    SET assigned_steward_id = #{assignedStewardId},
+        assigned_team_id = #{assignedTeamId},
+        assignment_status = #{assignmentStatus},
+        assignment_source = #{assignmentSource},
+        assignment_reason = #{assignmentReason},
+        assigned_by = #{assignedBy},
+        assigned_at = #{assignedAt},
+        version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion}
+  </update>
+
+  <update id="backfillPendingByAccountKey">
+    UPDATE crm_youzan_order_assignment
+    SET assigned_steward_id = #{stewardUserId},
+        assigned_team_id = #{stewardTeamId},
+        assignment_status = 'ASSIGNED',
+        assignment_source = 'AUTO_ALIAS',
+        assignment_reason = #{assignmentReason},
+        assigned_by = NULL,
+        assigned_at = #{assignedAt},
+        version = version + 1
+    WHERE tenant_id = #{tenantId}
+      AND memo_account_key = #{memoAccountKey}
+      AND assignment_status IN ('UNMATCHED', 'AMBIGUOUS')
+      AND assignment_source &lt;&gt; 'MANUAL'
+  </update>
+
+  <select id="selectAliases" resultType="com.whale.crm.integration.youzan.domain.YouzanStewardAlias">
+    SELECT <include refid="aliasColumns"/>
+    FROM crm_youzan_steward_alias
+    WHERE tenant_id=#{tenantId}
+    ORDER BY status ASC, alias_name ASC, id ASC
+  </select>
+
+  <select id="selectAliasById" resultType="com.whale.crm.integration.youzan.domain.YouzanStewardAlias">
+    SELECT <include refid="aliasColumns"/>
+    FROM crm_youzan_steward_alias
+    WHERE tenant_id=#{tenantId} AND id=#{id}
+  </select>
+
+  <select id="selectAliasByKey" resultType="com.whale.crm.integration.youzan.domain.YouzanStewardAlias">
+    SELECT <include refid="aliasColumns"/>
+    FROM crm_youzan_steward_alias
+    WHERE tenant_id=#{tenantId} AND alias_key=#{aliasKey}
+  </select>
+
+  <select id="selectAliasByKeyForUpdate" resultType="com.whale.crm.integration.youzan.domain.YouzanStewardAlias">
+    SELECT <include refid="aliasColumns"/>
+    FROM crm_youzan_steward_alias
+    WHERE tenant_id=#{tenantId} AND alias_key=#{aliasKey}
+    FOR UPDATE
+  </select>
+
+  <insert id="insertAlias">
+    INSERT INTO crm_youzan_steward_alias (
+      tenant_id, alias_name, alias_key, steward_user_id, status, remark, created_by, updated_by
+    )
+    VALUES (
+      #{tenantId}, #{entity.aliasName}, #{entity.aliasKey}, #{entity.stewardUserId},
+      #{entity.status}, #{entity.remark}, #{entity.createdBy}, #{entity.updatedBy}
+    )
+  </insert>
+
+  <update id="updateAlias">
+    UPDATE crm_youzan_steward_alias
+    SET alias_name = #{aliasName},
+        alias_key = #{aliasKey},
+        steward_user_id = #{stewardUserId},
+        status = #{status},
+        remark = #{remark},
+        updated_by = #{updatedBy},
+        version = version + 1
+    WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{expectedVersion}
+  </update>
+
+  <delete id="deleteAlias">
+    DELETE FROM crm_youzan_steward_alias
+    WHERE tenant_id = #{tenantId} AND id = #{id}
+  </delete>
+</mapper>

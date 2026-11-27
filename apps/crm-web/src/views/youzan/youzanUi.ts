@@ -33,6 +33,58 @@ const ISSUE_LABELS: Record<string, string> = {
   DEAD: '已终止',
 }
 
+const ASSIGNMENT_STATUS_LABELS: Record<string, string> = {
+  ASSIGNED: '已分配',
+  UNMATCHED: '账号未匹配',
+  AMBIGUOUS: '重名冲突',
+  NO_ACCOUNT: '备注无账号',
+}
+
+const ASSIGNMENT_SOURCE_LABELS: Record<string, string> = {
+  AUTO_ALIAS: '别名自动匹配',
+  AUTO_DISPLAY_NAME: '姓名自动匹配',
+  MANUAL: '人工分配',
+  NONE: '尚未分配',
+}
+
+const PROVIDER_ORDER_STATUS_LABELS: Record<string, string> = {
+  WAIT_BUYER_PAY: '待付款',
+  TRADE_PAID: '已支付',
+  WAIT_CONFIRM: '待确认',
+  WAIT_SELLER_SEND_GOODS: '待发货',
+  WAIT_BUYER_CONFIRM_GOODS: '已发货',
+  TRADE_SUCCESS: '交易完成',
+  TRADE_CLOSED: '交易关闭',
+  TRADE_CLOSED_BY_USER: '买家关闭',
+}
+
+export function assignmentStatusLabel(status: string | null | undefined): string {
+  if (!status) return '待分配'
+  return ASSIGNMENT_STATUS_LABELS[status] ?? status
+}
+
+export function assignmentStatusTone(status: string | null | undefined): YouzanTone {
+  if (status === 'ASSIGNED') return 'success'
+  if (status === 'UNMATCHED' || status === 'AMBIGUOUS') return 'warning'
+  return 'info'
+}
+
+export function assignmentSourceLabel(source: string | null | undefined): string {
+  if (!source) return '尚未分配'
+  return ASSIGNMENT_SOURCE_LABELS[source] ?? source
+}
+
+export function providerOrderStatusLabel(
+  status: string | null | undefined,
+  statusText?: string | null,
+): string | null {
+  const cleanText = statusText?.trim()
+  if (cleanText) return cleanText
+  const cleanStatus = status?.trim()
+  if (!cleanStatus) return null
+  return PROVIDER_ORDER_STATUS_LABELS[cleanStatus] ?? cleanStatus
+}
+
 export function mappingStatusLabel(status: string): string {
   return PROCESS_LABELS[status] ?? '未知状态'
 }

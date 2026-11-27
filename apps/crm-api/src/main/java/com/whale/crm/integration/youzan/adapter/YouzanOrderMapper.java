@@ -66,6 +66,10 @@ public class YouzanOrderMapper {
         JsonNode info = full.path("order_info");
         JsonNode pay = full.path("pay_info");
         JsonNode buyer = full.path("buyer_info");
+        JsonNode remarkInfo = full.path("remark_info");
+        if (!remarkInfo.isObject() || !remarkInfo.has("trade_memo")) {
+            return false;
+        }
         String tid = text(info, "tid");
         String status = text(info, "status");
         String updateTime = text(info, "update_time");

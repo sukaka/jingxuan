@@ -43,7 +43,23 @@
       )
     )
   </sql>
+  <sql id="assignmentScopeCondition">
+    <choose>
+      <when test="scope.scopeType == 'ALL'">AND 1=1</when>
+      <when test="scope.scopeType == 'SELF'">AND oa_scope.assigned_steward_id=#{scope.selfId}</when>
+      <when test="scope.scopeType == 'TEAM'">
+        <choose>
+          <when test="scope.teamIds != null and scope.teamIds.size() > 0">
+            AND (oa_scope.assigned_steward_id=#{scope.selfId} OR COALESCE(su_scope.team_id, oa_scope.assigned_team_id) IN <foreach collection="scope.teamIds" item="teamId" open="(" separator="," close=")">#{teamId}</foreach>)
+          </when>
+          <otherwise>AND oa_scope.assigned_steward_id=#{scope.selfId}</otherwise>
+        </choose>
+      </when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+  </sql>
   <sql id="eventScopeCondition">
+    <include refid="allScopeOrderFilter"/>
     AND (
       EXISTS (
         SELECT 1 FROM crm_youzan_order_map om
@@ -71,7 +87,44 @@
             <include refid="customerScopeCondition"/>
         )
       )
+      OR EXISTS (
+        SELECT 1 FROM crm_youzan_order_assignment oa_scope
+        LEFT JOIN sys_user su_scope ON su_scope.tenant_id=oa_scope.tenant_id AND su_scope.id=oa_scope.assigned_steward_id
+        WHERE oa_scope.tenant_id=e.tenant_id
+          AND oa_scope.shop_id=e.shop_id
+          AND oa_scope.external_order_no=e.external_order_no
+          AND oa_scope.assigned_steward_id IS NOT NULL
+          <include refid="assignmentScopeCondition"/>
+      )
     )
+  </sql>
+  <sql id="orderQueryFilters">
+    <if test="assignedStewardId != null">
+      AND oa.assigned_steward_id=#{assignedStewardId}
+    </if>
+    <if test="assignmentStatus != null and assignmentStatus != ''">
+      <choose>
+        <when test="assignmentStatus == 'UNASSIGNED'">
+          AND (oa.id IS NULL OR oa.assignment_status IN ('UNMATCHED', 'AMBIGUOUS', 'NO_ACCOUNT'))
+        </when>
+        <when test="assignmentStatus == 'NO_ACCOUNT'">
+          AND (oa.id IS NULL OR oa.assignment_status='NO_ACCOUNT')
+        </when>
+        <otherwise>
+          AND oa.assignment_status=#{assignmentStatus}
+        </otherwise>
+      </choose>
+    </if>
+    <if test="keyword != null and keyword != ''">
+      AND (
+        e.external_order_no LIKE CONCAT('%', #{keyword}, '%')
+        OR oa.memo_account_name LIKE CONCAT('%', #{keyword}, '%')
+        OR oa.memo_performance_owner LIKE CONCAT('%', #{keyword}, '%')
+        OR oa.memo_institution_name LIKE CONCAT('%', #{keyword}, '%')
+        OR oa.memo_source LIKE CONCAT('%', #{keyword}, '%')
+        OR oa.trade_memo_masked LIKE CONCAT('%', #{keyword}, '%')
+      )
+    </if>
   </sql>
 
   <insert id="insertEvent">
@@ -174,6 +227,49 @@
         <include refid="allScopeOrderFilter"/>
       </otherwise>
     </choose>
+  </select>
+  <select id="selectLatestOrderEventsFiltered" resultType="com.whale.crm.integration.youzan.domain.YouzanEvent">
+    SELECT <include refid="aliasedEventColumns"/> FROM crm_youzan_order_latest ol
+    INNER JOIN crm_youzan_event e ON e.tenant_id=ol.tenant_id AND e.id=ol.latest_event_id
+    LEFT JOIN crm_youzan_order_assignment oa
+      ON oa.tenant_id=ol.tenant_id AND oa.shop_id=ol.shop_id AND oa.external_order_no=ol.external_order_no
+    WHERE ol.tenant_id=#{tenantId} AND ol.shop_id=#{shopId}
+    <choose>
+      <when test="scope != null and scope.scopeType != 'ALL'">
+        <include refid="eventScopeCondition"/>
+      </when>
+      <otherwise>
+        <include refid="allScopeOrderFilter"/>
+      </otherwise>
+    </choose>
+    <include refid="orderQueryFilters"/>
+    ORDER BY ol.latest_event_id DESC LIMIT #{size} OFFSET #{offset}
+  </select>
+  <select id="countDistinctExternalOrdersFiltered" resultType="long">
+    SELECT COUNT(*) FROM crm_youzan_order_latest ol
+    INNER JOIN crm_youzan_event e ON e.tenant_id=ol.tenant_id AND e.id=ol.latest_event_id
+    LEFT JOIN crm_youzan_order_assignment oa
+      ON oa.tenant_id=ol.tenant_id AND oa.shop_id=ol.shop_id AND oa.external_order_no=ol.external_order_no
+    WHERE ol.tenant_id=#{tenantId} AND ol.shop_id=#{shopId}
+    <choose>
+      <when test="scope != null and scope.scopeType != 'ALL'">
+        <include refid="eventScopeCondition"/>
+      </when>
+      <otherwise>
+        <include refid="allScopeOrderFilter"/>
+      </otherwise>
+    </choose>
+    <include refid="orderQueryFilters"/>
+  </select>
+  <select id="selectLatestEventByExternalOrder" resultType="com.whale.crm.integration.youzan.domain.YouzanEvent">
+    SELECT <include refid="aliasedEventColumns"/> FROM crm_youzan_order_latest ol
+    INNER JOIN crm_youzan_event e ON e.tenant_id=ol.tenant_id AND e.id=ol.latest_event_id
+    WHERE ol.tenant_id=#{tenantId} AND ol.shop_id=#{shopId} AND ol.external_order_no=#{externalOrderNo}
+  </select>
+  <select id="countActiveCustomerByOrderId" resultType="long">
+    SELECT COUNT(*) FROM crm_order o
+    INNER JOIN crm_customer c ON c.tenant_id=o.tenant_id AND c.id=o.customer_id
+    WHERE o.tenant_id=#{tenantId} AND o.id=#{crmOrderId} AND c.deleted=0
   </select>
   <update id="updateEventStatus">
     UPDATE crm_youzan_event SET process_status=#{status},process_attempts=process_attempts+1,last_error=#{lastError},

@@ -25,6 +25,7 @@ import StatusPill from '../customer/StatusPill.vue'
 import { tradingErrorText } from '../trading/tradingUi'
 import type { YouzanTone } from './youzanUi'
 import { createYouzanKey } from './youzanUi'
+import YouzanHistorySnapshotSyncDialog from './YouzanHistorySnapshotSyncDialog.vue'
 
 const LIMIT_PRESETS = [10, 20, 50, 100] as const
 const PULL_ALL_BATCH_SIZE = 200
@@ -114,6 +115,7 @@ const pullingBatch = ref(false)
 const pullingAll = ref(false)
 const stopRequested = ref(false)
 const resettingCursor = ref(false)
+const historySnapshotDialogVisible = ref(false)
 const isPulling = computed(() => pullingBatch.value || pullingAll.value)
 
 interface PullAllProgress {
@@ -660,6 +662,15 @@ onBeforeUnmount(() => {
         </div>
         <div class="yz-head-actions">
           <StatusPill :text="channelPillText" :tone="channelPillTone" data-testid="yz-customer-channel-pill" />
+          <el-button
+            v-if="canManage && normalizedShopId"
+            plain
+            size="small"
+            data-testid="yz-open-history-snapshot"
+            @click="historySnapshotDialogVisible = true"
+          >
+            拉取历史订单只读快照
+          </el-button>
           <el-button text :loading="statusLoading" data-testid="yz-customer-status-refresh" @click="loadStatus">刷新状态</el-button>
         </div>
       </div>
@@ -691,7 +702,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="yz-cursor-note" data-testid="yz-customer-cursor-note">
-        <strong>断点续拉与防重说明：</strong>这次拉 10 条，下次自动接着第 11 条继续拉，不重复建档；拉完后自动转增量同步。若手机号命中 CRM 老客户，绝不覆盖原档案，会标记为手机号冲突供人工确认链接。
+        <strong>断点续拉与防重说明：</strong>这次拉 10 条，下次自动接着第 11 条继续拉，不重复建档；拉完后自动转增量同步。开启详细信息补全时，已建档老客重拉仅补齐空缺的城市、备注、生日及新增标签，绝不覆盖原手工档案；若手机号命中 CRM 老客户，绝不覆盖原档案，会标记为手机号冲突供人工确认链接。
       </div>
 
       <el-alert
@@ -807,7 +818,7 @@ onBeforeUnmount(() => {
           <el-switch
             v-model="form.enrichProfile"
             :disabled="isPulling"
-            active-text="补全买家详细信息（users.info.query + scrm.customer.get）"
+            active-text="补全详细信息（姓名、手机、生日、备注、城市与有赞原标签；已建档客户仅补空不覆盖）"
             data-testid="yz-pull-enrich"
           />
         </div>
@@ -1111,6 +1122,11 @@ onBeforeUnmount(() => {
           @size-change="runsQuery.page = 1; loadRuns(1)"
         />
       </div>
+      <YouzanHistorySnapshotSyncDialog
+        v-if="canManage"
+        v-model="historySnapshotDialogVisible"
+        :default-shop-id="normalizedShopId"
+      />
     </template>
   </section>
 </template>

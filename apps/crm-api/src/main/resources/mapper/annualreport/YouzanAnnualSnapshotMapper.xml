@@ -122,6 +122,28 @@
         </constructor>
     </resultMap>
 
+    <resultMap id="LinkedYouzanIdentityMap"
+               type="com.whale.crm.annualreport.domain.YouzanAnnualSnapshotRepository$LinkedYouzanIdentity">
+        <constructor>
+            <arg column="shop_id" javaType="java.lang.String"/>
+            <arg column="yz_open_id" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="CustomerOrderHistorySummaryRowMap"
+               type="com.whale.crm.annualreport.domain.YouzanAnnualSnapshotRepository$CustomerOrderHistorySummaryRow">
+        <constructor>
+            <arg column="total_order_count" javaType="_int"/>
+            <arg column="paid_order_count" javaType="_int"/>
+            <arg column="total_payment_fen" javaType="_long"/>
+            <arg column="total_refunded_fen" javaType="_long"/>
+            <arg column="net_spend_fen" javaType="_long"/>
+            <arg column="first_order_at" javaType="java.time.Instant"/>
+            <arg column="last_order_at" javaType="java.time.Instant"/>
+            <arg column="last_synced_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
     <sql id="ProfileColumns">
         id, tenant_id, shop_id, yz_open_id, customer_id, display_name, gender_hint,
         weixin_open_id_hash, weixin_union_id_hash, mobile_hash, mobile_masked,
@@ -348,6 +370,80 @@
           AND COALESCE(o.paid_at, o.ordered_at) &gt;= #{yearStart}
           AND COALESCE(o.paid_at, o.ordered_at) &lt; #{yearEnd}
         ORDER BY COALESCE(o.paid_at, o.ordered_at) ASC, o.id ASC
+    </select>
+
+    <select id="findLinkedYouzanIdentitiesByCustomerId" resultMap="LinkedYouzanIdentityMap">
+        SELECT DISTINCT linked.shop_id, linked.yz_open_id
+        FROM (
+            SELECT shop_id, external_customer_id AS yz_open_id
+            FROM crm_youzan_customer_link
+            WHERE tenant_id = #{tenantId}
+              AND customer_id = #{customerId}
+            UNION
+            SELECT source_app AS shop_id, external_id AS yz_open_id
+            FROM crm_customer_identity
+            WHERE tenant_id = #{tenantId}
+              AND customer_id = #{customerId}
+              AND identity_type = 'YOUZAN'
+              AND status = 'LINKED'
+            UNION
+            SELECT shop_id, yz_open_id
+            FROM crm_youzan_annual_profile
+            WHERE tenant_id = #{tenantId}
+              AND customer_id = #{customerId}
+        ) linked
+        WHERE linked.shop_id IS NOT NULL AND linked.shop_id != ''
+          AND linked.yz_open_id IS NOT NULL AND linked.yz_open_id != ''
+        ORDER BY linked.shop_id ASC, linked.yz_open_id ASC
+    </select>
+
+    <select id="summarizeOrdersByIdentities" resultMap="CustomerOrderHistorySummaryRowMap">
+        SELECT
+            COUNT(*) AS total_order_count,
+            COALESCE(SUM(CASE WHEN is_paid = 1 THEN 1 ELSE 0 END), 0) AS paid_order_count,
+            COALESCE(SUM(CASE WHEN is_paid = 1 THEN payment_fen ELSE 0 END), 0) AS total_payment_fen,
+            COALESCE(SUM(CASE WHEN is_paid = 1 THEN refunded_fen ELSE 0 END), 0) AS total_refunded_fen,
+            COALESCE(SUM(CASE WHEN is_paid = 1 THEN GREATEST(0, payment_fen - refunded_fen) ELSE 0 END), 0) AS net_spend_fen,
+            MIN(CASE WHEN is_paid = 1 THEN COALESCE(paid_at, ordered_at) ELSE NULL END) AS first_order_at,
+            MAX(CASE WHEN is_paid = 1 THEN COALESCE(paid_at, ordered_at) ELSE NULL END) AS last_order_at,
+            MAX(synced_at) AS last_synced_at
+        FROM crm_youzan_annual_order_snapshot
+        WHERE tenant_id = #{tenantId}
+          AND (
+            <foreach collection="identities" item="ident" separator=" OR ">
+                (shop_id = #{ident.shopId} AND yz_open_id = #{ident.yzOpenId})
+            </foreach>
+          )
+    </select>
+
+    <select id="findOrdersByIdentities" resultMap="YouzanAnnualOrderSnapshotMap">
+        SELECT <include refid="OrderColumns"/>
+        FROM crm_youzan_annual_order_snapshot
+        WHERE tenant_id = #{tenantId}
+          AND (
+            <foreach collection="identities" item="ident" separator=" OR ">
+                (shop_id = #{ident.shopId} AND yz_open_id = #{ident.yzOpenId})
+            </foreach>
+          )
+          <if test="paidOnly">
+              AND is_paid = 1
+          </if>
+        ORDER BY COALESCE(paid_at, ordered_at) DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countOrdersByIdentities" resultType="long">
+        SELECT COUNT(*)
+        FROM crm_youzan_annual_order_snapshot
+        WHERE tenant_id = #{tenantId}
+          AND (
+            <foreach collection="identities" item="ident" separator=" OR ">
+                (shop_id = #{ident.shopId} AND yz_open_id = #{ident.yzOpenId})
+            </foreach>
+          )
+          <if test="paidOnly">
+              AND is_paid = 1
+          </if>
     </select>
 
     <select id="findLinkedCustomerIdByYzOpenId" resultType="java.lang.Long">

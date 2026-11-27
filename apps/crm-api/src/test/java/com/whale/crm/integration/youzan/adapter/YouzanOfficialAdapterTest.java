@@ -225,6 +225,7 @@ class YouzanOfficialAdapterTest {
         JsonNode payInfoTimeOrder = objectMapper.readTree("""
                 {"order_info":{"tid":"E-PAY-1","status":"TRADE_PAID","update_time":"2026-10-24 11:00:00"},
                  "pay_info":{"payment":"18.50","pay_time":"2026-10-24 10:59:00","transaction":["T-PAY-1"],"phase_payments":[]},
+                 "remark_info":{"trade_memo":"账号：测试管家"},
                  "buyer_info":{"yz_open_id":"yz-open-2"},
                  "orders":[{"item_id":301,"sku_id":9,"num":1}]}
                 """);
@@ -237,10 +238,19 @@ class YouzanOfficialAdapterTest {
         JsonNode pendingComplete = objectMapper.readTree("""
                 {"order_info":{"tid":"E-PEND-1","status":"WAIT_BUYER_PAY","update_time":"2026-10-24 11:00:00"},
                  "pay_info":{"payment":"18.50"},
+                 "remark_info":{"trade_memo":""},
                  "buyer_info":{"yz_open_id":"yz-pend-1"},
                  "orders":[{"item_id":301,"sku_id":0,"num":1}]}
                 """);
         assertThat(mapper.hasCompleteDetail(pendingComplete)).isTrue();
+
+        JsonNode missingRemarkInfo = objectMapper.readTree("""
+                {"order_info":{"tid":"E-PEND-NO-REMARK","status":"WAIT_BUYER_PAY","update_time":"2026-10-24 11:00:00"},
+                 "pay_info":{"payment":"18.50"},
+                 "buyer_info":{"yz_open_id":"yz-pend-1"},
+                 "orders":[{"item_id":301,"sku_id":0,"num":1}]}
+                """);
+        assertThat(mapper.hasCompleteDetail(missingRemarkInfo)).isFalse();
 
         JsonNode pendingMissingBuyer = objectMapper.readTree("""
                 {"order_info":{"tid":"E-PEND-2","status":"WAIT_BUYER_PAY","update_time":"2026-10-24 11:00:00"},
@@ -312,6 +322,7 @@ class YouzanOfficialAdapterTest {
             JsonNode closedOrder = objectMapper.readTree("""
                     {"order_info":{"tid":"E-CLOSED-1","status":"%s","update_time":"2026-10-24 11:00:00"},
                      "pay_info":{"payment":"36.22"},
+                     "remark_info":{"trade_memo":""},
                      "buyer_info":{"yz_open_id":"yz-closed-1"},
                      "orders":[{"item_id":301,"sku_id":9,"num":1}]}
                     """.formatted(closedStatus));

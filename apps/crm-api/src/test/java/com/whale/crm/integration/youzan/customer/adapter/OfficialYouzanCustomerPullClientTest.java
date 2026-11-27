@@ -288,6 +288,8 @@ class OfficialYouzanCustomerPullClientTest {
                 .thenReturn(usersResp);
         when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.get"), eq("3.0.0"), anyMap()))
                 .thenReturn(scrmResp);
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.tag.relation.get"), eq("4.0.0"), anyMap()))
+                .thenReturn(objectMapper.readTree("{\"success\":true,\"code\":200,\"data\":{\"tags\":[]}}"));
 
         YouzanCustomerPullClient.YouzanCustomerEnrichment enriched = client.enrichCustomer(
                 TENANT_ID, SHOP_ID, "YZ-OPEN-ENRICH", 1, 9001L, null);
@@ -307,13 +309,156 @@ class OfficialYouzanCustomerPullClientTest {
                 .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "4005"));
         when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.get"), eq("3.0.0"), anyMap()))
                 .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "4005"));
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.tag.relation.get"), eq("4.0.0"), anyMap()))
+                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "4005"));
 
         YouzanCustomerPullClient.YouzanCustomerEnrichment enriched = client.enrichCustomer(
                 TENANT_ID, SHOP_ID, "YZ-OPEN-WARN", 1, 9002L, "13977770002");
 
         assertThat(enriched.mobile()).isEqualTo("13977770002");
-        assertThat(enriched.warning()).contains("youzan.users.info.query").contains("youzan.scrm.customer.get");
+        assertThat(enriched.warning())
+                .contains("youzan.users.info.query")
+                .contains("youzan.scrm.customer.get")
+                .contains("youzan.scrm.tag.relation.get");
         assertThat(YouzanCustomerPullClient.stripCiphertext("$abc12345$1$")).isNull();
         assertThat(YouzanCustomerPullClient.stripCiphertext("普通姓名")).isEqualTo("普通姓名");
+    }
+
+    @Test
+    void pullScrmAndOrderBuyersExtractCityTagsRemarkAndIgnoreGenericMunicipalityOrCiphertext() throws Exception {
+        JsonNode scrmResp = objectMapper.readTree("""
+                {
+                  "success": true,
+                  "code": 200,
+                  "data": {
+                    "total": 2,
+                    "record_list": [
+                      {
+                        "yz_open_id": "YZ-DETAIL-001",
+                        "name": "周清雅",
+                        "mobile": "13800138099",
+                        "remark": "偏好光电抗衰项目",
+                        "contact_address": {
+                          "province": "浙江省",
+                          "city": "杭州市",
+                          "address_detail": "绝不应采集的详细街道门牌123号"
+                        },
+                        "tags": [
+                          {"tag_id": 1, "tag_name": "贵宾客户"},
+                          {"tag_id": 2, "tag_name": "光电高复购"},
+                          {"tag_id": 3, "tag_name": "$cipherTag$1$"}
+                        ]
+                      },
+                      {
+                        "yz_open_id": "YZ-DETAIL-002",
+                        "name": "孙女士",
+                        "area": {"province": "上海市", "city": "市辖区"},
+                        "tag_list": ["皮肤管理", "皮肤管理"]
+                      }
+                    ]
+                  }
+                }
+                """);
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.list"), eq("1.0.0"), anyMap()))
+                .thenReturn(scrmResp);
+
+        YouzanCustomerPullClient.YouzanCustomerPage scrmPage = client.pullScrmPage(
+                TENANT_ID, SHOP_ID, null, null, 1, 20);
+        assertThat(scrmPage.items()).hasSize(2);
+        assertThat(scrmPage.items().get(0).remark()).isEqualTo("偏好光电抗衰项目");
+        assertThat(scrmPage.items().get(0).cityName()).isEqualTo("杭州市");
+        assertThat(scrmPage.items().get(0).tagNames()).containsExactly("贵宾客户", "光电高复购");
+        assertThat(scrmPage.items().get(1).cityName()).isEqualTo("上海市");
+        assertThat(scrmPage.items().get(1).tagNames()).containsExactly("皮肤管理");
+
+        JsonNode tradesResp = objectMapper.readTree("""
+                {
+                  "success": true,
+                  "code": 200,
+                  "data": {
+                    "total_results": 1,
+                    "full_order_info_list": [
+                      {
+                        "full_order_info": {
+                          "order_info": {"tid": "E202607010001", "created": "2026-07-01 10:00:00"},
+                          "buyer_info": {"yz_open_id": "YZ-ORDER-CITY-1", "fans_nickname": "林小鹿"},
+                          "address_info": {
+                            "delivery_province": "广东省",
+                            "delivery_city": "深圳市",
+                            "delivery_address": "某保密小区8栋808"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+                """);
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.trades.sold.get"), eq("4.0.2"), anyMap()))
+                .thenReturn(tradesResp);
+
+        YouzanCustomerPullClient.YouzanCustomerPage orderPage = client.pullOrderBuyersPage(
+                TENANT_ID, SHOP_ID, Instant.parse("2026-07-01T00:00:00Z"),
+                Instant.parse("2026-07-10T00:00:00Z"), 1, 50);
+        assertThat(orderPage.items().get(0).cityName()).isEqualTo("深圳市");
+    }
+
+    @Test
+    void enrichCustomerExtractsRemarkCityTagsAndFallsBackToTagRelationApiWhenTagsEmpty() throws Exception {
+        JsonNode usersResp = objectMapper.readTree("""
+                {
+                  "success": true,
+                  "code": 200,
+                  "data": {
+                    "user_list": [
+                      {
+                        "mobile_info": {"mobile": "13966668888"},
+                        "primitive_info": {"nick_name": "云朵", "gender": 2, "province": "北京市", "city": "市辖区"}
+                      }
+                    ]
+                  }
+                }
+                """);
+        JsonNode scrmResp = objectMapper.readTree("""
+                {
+                  "success": true,
+                  "code": 200,
+                  "data": {
+                    "name": "许云朵",
+                    "mobile": "13966668888",
+                    "gender": 2,
+                    "birthday": "1992-03-18 00:00:00",
+                    "remark": "有赞黑金会员，周末预约偏好",
+                    "contact_address": {"province": "浙江省", "city": "杭州市"}
+                  }
+                }
+                """);
+        JsonNode tagRelResp = objectMapper.readTree("""
+                {
+                  "success": true,
+                  "code": 200,
+                  "data": {
+                    "tags": [
+                      {"tag_id": 101, "tag_name": "黑金会员"},
+                      {"tag_id": 102, "tag_name": "高意向"}
+                    ]
+                  }
+                }
+                """);
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.users.info.query"), eq("1.0.0"), anyMap()))
+                .thenReturn(usersResp);
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.customer.get"), eq("3.0.0"), anyMap()))
+                .thenReturn(scrmResp);
+        when(remoteClient.callApi(eq(TOKEN), eq("youzan.scrm.tag.relation.get"), eq("4.0.0"), anyMap()))
+                .thenReturn(tagRelResp);
+
+        YouzanCustomerPullClient.YouzanCustomerEnrichment enriched = client.enrichCustomer(
+                TENANT_ID, SHOP_ID, "YZ-TAG-REL-01", 1, 8001L, null);
+
+        assertThat(enriched.name()).isEqualTo("许云朵");
+        assertThat(enriched.remark()).isEqualTo("有赞黑金会员，周末预约偏好");
+        assertThat(enriched.cityName()).isEqualTo("杭州市");
+        assertThat(enriched.tagNames()).containsExactly("黑金会员", "高意向");
+        assertThat(enriched.warning()).isNull();
+        verify(remoteClient, times(1)).callApi(eq(TOKEN), eq("youzan.scrm.tag.relation.get"), eq("4.0.0"), anyMap());
     }
 }

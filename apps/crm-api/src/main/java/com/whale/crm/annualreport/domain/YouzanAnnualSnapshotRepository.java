@@ -63,6 +63,22 @@ public interface YouzanAnnualSnapshotRepository {
                                                                  @Param("yearStart") Instant yearStart,
                                                                  @Param("yearEnd") Instant yearEnd);
 
+    List<LinkedYouzanIdentity> findLinkedYouzanIdentitiesByCustomerId(@Param("tenantId") long tenantId,
+                                                                      @Param("customerId") long customerId);
+
+    CustomerOrderHistorySummaryRow summarizeOrdersByIdentities(@Param("tenantId") long tenantId,
+                                                               @Param("identities") List<LinkedYouzanIdentity> identities);
+
+    List<YouzanAnnualOrderSnapshot> findOrdersByIdentities(@Param("tenantId") long tenantId,
+                                                           @Param("identities") List<LinkedYouzanIdentity> identities,
+                                                           @Param("paidOnly") boolean paidOnly,
+                                                           @Param("offset") int offset,
+                                                           @Param("limit") int limit);
+
+    long countOrdersByIdentities(@Param("tenantId") long tenantId,
+                                 @Param("identities") List<LinkedYouzanIdentity> identities,
+                                 @Param("paidOnly") boolean paidOnly);
+
     Optional<Long> findLinkedCustomerIdByYzOpenId(@Param("tenantId") long tenantId,
                                                   @Param("shopId") String shopId,
                                                   @Param("yzOpenId") String yzOpenId);
@@ -116,6 +132,24 @@ public interface YouzanAnnualSnapshotRepository {
             long paidOrderCount,
             long totalPaymentFen,
             long unifiedVisitSessions,
+            Instant lastSyncedAt
+    ) {
+    }
+
+    record LinkedYouzanIdentity(
+            String shopId,
+            String yzOpenId
+    ) {
+    }
+
+    record CustomerOrderHistorySummaryRow(
+            int totalOrderCount,
+            int paidOrderCount,
+            long totalPaymentFen,
+            long totalRefundedFen,
+            long netSpendFen,
+            Instant firstOrderAt,
+            Instant lastOrderAt,
             Instant lastSyncedAt
     ) {
     }

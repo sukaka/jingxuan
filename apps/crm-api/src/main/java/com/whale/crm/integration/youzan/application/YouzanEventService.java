@@ -52,7 +52,7 @@ public class YouzanEventService {
             "receiver_tel", "receiver_phone", "delivery_address", "self_fetch_info", "buyer_name", "id_card_number",
             "id_card_name", "user_name", "user_tel", "address_detail", "salesman_mobile", "salesman_nick_name",
             "service_guide_staff", "service_guide_name", "order_sales_staff", "order_sales_name", "item_sales_staff",
-            "outer_user_id", "weixin_openid", "open_user_id", "buyer_message", "trade_memo");
+            "outer_user_id", "weixin_openid", "open_user_id", "buyer_message", "buyer_messages", "trade_memo");
 
     private final YouzanRepository repository;
     private final ObjectMapper objectMapper;
@@ -66,6 +66,7 @@ public class YouzanEventService {
     private final TransactionTemplate transactionTemplate;
     private final TaskExecutor taskExecutor;
     private final YouzanRiskLinkOperations riskLinkOperations;
+    private final YouzanOrderAssignmentService assignmentService;
 
     public YouzanEventService(YouzanRepository repository, ObjectMapper objectMapper, AesGcmCipher cipher,
                               OrderApplicationService orderService, PaymentApplicationService paymentService,
@@ -74,7 +75,20 @@ public class YouzanEventService {
                               PlatformTransactionManager transactionManager,
                               @org.springframework.beans.factory.annotation.Qualifier("youzanSyncExecutor") TaskExecutor taskExecutor) {
         this(repository, objectMapper, cipher, orderService, paymentService, scopeSupport, currentUserService,
-                auditService, outboxService, transactionManager, taskExecutor, YouzanRiskLinkOperations.NOOP);
+                auditService, outboxService, transactionManager, taskExecutor, YouzanRiskLinkOperations.NOOP,
+                (YouzanOrderAssignmentService) null);
+    }
+
+    public YouzanEventService(YouzanRepository repository, ObjectMapper objectMapper, AesGcmCipher cipher,
+                              OrderApplicationService orderService, PaymentApplicationService paymentService,
+                              CustomerScopeSupport scopeSupport, CurrentUserService currentUserService,
+                              AuditService auditService, OutboxService outboxService,
+                              PlatformTransactionManager transactionManager,
+                              @org.springframework.beans.factory.annotation.Qualifier("youzanSyncExecutor") TaskExecutor taskExecutor,
+                              YouzanRiskLinkOperations riskLinkOperations) {
+        this(repository, objectMapper, cipher, orderService, paymentService, scopeSupport, currentUserService,
+                auditService, outboxService, transactionManager, taskExecutor, riskLinkOperations,
+                (YouzanOrderAssignmentService) null);
     }
 
     @Autowired
@@ -84,7 +98,21 @@ public class YouzanEventService {
                               AuditService auditService, OutboxService outboxService,
                               PlatformTransactionManager transactionManager,
                               @org.springframework.beans.factory.annotation.Qualifier("youzanSyncExecutor") TaskExecutor taskExecutor,
-                              YouzanRiskLinkOperations riskLinkOperations) {
+                              YouzanRiskLinkOperations riskLinkOperations,
+                              org.springframework.beans.factory.ObjectProvider<YouzanOrderAssignmentService> assignmentServiceProvider) {
+        this(repository, objectMapper, cipher, orderService, paymentService, scopeSupport, currentUserService,
+                auditService, outboxService, transactionManager, taskExecutor, riskLinkOperations,
+                assignmentServiceProvider == null ? null : assignmentServiceProvider.getIfAvailable());
+    }
+
+    private YouzanEventService(YouzanRepository repository, ObjectMapper objectMapper, AesGcmCipher cipher,
+                               OrderApplicationService orderService, PaymentApplicationService paymentService,
+                               CustomerScopeSupport scopeSupport, CurrentUserService currentUserService,
+                               AuditService auditService, OutboxService outboxService,
+                               PlatformTransactionManager transactionManager,
+                               TaskExecutor taskExecutor,
+                               YouzanRiskLinkOperations riskLinkOperations,
+                               YouzanOrderAssignmentService assignmentService) {
         this.repository = repository;
         this.objectMapper = objectMapper;
         this.cipher = cipher;
@@ -97,9 +125,11 @@ public class YouzanEventService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.taskExecutor = taskExecutor;
         this.riskLinkOperations = riskLinkOperations != null ? riskLinkOperations : YouzanRiskLinkOperations.NOOP;
+        this.assignmentService = assignmentService;
     }
 
     public YouzanEventResponse ingest(long tenantId, YouzanOrderEvent event, String source, String rawBody) {
+        YouzanEventResponse ingested;
         try {
             String normalized = json(event);
             String masked = maskedView(normalized, rawBody);
@@ -108,7 +138,7 @@ public class YouzanEventService {
             String providerEncrypted = cipher.encrypt(rawBody);
             String externalCustomerId = normalizeExternalCustomerId(event.externalCustomerId());
             Long campaignId = normalizeCampaignId(event.campaignId());
-            return transactionTemplate.execute(status -> {
+            ingested = transactionTemplate.execute(status -> {
                 YouzanEvent existing = repository.findEventByKey(tenantId, event.shopId(), event.eventId()).orElse(null);
                 if (existing != null) {
                     return response(tenantId, existing, true);
@@ -127,15 +157,27 @@ public class YouzanEventService {
             });
         } catch (DuplicateKeyException ex) {
             YouzanEvent existing = repository.findEventByKey(tenantId, event.shopId(), event.eventId()).orElseThrow();
-            return response(tenantId, existing, true);
+            ingested = response(tenantId, existing, true);
         }
+        syncOrderAssignmentSafely(tenantId, event.shopId(), event.externalOrderNo(),
+                ingested == null ? null : ingested.id(), rawBody);
+        return ingested;
     }
 
     public YouzanEventResponse replacePayloadAndProcess(long tenantId, long eventId, YouzanOrderEvent event,
                                                          String providerPayload) {
         String normalized = json(event);
         transactionsExecuteUpdate(tenantId, eventId, event, normalized, providerPayload);
+        syncOrderAssignmentSafely(tenantId, event.shopId(), event.externalOrderNo(), eventId, providerPayload);
         return process(tenantId, eventId);
+    }
+
+    private void syncOrderAssignmentSafely(long tenantId, String shopId, String externalOrderNo,
+                                           Long eventId, String providerPayload) {
+        if (assignmentService == null || providerPayload == null || providerPayload.isBlank()) {
+            return;
+        }
+        assignmentService.syncFromProviderPayload(tenantId, shopId, externalOrderNo, eventId, providerPayload);
     }
 
     private void transactionsExecuteUpdate(long tenantId, long eventId, YouzanOrderEvent event,

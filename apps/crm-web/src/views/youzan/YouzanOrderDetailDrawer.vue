@@ -8,8 +8,12 @@ import { formatDateTime } from '../customer/shared'
 import StatusPill from '../customer/StatusPill.vue'
 import { orderSourceLabel, orderStatusLabel } from '../trading/tradingUi'
 import {
+  assignmentSourceLabel,
+  assignmentStatusLabel,
+  assignmentStatusTone,
   mappingStatusLabel,
   mappingStatusTone,
+  providerOrderStatusLabel,
   resolveYouzanOrderItems,
   verificationMethodLabel,
   youzanOrderItemMappingLabel,
@@ -21,13 +25,30 @@ import {
 const props = defineProps<{
   modelValue: boolean
   order: YouzanOrderView | null
+  canAssign?: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  assign: [order: YouzanOrderView]
+}>()
 const auth = useAuthStore()
 const canViewRaw = computed(() => auth.hasPermission('integration:youzan:manage'))
 const rawExpanded = ref(false)
 const hasRaw = computed(() => Boolean(props.order?.payloadMaskedJson?.trim()))
 const orderItems = computed(() => resolveYouzanOrderItems(props.order))
+const providerStatusText = computed(() =>
+  providerOrderStatusLabel(props.order?.providerOrderStatus, props.order?.providerStatusText),
+)
+const hasStructuredMemo = computed(() => Boolean(
+  props.order?.tradeMemoMasked
+  || props.order?.memoAccountName
+  || props.order?.memoPerformanceOwner
+  || props.order?.memoChannel
+  || props.order?.memoCustomerType
+  || props.order?.memoSource
+  || props.order?.memoInstitutionName
+  || props.order?.memoExtraNote,
+))
 const itemsSummaryLabel = computed(() => {
   const count = orderItems.value.length
   if (count === 0) return '共 0 项'
@@ -99,6 +120,14 @@ async function copyRaw() {
           <div class="detail-item">
             <dt>内部订单状态</dt>
             <dd><StatusPill :text="order.orderStatus ? orderStatusLabel(order.orderStatus) : '尚未生成'" tone="info" /></dd>
+          </div>
+          <div v-if="providerStatusText" class="detail-item">
+            <dt>有赞订单状态</dt>
+            <dd data-testid="youzan-detail-provider-status">{{ providerStatusText }}</dd>
+          </div>
+          <div v-if="order.payWayDesc" class="detail-item">
+            <dt>有赞支付方式</dt>
+            <dd data-testid="youzan-detail-pay-way">{{ order.payWayDesc }}</dd>
           </div>
         </dl>
       </section>
@@ -198,6 +227,21 @@ async function copyRaw() {
             <dt>外部客户标识（yz_open_id）</dt>
             <dd class="detail-identifier" data-testid="youzan-detail-external-customer">{{ order.externalCustomerId }}</dd>
           </div>
+          <div v-if="order.buyerFormNameMasked || order.buyerFormMobileMasked" class="detail-item detail-item-wide">
+            <dt>下单表单客户（脱敏）</dt>
+            <dd data-testid="youzan-detail-buyer-form">
+              {{ order.buyerFormNameMasked || '—' }}
+              <span v-if="order.buyerFormMobileMasked"> · {{ order.buyerFormMobileMasked }}</span>
+            </dd>
+          </div>
+          <div v-if="order.orderedAt" class="detail-item">
+            <dt>有赞下单时间</dt>
+            <dd>{{ formatDateTime(order.orderedAt) }}</dd>
+          </div>
+          <div v-if="order.consignedAt" class="detail-item">
+            <dt>有赞发货时间</dt>
+            <dd>{{ formatDateTime(order.consignedAt) }}</dd>
+          </div>
           <div class="detail-item detail-item-wide">
             <dt>有赞更新时间</dt>
             <dd>{{ order.sourceUpdatedAt ? formatDateTime(order.sourceUpdatedAt) : '未记录' }}</dd>
@@ -217,6 +261,82 @@ async function copyRaw() {
           <p>{{ order.errorReason }}</p>
         </div>
         <div v-else class="no-error-panel">当前记录无映射异常</div>
+      </section>
+
+      <section class="detail-section" aria-labelledby="youzan-order-memo-assignment" data-testid="youzan-order-memo-assignment">
+        <div class="section-header">
+          <div>
+            <h3 id="youzan-order-memo-assignment">商家备注与管家分配</h3>
+            <p>自动解析有赞 trade_memo 中「账号：」后的人名并分配归属管家</p>
+          </div>
+          <div class="memo-header-actions">
+            <StatusPill
+              :text="assignmentStatusLabel(order.assignmentStatus)"
+              :tone="assignmentStatusTone(order.assignmentStatus)"
+            />
+            <el-button
+              v-if="canAssign"
+              size="small"
+              type="primary"
+              plain
+              data-testid="youzan-detail-assign-btn"
+              @click="emit('assign', order)"
+            >
+              {{ order.assignedStewardId ? '改派管家' : '分配管家' }}
+            </el-button>
+          </div>
+        </div>
+        <dl class="detail-grid">
+          <div class="detail-item">
+            <dt>归属管家</dt>
+            <dd data-testid="youzan-detail-assigned-steward">
+              {{ order.assignedStewardName || (order.assignedStewardId ? `管家 #${order.assignedStewardId}` : '待人工分配') }}
+            </dd>
+          </div>
+          <div class="detail-item">
+            <dt>分配方式</dt>
+            <dd>{{ assignmentSourceLabel(order.assignmentSource) }}</dd>
+          </div>
+          <div v-if="order.assignmentReason" class="detail-item detail-item-wide">
+            <dt>分配说明</dt>
+            <dd data-testid="youzan-detail-assignment-reason">{{ order.assignmentReason }}</dd>
+          </div>
+          <div v-if="order.memoAccountName" class="detail-item">
+            <dt>备注账号（匹配依据）</dt>
+            <dd data-testid="youzan-detail-memo-account">{{ order.memoAccountName }}</dd>
+          </div>
+          <div v-if="order.memoPerformanceOwner" class="detail-item">
+            <dt>业绩归属</dt>
+            <dd data-testid="youzan-detail-memo-performance">{{ order.memoPerformanceOwner }}</dd>
+          </div>
+          <div v-if="order.memoChannel" class="detail-item">
+            <dt>渠道</dt>
+            <dd>{{ order.memoChannel }}</dd>
+          </div>
+          <div v-if="order.memoCustomerType" class="detail-item">
+            <dt>客户类型</dt>
+            <dd>{{ order.memoCustomerType }}</dd>
+          </div>
+          <div v-if="order.memoSource" class="detail-item">
+            <dt>来源</dt>
+            <dd>{{ order.memoSource }}</dd>
+          </div>
+          <div v-if="order.memoInstitutionName" class="detail-item">
+            <dt>到院机构</dt>
+            <dd data-testid="youzan-detail-memo-institution">{{ order.memoInstitutionName }}</dd>
+          </div>
+          <div v-if="order.memoExtraNote" class="detail-item detail-item-wide">
+            <dt>补充说明</dt>
+            <dd data-testid="youzan-detail-memo-extra">{{ order.memoExtraNote }}</dd>
+          </div>
+          <div v-if="order.tradeMemoMasked" class="detail-item detail-item-wide">
+            <dt>商家备注原文（手机号已脱敏）</dt>
+            <dd data-testid="youzan-detail-trade-memo">{{ order.tradeMemoMasked }}</dd>
+          </div>
+        </dl>
+        <div v-if="!hasStructuredMemo" class="items-empty" style="margin-top: 10px">
+          当前订单暂无有赞商家备注（trade_memo）
+        </div>
       </section>
 
       <section v-if="canViewRaw" class="detail-section raw-section" aria-labelledby="youzan-order-raw" data-testid="youzan-raw-section">
@@ -304,6 +424,7 @@ async function copyRaw() {
 .error-panel strong { color: #a83f4c; font-size: 13px; }
 .error-panel p { margin: 6px 0 0; color: #a34852; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .no-error-panel { padding: 12px 14px; border-radius: 9px; background: #f3f8f5; color: #4d7163; font-size: 13px; }
+.memo-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex-shrink: 0; }
 .raw-section { margin-bottom: 0; background: #fbfcfb; }
 .raw-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .admin-badge { padding: 2px 7px; border: 1px solid #e4d2ad; border-radius: 5px; background: #fff8e9; color: #936726; font-size: 11px; }

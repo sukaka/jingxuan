@@ -61,6 +61,23 @@ public interface YouzanMapper {
                                               @Param("offset") int offset, @Param("size") int size);
     long countDistinctExternalOrders(@Param("tenantId") long tenantId, @Param("shopId") String shopId,
                                      @Param("scope") CustomerScopeSupport.ScopeQuery scope);
+    List<YouzanEvent> selectLatestOrderEventsFiltered(@Param("tenantId") long tenantId,
+                                                      @Param("shopId") String shopId,
+                                                      @Param("scope") CustomerScopeSupport.ScopeQuery scope,
+                                                      @Param("assignedStewardId") Long assignedStewardId,
+                                                      @Param("assignmentStatus") String assignmentStatus,
+                                                      @Param("keyword") String keyword,
+                                                      @Param("offset") int offset, @Param("size") int size);
+    long countDistinctExternalOrdersFiltered(@Param("tenantId") long tenantId,
+                                             @Param("shopId") String shopId,
+                                             @Param("scope") CustomerScopeSupport.ScopeQuery scope,
+                                             @Param("assignedStewardId") Long assignedStewardId,
+                                             @Param("assignmentStatus") String assignmentStatus,
+                                             @Param("keyword") String keyword);
+    YouzanEvent selectLatestEventByExternalOrder(@Param("tenantId") long tenantId,
+                                                 @Param("shopId") String shopId,
+                                                 @Param("externalOrderNo") String externalOrderNo);
+    long countActiveCustomerByOrderId(@Param("tenantId") long tenantId, @Param("crmOrderId") long crmOrderId);
     int updateEventStatus(@Param("tenantId") long tenantId, @Param("id") long id, @Param("version") long version,
                           @Param("status") String status, @Param("lastError") String lastError,
                           @Param("nextRetryAt") Instant nextRetryAt, @Param("processedAt") Instant processedAt,

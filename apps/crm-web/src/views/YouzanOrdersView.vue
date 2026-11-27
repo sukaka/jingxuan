@@ -2,7 +2,18 @@
 import { computed, inject, onMounted, reactive, ref, watch } from 'vue'
 import { routeLocationKey } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import type { YouzanCustomerLink, YouzanOrderView, YouzanReconcileReport, YouzanShopConfig, YouzanSkuCandidate, YouzanSkuMapping, YouzanSyncIssue } from '../api/youzan'
+import type {
+  YouzanCustomerLink,
+  YouzanOrderListQuery,
+  YouzanOrderView,
+  YouzanReconcileReport,
+  YouzanShopConfig,
+  YouzanSkuCandidate,
+  YouzanSkuMapping,
+  YouzanStewardAlias,
+  YouzanStewardOption,
+  YouzanSyncIssue,
+} from '../api/youzan'
 import {
   batchRetryYouzanSyncIssues,
   getYouzanReconcileReport,
@@ -11,7 +22,10 @@ import {
   listYouzanShops,
   listYouzanSkuCandidates,
   listYouzanSkuMappings,
+  listYouzanStewardAliases,
+  listYouzanStewardOptions,
   listYouzanSyncIssues,
+  pullYouzanOrderByTid,
   reconcileYouzanOrders,
   retryYouzanSyncIssue,
   syncYouzanOrders,
@@ -26,18 +40,24 @@ import { formatDateTime } from './customer/shared'
 import StatusPill from './customer/StatusPill.vue'
 import YouzanCustomerLinkPanel from './youzan/YouzanCustomerLinkPanel.vue'
 import YouzanCustomerPullPanel from './youzan/YouzanCustomerPullPanel.vue'
+import YouzanOrderAssignDialog from './youzan/YouzanOrderAssignDialog.vue'
 import YouzanOrderDetailDrawer from './youzan/YouzanOrderDetailDrawer.vue'
 import YouzanShopConfigPanel from './youzan/YouzanShopConfigPanel.vue'
 import YouzanSkuMappingPanel from './youzan/YouzanSkuMappingPanel.vue'
+import YouzanStewardAliasPanel from './youzan/YouzanStewardAliasPanel.vue'
 import YouzanSyncIssuePanel from './youzan/YouzanSyncIssuePanel.vue'
 import YouzanSyncJobPanel from './youzan/YouzanSyncJobPanel.vue'
 import YouzanSyncPolicyPanel from './youzan/YouzanSyncPolicyPanel.vue'
 import {
+  assignmentSourceLabel,
+  assignmentStatusLabel,
+  assignmentStatusTone,
   createYouzanKey,
   extractUnmappedExternalSkuId,
   isMappingSuccess,
   mappingStatusLabel,
   mappingStatusTone,
+  providerOrderStatusLabel,
   resolveYouzanOrderItems,
   youzanOrderItemQuantityText,
   youzanOrderItemsTotalQuantity,
@@ -60,6 +80,12 @@ const canReadOrders = computed(() => auth.hasPermission('order:read'))
 const canRead = computed(() => canReadOrders.value || auth.hasPermission('integration:youzan:manage'))
 const canWrite = computed(() => auth.hasPermission('campaign:write') || auth.hasPermission('integration:youzan:manage'))
 const canManage = computed(() => auth.hasPermission('integration:youzan:manage'))
+const canAssignOrder = computed(() =>
+  auth.user?.userType !== 'INSTITUTION'
+  && (auth.hasPermission('integration:youzan:manage')
+    || auth.hasPermission('customer:assign')
+    || auth.hasPermission('campaign:write')),
+)
 const canManageRuntime = computed(() => auth.hasPermission('integration:runtime:manage'))
 
 function resolveTabFromQuery(rawTab: unknown): string | null {
@@ -67,7 +93,7 @@ function resolveTabFromQuery(rawTab: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
   const publicTabs = new Set(['orders', 'mappings', 'customers', 'issues'])
-  const manageTabs = new Set(['shops', 'policy', 'jobs', 'customer-pull'])
+  const manageTabs = new Set(['shops', 'policy', 'jobs', 'customer-pull', 'steward-aliases'])
   if (publicTabs.has(normalized)) return normalized
   if (manageTabs.has(normalized) && canManage.value) return normalized
   return null
@@ -202,14 +228,40 @@ function externalCustomerIdOf(row: YouzanOrderView): string | null {
 function buyerHeadline(row: YouzanOrderView): string {
   const data = raw(row)
   if (data.nickname != null && data.nickname !== '') return String(data.nickname)
+  if (row.buyerFormNameMasked) return row.buyerFormNameMasked
   return externalCustomerIdOf(row) || '—'
 }
 function buyerSubline(row: YouzanOrderView): string {
   const data = raw(row)
   if (data.mobile != null && data.mobile !== '') return String(data.mobile)
+  if (row.buyerFormMobileMasked) return row.buyerFormMobileMasked
   const extId = externalCustomerIdOf(row)
   if (data.nickname != null && data.nickname !== '') return extId || '—'
+  if (row.buyerFormNameMasked) return extId || '下单表单'
   return extId ? '有赞外部客户' : '—'
+}
+function orderStatusSubline(row: YouzanOrderView): string | null {
+  const parts: string[] = []
+  const statusText = providerOrderStatusLabel(row.providerOrderStatus, row.providerStatusText)
+  if (statusText) parts.push(statusText)
+  if (row.payWayDesc) parts.push(row.payWayDesc)
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+function memoSummaryPrimary(row: YouzanOrderView): string | null {
+  const parts: string[] = []
+  if (row.memoPerformanceOwner) parts.push(`业绩：${row.memoPerformanceOwner}`)
+  if (row.memoChannel) parts.push(`渠道：${row.memoChannel}`)
+  if (row.memoCustomerType) parts.push(row.memoCustomerType)
+  if (row.memoInstitutionName) parts.push(`到院：${row.memoInstitutionName}`)
+  if (parts.length > 0) return parts.join(' · ')
+  if (row.tradeMemoMasked) return row.tradeMemoMasked
+  return null
+}
+function memoSummarySubline(row: YouzanOrderView): string | null {
+  const parts: string[] = []
+  if (row.memoSource) parts.push(`来源：${row.memoSource}`)
+  if (row.memoExtraNote) parts.push(row.memoExtraNote)
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 function goodsPrimary(row: YouzanOrderView): string {
   const items = resolveYouzanOrderItems(row)
@@ -294,7 +346,31 @@ const orders = ref<YouzanOrderView[]>([])
 const orderTotal = ref(0)
 const orderLoading = ref(false)
 const orderError = ref('')
-const orderQuery = reactive({ page: 1, size: 20 })
+const orderQuery = reactive<{
+  page: number
+  size: number
+  assignedStewardId: number | undefined
+  assignmentStatus: string
+  keyword: string
+}>({
+  page: 1,
+  size: 20,
+  assignedStewardId: undefined,
+  assignmentStatus: '',
+  keyword: '',
+})
+
+const stewardOptions = ref<YouzanStewardOption[]>([])
+const stewardAliases = ref<YouzanStewardAlias[]>([])
+const stewardAliasesLoading = ref(false)
+const pendingAliasName = ref('')
+
+const pullTidInput = ref('')
+const pullingTid = ref(false)
+let pullTidAttempt: { signature: string; key: string } | null = null
+
+const assignDialogVisible = ref(false)
+const assigningOrder = ref<YouzanOrderView | null>(null)
 
 const report = ref<YouzanReconcileReport | null>(null)
 const reportError = ref('')
@@ -321,7 +397,16 @@ async function loadOrders() {
   orderLoading.value = true
   orderError.value = ''
   try {
-    const result = await listYouzanOrders({ shopId: normalizedShopId.value, page: orderQuery.page, size: orderQuery.size })
+    const queryParams: YouzanOrderListQuery = {
+      shopId: normalizedShopId.value,
+      page: orderQuery.page,
+      size: orderQuery.size,
+    }
+    if (orderQuery.assignedStewardId != null) queryParams.assignedStewardId = orderQuery.assignedStewardId
+    if (orderQuery.assignmentStatus) queryParams.assignmentStatus = orderQuery.assignmentStatus
+    const trimmedKeyword = orderQuery.keyword.trim()
+    if (trimmedKeyword) queryParams.keyword = trimmedKeyword
+    const result = await listYouzanOrders(queryParams)
     orders.value = result.items
     orderTotal.value = result.total
     orderQuery.page = result.page
@@ -332,6 +417,98 @@ async function loadOrders() {
     orderError.value = tradingErrorText(error)
   } finally {
     orderLoading.value = false
+  }
+}
+
+async function loadStewardOptions() {
+  if (!canRead.value || auth.user?.userType === 'INSTITUTION') return
+  try {
+    const list = await listYouzanStewardOptions()
+    stewardOptions.value = Array.isArray(list) ? list : []
+  } catch {
+    stewardOptions.value = []
+  }
+}
+
+async function loadStewardAliases() {
+  if (!canManage.value || auth.user?.userType === 'INSTITUTION') return
+  stewardAliasesLoading.value = true
+  try {
+    const list = await listYouzanStewardAliases()
+    stewardAliases.value = Array.isArray(list) ? list : []
+  } catch {
+    stewardAliases.value = []
+  } finally {
+    stewardAliasesLoading.value = false
+  }
+}
+
+function resetOrderFilters() {
+  orderQuery.assignedStewardId = undefined
+  orderQuery.assignmentStatus = ''
+  orderQuery.keyword = ''
+  orderQuery.page = 1
+  void loadOrders()
+}
+
+function openAssignDialog(order: YouzanOrderView) {
+  assigningOrder.value = order
+  assignDialogVisible.value = true
+}
+
+function handleOrderAssigned(updated: YouzanOrderView, savedAlias: boolean) {
+  if (selectedOrder.value && selectedOrder.value.externalOrderNo === updated.externalOrderNo
+      && selectedOrder.value.shopId === updated.shopId) {
+    selectedOrder.value = updated
+  }
+  const tasks: Array<Promise<unknown>> = [loadOrders()]
+  if (savedAlias && canManage.value) tasks.push(loadStewardAliases())
+  void Promise.allSettled(tasks)
+}
+
+function handleAliasesSaved() {
+  pendingAliasName.value = ''
+  void Promise.allSettled([loadStewardAliases(), loadOrders()])
+}
+
+async function runPullByTid() {
+  if (pullingTid.value || !canManage.value) return
+  const targetShopId = normalizedShopId.value
+  const tid = pullTidInput.value.trim()
+  if (!targetShopId) {
+    ElMessage.warning('请先输入或选择有赞店铺编号（kdt_id）')
+    return
+  }
+  if (!tid) {
+    ElMessage.warning('请输入要拉取的有赞订单号（tid）')
+    return
+  }
+  persistShopId(targetShopId)
+  const signature = `${targetShopId}:${tid}`
+  if (pullTidAttempt?.signature !== signature) {
+    pullTidAttempt = { signature, key: createYouzanKey('youzan.pull-tid') }
+  }
+  const key = pullTidAttempt.key
+  pullingTid.value = true
+  try {
+    const pulled = await pullYouzanOrderByTid({ shopId: targetShopId, tid }, key)
+    pullTidAttempt = null
+    pullTidInput.value = ''
+    orderQuery.page = 1
+    await Promise.allSettled([loadOrders(), loadIssues(), loadSkuCandidates(), loadReport()])
+    selectedOrder.value = pulled
+    detailVisible.value = true
+    if (pulled.assignmentStatus === 'ASSIGNED' && pulled.assignedStewardName) {
+      ElMessage.success(`已拉取订单 ${pulled.externalOrderNo}，已自动分配给管家：${pulled.assignedStewardName}`)
+    } else if (pulled.memoAccountName) {
+      ElMessage.warning(`已拉取订单 ${pulled.externalOrderNo}，备注账号「${pulled.memoAccountName}」尚未匹配到管家，请配置别名或人工分配`)
+    } else {
+      ElMessage.success(`已拉取订单 ${pulled.externalOrderNo}`)
+    }
+  } catch (error) {
+    ElMessage.error(tradingErrorText(error))
+  } finally {
+    pullingTid.value = false
   }
 }
 
@@ -450,8 +627,17 @@ function selectShop(id: string) {
 
 function loadAll(includeShops = true) {
   if (!canRead.value) return
-  const tasks: Array<Promise<unknown>> = [loadOrders(), loadIssues(), loadMappings(), loadSkuCandidates(), loadLinks(), loadReport()]
+  const tasks: Array<Promise<unknown>> = [
+    loadOrders(),
+    loadIssues(),
+    loadMappings(),
+    loadSkuCandidates(),
+    loadLinks(),
+    loadReport(),
+    loadStewardOptions(),
+  ]
   if (includeShops) tasks.push(loadShops())
+  if (canManage.value) tasks.push(loadStewardAliases())
   void Promise.allSettled(tasks)
 }
 
@@ -740,6 +926,7 @@ onMounted(() => {
       <el-card shadow="never">
         <el-tabs v-model="activeTab" class="fulfillment-status-tabs">
           <el-tab-pane label="订单与原始状态" name="orders" />
+          <el-tab-pane v-if="canManage" label="管家账号映射" name="steward-aliases" />
           <el-tab-pane v-if="canManage" label="客户拉取与建档" name="customer-pull" />
           <el-tab-pane v-if="canManage" label="店铺接入" name="shops" />
           <el-tab-pane v-if="canManage" label="同步策略" name="policy" />
@@ -750,10 +937,77 @@ onMounted(() => {
         </el-tabs>
 
         <template v-if="activeTab === 'orders'">
+          <div class="youzan-orders-controls">
+            <div v-if="canManage" class="youzan-pull-tid-bar" data-testid="youzan-pull-tid-bar">
+              <span class="youzan-pull-tid-label">按单号实时拉取（youzan.trade.get）</span>
+              <el-input
+                v-model="pullTidInput"
+                placeholder="输入有赞订单号 tid，如 E2026..."
+                clearable
+                class="youzan-tid-input"
+                data-testid="youzan-pull-tid-input"
+                @keyup.enter="runPullByTid"
+              />
+              <el-button
+                type="primary"
+                plain
+                :loading="pullingTid"
+                data-testid="youzan-pull-tid-btn"
+                @click="runPullByTid"
+              >
+                按单号拉取并分配
+              </el-button>
+            </div>
+            <div class="youzan-order-filter-bar" data-testid="youzan-order-filter-bar">
+              <el-input
+                v-model="orderQuery.keyword"
+                placeholder="搜索订单号 / 备注账号 / 业绩 / 到院"
+                clearable
+                class="youzan-filter-keyword"
+                data-testid="youzan-order-keyword"
+                @keyup.enter="orderQuery.page = 1; loadOrders()"
+              />
+              <el-select
+                v-model="orderQuery.assignedStewardId"
+                placeholder="按归属管家筛选"
+                clearable
+                filterable
+                class="youzan-filter-select"
+                data-testid="youzan-order-steward-filter"
+              >
+                <el-option
+                  v-for="item in stewardOptions"
+                  :key="item.id"
+                  :label="item.teamName ? `${item.displayName}（${item.teamName}）` : item.displayName"
+                  :value="item.id"
+                />
+              </el-select>
+              <el-select
+                v-model="orderQuery.assignmentStatus"
+                placeholder="全部分配状态"
+                clearable
+                class="youzan-filter-select"
+                data-testid="youzan-order-assign-status-filter"
+              >
+                <el-option label="已分配管家" value="ASSIGNED" />
+                <el-option label="全部待人工分配" value="UNASSIGNED" />
+                <el-option label="账号未匹配" value="UNMATCHED" />
+                <el-option label="重名冲突" value="AMBIGUOUS" />
+                <el-option label="备注无账号" value="NO_ACCOUNT" />
+              </el-select>
+              <el-button type="primary" :loading="orderLoading" data-testid="youzan-order-filter-search" @click="orderQuery.page = 1; loadOrders()">筛选</el-button>
+              <el-button data-testid="youzan-order-filter-reset" @click="resetOrderFilters">重置</el-button>
+            </div>
+          </div>
           <el-alert v-if="orderError" type="error" :title="`订单加载失败：${orderError}`" :closable="false" class="crm-table-alert" />
           <div class="proto-table-wrap">
             <app-table v-loading="orderLoading" :data="orders" :row-key="orderRowKey">
-              <el-table-column prop="externalOrderNo" label="有赞订单号" min-width="160" />
+              <el-table-column prop="externalOrderNo" label="有赞订单号" min-width="180">
+                <template #default="{ row }">
+                  <div class="youzan-order-no">{{ row.externalOrderNo }}</div>
+                  <div v-if="orderStatusSubline(row)" class="proto-subcell">{{ orderStatusSubline(row) }}</div>
+                </template>
+              </el-table-column>
               <el-table-column label="客户昵称 / 手机" min-width="135"><template #default="{row}">{{ buyerHeadline(row) }}<div class="proto-subcell">{{ buyerSubline(row) }}</div></template></el-table-column>
               <el-table-column label="商品" min-width="210">
                 <template #default="{row}">
@@ -767,16 +1021,72 @@ onMounted(() => {
                 </template>
               </el-table-column>
               <el-table-column label="实付" width="95" align="right"><template #default="{row}">{{ fenToYuan(row.externalAmountFen) }}</template></el-table-column>
+              <el-table-column label="归属管家" min-width="165">
+                <template #default="{ row }">
+                  <div class="youzan-steward-cell" data-testid="youzan-order-steward">
+                    <div class="youzan-steward-head">
+                      <strong v-if="row.assignedStewardName" class="youzan-steward-name">{{ row.assignedStewardName }}</strong>
+                      <span v-else-if="row.assignedStewardId" class="youzan-steward-name">管家 #{{ row.assignedStewardId }}</span>
+                      <StatusPill
+                        v-if="row.assignmentStatus"
+                        :text="assignmentStatusLabel(row.assignmentStatus)"
+                        :tone="assignmentStatusTone(row.assignmentStatus)"
+                      />
+                      <span v-else class="proto-muted">未分配</span>
+                    </div>
+                    <div v-if="row.memoAccountName || row.assignmentSource" class="proto-subcell">
+                      <span v-if="row.memoAccountName">账号：{{ row.memoAccountName }}</span>
+                      <span v-if="row.memoAccountName && row.assignmentSource && row.assignmentSource !== 'NONE'"> · </span>
+                      <span v-if="row.assignmentSource && row.assignmentSource !== 'NONE'">{{ assignmentSourceLabel(row.assignmentSource) }}</span>
+                    </div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="商家备注摘要" min-width="210">
+                <template #default="{ row }">
+                  <div v-if="memoSummaryPrimary(row)" class="youzan-memo-cell" data-testid="youzan-order-memo">
+                    <div class="youzan-memo-main">{{ memoSummaryPrimary(row) }}</div>
+                    <div v-if="memoSummarySubline(row)" class="proto-subcell">{{ memoSummarySubline(row) }}</div>
+                  </div>
+                  <span v-else class="proto-muted">—</span>
+                </template>
+              </el-table-column>
               <el-table-column label="订单类型" width="110"><template #default="{row}"><span class="proto-pill" :class="orderTypeTone(orderTypeOf(row))">{{ orderTypeLabel(orderTypeOf(row)) }}</span></template></el-table-column>
               <el-table-column label="活动 / 批次" min-width="110"><template #default="{row}">活动 #{{ campaignIdOf(row) }}<div class="proto-subcell">批次 #{{ campaignBatchIdOf(row) }}</div></template></el-table-column>
               <el-table-column label="支付时间" min-width="150"><template #default="{row}">{{ paidAtOf(row) ? formatDateTime(paidAtOf(row)) : '未支付' }}</template></el-table-column>
               <el-table-column label="CRM匹配" min-width="105"><template #default="{row}">{{ linkedCustomer(row) }}</template></el-table-column>
               <el-table-column label="状态" width="120"><template #default="{row}"><StatusPill :text="mappingStatusLabel(row.mappingStatus)" :tone="mappingStatusTone(row.mappingStatus)" /></template></el-table-column>
-              <el-table-column label="操作" width="190" fixed="right"><template #default="{row}"><el-button v-if="row.mappingStatus !== 'PROCESSED'" size="small" type="primary" @click="matchAndSync(row)">匹配并同步</el-button><span v-else class="proto-muted">已入队</span><el-button text data-testid="youzan-order-detail" @click="openOrder(row)">脱敏详情</el-button></template></el-table-column>
+              <el-table-column label="操作" width="240" fixed="right">
+                <template #default="{row}">
+                  <el-button v-if="row.mappingStatus !== 'PROCESSED'" size="small" type="primary" @click="matchAndSync(row)">匹配并同步</el-button>
+                  <span v-else class="proto-muted">已入队</span>
+                  <el-button
+                    v-if="canAssignOrder"
+                    text
+                    type="primary"
+                    data-testid="youzan-order-assign"
+                    @click="openAssignDialog(row)"
+                  >
+                    {{ row.assignedStewardId ? '改派' : '分配管家' }}
+                  </el-button>
+                  <el-button text data-testid="youzan-order-detail" @click="openOrder(row)">脱敏详情</el-button>
+                </template>
+              </el-table-column>
               <template #empty>暂无原始订单事件</template>
             </app-table>
           </div>
           <el-pagination v-model:current-page="orderQuery.page" v-model:page-size="orderQuery.size" :total="orderTotal" :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next" class="crm-pager" @current-change="loadOrders" @size-change="orderQuery.page = 1; loadOrders()" />
+        </template>
+
+        <template v-else-if="activeTab === 'steward-aliases' && canManage">
+          <YouzanStewardAliasPanel
+            :aliases="stewardAliases"
+            :steward-options="stewardOptions"
+            :loading="stewardAliasesLoading"
+            :can-write="canManage"
+            :suggested-alias-name="pendingAliasName"
+            @saved="handleAliasesSaved"
+          />
         </template>
 
         <template v-else-if="activeTab === 'customer-pull' && canManage">
@@ -862,7 +1172,19 @@ onMounted(() => {
       </el-card>
     </template>
 
-    <YouzanOrderDetailDrawer v-model="detailVisible" :order="selectedOrder" />
+    <YouzanOrderDetailDrawer
+      v-model="detailVisible"
+      :order="selectedOrder"
+      :can-assign="canAssignOrder"
+      @assign="openAssignDialog"
+    />
+    <YouzanOrderAssignDialog
+      v-model="assignDialogVisible"
+      :order="assigningOrder"
+      :steward-options="stewardOptions"
+      :can-save-alias="canManage"
+      @saved="handleOrderAssigned"
+    />
     <el-dialog v-model="showPrerequisites" title="有赞接口前置条件" width="520px">
       <p v-if="hasActiveRealIntegration">当前已进入真实店铺接入：请确认使用有赞云无容器自用型应用凭证、系统出口 IP 已加入有赞 IP 白名单、公网 HTTPS 消息地址可正常返回 HTTP 200 {"code":0,"msg":"success"}，并按策略执行分页与增量同步。</p>
       <p v-else>正式接入需确认店铺类型、开放平台应用与授权、订单/退款接口、回调安全规则及分页限速。当前尚未启用已验证的真实店铺，真实接口默认保持禁用，完成授权与连接测试后可在全局开关及店铺配置中启用。</p>
@@ -884,4 +1206,15 @@ onMounted(() => {
 .youzan-goods-title { color: #1f3c47; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 .youzan-goods-count { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid #cce0db; border-radius: 999px; background: #eef7f5; color: #175c55; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .youzan-goods-sub { line-height: 1.5; overflow-wrap: anywhere; }
+.youzan-orders-controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.youzan-pull-tid-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid #d9e8e3; border-radius: 10px; background: #f6fbf9; }
+.youzan-pull-tid-label { color: #1b4d46; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.youzan-tid-input { width: min(290px, 100%); }
+.youzan-order-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.youzan-filter-keyword { width: min(260px, 100%); }
+.youzan-order-no { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #173f3a; word-break: break-all; }
+.youzan-steward-cell, .youzan-memo-cell { min-width: 0; }
+.youzan-steward-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.youzan-steward-name { color: #173f3a; font-size: 13px; }
+.youzan-memo-main { color: #244540; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 </style>

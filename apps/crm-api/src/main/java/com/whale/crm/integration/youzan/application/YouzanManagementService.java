@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whale.crm.customer.application.CustomerScopeSupport;
 import com.whale.crm.integration.youzan.adapter.RealYouzanAdapter;
 import com.whale.crm.integration.youzan.adapter.YouzanAdapterRouter;
+import com.whale.crm.integration.youzan.adapter.YouzanOrderEnvelope;
 import com.whale.crm.integration.youzan.adapter.YouzanOrderEvent;
 import com.whale.crm.integration.youzan.adapter.YouzanOrderLine;
 import com.whale.crm.integration.youzan.adapter.YouzanPullPage;
@@ -15,8 +16,10 @@ import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanBatchRetryResponse;
 import com.whale.crm.integration.youzan.api.dto.YouzanCustomerLinkRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanEventResponse;
+import com.whale.crm.integration.youzan.api.dto.YouzanOrderAssignRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanOrderItemView;
 import com.whale.crm.integration.youzan.api.dto.YouzanOrderView;
+import com.whale.crm.integration.youzan.api.dto.YouzanPullOrderByTidRequest;
 import com.whale.crm.integration.youzan.api.dto.YouzanReconcileReport;
 import com.whale.crm.integration.youzan.api.dto.YouzanSkuCandidateView;
 import com.whale.crm.integration.youzan.api.dto.YouzanSkuMappingRequest;
@@ -26,6 +29,7 @@ import com.whale.crm.integration.youzan.domain.YouzanConfigRepository;
 import com.whale.crm.integration.youzan.domain.YouzanCustomerLink;
 import com.whale.crm.integration.youzan.domain.YouzanEvent;
 import com.whale.crm.integration.youzan.domain.YouzanMappingIssueEvent;
+import com.whale.crm.integration.youzan.domain.YouzanOrderAssignment;
 import com.whale.crm.integration.youzan.domain.YouzanOrderMap;
 import com.whale.crm.integration.youzan.domain.YouzanRepository;
 import com.whale.crm.integration.youzan.domain.YouzanSkuMapping;
@@ -39,6 +43,7 @@ import com.whale.crm.platform.idempotency.IdempotencyService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.DataScope;
 import com.whale.crm.platform.security.crypto.AesGcmCipher;
+import com.whale.crm.platform.user.domain.UserRepository;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
 import com.whale.crm.platform.web.PageResponse;
@@ -49,6 +54,7 @@ import com.whale.crm.trading.application.OrderApplicationService;
 import com.whale.crm.trading.application.OutboxService;
 import com.whale.crm.trading.domain.OrderFulfillmentView;
 import com.whale.crm.trading.domain.OrderItem;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.access.AccessDeniedException;
@@ -85,6 +91,8 @@ public class YouzanManagementService {
     private static final int MAX_SKU_CANDIDATE_SCAN_ISSUES = 500;
     private static final int DEFAULT_BATCH_RETRY_LIMIT = 50;
     private static final int MAX_BATCH_RETRY_LIMIT = 100;
+    private static final Set<String> VALID_ASSIGNMENT_STATUS_FILTERS = Set.of(
+            "ASSIGNED", "UNASSIGNED", "UNMATCHED", "AMBIGUOUS", "NO_ACCOUNT");
     private final YouzanRepository repository;
     private final YouzanConfigRepository configRepository;
     private final YouzanEventService eventService;
@@ -100,6 +108,7 @@ public class YouzanManagementService {
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
     private final YouzanRiskLinkOperations riskLinkOperations;
+    private final YouzanOrderAssignmentService assignmentService;
 
     public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
                                    YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
@@ -109,10 +118,9 @@ public class YouzanManagementService {
                                    AesGcmCipher cipher, PlatformTransactionManager transactionManager) {
         this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
                 scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
-                transactionManager, Clock.system(BUSINESS_ZONE), YouzanRiskLinkOperations.NOOP);
+                transactionManager, Clock.system(BUSINESS_ZONE), YouzanRiskLinkOperations.NOOP, null);
     }
 
-    @Autowired
     public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
                                    YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
                                    OrderApplicationService orderService, CatalogApplicationService catalogService,
@@ -122,7 +130,22 @@ public class YouzanManagementService {
                                    YouzanRiskLinkOperations riskLinkOperations) {
         this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
                 scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
-                transactionManager, Clock.system(BUSINESS_ZONE), riskLinkOperations);
+                transactionManager, Clock.system(BUSINESS_ZONE), riskLinkOperations, null);
+    }
+
+    @Autowired
+    public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
+                                   YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
+                                   OrderApplicationService orderService, CatalogApplicationService catalogService,
+                                   CustomerScopeSupport scopeSupport, IdempotencyService idempotencyService,
+                                   AuditService auditService, OutboxService outboxService, ObjectMapper objectMapper,
+                                   AesGcmCipher cipher, PlatformTransactionManager transactionManager,
+                                   YouzanRiskLinkOperations riskLinkOperations,
+                                   ObjectProvider<YouzanOrderAssignmentService> assignmentServiceProvider) {
+        this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
+                scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
+                transactionManager, Clock.system(BUSINESS_ZONE), riskLinkOperations,
+                assignmentServiceProvider == null ? null : assignmentServiceProvider.getIfAvailable());
     }
 
     public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
@@ -133,7 +156,7 @@ public class YouzanManagementService {
                                    AesGcmCipher cipher, PlatformTransactionManager transactionManager, Clock clock) {
         this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
                 scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
-                transactionManager, clock, YouzanRiskLinkOperations.NOOP);
+                transactionManager, clock, YouzanRiskLinkOperations.NOOP, null);
     }
 
     public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
@@ -143,6 +166,19 @@ public class YouzanManagementService {
                                    AuditService auditService, OutboxService outboxService, ObjectMapper objectMapper,
                                    AesGcmCipher cipher, PlatformTransactionManager transactionManager, Clock clock,
                                    YouzanRiskLinkOperations riskLinkOperations) {
+        this(repository, configRepository, eventService, adapterRouter, orderService, catalogService,
+                scopeSupport, idempotencyService, auditService, outboxService, objectMapper, cipher,
+                transactionManager, clock, riskLinkOperations, null);
+    }
+
+    public YouzanManagementService(YouzanRepository repository, YouzanConfigRepository configRepository,
+                                   YouzanEventService eventService, YouzanAdapterRouter adapterRouter,
+                                   OrderApplicationService orderService, CatalogApplicationService catalogService,
+                                   CustomerScopeSupport scopeSupport, IdempotencyService idempotencyService,
+                                   AuditService auditService, OutboxService outboxService, ObjectMapper objectMapper,
+                                   AesGcmCipher cipher, PlatformTransactionManager transactionManager, Clock clock,
+                                   YouzanRiskLinkOperations riskLinkOperations,
+                                   YouzanOrderAssignmentService assignmentService) {
         this.repository = repository;
         this.configRepository = configRepository;
         this.eventService = eventService;
@@ -158,18 +194,35 @@ public class YouzanManagementService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.clock = clock != null ? clock : Clock.system(BUSINESS_ZONE);
         this.riskLinkOperations = riskLinkOperations != null ? riskLinkOperations : YouzanRiskLinkOperations.NOOP;
+        this.assignmentService = assignmentService;
     }
 
     public PageResponse<YouzanOrderView> orders(long tenantId, CurrentUser user, String shopId, int page, int size) {
+        return orders(tenantId, user, shopId, null, null, null, page, size);
+    }
+
+    public PageResponse<YouzanOrderView> orders(long tenantId, CurrentUser user, String shopId,
+                                                Long assignedStewardId, String assignmentStatus, String keyword,
+                                                int page, int size) {
         int offset = (page - 1) * size;
         DataScope scope = scopeSupport.scope(user);
         if (scopeSupport.isEmptyScope(scope)) {
             return new PageResponse<>(List.of(), 0, page, size);
         }
+        String cleanStatus = normalizeAssignmentStatusFilter(assignmentStatus);
+        String cleanKeyword = normalizeKeywordFilter(keyword);
         CustomerScopeSupport.ScopeQuery scopeQuery = scopeQuery(scope, user);
-        List<YouzanEvent> rawEvents = repository.findLatestOrderEvents(tenantId, shopId, scopeQuery, offset, size);
+        boolean filtered = assignedStewardId != null || cleanStatus != null || cleanKeyword != null;
+        List<YouzanEvent> rawEvents = filtered
+                ? repository.findLatestOrderEventsFiltered(tenantId, shopId, scopeQuery,
+                        assignedStewardId, cleanStatus, cleanKeyword, offset, size)
+                : repository.findLatestOrderEvents(tenantId, shopId, scopeQuery, offset, size);
         List<YouzanOrderView> items = toViews(tenantId, user, scope, rawEvents);
-        return new PageResponse<>(items, repository.countDistinctExternalOrders(tenantId, shopId, scopeQuery), page, size);
+        long total = filtered
+                ? repository.countDistinctExternalOrdersFiltered(tenantId, shopId, scopeQuery,
+                        assignedStewardId, cleanStatus, cleanKeyword)
+                : repository.countDistinctExternalOrders(tenantId, shopId, scopeQuery);
+        return new PageResponse<>(items, total, page, size);
     }
 
     @Transactional(readOnly = true)
@@ -179,8 +232,78 @@ public class YouzanManagementService {
             throw orderNotFound();
         }
         YouzanEvent raw = repository.findEvent(tenantId, eventId).orElseThrow(this::orderNotFound);
-        PreparedOrderView prepared = prepareOrderView(tenantId, user, scope, raw, false);
-        return enrichOrderViews(tenantId, user, List.of(prepared)).get(0);
+        YouzanOrderAssignment assignment = loadSingleAssignment(tenantId, raw);
+        Map<Long, UserRepository.StewardOptionRow> staffProfiles = loadStaffProfilesForAssignments(
+                tenantId, assignment == null ? List.of() : List.of(assignment));
+        PreparedOrderView prepared = prepareOrderView(tenantId, user, scope, raw, false, assignment, staffProfiles);
+        return enrichOrderViews(tenantId, user, List.of(prepared), staffProfiles).get(0);
+    }
+
+    public YouzanOrderView pullOrderByTid(CurrentUser user, YouzanPullOrderByTidRequest request,
+                                          String idempotencyKey) {
+        if (user == null || user.isInstitutionUser() || !"EMPLOYEE".equals(user.userType())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅内部员工可执行有赞单笔订单拉取");
+        }
+        requireKey(idempotencyKey);
+        if (request == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请求体不能为空");
+        }
+        String shopId = firstNonBlank(request.shopId());
+        String tid = firstNonBlank(request.tid());
+        if (shopId == null || tid == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "店铺编号和有赞订单号不能为空");
+        }
+        long tenantId = user.tenantId();
+        var adapter = adapterRouter.adapter(tenantId, shopId);
+        YouzanOrderEnvelope envelope = adapter.fetchOrder(tenantId, shopId, null, tid);
+        YouzanOrderEvent event = envelope.event();
+        String providerPayload = envelope.providerPayload() != null ? envelope.providerPayload() : json(event);
+        YouzanEventResponse ingested = eventService.ingest(tenantId, event, "PULL_DETAIL", providerPayload);
+        YouzanEvent persisted = repository.findEventByKey(tenantId, event.shopId(), event.eventId())
+                .orElseGet(() -> ingested != null && ingested.id() != null
+                        ? repository.findEvent(tenantId, ingested.id()).orElseThrow() : null);
+        if (persisted == null || persisted.id() == null) {
+            throw new IllegalStateException("有赞订单事件落库失败");
+        }
+        eventService.process(tenantId, persisted.id());
+        if (assignmentService != null) {
+            assignmentService.syncFromProviderPayload(tenantId, event.shopId(), event.externalOrderNo(),
+                    persisted.id(), providerPayload);
+        }
+        YouzanOrderView view = order(tenantId, user, persisted.id());
+        Map<String, Object> auditAfter = new LinkedHashMap<>();
+        auditAfter.put("shopId", view.shopId());
+        auditAfter.put("externalOrderNo", view.externalOrderNo());
+        auditAfter.put("eventId", view.eventId());
+        auditAfter.put("mappingStatus", view.mappingStatus());
+        auditAfter.put("assignmentStatus", view.assignmentStatus());
+        auditAfter.put("assignedStewardId", view.assignedStewardId());
+        auditService.record(tenantId, user.userId(), AuditService.ACTION_YOUZAN_ORDER_PULL_BY_TID,
+                "YOUZAN_ORDER", view.shopId() + ":" + view.externalOrderNo(), null, auditAfter, null);
+        return view;
+    }
+
+    public YouzanOrderView assignOrderSteward(CurrentUser user, String shopId, String externalOrderNo,
+                                              YouzanOrderAssignRequest request, String idempotencyKey) {
+        if (user == null || user.isInstitutionUser() || !"EMPLOYEE".equals(user.userType())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅内部员工可执行有赞订单管家分配");
+        }
+        if (assignmentService == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "有赞订单分配服务未启用");
+        }
+        String cleanShopId = firstNonBlank(shopId);
+        String cleanOrderNo = firstNonBlank(externalOrderNo);
+        if (cleanShopId == null || cleanOrderNo == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "店铺编号和有赞订单号不能为空");
+        }
+        long tenantId = user.tenantId();
+        YouzanEvent latest = repository.findLatestEventByExternalOrder(tenantId, cleanShopId, cleanOrderNo)
+                .orElseThrow(this::orderNotFound);
+        if (!user.permissions().contains("integration:youzan:manage")) {
+            order(tenantId, user, latest.id());
+        }
+        assignmentService.assignOrderSteward(user, cleanShopId, cleanOrderNo, latest.id(), request, idempotencyKey);
+        return order(tenantId, user, latest.id());
     }
 
     private List<YouzanOrderView> toViews(long tenantId, CurrentUser user, DataScope scope,
@@ -188,9 +311,13 @@ public class YouzanManagementService {
         if (rawEvents == null || rawEvents.isEmpty()) {
             return List.of();
         }
+        Map<String, YouzanOrderAssignment> assignmentsByKey = loadAssignmentsForEvents(tenantId, rawEvents);
+        Map<Long, UserRepository.StewardOptionRow> staffProfiles = loadStaffProfilesForAssignments(
+                tenantId, assignmentsByKey.values());
         List<PreparedOrderView> prepared = new ArrayList<>(rawEvents.size());
         for (YouzanEvent raw : rawEvents) {
-            PreparedOrderView item = prepareOrderView(tenantId, user, scope, raw, true);
+            YouzanOrderAssignment assignment = assignmentsByKey.get(assignmentKey(raw.shopId(), raw.externalOrderNo()));
+            PreparedOrderView item = prepareOrderView(tenantId, user, scope, raw, true, assignment, staffProfiles);
             if (item != null) {
                 prepared.add(item);
             }
@@ -198,38 +325,48 @@ public class YouzanManagementService {
         if (prepared.isEmpty()) {
             return List.of();
         }
-        return enrichOrderViews(tenantId, user, prepared);
+        return enrichOrderViews(tenantId, user, prepared, staffProfiles);
     }
 
     private PreparedOrderView prepareOrderView(long tenantId, CurrentUser user, DataScope scope, YouzanEvent raw,
-                                               boolean omitUnlinked) {
+                                               boolean omitUnlinked, YouzanOrderAssignment assignment,
+                                               Map<Long, UserRepository.StewardOptionRow> staffProfiles) {
         YouzanOrderMap map = repository.findOrderMap(tenantId, raw.shopId(), raw.externalOrderNo()).orElse(null);
         OrderFulfillmentView detail = null;
+        boolean assignedVisible = isAssignedVisible(scope, user, assignment, staffProfiles);
         if (map != null) {
             try {
                 detail = orderService.detail(tenantId, user, map.crmOrderId());
             } catch (BusinessException ex) {
                 if (ex.errorCode() == ErrorCode.NOT_FOUND) {
-                    if (omitUnlinked) {
-                        return null;
+                    if (scope.type() != DataScope.ScopeType.ALL && assignedVisible
+                            && repository.isMappedCustomerActive(tenantId, map.crmOrderId())) {
+                        // 有赞订单显式分配给当前管家/团队，但内部 CRM 客户归属他人：允许查看有赞外部订单视图，不透出他人内部 CRM 订单明细
+                        map = null;
+                    } else {
+                        if (omitUnlinked) {
+                            return null;
+                        }
+                        throw orderNotFound();
                     }
-                    throw orderNotFound();
+                } else {
+                    throw ex;
                 }
-                throw ex;
             }
         }
         YouzanOrderEvent event = readEvent(raw.payloadCipher());
-        if (map == null && !rawVisible(tenantId, user, scope, event)) {
+        if (map == null && !assignedVisible && !rawVisible(tenantId, user, scope, event)) {
             if (omitUnlinked) {
                 return null;
             }
             throw orderNotFound();
         }
-        return new PreparedOrderView(raw, map, detail, event);
+        return new PreparedOrderView(raw, map, detail, event, assignment);
     }
 
     private List<YouzanOrderView> enrichOrderViews(long tenantId, CurrentUser user,
-                                                   List<PreparedOrderView> preparedOrders) {
+                                                   List<PreparedOrderView> preparedOrders,
+                                                   Map<Long, UserRepository.StewardOptionRow> staffProfiles) {
         Map<String, Map<String, YouzanSkuMapping>> mappingsByShop = new HashMap<>();
         List<List<OrderItemDraft>> draftsByOrder = new ArrayList<>(preparedOrders.size());
         Set<Long> skuIdsNeedingName = new LinkedHashSet<>();
@@ -257,29 +394,163 @@ public class YouzanManagementService {
             List<YouzanOrderItemView> itemViews = draftsByOrder.get(i).stream()
                     .map(draft -> draft.toView(catalogSkuNames))
                     .toList();
-            views.add(buildOrderView(prepared, itemViews, canViewMaskedPayload));
+            views.add(buildOrderView(prepared, itemViews, canViewMaskedPayload, staffProfiles));
         }
         return views;
     }
 
     private YouzanOrderView buildOrderView(PreparedOrderView prepared, List<YouzanOrderItemView> itemViews,
-                                           boolean canViewMaskedPayload) {
+                                           boolean canViewMaskedPayload,
+                                           Map<Long, UserRepository.StewardOptionRow> staffProfiles) {
         YouzanEvent raw = prepared.raw();
         YouzanOrderMap map = prepared.map();
         OrderFulfillmentView detail = prepared.detail();
         YouzanOrderEvent event = prepared.event();
+        YouzanOrderAssignment assignment = prepared.assignment();
         String verificationMethod = detail == null ? null : detail.order().payments().stream()
                 .map(payment -> payment.verificationMethod()).filter(method -> method != null).findFirst().orElse(null);
-        return new YouzanOrderView(map == null ? null : map.id(), raw.shopId(), raw.externalOrderNo(),
-                map == null ? null : map.crmOrderId(), raw.processStatus(),
+        String assignedStewardName = null;
+        if (assignment != null && assignment.assignedStewardId() != null && staffProfiles != null) {
+            UserRepository.StewardOptionRow profile = staffProfiles.get(assignment.assignedStewardId());
+            if (profile != null) {
+                assignedStewardName = profile.displayName();
+            }
+        }
+        return new YouzanOrderView(
+                map == null ? null : map.id(),
+                raw.shopId(),
+                raw.externalOrderNo(),
+                map == null ? null : map.crmOrderId(),
+                raw.processStatus(),
                 detail == null ? null : detail.order().order().paidFen(),
                 detail == null ? raw.sourceSystem() : detail.order().order().sourceSystem(),
                 detail == null ? raw.shopId() : detail.order().order().externalShopId(),
-                raw.eventId(), raw.processStatus(), detail == null ? null : detail.order().order().status(),
-                event.externalUpdatedAt(), event.amountFen(), verificationMethod,
-                canViewMaskedPayload ? raw.payloadMaskedJson() : null, raw.lastError(),
-                event.externalCustomerId(), event.paidAt(), event.orderTypeCode(),
-                event.campaignId(), event.campaignBatchId(), itemViews);
+                raw.eventId(),
+                raw.processStatus(),
+                detail == null ? null : detail.order().order().status(),
+                event.externalUpdatedAt(),
+                event.amountFen(),
+                verificationMethod,
+                canViewMaskedPayload ? raw.payloadMaskedJson() : null,
+                raw.lastError(),
+                event.externalCustomerId(),
+                event.paidAt(),
+                event.orderTypeCode(),
+                event.campaignId(),
+                event.campaignBatchId(),
+                itemViews,
+                assignment == null ? event.status() : firstNonBlank(assignment.providerOrderStatus(), event.status()),
+                assignment == null ? null : assignment.providerStatusText(),
+                assignment == null ? null : assignment.payWayDesc(),
+                assignment == null ? null : assignment.orderedAt(),
+                assignment == null ? null : assignment.consignedAt(),
+                assignment == null ? null : assignment.buyerFormNameMasked(),
+                assignment == null ? null : assignment.buyerFormMobileMasked(),
+                assignment == null ? null : assignment.tradeMemoMasked(),
+                assignment == null ? null : assignment.memoPerformanceOwner(),
+                assignment == null ? null : assignment.memoChannel(),
+                assignment == null ? null : assignment.memoCustomerType(),
+                assignment == null ? null : assignment.memoSource(),
+                assignment == null ? null : assignment.memoAccountName(),
+                assignment == null ? null : assignment.memoInstitutionName(),
+                assignment == null ? null : assignment.memoExtraNote(),
+                assignment == null ? null : assignment.assignedStewardId(),
+                assignedStewardName,
+                assignment == null ? null : assignment.assignmentStatus(),
+                assignment == null ? null : assignment.assignmentSource(),
+                assignment == null ? null : assignment.assignmentReason(),
+                assignment == null ? null : assignment.assignedAt(),
+                assignment == null ? null : assignment.version());
+    }
+
+    private YouzanOrderAssignment loadSingleAssignment(long tenantId, YouzanEvent raw) {
+        if (assignmentService == null || raw == null) {
+            return null;
+        }
+        return assignmentService.findByOrder(tenantId, raw.shopId(), raw.externalOrderNo()).orElse(null);
+    }
+
+    private Map<String, YouzanOrderAssignment> loadAssignmentsForEvents(long tenantId, List<YouzanEvent> rawEvents) {
+        if (assignmentService == null || rawEvents == null || rawEvents.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Set<String>> ordersByShop = new LinkedHashMap<>();
+        for (YouzanEvent raw : rawEvents) {
+            if (raw == null || raw.shopId() == null || raw.shopId().isBlank()
+                    || raw.externalOrderNo() == null || raw.externalOrderNo().isBlank()) {
+                continue;
+            }
+            ordersByShop.computeIfAbsent(raw.shopId(), k -> new LinkedHashSet<>()).add(raw.externalOrderNo());
+        }
+        Map<String, YouzanOrderAssignment> result = new HashMap<>();
+        for (Map.Entry<String, Set<String>> entry : ordersByShop.entrySet()) {
+            Map<String, YouzanOrderAssignment> shopMap = assignmentService.findByOrdersMap(
+                    tenantId, entry.getKey(), entry.getValue());
+            for (Map.Entry<String, YouzanOrderAssignment> orderEntry : shopMap.entrySet()) {
+                result.put(assignmentKey(entry.getKey(), orderEntry.getKey()), orderEntry.getValue());
+            }
+        }
+        return result;
+    }
+
+    private Map<Long, UserRepository.StewardOptionRow> loadStaffProfilesForAssignments(
+            long tenantId, java.util.Collection<YouzanOrderAssignment> assignments) {
+        if (assignmentService == null || assignments == null || assignments.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> stewardIds = assignments.stream()
+                .filter(Objects::nonNull)
+                .map(YouzanOrderAssignment::assignedStewardId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (stewardIds.isEmpty()) {
+            return Map.of();
+        }
+        return assignmentService.loadStaffProfiles(tenantId, stewardIds);
+    }
+
+    private static boolean isAssignedVisible(DataScope scope, CurrentUser user, YouzanOrderAssignment assignment,
+                                             Map<Long, UserRepository.StewardOptionRow> staffProfiles) {
+        if (assignment == null || assignment.assignedStewardId() == null || scope == null || user == null) {
+            return false;
+        }
+        return switch (scope.type()) {
+            case ALL -> true;
+            case SELF -> Objects.equals(assignment.assignedStewardId(), user.userId());
+            case TEAM -> {
+                if (Objects.equals(assignment.assignedStewardId(), user.userId())) {
+                    yield true;
+                }
+                UserRepository.StewardOptionRow profile = staffProfiles == null
+                        ? null : staffProfiles.get(assignment.assignedStewardId());
+                Long teamId = profile != null && profile.teamId() != null
+                        ? profile.teamId() : assignment.assignedTeamId();
+                yield teamId != null && scope.teamIds() != null && scope.teamIds().contains(teamId);
+            }
+            default -> false;
+        };
+    }
+
+    private static String assignmentKey(String shopId, String externalOrderNo) {
+        return (shopId == null ? "" : shopId) + "\u0000" + (externalOrderNo == null ? "" : externalOrderNo);
+    }
+
+    private static String normalizeAssignmentStatusFilter(String raw) {
+        String clean = firstNonBlank(raw);
+        if (clean == null) {
+            return null;
+        }
+        String upper = clean.toUpperCase(java.util.Locale.ROOT);
+        if (!VALID_ASSIGNMENT_STATUS_FILTERS.contains(upper)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "无效的管家分配状态筛选值");
+        }
+        return upper;
+    }
+
+    private static String normalizeKeywordFilter(String raw) {
+        String clean = firstNonBlank(raw);
+        return clean == null ? null : truncate(clean, 100);
     }
 
     private List<OrderItemDraft> buildOrderItemDrafts(PreparedOrderView prepared,
@@ -627,7 +898,10 @@ public class YouzanManagementService {
                         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
                 YouzanEvent raw = repository.findEvent(tenantId, existing.eventId())
                         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在"));
-                if (prepareOrderView(tenantId, user, scope, raw, true) == null) {
+                YouzanOrderAssignment assignment = loadSingleAssignment(tenantId, raw);
+                Map<Long, UserRepository.StewardOptionRow> profiles = loadStaffProfilesForAssignments(
+                        tenantId, assignment == null ? List.of() : List.of(assignment));
+                if (prepareOrderView(tenantId, user, scope, raw, true, assignment, profiles) == null) {
                     throw new BusinessException(ErrorCode.NOT_FOUND, "同步异常不存在");
                 }
             }
@@ -1063,7 +1337,7 @@ public class YouzanManagementService {
     }
 
     private record PreparedOrderView(YouzanEvent raw, YouzanOrderMap map, OrderFulfillmentView detail,
-                                     YouzanOrderEvent event) {
+                                     YouzanOrderEvent event, YouzanOrderAssignment assignment) {
     }
 
     private record OrderItemDraft(String externalSkuId, Integer quantity, String itemTitle, String skuSpec,

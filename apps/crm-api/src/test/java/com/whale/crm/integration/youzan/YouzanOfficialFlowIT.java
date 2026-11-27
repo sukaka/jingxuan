@@ -435,6 +435,234 @@ class YouzanOfficialFlowIT extends AbstractMysqlIT {
         assertThat(managerReport.at("/totalEvents").asLong()).isEqualTo(1L);
     }
 
+    @Test
+    void pullByTidParsesTradeMemoAssignsByAliasAndDisplayNameEnforcesScopeAndPreservesManualAssign() throws Exception {
+        String shopId = "93" + numericSuffix();
+        String clientId = "it-memo-client-" + suffix();
+        String secret = "it-memo-secret-" + suffix();
+        String tidAlias = "E-MEMO-ALIAS-" + suffix();
+        String tidExactName = "E-MEMO-EXACT-" + suffix();
+        String aliasName = "紫紫IT-" + suffix().substring(0, 6);
+
+        Map<String, Object> manager1Row = jdbcTemplate.queryForMap(
+                "SELECT id,display_name FROM sys_user WHERE tenant_id=1 AND username='manager1'");
+        Map<String, Object> manager2Row = jdbcTemplate.queryForMap(
+                "SELECT id,display_name FROM sys_user WHERE tenant_id=1 AND username='manager2'");
+        long manager1Id = ((Number) manager1Row.get("id")).longValue();
+        String manager1Name = (String) manager1Row.get("display_name");
+        long manager2Id = ((Number) manager2Row.get("id")).longValue();
+        String manager2Name = (String) manager2Row.get("display_name");
+
+        AuthCookies manager2 = login("manager2");
+        AuthCookies lead1 = login("lead1");
+        AuthCookies lead2 = login("lead2");
+        AuthCookies operator1 = login("operator1");
+
+        enableYouzanRealRuntime();
+        saveShop(shopId, "备注分配真链测试店", clientId, secret, true, null);
+
+        String rawBuyerMobile = "13900007633";
+        Map<String, Object> aliasOrderDetail = buildRichOrderInfo(
+                tidAlias, "WAIT_BUYER_CONFIRM_GOODS", "已发货", "微信支付",
+                "2026-11-11 15:40:31", "2026-11-11 15:40:48", "2026-11-11 15:40:49", "2026-11-11 20:42:43",
+                "4999.00", List.of("TX-MEMO-1-" + suffix()), "yz-memo-cust-1-" + suffix(),
+                "4898748343", "15042235417", "2026测试万能卡",
+                "[{\"k\":\"城市\",\"v\":\"广州\"}]",
+                "{\"姓名\":\"林小美\",\"手机号\":\"" + rawBuyerMobile + "\"}",
+                "业绩：陈顾问，渠道：koc，类型：新客，来源：koc小星，账号：" + aliasName + "，到院：杭州示范院  可以延期核销申请半个月");
+        STUB_DETAIL_ORDERS.put(tidAlias, aliasOrderDetail);
+
+        // 1. 按单号单笔拉取 youzan.trade.get/4.0.2（尚未配别名 -> UNMATCHED）
+        JsonNode pulled = data(admin.withAuth(post("/api/v1/integrations/youzan/orders/pull-by-tid"))
+                .header("Idempotency-Key", key("pull-tid-1"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("shopId", shopId, "tid", tidAlias))));
+
+        assertThat(DETAIL_CALLS.get()).isEqualTo(1);
+        assertThat(pulled.at("/externalOrderNo").asText()).isEqualTo(tidAlias);
+        assertThat(pulled.at("/providerOrderStatus").asText()).isEqualTo("WAIT_BUYER_CONFIRM_GOODS");
+        assertThat(pulled.at("/providerStatusText").asText()).isEqualTo("已发货");
+        assertThat(pulled.at("/payWayDesc").asText()).isEqualTo("微信支付");
+        assertThat(pulled.at("/buyerFormNameMasked").asText()).isEqualTo("林*美");
+        assertThat(pulled.at("/buyerFormMobileMasked").asText()).isEqualTo("139****7633");
+        assertThat(pulled.at("/memoPerformanceOwner").asText()).isEqualTo("陈顾问");
+        assertThat(pulled.at("/memoChannel").asText()).isEqualTo("koc");
+        assertThat(pulled.at("/memoCustomerType").asText()).isEqualTo("新客");
+        assertThat(pulled.at("/memoSource").asText()).isEqualTo("koc小星");
+        assertThat(pulled.at("/memoAccountName").asText()).isEqualTo(aliasName);
+        assertThat(pulled.at("/memoInstitutionName").asText()).isEqualTo("杭州示范院");
+        assertThat(pulled.at("/memoExtraNote").asText()).isEqualTo("可以延期核销申请半个月");
+        assertThat(pulled.at("/assignmentStatus").asText()).isEqualTo("UNMATCHED");
+        assertThat(pulled.at("/assignedStewardId").isNull()).isTrue();
+        assertThat(pulled.toString()).doesNotContain(rawBuyerMobile, "林小美");
+
+        // 未分配时，普通管家不可见
+        JsonNode m1Before = data(manager1.withAuth(get("/api/v1/integrations/youzan/orders")
+                .param("shopId", shopId).param("page", "1").param("size", "20")));
+        assertThat(m1Before.at("/total").asLong()).isZero();
+
+        // 2. 管理员配置账号别名 aliasName -> manager1，自动回填待分配订单
+        JsonNode aliasSaved = data(admin.withAuth(post("/api/v1/integrations/youzan/steward-aliases"))
+                .header("Idempotency-Key", key("save-alias-1"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of(
+                        "aliasName", aliasName,
+                        "stewardUserId", manager1Id,
+                        "status", "ACTIVE",
+                        "remark", "花名映射集成测试",
+                        "backfillPending", true))));
+        assertThat(aliasSaved.at("/backfilledOrderCount").asInt()).isEqualTo(1);
+        assertThat(aliasSaved.at("/alias/stewardName").asText()).isEqualTo(manager1Name);
+
+        // 回填后：manager1 与同团队 lead1 可见，manager2 与跨团队 lead2 仍不可见
+        JsonNode m1After = data(manager1.withAuth(get("/api/v1/integrations/youzan/orders")
+                .param("shopId", shopId)
+                .param("assignmentStatus", "ASSIGNED")
+                .param("keyword", "杭州示范院")
+                .param("page", "1").param("size", "20")));
+        assertThat(m1After.at("/total").asLong()).isEqualTo(1L);
+        JsonNode m1Order = findOrder(m1After, tidAlias);
+        assertThat(m1Order.at("/assignedStewardId").asLong()).isEqualTo(manager1Id);
+        assertThat(m1Order.at("/assignedStewardName").asText()).isEqualTo(manager1Name);
+        assertThat(m1Order.at("/assignmentSource").asText()).isEqualTo("AUTO_ALIAS");
+        assertThat(m1Order.at("/payloadMaskedJson").isNull()).isTrue();
+        assertThat(m1After.toString()).doesNotContain(rawBuyerMobile, "林小美");
+
+        // 传入范围外管家 ID 筛选必须收敛为空，不可放大范围
+        JsonNode m1CrossFilter = data(manager1.withAuth(get("/api/v1/integrations/youzan/orders")
+                .param("shopId", shopId).param("assignedStewardId", Long.toString(manager2Id))));
+        assertThat(m1CrossFilter.at("/total").asLong()).isZero();
+
+        assertThat(data(lead1.withAuth(get("/api/v1/integrations/youzan/orders").param("shopId", shopId)))
+                .at("/total").asLong()).isEqualTo(1L);
+        assertThat(data(manager2.withAuth(get("/api/v1/integrations/youzan/orders").param("shopId", shopId)))
+                .at("/total").asLong()).isZero();
+        assertThat(data(lead2.withAuth(get("/api/v1/integrations/youzan/orders").param("shopId", shopId)))
+                .at("/total").asLong()).isZero();
+
+        long aliasEventId = queryLong("SELECT latest_event_id FROM crm_youzan_order_latest "
+                + "WHERE tenant_id=1 AND shop_id=? AND external_order_no=?", shopId, tidAlias);
+        mockMvc.perform(get("/api/v1/integrations/youzan/orders/{id}", aliasEventId).cookie(manager2.cookies()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+
+        // 3. 批量拉取列表缺 remark_info 时自动补调 youzan.trade.get/4.0.2，并按管家姓名精确匹配 manager2
+        Map<String, Object> listWithoutRemark = new LinkedHashMap<>();
+        listWithoutRemark.put("order_info", Map.of("tid", tidExactName, "status", "TRADE_SUCCESS",
+                "update_time", "2026-11-12 10:00:00", "pay_time", "2026-11-12 09:59:00"));
+        listWithoutRemark.put("pay_info", Map.of("payment", "1811.00", "transaction", List.of("TX-MEMO-2-" + suffix()),
+                "phase_payments", List.of()));
+        listWithoutRemark.put("buyer_info", Map.of("yz_open_id", "yz-memo-cust-2-" + suffix()));
+        listWithoutRemark.put("orders", List.of(Map.of("item_id", "301", "sku_id", "9", "num", 1)));
+        STUB_LIST_ORDERS.set(List.of(listWithoutRemark));
+
+        Map<String, Object> exactNameDetail = buildRichOrderInfo(
+                tidExactName, "TRADE_SUCCESS", "交易完成", "微信支付",
+                "2026-11-12 09:58:00", "2026-11-12 09:59:00", null, "2026-11-12 10:00:00",
+                "1811.00", List.of("TX-MEMO-2-" + suffix()), "yz-memo-cust-2-" + suffix(),
+                "301", "9", "水光示范卡", "[]", "{}",
+                "业绩：林顾问，账号：" + manager2Name + "，到院：上海示范院");
+        STUB_DETAIL_ORDERS.put(tidExactName, exactNameDetail);
+
+        data(admin.withAuth(post("/api/v1/integrations/youzan/reconcile"))
+                .header("Idempotency-Key", key("reconcile-missing-memo"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("shopId", shopId, "limit", 50))));
+
+        assertThat(DETAIL_CALLS.get()).isEqualTo(2);
+        JsonNode m2Orders = data(manager2.withAuth(get("/api/v1/integrations/youzan/orders").param("shopId", shopId)));
+        assertThat(m2Orders.at("/total").asLong()).isEqualTo(1L);
+        JsonNode m2Order = findOrder(m2Orders, tidExactName);
+        assertThat(m2Order.at("/assignedStewardId").asLong()).isEqualTo(manager2Id);
+        assertThat(m2Order.at("/assignmentSource").asText()).isEqualTo("AUTO_DISPLAY_NAME");
+
+        // 4. 管理员人工改派 tidAlias 给 manager2，再次单笔拉取不得覆盖 MANUAL 分配
+        long assignVersion = m1Order.at("/assignmentVersion").asLong();
+        JsonNode reassigned = data(admin.withAuth(put("/api/v1/integrations/youzan/orders/{tid}/assign", tidAlias))
+                .param("shopId", shopId)
+                .header("Idempotency-Key", key("manual-reassign-1"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of(
+                        "stewardUserId", manager2Id,
+                        "reason", "人工改派测试",
+                        "version", assignVersion))));
+        assertThat(reassigned.at("/assignedStewardId").asLong()).isEqualTo(manager2Id);
+        assertThat(reassigned.at("/assignmentSource").asText()).isEqualTo("MANUAL");
+
+        JsonNode repulled = data(admin.withAuth(post("/api/v1/integrations/youzan/orders/pull-by-tid"))
+                .header("Idempotency-Key", key("pull-tid-2"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("shopId", shopId, "tid", tidAlias))));
+        assertThat(repulled.at("/assignedStewardId").asLong()).isEqualTo(manager2Id);
+        assertThat(repulled.at("/assignmentSource").asText()).isEqualTo("MANUAL");
+
+        // 5. 机构账号严禁访问任何新增有赞分配/别名接口
+        mockMvc.perform(get("/api/v1/integrations/youzan/steward-options").cookie(operator1.cookies()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/integrations/youzan/steward-aliases").cookie(operator1.cookies()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(operator1.withAuth(post("/api/v1/integrations/youzan/orders/pull-by-tid"))
+                        .header("Idempotency-Key", key("op-pull"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("shopId", shopId, "tid", tidAlias))))
+                .andExpect(status().isForbidden());
+
+        // 清理测试别名
+        long aliasId = aliasSaved.at("/alias/id").asLong();
+        mockMvc.perform(admin.withAuth(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/v1/integrations/youzan/steward-aliases/{id}", aliasId)))
+                .andExpect(status().isOk());
+    }
+
+    private static Map<String, Object> buildRichOrderInfo(
+            String tid, String status, String statusStr, String payWayDesc,
+            String created, String payTime, String consignTime, String updateTime,
+            String paymentYuan, List<String> transactions, String yzOpenId,
+            String itemId, String skuId, String title, String skuProps,
+            String buyerMessages, String tradeMemo) {
+        Map<String, Object> orderInfo = new LinkedHashMap<>();
+        orderInfo.put("tid", tid);
+        orderInfo.put("status", status);
+        orderInfo.put("status_str", statusStr);
+        orderInfo.put("pay_type_desc", payWayDesc);
+        orderInfo.put("created", created);
+        orderInfo.put("update_time", updateTime);
+        if (payTime != null) {
+            orderInfo.put("pay_time", payTime);
+        }
+        if (consignTime != null) {
+            orderInfo.put("consign_time", consignTime);
+        }
+        Map<String, Object> payInfo = new LinkedHashMap<>();
+        payInfo.put("payment", paymentYuan);
+        payInfo.put("pay_way_desc", payWayDesc);
+        payInfo.put("transaction", transactions);
+        payInfo.put("phase_payments", List.of());
+
+        Map<String, Object> buyerInfo = new LinkedHashMap<>();
+        buyerInfo.put("yz_open_id", yzOpenId);
+        buyerInfo.put("buyer_phone", "$CIPHER_PHONE$1$");
+        buyerInfo.put("fans_nickname", "$CIPHER_NICK$1$");
+
+        Map<String, Object> line = new LinkedHashMap<>();
+        line.put("item_id", itemId);
+        line.put("sku_id", skuId);
+        line.put("num", 1);
+        line.put("title", title);
+        line.put("price", paymentYuan);
+        line.put("payment", paymentYuan);
+        line.put("sku_properties_name", skuProps);
+        line.put("buyer_messages", buyerMessages);
+
+        Map<String, Object> full = new LinkedHashMap<>();
+        full.put("order_info", orderInfo);
+        full.put("pay_info", payInfo);
+        full.put("buyer_info", buyerInfo);
+        full.put("remark_info", Map.of("buyer_message", "", "star", 0, "trade_memo", tradeMemo));
+        full.put("orders", List.of(line));
+        return full;
+    }
+
     private void enableYouzanRealRuntime() throws Exception {
         JsonNode current = data(admin.withAuth(get("/api/v1/integrations/runtime-config")));
         long version = current.at("/version").asLong();
@@ -511,6 +739,7 @@ class YouzanOfficialFlowIT extends AbstractMysqlIT {
         full.put("order_info", orderInfo);
         full.put("pay_info", payInfo);
         full.put("buyer_info", buyerInfo);
+        full.put("remark_info", Map.of("buyer_message", "", "star", 0, "trade_memo", ""));
         full.put("orders", List.of(line));
         return full;
     }

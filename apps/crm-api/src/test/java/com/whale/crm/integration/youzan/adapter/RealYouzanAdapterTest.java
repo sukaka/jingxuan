@@ -139,6 +139,7 @@ class RealYouzanAdapterTest {
                     "order_info":{"tid":"E-COMPLETE-1","status":"TRADE_SUCCESS","update_time":"2026-10-24 11:00:00"},
                     "pay_info":{"payment":"88.50","pay_time":"2026-10-24 10:59:00","transaction":["T-COMPLETE-1"],"phase_payments":[]},
                     "buyer_info":{"yz_open_id":"yz-complete-1"},
+                    "remark_info":{"buyer_message":"","trade_memo":""},
                     "orders":[{"item_id":301,"sku_id":9,"num":2}]
                   }}
                 ]}}
@@ -162,6 +163,46 @@ class RealYouzanAdapterTest {
         assertThat(page.rawPayloads()).containsKey(event.eventId());
         assertThat(page.rawPayloads().get(event.eventId())).contains("E-COMPLETE-1");
         verify(remote, never()).callApi(any(), eq("youzan.trade.get"), any(), any());
+    }
+
+    @Test
+    void pullFallsBackToTradeGetWhenRemarkInfoMissingFromList() throws Exception {
+        YouzanTokenService tokenService = mock(YouzanTokenService.class);
+        YouzanRemoteClient remote = mock(YouzanRemoteClient.class);
+        when(tokenService.accessToken(2L, "123")).thenReturn("token");
+        JsonNode listWithoutRemark = objectMapper.readTree("""
+                {"success":true,"code":200,"data":{"total_results":1,"full_order_info_list":[
+                  {"full_order_info":{
+                    "order_info":{"tid":"E-NO-MEMO-1","status":"TRADE_SUCCESS","update_time":"2026-10-24 11:00:00"},
+                    "pay_info":{"payment":"88.50","pay_time":"2026-10-24 10:59:00","transaction":["T-NO-MEMO-1"],"phase_payments":[]},
+                    "buyer_info":{"yz_open_id":"yz-no-memo-1"},
+                    "orders":[{"item_id":301,"sku_id":9,"num":1}]
+                  }}
+                ]}}
+                """);
+        JsonNode detailWithRemark = objectMapper.readTree("""
+                {"success":true,"code":200,"data":{"full_order_info":{
+                  "order_info":{"tid":"E-NO-MEMO-1","status":"TRADE_SUCCESS","update_time":"2026-10-24 11:00:00","pay_time":"2026-10-24 10:59:00"},
+                  "pay_info":{"payment":"88.50","transaction":["T-NO-MEMO-1"],"phase_payments":[]},
+                  "buyer_info":{"yz_open_id":"yz-no-memo-1"},
+                  "remark_info":{"trade_memo":"业绩：顾问甲，账号：紫紫模拟，到院：示范院"},
+                  "orders":[{"item_id":301,"sku_id":9,"num":1}]
+                }}}
+                """);
+        when(remote.callApi(eq("token"), eq("youzan.trades.sold.get"), eq("4.0.2"), any())).thenReturn(listWithoutRemark);
+        when(remote.callApi(eq("token"), eq("youzan.trade.get"), eq("4.0.2"), eq(Map.of("tid", "E-NO-MEMO-1"))))
+                .thenReturn(detailWithRemark);
+        RealYouzanAdapter adapter = new RealYouzanAdapter(tokenService, remote, new YouzanOrderMapper(), objectMapper, "4.0.2", 0);
+        Instant start = Instant.parse("2026-10-01T00:00:00Z");
+        Instant end = Instant.parse("2026-10-26T00:00:00Z");
+        String cursor = objectMapper.writeValueAsString(new YouzanSyncCursorValue("CREATED", start, end, end, 1));
+
+        YouzanPullPage page = adapter.pullOrders(2L, "123", cursor, 50);
+
+        assertThat(page.events()).hasSize(1);
+        String eventId = page.events().get(0).eventId();
+        assertThat(page.rawPayloads().get(eventId)).contains("紫紫模拟");
+        verify(remote).callApi(eq("token"), eq("youzan.trade.get"), eq("4.0.2"), eq(Map.of("tid", "E-NO-MEMO-1")));
     }
 
     @Test

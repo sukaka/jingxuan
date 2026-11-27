@@ -474,6 +474,69 @@ class YouzanCustomerSyncServiceTest {
         assertThat(status.scrmCursor().itemOffset()).isZero();
     }
 
+    @Test
+    void enrichProfileEnrichesScrmDetailsAndNonDestructivelyBackfillsExistingBoundCustomer() {
+        // 1. 新客户在 SCRM_LIST 已返回姓名与手机，但缺少备注/城市/标签 → enrichProfile=true 时必须调用 enrichCustomer
+        YouzanCustomerPullClient.YouzanPulledCustomer newCust = new YouzanCustomerPullClient.YouzanPulledCustomer(
+                "YZ-ENRICH-NEW", "大贝壳", "大贝壳", "13911112222",
+                "FEMALE", null, Instant.parse("2026-06-01T00:00:00Z"), 1, 3001L, null);
+        // 2. 已绑定老客户 → enrichProfile=true 时调用 enrichCustomer 并走非破坏性 backfillMissingProfile
+        crmCustomerNoById.put(3002L, "C0000003002");
+        linksByOpenId.put("YZ-ENRICH-EXIST", new YouzanCustomerLink(
+                2L, SHOP_ID, "YZ-ENRICH-EXIST", 3002L, "STRONG", "HIGH", "seed", 1L, clock.instant(), 0L));
+        YouzanCustomerPullClient.YouzanPulledCustomer existingCust = new YouzanCustomerPullClient.YouzanPulledCustomer(
+                "YZ-ENRICH-EXIST", "老客户", "老客户", "13911113333",
+                "FEMALE", null, Instant.parse("2026-06-02T00:00:00Z"), 1, 3002L, null);
+
+        when(pullClient.pullScrmPage(eq(TENANT_ID), eq(SHOP_ID), any(), any(), eq(1), eq(20)))
+                .thenReturn(new YouzanCustomerPullClient.YouzanCustomerPage(
+                        List.of(newCust, existingCust), 2, false, List.of()));
+        when(pullClient.enrichCustomer(TENANT_ID, SHOP_ID, "YZ-ENRICH-NEW", 1, 3001L, "13911112222"))
+                .thenReturn(new YouzanCustomerPullClient.YouzanCustomerEnrichment(
+                        "大贝壳", "大贝壳", "13911112222", "FEMALE", java.time.LocalDate.of(1994, 5, 1),
+                        "有赞黑金备注", "杭州市", List.of("贵宾客户", "有赞老客"), null));
+        when(pullClient.enrichCustomer(TENANT_ID, SHOP_ID, "YZ-ENRICH-EXIST", 1, 3002L, "13911113333"))
+                .thenReturn(new YouzanCustomerPullClient.YouzanCustomerEnrichment(
+                        "老客户", "老客户", "13911113333", "FEMALE", null,
+                        "老客有赞备注", "上海市", List.of("贵宾客户"), null));
+        when(importService.resolveOrCreateTagCodes(eq(TENANT_ID), eq(ADMIN), eq(List.of("贵宾客户"))))
+                .thenReturn(List.of("VIP"));
+        when(importService.resolveOrCreateTagCodes(eq(TENANT_ID), eq(ADMIN), eq(List.of("有赞老客"))))
+                .thenReturn(List.of("YZ_TAG_OLD"));
+        when(importService.backfillMissingProfile(eq(TENANT_ID), eq(ADMIN), eq(3002L), any()))
+                .thenReturn(new CustomerExternalImportService.BackfillProfileResult(
+                        true, List.of("城市", "备注", "标签(1)"), 1));
+
+        List<CustomerExternalImportService.ExternalCustomerCommand> capturedCommands = new ArrayList<>();
+        when(importService.importCustomer(eq(TENANT_ID), eq(ADMIN), any(), any()))
+                .thenAnswer(inv -> {
+                    CustomerExternalImportService.ExternalCustomerCommand cmd = inv.getArgument(3);
+                    capturedCommands.add(cmd);
+                    long id = customerIdSeq.incrementAndGet();
+                    String no = String.format("C%010d", id);
+                    crmCustomerNoById.put(id, no);
+                    return new CustomerExternalImportService.ExternalImportResult(
+                            CustomerExternalImportService.OUTCOME_CREATED, id, no, cmd.displayName(),
+                            MobileSupport.mask(cmd.mobile()), List.of(), List.of(), "新建 CRM 客户 " + no);
+                });
+
+        YouzanCustomerSyncRunResponse run = service.pull(
+                ADMIN, pullReq("SCRM_LIST", "BATCH", 10, true, false), "k-enrich-detail");
+
+        assertThat(run.createdCount()).isEqualTo(1);
+        assertThat(run.skippedExistingCount()).isEqualTo(1);
+        assertThat(capturedCommands).hasSize(1);
+        assertThat(capturedCommands.get(0).cityName()).isEqualTo("杭州市");
+        assertThat(capturedCommands.get(0).remark()).isEqualTo("有赞黑金备注");
+        assertThat(capturedCommands.get(0).tagCodes()).containsExactly("VIP", "YZ_TAG_OLD");
+        // 标签「贵宾客户」在同批次内命中缓存，仅解析一次
+        verify(importService, times(1)).resolveOrCreateTagCodes(eq(TENANT_ID), eq(ADMIN), eq(List.of("贵宾客户")));
+        verify(importService, times(1)).backfillMissingProfile(eq(TENANT_ID), eq(ADMIN), eq(3002L), any());
+        var existingItem = run.items().stream()
+                .filter(i -> "YZ-ENRICH-EXIST".equals(i.externalCustomerId())).findFirst().orElseThrow();
+        assertThat(existingItem.detailMasked()).contains("已补全空缺资料").contains("城市").contains("备注");
+    }
+
     private static YouzanCustomerPullRequest pullReq(String sourceMode, String pullMode, Integer limit,
                                                      boolean enrichProfile, boolean resetCursor) {
         return new YouzanCustomerPullRequest(

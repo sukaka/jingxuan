@@ -21,6 +21,8 @@ public class MockYouzanCustomerPullClient implements YouzanCustomerPullClient {
     public static final String MOCK_SHOP_ID = "MOCK-SHOP-001";
     private static final Instant BASE_CREATED_AT = Instant.parse("2026-06-01T02:00:00Z");
 
+    private static final List<String> MOCK_CITIES = List.of("杭州", "上海", "北京", "深圳");
+
     private final CopyOnWriteArrayList<YouzanPulledCustomer> scrmFixtures = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<YouzanPulledCustomer> orderBuyerFixtures = new CopyOnWriteArrayList<>();
 
@@ -34,6 +36,10 @@ public class MockYouzanCustomerPullClient implements YouzanCustomerPullClient {
         List<YouzanPulledCustomer> defaultScrm = new ArrayList<>();
         for (int i = 1; i <= 35; i++) {
             String index = String.format("%03d", i);
+            String city = MOCK_CITIES.get((i - 1) % MOCK_CITIES.size());
+            List<String> tags = i % 2 == 0
+                    ? List.of("贵宾客户", "有赞老客")
+                    : List.of("有赞老客");
             defaultScrm.add(new YouzanPulledCustomer(
                     "YZ-MOCK-CUST-" + index,
                     "有赞演示客户" + index,
@@ -44,7 +50,9 @@ public class MockYouzanCustomerPullClient implements YouzanCustomerPullClient {
                     BASE_CREATED_AT.plus(i, ChronoUnit.DAYS),
                     1,
                     10000L + i,
-                    "有赞演示同步样本 #" + index
+                    "有赞演示同步样本 #" + index,
+                    city,
+                    tags
             ));
         }
         scrmFixtures.addAll(defaultScrm);
@@ -53,6 +61,7 @@ public class MockYouzanCustomerPullClient implements YouzanCustomerPullClient {
         List<YouzanPulledCustomer> defaultOrders = new ArrayList<>();
         for (int i = 1; i <= 15; i++) {
             String index = String.format("%03d", i);
+            String city = MOCK_CITIES.get((i - 1) % MOCK_CITIES.size());
             YouzanPulledCustomer buyer = new YouzanPulledCustomer(
                     "YZ-MOCK-ORDER-BUYER-" + index,
                     "有赞订单买家" + index,
@@ -63,7 +72,9 @@ public class MockYouzanCustomerPullClient implements YouzanCustomerPullClient {
                     BASE_CREATED_AT.plus(i, ChronoUnit.DAYS),
                     1,
                     20000L + i,
-                    null
+                    null,
+                    city,
+                    List.of()
             );
             defaultOrders.add(buyer);
             if (i <= 3) {
@@ -119,7 +130,19 @@ public class MockYouzanCustomerPullClient implements YouzanCustomerPullClient {
     @Override
     public YouzanCustomerEnrichment enrichCustomer(long tenantId, String shopId, String yzOpenId,
                                                    Integer fansType, Long fansId, String plainMobile) {
-        return new YouzanCustomerEnrichment(null, null, plainMobile, "UNKNOWN", null, null);
+        if (yzOpenId != null && yzOpenId.startsWith("YZ-MOCK-ORDER-BUYER-")) {
+            return new YouzanCustomerEnrichment(
+                    null,
+                    null,
+                    plainMobile,
+                    "FEMALE",
+                    LocalDate.of(1993, 6, 15),
+                    "有赞订单买家补全备注（" + yzOpenId + "）",
+                    "杭州",
+                    List.of("贵宾客户", "有赞复购"),
+                    null);
+        }
+        return new YouzanCustomerEnrichment(null, null, plainMobile, "UNKNOWN", null, null, null, List.of(), null);
     }
 
     private YouzanCustomerPage slice(List<YouzanPulledCustomer> source, Instant start, Instant end,

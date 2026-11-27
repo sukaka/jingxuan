@@ -842,3 +842,66 @@ export async function getCustomerStewardRelations(id: number): Promise<CustomerS
   const res = await http.get<ApiResponse<CustomerStewardSummary>>(`/customers/${id}/steward-relations`)
   return res.data.data
 }
+
+/** 客户详情页「有赞历史订单（只读快照）」明细行 */
+export interface CustomerYouzanHistoryOrderLineItem {
+  itemId: string | null
+  skuId: string | null
+  title: string
+  skuProps: string | null
+  num: number
+  priceFen: number
+}
+
+export interface CustomerYouzanHistoryOrderItem {
+  id: number
+  shopId: string
+  tid: string
+  orderStatus: string
+  paid: boolean
+  orderedAt: string | null
+  paidAt: string | null
+  paymentFen: number
+  refundedFen: number
+  netPaymentFen: number
+  titleSummary: string
+  items: CustomerYouzanHistoryOrderLineItem[]
+  syncedAt: string
+}
+
+export interface CustomerYouzanHistoryOrdersSummary {
+  totalOrderCount: number
+  paidOrderCount: number
+  totalPaymentFen: number
+  totalRefundedFen: number
+  netSpendFen: number
+  firstOrderAt: string | null
+  lastOrderAt: string | null
+  lastSyncedAt: string | null
+}
+
+export interface CustomerYouzanHistoryOrders {
+  customerId: number
+  hasYouzanIdentity: boolean
+  linkedShopIds: string[]
+  summary: CustomerYouzanHistoryOrdersSummary
+  orders: PageResult<CustomerYouzanHistoryOrderItem>
+}
+
+/** GET /customers/{id}/youzan-history-orders(customer:read + 行级范围):客户有赞历史订单只读快照（不入账、不发权益） */
+export async function getCustomerYouzanHistoryOrders(
+  customerId: number,
+  query?: { paidOnly?: boolean; page?: number; size?: number },
+): Promise<CustomerYouzanHistoryOrders> {
+  const res = await http.get<ApiResponse<CustomerYouzanHistoryOrders>>(
+    `/customers/${customerId}/youzan-history-orders`,
+    {
+      params: {
+        paidOnly: query?.paidOnly ?? true,
+        page: query?.page ?? 1,
+        size: query?.size ?? 20,
+      },
+    },
+  )
+  return res.data.data
+}

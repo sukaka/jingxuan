@@ -2,6 +2,57 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [V66-YOUZAN-ORDER-MEMO-STEWARD-ASSIGNMENT] 有赞订单按单号拉取、`trade_memo` 备注解析与按「账号」自动/人工分配管家 — 2026-11-27
+- **数据库迁移与受控回滚（`V66`）**：
+  - 新增 `apps/crm-api/src/main/resources/db/migration/V66__youzan_order_memo_steward_assignment.sql` 与受控回滚脚本 `apps/crm-api/src/main/resources/db/rollback/V66__youzan_order_memo_steward_assignment_rollback.sql`：
+    - 新增 `crm_youzan_steward_alias`（租户级 `账号别名 → CRM 在职管家` 映射表，唯一键 `uk_yz_steward_alias_key(tenant_id, alias_key)`，外键关联 `sys_user`）。
+    - 新增 `crm_youzan_order_assignment`（单订单一对一 `uk_yz_order_assign_order(tenant_id, shop_id, external_order_no)`，记录有赞订单展示元数据、脱敏后的下单表单信息、结构化 `trade_memo` 解析字段及归属管家分配状态/来源/乐观锁版本）。
+- **后端 `youzan.trade.get/4.0.2` 拉取增强、备注解析、管家分配与数据范围隔离（`apps/crm-api`）**：
+  - 新增 `YouzanTradeMemoParser`：解析 `remark_info.trade_memo` 中的「业绩」「渠道」「类型」「来源」「账号」「到院」「补充说明」，自动清理零宽字符并脱敏任意误填 11 位手机号；同时解析 `orders[].buyer_messages` 下单人姓名/手机号并严格脱敏（`YouzanEventService` 同步将 `buyer_messages` 纳入递归脱敏字段列表）。
+  - 增强 `YouzanOrderMapper#hasCompleteDetail`：批量拉取（`youzan.trades.sold.get/4.0.2`）若列表响应缺少 `remark_info.trade_memo` 自动回退调用 `youzan.trade.get/4.0.2` 补全详情；列表已包含 `remark_info.trade_memo` 时零额外 N+1 调用；同步实现本地 `MockYouzanAdapter#fetchOrder` 合成样本支持。
+  - 新增 `YouzanOrderAssignmentService`、`YouzanOrderAssignmentRepository` / `YouzanOrderAssignmentMapper.xml`：优先匹配启用的 `crm_youzan_steward_alias` 别名表，其次精确匹配在职 `MANAGER`/`MANAGER_LEAD` 的 `display_name`，重名标 `AMBIGUOUS`、未命中标 `UNMATCHED`、无账号标 `NO_ACCOUNT`；人工分配（`MANUAL`）在后续订单同步刷新时不被覆盖，且严禁修改既有 CRM 老客归属管家。
+  - 扩展 `YouzanMapper.xml`、`YouzanManagementService` 与 `YouzanIntegrationController`：
+    - `GET /api/v1/integrations/youzan/orders` 支持 `assignedStewardId`、`assignmentStatus`、`keyword` 筛选，并将有赞订单分配记录纳入 `SELF`/`TEAM`/`ALL` 数据范围隔离（跨管家越权返回 404，传范围外管家筛选收敛为空）。
+    - 新增 `POST /api/v1/integrations/youzan/orders/pull-by-tid`（按 `tid` 实时调用 `youzan.trade.get/4.0.2` 拉取并分配）、`PUT /api/v1/integrations/youzan/orders/{externalOrderNo}/assign`（人工分配/改派并支持管理员一键保存别名与回填历史待分配订单）、`GET /api/v1/integrations/youzan/steward-options` 及 `GET/POST/DELETE /api/v1/integrations/youzan/steward-aliases`（均写审计 `YOUZAN_ORDER_PULL_BY_TID`/`YOUZAN_ORDER_STEWARD_ASSIGN`/`YOUZAN_STEWARD_ALIAS_SAVE`/`YOUZAN_STEWARD_ALIAS_DELETE`，全接口拒绝机构账号）。
+- **前端有赞订单同步中心增强与契约文档（`apps/crm-web` + `contracts` + `docs`）**：
+  - 升级 `YouzanOrdersView.vue` 与 `YouzanOrderDetailDrawer.vue`：新增按有赞订单号（`tid`）实时拉取栏、关键字/归属管家/分配状态筛选条、订单列表「归属管家」「商家备注摘要」列及有赞状态/支付方式副行；详情抽屉新增「商家备注与管家分配」分区展示完整结构化字段与脱敏下单人信息。
+  - 新增 `YouzanOrderAssignDialog.vue`（人工分配/改派与一键保存别名）与 `YouzanStewardAliasPanel.vue`（「管家账号映射」页签，支持新增/编辑/删除及自动回填历史待分配订单）；更新 `AuditLogsView.vue` 审计中文标签。
+  - 同步更新 `contracts/openapi/openapi.v1.yaml`、`docs/04_接口与集成/42_有赞订单对接.md` 与 `docs/04_接口与集成/42_有赞字段映射与交接.md`。
+- **验证证据**：
+  - 后端单测 + 真实 MySQL 8.4 + Flyway V66 Testcontainers 集成测试 + 静态门禁：`./mvnw -pl apps/crm-api verify -Dtest='com.whale.crm.integration.youzan.**.*Test' -Dit.test='YouzanOfficialFlowIT,YouzanOrderQueryIT,YouzanConnectionApiIT,YouzanAcceptanceIT' -DfailIfNoTests=false` **BUILD SUCCESS**（`07:18 min`）：
+    - Surefire 单元测试：**142/142 通过**（22 个有赞测试类，含新增 `YouzanTradeMemoParserTest` 4/4、`YouzanOrderAssignmentServiceTest` 6/6，更新 `RealYouzanAdapterTest` 10/10、`YouzanEventMaskingTest` 3/3、`YouzanOfficialAdapterTest` 10/10、`RealYouzanHttpFlowTest` 3/3）；
+    - Failsafe 集成测试（MySQL 8.4 Testcontainers）：**25/25 通过**（`YouzanOrderQueryIT` 10/10、`YouzanConnectionApiIT` 3/3、`YouzanOfficialFlowIT` 4/4、`YouzanAcceptanceIT` 8/8）；
+    - 静态门禁：Checkstyle `0 violations`、SpotBugs `0 bugs / 0 errors / 0 warnings`、Spotless `1483 files clean`。
+  - 前端类型检查、Lint、有赞相关单测与生产构建：`cd apps/crm-web && npm run typecheck && npm run lint && npx vitest run tests/youzan-api.test.ts tests/youzan-order-detail.test.ts tests/youzan-view.test.ts tests/youzan-ui.test.ts tests/youzan-routing.test.ts tests/youzan-shop-config.test.ts && npm run build` 全部通过：`typecheck` 0 错误、`lint`（`--max-warnings 0`）0 错误 / 0 警告、Vitest **6/6 文件、65/65 用例通过**，`vite build`（`7.42s`）成功。
+  - OpenAPI YAML 校验：Python `yaml.safe_load` + 全量 `$ref` 递归校验通过（`360 paths / 644 schemas`）；变更文件密钥与敏感信息扫描零泄露。
+  - 未运行项：与本模块无关的其他领域全量后端单测与 `*IT`、Kafka 消费集成测试（无新增 Kafka 事件）、全量非本次改动前端测试套件、真实有赞云线上凭证端到端拉取与浏览器 E2E 未运行。
+
+## [YOUZAN-CUSTOMER-DETAIL-AND-HISTORY-SNAPSHOT] 有赞客户拉取详情补全（备注/城市/标签）与客户详情只读有赞历史订单 — 2026-11-27
+- **有赞客户拉取详情补全与无损补齐（`apps/crm-api`，无新增数据库表、Flyway 迁移或 Kafka 事件）**：
+  - 扩展 `YouzanCustomerPullClient`（`YouzanPulledCustomer` / `YouzanCustomerEnrichment`）、`OfficialYouzanCustomerPullClient` 与 `MockYouzanCustomerPullClient`：
+    - `youzan.scrm.customer.list/1.0.0` 与 `youzan.trades.sold.get/4.0.2` 列表解析新增提取 `remark`/`memo`、省/市级 `cityName`（过滤直辖市 `市辖区`/`县` 占位，严禁采集详细街道门牌地址）及过滤密文后的 `tagNames`（每客户最多 30 个，单标签最长 64 字符）。
+    - `enrichCustomer` 扩展解析 `youzan.users.info.query/1.0.0`（`primitive_info` 省市）、`youzan.scrm.customer.get/3.0.0`（`remark`/`memo`、省市与标签），并在上述接口未返回标签时可选调用 `youzan.scrm.tag.relation.get`（默认 `4.0.0`，可通过 `YOUZAN_SCRM_TAG_RELATION_VERSION` 覆写，按 `account_type=YzOpenId` 查询，`4204`/`4005` 仅记非阻断警告）。
+  - 扩展 `CustomerExternalImportService` 与 `YouzanCustomerSyncService`：
+    - 城市按 `cities` 字典 `ACTIVE` 选项做标准化匹配（去 `市`/`自治州` 后缀并兼容省市组合文本），未命中不写非法字典码。
+    - 有赞标签解析在独立事务外执行（避免重复标签回滚主导入事务）：复用 `customerTags` 字典已有 `ACTIVE` 项，不自动复活 `INACTIVE`/`ARCHIVED` 标签；仅当操作员具备 `customer:tag:manage` 权限时自动创建 `YZ_TAG_<12位sha256>` 字典项并通过 `insertIfAbsent` 幂等关联。
+    - `SCRM_LIST` 开启 `enrichProfile=true` 时，对缺失 `remark`/`cityName`/`birthday`/`tagNames` 的客户同样触发详情补全；对已绑定旧客户（`SKIPPED_EXISTING`）调用 `backfillMissingProfile`（`REQUIRES_NEW` + 行锁）**仅补空** `cityCode`/`remark`/`birthday` 与幂等追加标签并记 `ACTION_CUSTOMER_UPDATE` 审计，绝不覆盖人工已维护字段，也不触碰 `MOBILE_CONFLICT` 客户。
+- **客户详情有赞历史订单只读快照接口（`apps/crm-api`，复用 V60 `crm_youzan_annual_order_snapshot`）**：
+  - 扩展 `YouzanAnnualSnapshotRepository` / `YouzanAnnualSnapshotMapper.xml`：联合 `crm_youzan_customer_link`、`crm_customer_identity(YOUZAN/LINKED)` 与 `crm_youzan_annual_profile` 聚合客户已关联有赞身份，按显式 `tenant_id` 分页查询并汇总只读历史快照订单。
+  - 新增 `CustomerYouzanHistoryOrderController`（`GET /api/v1/customers/{customerId}/youzan-history-orders`，`@PreAuthorize("hasAuthority('customer:read')")`，支持 `paidOnly=true`、`page`、`size`）、`CustomerYouzanHistoryOrderService` 与 `CustomerYouzanHistoryOrdersResponse`：严格拒绝 `INSTITUTION` 机构用户（`403`）、复用 `CustomerScopeSupport#requireVisible` 行级数据范围校验（越权返回 `404`）、对商品标题/规格执行 `QuickReplyTextMasker` 脱敏，绝不返回 `yz_open_id`/明文手机号/街道地址，绝不写入 `crm_order` 或发放 `crm_entitlement`。
+- **前端展示、只读历史快照同步入口及契约文档（`apps/crm-web` + `contracts` + `docs`）**：
+  - 扩展 `src/api/customer.ts` 新增 `getCustomerYouzanHistoryOrders` 与对应只读历史订单类型；新增 `src/views/youzan/YouzanHistorySnapshotSyncDialog.vue`（按年份预设一键触发 `POST /api/v1/annual-reports/youzan-snapshots/sync`，370 天上限校验与只读安全提示）。
+  - 升级 `src/views/customer/CustomerBusinessPanel.vue`：在「订单与退款」页签分区展示「CRM 正式订单与退款」与「有赞历史订单（只读快照）」（汇总卡片、仅已支付开关、结构化商品行明细、独立分页与错误隔离；机构用户自动隐藏；具备 `integration:youzan:manage` 权限时显示「同步历史快照」入口）。
+  - 升级 `src/views/youzan/YouzanCustomerPullPanel.vue`：更新资料补全/断点续拉文案，新增「拉取历史订单只读快照」按钮与弹窗。
+  - 同步更新 `contracts/openapi/openapi.v1.yaml`（新增 `/customers/{customerId}/youzan-history-orders` 与 5 个 Schema，更新 `enrichProfile` 说明，共 `355 paths / 635 schemas / 2963 refs`）及 `docs/04_接口与集成/42_有赞订单对接.md`（10.1 与新增 10.6 节）。
+- **验证证据**：
+  - 后端单测 + 真实 MySQL 8.4 Testcontainers 集成测试 + 静态门禁：`./mvnw -B -pl apps/crm-api -am -Dtest='OfficialYouzanCustomerPullClientTest,YouzanCustomerSyncServiceTest,CustomerYouzanHistoryOrderServiceTest,RealYouzanAnnualPullClientTest' -Dit.test='YouzanCustomerSyncApiIT,CustomerYouzanHistoryOrderApiIT,YouzanAnnualSnapshotAndAuthApiIT' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false verify` **BUILD SUCCESS**（`02:33 min`）：
+    - Surefire 单元测试：**26/26 通过**（`OfficialYouzanCustomerPullClientTest` 8/8、`YouzanCustomerSyncServiceTest` 7/7、`RealYouzanAnnualPullClientTest` 8/8、`CustomerYouzanHistoryOrderServiceTest` 3/3）；
+    - Failsafe 集成测试（MySQL 8.4 Testcontainers）：**8/8 通过**（`YouzanCustomerSyncApiIT` 6/6、`YouzanAnnualSnapshotAndAuthApiIT` 1/1、`CustomerYouzanHistoryOrderApiIT` 1/1）；
+    - 静态门禁：Checkstyle `0 violations`、SpotBugs `0 bugs / 0 errors / 0 warnings`、Spotless `1468 files clean`。
+  - 前端类型检查、Lint、相关单测与生产构建：`cd apps/crm-web && npm run typecheck && npm run lint && npx vitest run tests/customer-youzan-history-orders.test.ts tests/youzan-customer-pull-panel.test.ts tests/youzan-api.test.ts tests/youzan-view.test.ts tests/customer-profile.test.ts && npm run build` 全部通过：`typecheck` 0 错误、`lint`（`--max-warnings 0`）0 错误 / 0 警告、Vitest **5/5 测试文件、56/56 用例通过**（`customer-youzan-history-orders.test.ts` 4/4、`youzan-customer-pull-panel.test.ts` 11/11、`youzan-api.test.ts` 5/5、`youzan-view.test.ts` 32/32、`customer-profile.test.ts` 4/4）、`build`（`2.22s`）成功。
+  - OpenAPI YAML 校验：Python `yaml.safe_load` + 全量 `$ref` 递归解析通过（OpenAPI `3.0.3`，`355 paths`，`635 schemas`，`2963 refs`）。
+  - 未运行项：与本模块无关的其他领域全量后端单测与 `*IT`、Kafka 消费集成测试（无新增 Kafka 事件）、全量非有赞/客户前端测试套件、真实有赞云线上凭证端到端拉取与全站浏览器 E2E 未运行。
+
 ## [V65-CUSTOMER-PRIVACY-GOVERNANCE] 客户隐私全员默认脱敏、上级主管审批限时查看与管理员按钮揭盲审计 — 2026-11-27
 - **数据库迁移、受控回滚与权限种子（`V65`）**：
   - 新增 `apps/crm-api/src/main/resources/db/migration/V65__customer_privacy_governance.sql` 与受控回滚脚本 `apps/crm-api/src/main/resources/db/rollback/V65__customer_privacy_governance_rollback.sql`，同步更新 `db/dev/R__seed_auth_dev.sql` 与 `db/prod/R__seed_rbac_prod.sql`：

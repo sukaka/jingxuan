@@ -56,6 +56,8 @@ class YouzanEventMaskingTest {
         raw.put("service_guide_name", "虚构导购");
         raw.put("outer_user_id", "external-open-id");
         raw.put("buyer_message", "含个人联系方式的留言");
+        raw.put("buyer_messages", "{\"姓名\":\"虚构下单人\",\"手机号\":\"13911112222\"}");
+        raw.put("trade_memo", "业绩：顾问甲，账号：小美，联系13933334444");
         raw.putObject("service_guide").put("service_guide_staff", "staff-private-1");
         java.util.concurrent.atomic.AtomicReference<YouzanEvent> inserted = new java.util.concurrent.atomic.AtomicReference<>();
         when(repository.findEventByKey(any(Long.class), any(), any())).thenAnswer(invocation ->
@@ -71,7 +73,7 @@ class YouzanEventMaskingTest {
         verify(repository).insertEvent(any(Long.class), saved.capture());
         String masked = saved.getValue().payloadMaskedJson();
         assertThat(masked).doesNotContain("13800000000", "虚构导购", "external-open-id", "staff-private-1",
-                "含个人联系方式的留言");
+                "含个人联系方式的留言", "虚构下单人", "13911112222", "13933334444");
         assertThat(masked).contains("***");
     }
 

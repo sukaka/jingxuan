@@ -248,6 +248,93 @@ class YouzanCustomerSyncApiIT extends AbstractMysqlIT {
     }
 
     @Test
+    void pullPopulatesCityRemarkTagsAndNonDestructivelyBackfillsExistingBoundCustomersWithoutOverwriting()
+            throws Exception {
+        AuthCookies admin = login("admin");
+        long ordersBefore = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_order WHERE tenant_id=1", Long.class);
+        long entitlementsBefore = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM crm_entitlement WHERE tenant_id=1", Long.class);
+
+        // 1. 拉取前 2 位 Mock SCRM 客户（含城市 杭州/上海、备注、生日、以及「贵宾客户」「有赞老客」标签）
+        String pull2 = objectMapper.writeValueAsString(Map.of(
+                "shopId", SHOP_ID, "sourceMode", "SCRM_LIST", "pullMode", "BATCH",
+                "limit", 2, "ownerStaffId", 2, "enrichProfile", true));
+        mockMvc.perform(admin.withAuth(post(BASE + "/pull"))
+                        .header("Idempotency-Key", "it-detail-pull-1-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(pull2))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.createdCount").value(2));
+
+        Long cust1Id = jdbcTemplate.queryForObject(
+                "SELECT customer_id FROM crm_youzan_customer_link WHERE tenant_id=1 AND shop_id=? "
+                        + "AND external_customer_id='YZ-MOCK-CUST-001'", Long.class, SHOP_ID);
+        Long cust2Id = jdbcTemplate.queryForObject(
+                "SELECT customer_id FROM crm_youzan_customer_link WHERE tenant_id=1 AND shop_id=? "
+                        + "AND external_customer_id='YZ-MOCK-CUST-002'", Long.class, SHOP_ID);
+        assertThat(cust1Id).isNotNull();
+        assertThat(cust2Id).isNotNull();
+
+        // 校验建档已直接落库城市（HZ/SH）、备注及有赞标签（自动复用已有 VIP + 自动建「有赞老客」）
+        Map<String, Object> c1Row = jdbcTemplate.queryForMap(
+                "SELECT city_code, remark FROM crm_customer WHERE tenant_id=1 AND id=?", cust1Id);
+        Map<String, Object> c2Row = jdbcTemplate.queryForMap(
+                "SELECT city_code, remark FROM crm_customer WHERE tenant_id=1 AND id=?", cust2Id);
+        assertThat(c1Row.get("city_code")).isEqualTo("HZ");
+        assertThat(c1Row.get("remark")).isEqualTo("有赞演示同步样本 #001");
+        assertThat(c2Row.get("city_code")).isEqualTo("SH");
+
+        List<String> c2TagLabels = jdbcTemplate.queryForList(
+                "SELECT di.option_label FROM crm_customer_tag ct "
+                        + "JOIN sys_dictionary_type dt ON dt.tenant_id=ct.tenant_id AND dt.dict_code='customerTags' "
+                        + "JOIN sys_dictionary_item di ON di.tenant_id=ct.tenant_id AND di.dict_type_id=dt.id "
+                        + "AND di.option_code=ct.tag_code "
+                        + "WHERE ct.tenant_id=1 AND ct.customer_id=?",
+                String.class, cust2Id);
+        assertThat(c2TagLabels).contains("贵宾客户", "有赞老客");
+
+        // 2. 模拟老客户场景：cust1 清空城市/备注/标签（模拟历史只拉过姓名手机），cust2 手工改成北京+手工备注
+        jdbcTemplate.update("UPDATE crm_customer SET city_code=NULL, remark=NULL WHERE tenant_id=1 AND id=?", cust1Id);
+        jdbcTemplate.update("DELETE FROM crm_customer_tag WHERE tenant_id=1 AND customer_id=?", cust1Id);
+        jdbcTemplate.update("UPDATE crm_customer SET city_code='BJ', remark='管家手工维护备注' WHERE tenant_id=1 AND id=?",
+                cust2Id);
+
+        // 重置游标后以 enrichProfile=true 重拉：cust1 应补回 HZ/备注/有赞老客，cust2 手工维护的 BJ 与备注绝不被覆盖
+        mockMvc.perform(admin.withAuth(post(BASE + "/cursor/reset"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("shopId", SHOP_ID, "sourceMode", "SCRM_LIST"))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(admin.withAuth(post(BASE + "/pull"))
+                        .header("Idempotency-Key", "it-detail-backfill-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "shopId", SHOP_ID, "sourceMode", "SCRM_LIST", "pullMode", "BATCH",
+                                "limit", 2, "ownerStaffId", 2, "enrichProfile", true))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.skippedExistingCount").value(2));
+
+        Map<String, Object> c1After = jdbcTemplate.queryForMap(
+                "SELECT city_code, remark FROM crm_customer WHERE tenant_id=1 AND id=?", cust1Id);
+        Map<String, Object> c2After = jdbcTemplate.queryForMap(
+                "SELECT city_code, remark FROM crm_customer WHERE tenant_id=1 AND id=?", cust2Id);
+        assertThat(c1After.get("city_code")).isEqualTo("HZ");
+        assertThat(c1After.get("remark")).isEqualTo("有赞演示同步样本 #001");
+        Integer c1TagCountAfter = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM crm_customer_tag WHERE tenant_id=1 AND customer_id=?", Integer.class, cust1Id);
+        assertThat(c1TagCountAfter).isGreaterThanOrEqualTo(1);
+
+        // cust2 手工值完全保护，绝不覆盖
+        assertThat(c2After.get("city_code")).isEqualTo("BJ");
+        assertThat(c2After.get("remark")).isEqualTo("管家手工维护备注");
+
+        // 绝不触碰 CRM 正式订单与权益
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_order WHERE tenant_id=1", Long.class))
+                .isEqualTo(ordersBefore);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM crm_entitlement WHERE tenant_id=1", Long.class))
+                .isEqualTo(entitlementsBefore);
+    }
+
+    @Test
     void orderBuyersDeduplicatesRepeatOrdersAndProtectsLegacyCustomerOnMobileConflict() throws Exception {
         AuthCookies admin = login("admin");
 
@@ -417,11 +504,14 @@ class YouzanCustomerSyncApiIT extends AbstractMysqlIT {
                         + "AND (external_id LIKE 'YZ-MOCK-CUST-%' OR external_id LIKE 'YZ-MOCK-ORDER-BUYER-%')",
                 SHOP_ID);
         for (Long id : createdIds) {
+            jdbcTemplate.update("DELETE FROM crm_customer_tag WHERE tenant_id=1 AND customer_id=?", id);
             jdbcTemplate.update("DELETE FROM crm_customer WHERE tenant_id=1 AND id=?", id);
         }
         for (Long id : legacyTestIds) {
+            jdbcTemplate.update("DELETE FROM crm_customer_tag WHERE tenant_id=1 AND customer_id=?", id);
             jdbcTemplate.update("DELETE FROM crm_customer WHERE tenant_id=1 AND id=?", id);
         }
+        jdbcTemplate.update("DELETE FROM sys_dictionary_item WHERE tenant_id=1 AND option_code LIKE 'YZ_TAG_%'");
         jdbcTemplate.update("DELETE FROM crm_idempotency_record WHERE tenant_id=1 "
                 + "AND scope_code='youzan.customer.sync.pull'");
         jdbcTemplate.update("DELETE FROM crm_audit_log WHERE tenant_id=1 "

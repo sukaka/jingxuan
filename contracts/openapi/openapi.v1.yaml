@@ -916,6 +916,23 @@ paths:
                     type: array
                     items: {$ref: '#/components/schemas/LegacyProfileItem'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /customers/{customerId}/youzan-history-orders:
+    get:
+      tags: [Customers]
+      summary: 客户详情有赞历史订单只读快照（customer:read + 行级数据范围，拒绝机构账号）；免配 SKU、不写入 crm_order、不发权益
+      parameters:
+        - {name: customerId, in: path, required: true, schema: {type: integer, format: int64, minimum: 1}}
+        - {name: paidOnly, in: query, required: false, schema: {type: boolean, default: true}, description: 是否仅返回已支付订单快照（默认 true）}
+        - {name: page, in: query, required: false, schema: {type: integer, format: int32, minimum: 1, default: 1}}
+        - {name: size, in: query, required: false, schema: {type: integer, format: int32, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        '200':
+          description: 客户有赞历史订单汇总与分页明细（脱敏商品标题，不含明文 yz_open_id/手机号/地址）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CustomerYouzanHistoryOrdersEnvelope'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /customers/{id}:
     get:
       tags: [Customers]
@@ -3613,19 +3630,143 @@ paths:
   /integrations/youzan/orders:
     get:
       tags: [YouzanIntegration]
-      summary: 有赞原始订单与映射分页（order:read + 数据范围；含未映射 Raw）
-      description: 按外部订单最新 Raw 返回，授权范围内可包含未映射/未匹配记录。无内部订单时 mapId/orderId/orderStatus/paidFen/verificationMethod 为空；payloadMaskedJson 仅向 integration:youzan:manage 返回脱敏文本，其他 order:read 用户为 null，不返回 payload_cipher。
+      summary: 有赞原始订单与映射分页（order:read / integration:youzan:manage + 数据范围；支持按管家与分配状态筛选）
+      description: 按外部订单最新 Raw 返回，授权范围内可包含未映射/未匹配记录及按 trade_memo 分配给当前管家/团队的订单。无内部订单时 mapId/orderId/orderStatus/paidFen/verificationMethod 为空；payloadMaskedJson 仅向 integration:youzan:manage 返回脱敏文本，其他 order:read 用户为 null，不返回 payload_cipher。
       parameters:
         - {name: shopId, in: query, required: true, schema: {type: string}}
+        - {name: assignedStewardId, in: query, required: false, schema: {type: integer, format: int64}, description: 按归属管家 ID 筛选（受数据范围收敛，传范围外管家返回空页）}
+        - {name: assignmentStatus, in: query, required: false, schema: {type: string, enum: [ASSIGNED, UNASSIGNED, UNMATCHED, AMBIGUOUS, NO_ACCOUNT]}, description: 按管家分配状态筛选}
+        - {name: keyword, in: query, required: false, schema: {type: string, maxLength: 100}, description: 按订单号、备注账号、业绩人、到院机构或脱敏备注搜索}
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Size'
       responses:
         '200':
-          description: 原始事件、外部金额/时间、映射状态及可空的内部订单字段
+          description: 原始事件、外部金额/时间、映射状态、商家备注解析与管家分配信息及可空的内部订单字段
           content:
             application/json:
               schema: {$ref: '#/components/schemas/YouzanOrderPageResponse'}
         '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /integrations/youzan/orders/pull-by-tid:
+    post:
+      tags: [YouzanIntegration]
+      summary: 按有赞订单号（tid）单笔调用 youzan.trade.get/4.0.2 实时拉取并自动解析 trade_memo 分配管家（integration:youzan:manage）
+      description: 调用有赞订单详情接口（youzan.trade.get/4.0.2）拉取单笔订单，落库并执行既有映射/支付核验流程，同时解析 trade_memo「账号：」后的人名自动分配管家；不自动绕过支付核验或覆盖老客归属。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/YouzanPullOrderByTidRequest'}
+      responses:
+        '200':
+          description: 拉取并解析后的有赞订单完整视图（含商品明细、备注解析与管家分配结果）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanOrderViewEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/PendingBusinessRule'}
+  /integrations/youzan/orders/{externalOrderNo}/assign:
+    put:
+      tags: [YouzanIntegration]
+      summary: 人工分配或改派有赞订单归属管家（integration:youzan:manage / customer:assign / campaign:write）
+      description: 仅作用于有赞订单层（crm_youzan_order_assignment）并记录 assignmentSource=MANUAL，后续同步不覆盖人工结果，绝不自动覆盖 CRM 老客户归属。管理员可同时勾选 saveAlias 沉淀账号别名并自动回填历史待分配订单。
+      parameters:
+        - {name: externalOrderNo, in: path, required: true, schema: {type: string}}
+        - {name: shopId, in: query, required: true, schema: {type: string}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/YouzanOrderAssignRequest'}
+      responses:
+        '200':
+          description: 更新后的有赞订单视图
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanOrderViewEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /integrations/youzan/steward-options:
+    get:
+      tags: [YouzanIntegration]
+      summary: 查询当前操作人数据范围内可选的在职管家下拉（integration:youzan:manage / order:read）
+      responses:
+        '200':
+          description: 可选在职管家列表
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanStewardOptionListEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /integrations/youzan/steward-aliases:
+    get:
+      tags: [YouzanIntegration]
+      summary: 查询有赞商家备注「账号」别名与 CRM 管家映射列表（integration:youzan:manage / order:read）
+      responses:
+        '200':
+          description: 账号别名映射列表
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanStewardAliasListEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [YouzanIntegration]
+      summary: 新建或更新有赞备注账号别名映射（integration:youzan:manage）
+      description: 按 aliasKey 幂等保存别名映射，可选 backfillPending=true 自动回填同账号的历史待分配订单（不覆盖已人工指派订单）。
+      parameters:
+        - {$ref: '#/components/parameters/CsrfToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/YouzanStewardAliasRequest'}
+      responses:
+        '200':
+          description: 保存后的别名映射与回填订单数
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/YouzanStewardAliasSaveEnvelope'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /integrations/youzan/steward-aliases/{id}:
+    delete:
+      tags: [YouzanIntegration]
+      summary: 删除有赞备注账号别名映射（integration:youzan:manage）
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+        - {$ref: '#/components/parameters/CsrfToken'}
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message, data, requestId, timestamp]
+                properties:
+                  code: {type: string, enum: [OK]}
+                  message: {type: string, example: success}
+                  data: {nullable: true}
+                  requestId: {type: string}
+                  timestamp: {type: string, format: date-time}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -11880,6 +12021,114 @@ components:
           description: 结构化非敏感商品明细列表（含外部 SKU、数量、标题、规格、单价/实付整数分、商家编码及关联 CRM SKU 信息）
           items:
             $ref: '#/components/schemas/YouzanOrderItemView'
+        providerOrderStatus: {type: string, nullable: true, description: 有赞订单状态码（如 WAIT_BUYER_CONFIRM_GOODS）}
+        providerStatusText: {type: string, nullable: true, description: 有赞订单状态中文文案（如 已发货）}
+        payWayDesc: {type: string, nullable: true, description: 有赞支付方式说明（如 微信支付）}
+        orderedAt: {type: string, format: date-time, nullable: true, description: 有赞下单时间}
+        consignedAt: {type: string, format: date-time, nullable: true, description: 有赞发货时间}
+        buyerFormNameMasked: {type: string, nullable: true, description: '下单表单姓名脱敏（orders[].buyer_messages）'}
+        buyerFormMobileMasked: {type: string, nullable: true, description: '下单表单手机号脱敏（orders[].buyer_messages）'}
+        tradeMemoMasked: {type: string, nullable: true, description: '有赞商家备注（手机号已脱敏）'}
+        memoPerformanceOwner: {type: string, nullable: true, description: '商家备注解析：业绩归属人'}
+        memoChannel: {type: string, nullable: true, description: '商家备注解析：渠道'}
+        memoCustomerType: {type: string, nullable: true, description: '商家备注解析：客户类型'}
+        memoSource: {type: string, nullable: true, description: '商家备注解析：来源'}
+        memoAccountName: {type: string, nullable: true, description: '商家备注解析：账号后人名（管家分配依据）'}
+        memoInstitutionName: {type: string, nullable: true, description: '商家备注解析：到院机构'}
+        memoExtraNote: {type: string, nullable: true, description: '商家备注解析：补充说明（手机号已脱敏）'}
+        assignedStewardId: {type: integer, format: int64, nullable: true, description: 分配的归属管家 ID}
+        assignedStewardName: {type: string, nullable: true, description: 分配的归属管家姓名}
+        assignmentStatus: {type: string, enum: [ASSIGNED, UNMATCHED, AMBIGUOUS, NO_ACCOUNT], nullable: true, description: 管家分配状态}
+        assignmentSource: {type: string, enum: [AUTO_ALIAS, AUTO_DISPLAY_NAME, MANUAL, NONE], nullable: true, description: 管家分配来源}
+        assignmentReason: {type: string, nullable: true, description: 自动匹配说明或人工分配理由}
+        assignedAt: {type: string, format: date-time, nullable: true, description: 最近分配时间}
+        assignmentVersion: {type: integer, format: int64, nullable: true, description: 分配记录乐观锁版本}
+    YouzanPullOrderByTidRequest:
+      type: object
+      required: [shopId, tid]
+      properties:
+        shopId: {type: string, minLength: 1, maxLength: 64}
+        tid: {type: string, minLength: 1, maxLength: 128}
+    YouzanOrderAssignRequest:
+      type: object
+      required: [stewardUserId]
+      properties:
+        stewardUserId: {type: integer, format: int64, minimum: 1}
+        reason: {type: string, maxLength: 500, nullable: true}
+        version: {type: integer, format: int64, minimum: 0, nullable: true}
+        saveAlias: {type: boolean, nullable: true}
+        aliasName: {type: string, maxLength: 64, nullable: true}
+    YouzanStewardOptionView:
+      type: object
+      required: [id, displayName]
+      properties:
+        id: {type: integer, format: int64}
+        displayName: {type: string}
+        teamId: {type: integer, format: int64, nullable: true}
+        teamName: {type: string, nullable: true}
+    YouzanStewardOptionListEnvelope:
+      type: object
+      required: [code, message, data, requestId, timestamp]
+      properties:
+        code: {type: string, enum: [OK]}
+        message: {type: string, example: success}
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/YouzanStewardOptionView'}
+        requestId: {type: string}
+        timestamp: {type: string, format: date-time}
+    YouzanStewardAliasRequest:
+      type: object
+      required: [aliasName, stewardUserId]
+      properties:
+        aliasName: {type: string, minLength: 1, maxLength: 64}
+        stewardUserId: {type: integer, format: int64, minimum: 1}
+        status: {type: string, enum: [ACTIVE, INACTIVE], nullable: true}
+        remark: {type: string, maxLength: 255, nullable: true}
+        version: {type: integer, format: int64, minimum: 0, nullable: true}
+        backfillPending: {type: boolean, nullable: true}
+    YouzanStewardAliasView:
+      type: object
+      required: [id, aliasName, aliasKey, stewardUserId, status, version]
+      properties:
+        id: {type: integer, format: int64}
+        aliasName: {type: string}
+        aliasKey: {type: string}
+        stewardUserId: {type: integer, format: int64}
+        stewardName: {type: string, nullable: true}
+        teamId: {type: integer, format: int64, nullable: true}
+        teamName: {type: string, nullable: true}
+        status: {type: string, enum: [ACTIVE, INACTIVE]}
+        remark: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time, nullable: true}
+        updatedAt: {type: string, format: date-time, nullable: true}
+        version: {type: integer, format: int64, minimum: 0}
+    YouzanStewardAliasListEnvelope:
+      type: object
+      required: [code, message, data, requestId, timestamp]
+      properties:
+        code: {type: string, enum: [OK]}
+        message: {type: string, example: success}
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/YouzanStewardAliasView'}
+        requestId: {type: string}
+        timestamp: {type: string, format: date-time}
+    YouzanStewardAliasSaveResponse:
+      type: object
+      required: [alias, backfilledOrderCount]
+      properties:
+        alias: {$ref: '#/components/schemas/YouzanStewardAliasView'}
+        backfilledOrderCount: {type: integer, format: int32, minimum: 0}
+    YouzanStewardAliasSaveEnvelope:
+      type: object
+      required: [code, message, data, requestId, timestamp]
+      properties:
+        code: {type: string, enum: [OK]}
+        message: {type: string, example: success}
+        data: {$ref: '#/components/schemas/YouzanStewardAliasSaveResponse'}
+        requestId: {type: string}
+        timestamp: {type: string, format: date-time}
     YouzanEventResponse:
       type: object
       required: [id, eventId, eventType, externalOrderNo, processStatus, processAttempts, lastError, orderId, receivedAt, processedAt, duplicate]
@@ -14710,7 +14959,7 @@ components:
         channelCode: {type: string, maxLength: 64, nullable: true, description: '可选默认客户渠道编码（须为启用中的 customerChannels 字典项）'}
         startDate: {type: string, format: date, nullable: true, description: '可选起始日期（YYYY-MM-DD，按 Asia/Shanghai 解析）'}
         endDate: {type: string, format: date, nullable: true, description: '可选截止日期（YYYY-MM-DD，按 Asia/Shanghai 解析）'}
-        enrichProfile: {type: boolean, nullable: true, default: true, description: '是否调用 youzan.users.info.query 与 youzan.scrm.customer.get 补全买家姓名、手机号与生日（默认 true）'}
+        enrichProfile: {type: boolean, nullable: true, default: true, description: '是否调用 youzan.users.info.query、youzan.scrm.customer.get 与 youzan.scrm.tag.relation.get 补全买家姓名、手机号、生日、备注、城市与有赞原标签；已建档客户开启时仅非破坏性补齐空缺资料与新增标签（默认 true）'}
         resetCursor: {type: boolean, nullable: true, default: false, description: '是否在本次拉取前清空已有断点游标从头扫描（默认 false）'}
     YouzanCustomerCursorResetRequest:
       type: object
@@ -15038,3 +15287,64 @@ components:
                 total: {type: integer, format: int64, minimum: 0}
                 page: {type: integer, format: int32, minimum: 1}
                 size: {type: integer, format: int32, minimum: 1}
+    CustomerYouzanHistoryOrderLineItem:
+      type: object
+      required: [title, num, priceFen]
+      properties:
+        itemId: {type: string, nullable: true}
+        skuId: {type: string, nullable: true}
+        title: {type: string, description: 已脱敏商品标题}
+        skuProps: {type: string, nullable: true, description: 已脱敏商品规格}
+        num: {type: integer, format: int32, minimum: 1}
+        priceFen: {type: integer, format: int64, minimum: 0, description: 商品单价或行金额（整数分）}
+    CustomerYouzanHistoryOrderItem:
+      type: object
+      required: [id, shopId, tid, orderStatus, paid, paymentFen, refundedFen, netPaymentFen, titleSummary, items, syncedAt]
+      properties:
+        id: {type: integer, format: int64}
+        shopId: {type: string}
+        tid: {type: string, description: 有赞订单号}
+        orderStatus: {type: string, description: 有赞原始订单状态}
+        paid: {type: boolean}
+        orderedAt: {type: string, format: date-time, nullable: true}
+        paidAt: {type: string, format: date-time, nullable: true}
+        paymentFen: {type: integer, format: int64, minimum: 0}
+        refundedFen: {type: integer, format: int64, minimum: 0}
+        netPaymentFen: {type: integer, format: int64, minimum: 0}
+        titleSummary: {type: string}
+        items: {type: array, items: {$ref: '#/components/schemas/CustomerYouzanHistoryOrderLineItem'}}
+        syncedAt: {type: string, format: date-time}
+    CustomerYouzanHistoryOrdersSummary:
+      type: object
+      required: [totalOrderCount, paidOrderCount, totalPaymentFen, totalRefundedFen, netSpendFen]
+      properties:
+        totalOrderCount: {type: integer, format: int32, minimum: 0}
+        paidOrderCount: {type: integer, format: int32, minimum: 0}
+        totalPaymentFen: {type: integer, format: int64, minimum: 0}
+        totalRefundedFen: {type: integer, format: int64, minimum: 0}
+        netSpendFen: {type: integer, format: int64, minimum: 0}
+        firstOrderAt: {type: string, format: date-time, nullable: true}
+        lastOrderAt: {type: string, format: date-time, nullable: true}
+        lastSyncedAt: {type: string, format: date-time, nullable: true}
+    CustomerYouzanHistoryOrdersResponse:
+      type: object
+      required: [customerId, hasYouzanIdentity, linkedShopIds, summary, orders]
+      properties:
+        customerId: {type: integer, format: int64}
+        hasYouzanIdentity: {type: boolean}
+        linkedShopIds: {type: array, items: {type: string}}
+        summary: {$ref: '#/components/schemas/CustomerYouzanHistoryOrdersSummary'}
+        orders:
+          type: object
+          required: [items, total, page, size]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/CustomerYouzanHistoryOrderItem'}}
+            total: {type: integer, format: int64, minimum: 0}
+            page: {type: integer, format: int32, minimum: 1}
+            size: {type: integer, format: int32, minimum: 1}
+    CustomerYouzanHistoryOrdersEnvelope:
+      allOf:
+        - {$ref: '#/components/schemas/ApiResponse'}
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/CustomerYouzanHistoryOrdersResponse'}

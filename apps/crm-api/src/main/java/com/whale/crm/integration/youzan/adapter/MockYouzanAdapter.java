@@ -70,6 +70,47 @@ public class MockYouzanAdapter implements YouzanAdapter {
         return new YouzanPullPage(fixtures.subList(from, to), Integer.toString(to), hasMore);
     }
 
+    @Override
+    public YouzanOrderEnvelope fetchOrder(long tenantId, String shopId, String eventId, String orderNo) {
+        if (!"MOCK-SHOP-001".equals(shopId)) {
+            throw new com.whale.crm.platform.web.BusinessException(
+                    com.whale.crm.platform.web.ErrorCode.NOT_FOUND, "模拟演示环境仅支持 MOCK-SHOP-001 店铺按单号拉取");
+        }
+        String cleanTid = orderNo == null ? "" : orderNo.strip();
+        if (cleanTid.isEmpty()) {
+            throw new com.whale.crm.platform.web.BusinessException(
+                    com.whale.crm.platform.web.ErrorCode.VALIDATION_FAILED, "有赞订单号不能为空");
+        }
+        Instant paidAt = Instant.parse("2026-11-11T07:40:48Z");
+        Instant updatedAt = Instant.parse("2026-11-11T12:42:43Z");
+        String actualEventId = eventId == null || eventId.isBlank()
+                ? "MOCK-PULL:" + cleanTid + ":" + updatedAt.toEpochMilli() : eventId;
+        YouzanOrderEvent event = new YouzanOrderEvent(
+                actualEventId, "ORDER_PAID", shopId, cleanTid,
+                "YZ-DEMO-CUSTOMER-1010", "MOCK-TRADE-" + cleanTid, "WAIT_BUYER_CONFIRM_GOODS", 499900L,
+                paidAt, updatedAt, "REGULAR", null, null, "PLATFORM", LocalDate.parse("2027-12-31"),
+                List.of(new YouzanOrderLine("4898748343:15042235417", 1)));
+        String escapedTid = cleanTid.replace("\\", "\\\\").replace("\"", "\\\"");
+        String providerPayload = (
+                "{\"code\":200,\"success\":true,\"message\":\"successful\",\"data\":{\"full_order_info\":{"
+                + "\"remark_info\":{\"buyer_message\":\"\",\"star\":0,"
+                + "\"trade_memo\":\"业绩：模拟顾问，渠道：koc，类型：新客，来源：模拟达人，账号：演示管家，到院：演示合作机构  可延期核销申请半个月\"},"
+                + "\"pay_info\":{\"pay_way_desc\":\"微信支付\",\"payment\":\"4999.00\","
+                + "\"transaction\":[\"MOCK-TRADE-" + escapedTid + "\"],\"phase_payments\":[]},"
+                + "\"buyer_info\":{\"yz_open_id\":\"YZ-DEMO-CUSTOMER-1010\","
+                + "\"buyer_phone\":\"$MOCK_CIPHER$1$\",\"fans_nickname\":\"$MOCK_CIPHER$1$\"},"
+                + "\"orders\":[{\"item_id\":4898748343,\"sku_id\":15042235417,\"num\":1,"
+                + "\"price\":\"4999.00\",\"payment\":\"4999.00\",\"title\":\"模拟年度甄选卡\","
+                + "\"sku_properties_name\":\"[{\\\"k\\\":\\\"城市\\\",\\\"v\\\":\\\"广州\\\"}]\","
+                + "\"buyer_messages\":\"{\\\"姓名\\\":\\\"测试客户\\\",\\\"手机号\\\":\\\"13800001234\\\"}\"}],"
+                + "\"order_info\":{\"tid\":\"" + escapedTid + "\",\"status\":\"WAIT_BUYER_CONFIRM_GOODS\","
+                + "\"status_str\":\"已发货\",\"pay_type_desc\":\"微信支付\","
+                + "\"created\":\"2026-11-11 15:40:31\",\"pay_time\":\"2026-11-11 15:40:48\","
+                + "\"consign_time\":\"2026-11-11 15:40:49\",\"update_time\":\"2026-11-11 20:42:43\"}"
+                + "}}}");
+        return new YouzanOrderEnvelope(event, providerPayload);
+    }
+
     public static YouzanOrderEvent paidEvent() {
         return new YouzanOrderEvent("YZ-MOCK-PAID-001", "ORDER_PAID", "MOCK-SHOP-001", "YZ-MOCK-PAID-001",
                 "YZ-DEMO-CUSTOMER-1010", "YZ-MOCK-TRADE-001", "PAID", 362200L,

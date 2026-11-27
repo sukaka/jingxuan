@@ -10,7 +10,9 @@ import type { Sku } from '../src/api/catalog'
 import { listSkus } from '../src/api/catalog'
 import type { YouzanCustomerLink, YouzanOrderView, YouzanSkuCandidate, YouzanSyncIssue } from '../src/api/youzan'
 import {
+  assignYouzanOrderSteward,
   batchRetryYouzanSyncIssues,
+  deleteYouzanStewardAlias,
   getYouzanCustomerSyncStatus,
   getYouzanReconcileReport,
   listYouzanCustomerLinks,
@@ -20,13 +22,17 @@ import {
   listYouzanShops,
   listYouzanSkuCandidates,
   listYouzanSkuMappings,
+  listYouzanStewardAliases,
+  listYouzanStewardOptions,
   listYouzanSyncIssues,
   pullYouzanCustomers,
+  pullYouzanOrderByTid,
   reconcileYouzanOrders,
   resetYouzanCustomerSyncCursor,
   retryYouzanSyncIssue,
   saveYouzanCustomerLink,
   saveYouzanSkuMapping,
+  saveYouzanStewardAlias,
   syncYouzanOrders,
 } from '../src/api/youzan'
 import { getOrder } from '../src/api/trading'
@@ -41,6 +47,12 @@ vi.mock('../src/api/trading', () => ({
 
 vi.mock('../src/api/youzan', () => ({
   listYouzanOrders: vi.fn(),
+  pullYouzanOrderByTid: vi.fn(),
+  assignYouzanOrderSteward: vi.fn(),
+  listYouzanStewardOptions: vi.fn(),
+  listYouzanStewardAliases: vi.fn(),
+  saveYouzanStewardAlias: vi.fn(),
+  deleteYouzanStewardAlias: vi.fn(),
   listYouzanShops: vi.fn(),
   syncYouzanOrders: vi.fn(),
   reconcileYouzanOrders: vi.fn(),
@@ -248,6 +260,15 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     vi.resetAllMocks()
     window.localStorage.clear()
     vi.mocked(listYouzanOrders).mockResolvedValue({ items: [order], total: 1, page: 1, size: 20 })
+    vi.mocked(listYouzanStewardOptions).mockResolvedValue([{ id: 9, displayName: '测试管家', teamId: 1, teamName: '管家一组' }])
+    vi.mocked(listYouzanStewardAliases).mockResolvedValue([])
+    vi.mocked(pullYouzanOrderByTid).mockResolvedValue(order)
+    vi.mocked(assignYouzanOrderSteward).mockResolvedValue({ ...order, assignedStewardId: 9, assignedStewardName: '测试管家', assignmentStatus: 'ASSIGNED', assignmentSource: 'MANUAL' })
+    vi.mocked(saveYouzanStewardAlias).mockResolvedValue({
+      alias: { id: 1, aliasName: '紫紫模拟', aliasKey: '紫紫模拟', stewardUserId: 9, stewardName: '测试管家', teamId: 1, teamName: '管家一组', status: 'ACTIVE', remark: null, createdAt: '2026-11-27T07:00:00Z', updatedAt: '2026-11-27T07:00:00Z', version: 0 },
+      backfilledOrderCount: 1,
+    })
+    vi.mocked(deleteYouzanStewardAlias).mockResolvedValue(undefined)
     vi.mocked(listYouzanShops).mockResolvedValue([])
     vi.mocked(getYouzanReconcileReport).mockResolvedValue({ shopId: 'MOCK-SHOP-001', totalEvents: 2, internalOrders: 1, openIssues: 1, lastSyncAt: '2026-10-24T02:00:00Z', todayEvents: 2, campaignOrders: 1 })
     vi.mocked(listYouzanSyncIssues).mockResolvedValue({ items: [issue], total: 1, page: 1, size: 20 })
@@ -381,10 +402,17 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     expect(success).not.toHaveBeenCalled()
   })
 
-  it('原始订单保留 10 列并展示脱敏字段、活动归属和真实 CRM 客户链接', async () => {
+  it('原始订单保留完整业务列并展示脱敏字段、归属管家、商家备注、活动归属和真实 CRM 客户链接', async () => {
     const rawOrder: YouzanOrderView = {
       ...order,
       payloadMaskedJson: '{"event_id":"YZ-MOCK-PAID-001","external_customer_id":"YZ-CUSTOMER-1","nickname":"脱敏昵称","mobile":"138****0000","items":[{"external_sku_id":"YZ-SKU-301","quantity":2}],"order_type_code":"CAMPAIGN","campaign_id":7,"campaign_batch_id":3,"paid_at":"2026-10-24T03:00:00Z"}',
+      assignedStewardId: 9,
+      assignedStewardName: '测试管家',
+      assignmentStatus: 'ASSIGNED',
+      assignmentSource: 'AUTO_ALIAS',
+      memoAccountName: '紫紫模拟',
+      memoPerformanceOwner: '陈顾问',
+      memoInstitutionName: '杭州示范院',
     }
     vi.mocked(listYouzanOrders).mockResolvedValue({ items: [rawOrder], total: 1, page: 1, size: 20 })
     const wrapper = mountView(['order:read', 'integration:youzan:manage'])
@@ -395,6 +423,8 @@ describe('YouzanOrdersView 模拟同步管理', () => {
       '客户昵称 / 手机',
       '商品',
       '实付',
+      '归属管家',
+      '商家备注摘要',
       '订单类型',
       '活动 / 批次',
       '支付时间',
@@ -405,6 +435,10 @@ describe('YouzanOrdersView 模拟同步管理', () => {
     expect(wrapper.text()).toContain('脱敏昵称')
     expect(wrapper.text()).toContain('138****0000')
     expect(wrapper.text()).toContain('YZ-SKU-301 × 2')
+    expect(wrapper.text()).toContain('测试管家')
+    expect(wrapper.text()).toContain('账号：紫紫模拟')
+    expect(wrapper.text()).toContain('业绩：陈顾问')
+    expect(wrapper.text()).toContain('到院：杭州示范院')
     expect(wrapper.text()).toContain('活动 #7')
     expect(wrapper.text()).toContain('批次 #3')
     expect(wrapper.text()).toContain('未知订单类型')
@@ -1541,5 +1575,63 @@ describe('YouzanOrdersView 模拟同步管理', () => {
 
     expect(goodsCells[2]?.text()).toContain('LEGACY-SKU-9 × 3')
     expect(goodsCells[2]?.find('.proto-subcell').exists()).toBe(false)
+  })
+
+  it('管理员支持按有赞订单号单笔拉取、自动打开详情展示备注与分配管家', async () => {
+    const success = vi.spyOn(ElMessage, 'success')
+    const pulledOrder: YouzanOrderView = {
+      ...order,
+      externalOrderNo: 'E202611119999',
+      providerOrderStatus: 'WAIT_BUYER_CONFIRM_GOODS',
+      providerStatusText: '已发货',
+      payWayDesc: '微信支付',
+      memoAccountName: '紫紫模拟',
+      memoPerformanceOwner: '陈顾问',
+      memoInstitutionName: '杭州示范院',
+      tradeMemoMasked: '业绩：陈顾问，账号：紫紫模拟，到院：杭州示范院',
+      assignedStewardId: 9,
+      assignedStewardName: '测试管家',
+      assignmentStatus: 'ASSIGNED',
+      assignmentSource: 'AUTO_ALIAS',
+    }
+    vi.mocked(pullYouzanOrderByTid).mockResolvedValue(pulledOrder)
+
+    const wrapper = mountView(['order:read', 'integration:youzan:manage'])
+    await flushPromises()
+
+    await wrapper.get('[data-testid="youzan-pull-tid-input"]').setValue('E202611119999')
+    await wrapper.get('[data-testid="youzan-pull-tid-btn"]').trigger('click')
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    expect(pullYouzanOrderByTid).toHaveBeenCalledWith(
+      { shopId: 'MOCK-SHOP-001', tid: 'E202611119999' },
+      expect.stringMatching(/^youzan\.pull-tid:/),
+    )
+    expect(success).toHaveBeenCalledWith(expect.stringContaining('已自动分配给管家：测试管家'))
+    expect(document.body.textContent).toContain('E202611119999')
+    expect(document.body.textContent).toContain('杭州示范院')
+  })
+
+  it('管理员可在管家账号映射页签新增别名并自动回填历史待分配订单', async () => {
+    const success = vi.spyOn(ElMessage, 'success')
+    const wrapper = mountView(['order:read', 'integration:youzan:manage'])
+    await flushPromises()
+
+    await openTab(wrapper, '管家账号映射')
+    await wrapper.get('[data-testid="steward-alias-create"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="steward-alias-name"]').setValue('紫紫模拟')
+    component(wrapper, 'steward-alias-steward').vm.$emit('update:modelValue', 9)
+    await flushPromises()
+    await wrapper.get('[data-testid="steward-alias-save"]').trigger('click')
+    await flushPromises()
+
+    expect(saveYouzanStewardAlias).toHaveBeenCalledWith(
+      expect.objectContaining({ aliasName: '紫紫模拟', stewardUserId: 9, status: 'ACTIVE', backfillPending: true }),
+      expect.stringMatching(/^youzan\.steward\.alias:/),
+    )
+    expect(success).toHaveBeenCalledWith(expect.stringContaining('已自动回填 1 笔历史待分配订单'))
   })
 })

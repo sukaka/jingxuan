@@ -31,6 +31,24 @@ public interface YouzanRepository {
     List<YouzanEvent> findLatestOrderEvents(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope,
                                             int offset, int size);
     long countDistinctExternalOrders(long tenantId, String shopId, CustomerScopeSupport.ScopeQuery scope);
+    default List<YouzanEvent> findLatestOrderEventsFiltered(long tenantId, String shopId,
+                                                            CustomerScopeSupport.ScopeQuery scope,
+                                                            Long assignedStewardId, String assignmentStatus,
+                                                            String keyword, int offset, int size) {
+        return findLatestOrderEvents(tenantId, shopId, scope, offset, size);
+    }
+    default long countDistinctExternalOrdersFiltered(long tenantId, String shopId,
+                                                     CustomerScopeSupport.ScopeQuery scope,
+                                                     Long assignedStewardId, String assignmentStatus,
+                                                     String keyword) {
+        return countDistinctExternalOrders(tenantId, shopId, scope);
+    }
+    default Optional<YouzanEvent> findLatestEventByExternalOrder(long tenantId, String shopId, String externalOrderNo) {
+        return Optional.empty();
+    }
+    default boolean isMappedCustomerActive(long tenantId, long crmOrderId) {
+        return true;
+    }
 
     void insertOrderMap(long tenantId, YouzanOrderMap map);
     Optional<YouzanOrderMap> findOrderMap(long tenantId, String shopId, String externalOrderNo);

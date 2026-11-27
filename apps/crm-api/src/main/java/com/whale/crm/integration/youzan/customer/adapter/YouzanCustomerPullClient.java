@@ -32,8 +32,29 @@ public interface YouzanCustomerPullClient {
             Instant createdAt,
             Integer fansType,
             Long fansId,
-            String remark
+            String remark,
+            String cityName,
+            List<String> tagNames
     ) {
+        public YouzanPulledCustomer {
+            tagNames = tagNames == null ? List.of() : List.copyOf(tagNames);
+        }
+
+        public YouzanPulledCustomer(
+                String yzOpenId,
+                String name,
+                String nickname,
+                String mobile,
+                String genderHint,
+                LocalDate birthday,
+                Instant createdAt,
+                Integer fansType,
+                Long fansId,
+                String remark
+        ) {
+            this(yzOpenId, name, nickname, mobile, genderHint, birthday, createdAt,
+                    fansType, fansId, remark, null, List.of());
+        }
     }
 
     record YouzanCustomerPage(
@@ -54,10 +75,28 @@ public interface YouzanCustomerPullClient {
             String mobile,
             String genderHint,
             LocalDate birthday,
+            String remark,
+            String cityName,
+            List<String> tagNames,
             String warning
     ) {
+        public YouzanCustomerEnrichment {
+            tagNames = tagNames == null ? List.of() : List.copyOf(tagNames);
+        }
+
+        public YouzanCustomerEnrichment(
+                String name,
+                String nickname,
+                String mobile,
+                String genderHint,
+                LocalDate birthday,
+                String warning
+        ) {
+            this(name, nickname, mobile, genderHint, birthday, null, null, List.of(), warning);
+        }
+
         public static YouzanCustomerEnrichment empty(String warning) {
-            return new YouzanCustomerEnrichment(null, null, null, "UNKNOWN", null, warning);
+            return new YouzanCustomerEnrichment(null, null, null, "UNKNOWN", null, null, null, List.of(), warning);
         }
     }
 
