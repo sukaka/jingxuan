@@ -31,9 +31,21 @@ public interface CustomerRepository {
                 tagMatchMode, offset, size);
     }
 
+    default List<CustomerListRow> search(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                                         String keyword, String mobileHashKeyword, String idCardHashKeyword,
+                                         String emailHashKeyword, String wechatIdHashKeyword, String status,
+                                         String cityCode, String sourceCode, String channelCode, String tierCode,
+                                         Long ownerId, java.time.Instant followupDueBefore, List<String> tagCodes,
+                                         String tagMatchMode, int offset, int size) {
+        return search(tenantId, scopeType, teamIds, selfId, keyword, mobileHashKeyword, idCardHashKeyword,
+                emailHashKeyword, wechatIdHashKeyword, status, cityCode, null, null, null,
+                sourceCode, channelCode, tierCode, ownerId, followupDueBefore, tagCodes, tagMatchMode, offset, size);
+    }
+
     List<CustomerListRow> search(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                                  String keyword, String mobileHashKeyword, String idCardHashKeyword,
                                  String emailHashKeyword, String wechatIdHashKeyword, String status, String cityCode,
+                                 String provinceCode, String regionCityCode, String districtCode,
                                  String sourceCode, String channelCode, String tierCode, Long ownerId,
                                  java.time.Instant followupDueBefore, List<String> tagCodes, String tagMatchMode,
                                  int offset, int size);
@@ -51,13 +63,24 @@ public interface CustomerRepository {
                              String sourceCode, String channelCode, String tierCode, Long ownerId,
                              java.time.Instant followupDueBefore, List<String> tagCodes, String tagMatchMode) {
         return countSearch(tenantId, scopeType, teamIds, selfId, keyword, mobileHashKeyword, null, null, null,
-                status, cityCode, sourceCode, channelCode, tierCode, ownerId, followupDueBefore, tagCodes,
-                tagMatchMode);
+                status, cityCode, null, null, null, sourceCode, channelCode, tierCode, ownerId,
+                followupDueBefore, tagCodes, tagMatchMode);
+    }
+
+    default long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId,
+                             String keyword, String mobileHashKeyword, String idCardHashKeyword,
+                             String emailHashKeyword, String wechatIdHashKeyword, String status, String cityCode,
+                             String sourceCode, String channelCode, String tierCode, Long ownerId,
+                             java.time.Instant followupDueBefore, List<String> tagCodes, String tagMatchMode) {
+        return countSearch(tenantId, scopeType, teamIds, selfId, keyword, mobileHashKeyword, idCardHashKeyword,
+                emailHashKeyword, wechatIdHashKeyword, status, cityCode, null, null, null, sourceCode, channelCode,
+                tierCode, ownerId, followupDueBefore, tagCodes, tagMatchMode);
     }
 
     long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                      String keyword, String mobileHashKeyword, String idCardHashKeyword,
                      String emailHashKeyword, String wechatIdHashKeyword, String status, String cityCode,
+                     String provinceCode, String regionCityCode, String districtCode,
                      String sourceCode, String channelCode, String tierCode, Long ownerId,
                      java.time.Instant followupDueBefore, List<String> tagCodes, String tagMatchMode);
 

@@ -20,6 +20,13 @@
     <result property="wechatIdCipher" column="wechat_id_cipher"/>
     <result property="wechatIdHash" column="wechat_id_hash"/>
     <result property="cityCode" column="city_code"/>
+    <result property="provinceCode" column="province_code"/>
+    <result property="provinceName" column="province_name"/>
+    <result property="regionCityCode" column="region_city_code"/>
+    <result property="regionCityName" column="region_city_name"/>
+    <result property="districtCode" column="district_code"/>
+    <result property="districtName" column="district_name"/>
+    <result property="detailAddress" column="detail_address"/>
     <result property="sourceCode" column="source_code"/>
     <result property="channelCode" column="channel_code"/>
     <result property="customerStatus" column="customer_status"/>
@@ -57,6 +64,13 @@
     <result property="emailCipher" column="email_cipher"/>
     <result property="wechatIdCipher" column="wechat_id_cipher"/>
     <result property="cityCode" column="city_code"/>
+    <result property="provinceCode" column="province_code"/>
+    <result property="provinceName" column="province_name"/>
+    <result property="regionCityCode" column="region_city_code"/>
+    <result property="regionCityName" column="region_city_name"/>
+    <result property="districtCode" column="district_code"/>
+    <result property="districtName" column="district_name"/>
+    <result property="detailAddress" column="detail_address"/>
     <result property="customerStatus" column="customer_status"/>
     <result property="tierCode" column="tier_code"/>
     <result property="intentLevel" column="intent_level"/>
@@ -74,7 +88,9 @@
   <sql id="customerColumns">
     id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname, remark_name,
     mobile_cipher, mobile_hash, id_card_cipher, id_card_hash, email_cipher, email_hash,
-    wechat_id_cipher, wechat_id_hash, city_code, source_code, channel_code, customer_status, tier_code,
+    wechat_id_cipher, wechat_id_hash, city_code, province_code, province_name, region_city_code,
+    region_city_name, district_code, district_name, detail_address, source_code, channel_code,
+    customer_status, tier_code,
     tier_locked, tier_lock_reason, intent_level, spending_level, birthday, points_cached, attention_projects,
     blocker_note, remark,
     first_added_at, first_order_at, last_followup_at, next_followup_at, deleted, created_at, updated_at, version
@@ -126,6 +142,15 @@
     <if test="cityCode != null and cityCode != ''">
       AND c.city_code = #{cityCode}
     </if>
+    <if test="provinceCode != null and provinceCode != ''">
+      AND c.province_code = #{provinceCode}
+    </if>
+    <if test="regionCityCode != null and regionCityCode != ''">
+      AND c.region_city_code = #{regionCityCode}
+    </if>
+    <if test="districtCode != null and districtCode != ''">
+      AND c.district_code = #{districtCode}
+    </if>
     <if test="sourceCode != null and sourceCode != ''">
       AND c.source_code = #{sourceCode}
     </if>
@@ -168,7 +193,8 @@
   <select id="search" resultMap="CustomerListRowMap">
     SELECT c.id, c.tenant_id, c.owner_staff_id, o.display_name AS owner_name, c.team_id, c.customer_no,
            c.display_name, c.nickname, c.mobile_cipher, c.id_card_cipher, c.email_cipher, c.wechat_id_cipher,
-           c.city_code, c.customer_status, c.tier_code,
+           c.city_code, c.province_code, c.province_name, c.region_city_code, c.region_city_name,
+           c.district_code, c.district_name, c.detail_address, c.customer_status, c.tier_code,
            c.intent_level, c.points_cached, c.last_followup_at, c.created_at, c.version,
            c.source_code, c.channel_code, c.spending_level, c.birthday,
            c.next_followup_at
@@ -223,13 +249,15 @@
     INSERT INTO crm_customer (tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
                               remark_name, mobile_cipher, mobile_hash, id_card_cipher, id_card_hash,
                               email_cipher, email_hash, wechat_id_cipher, wechat_id_hash,
-                              city_code, source_code, channel_code,
+                              city_code, province_code, province_name, region_city_code, region_city_name,
+                              district_code, district_name, detail_address, source_code, channel_code,
                               customer_status, tier_code, intent_level, spending_level, birthday,
                               attention_projects, blocker_note, remark, first_added_at)
     VALUES (#{tenantId}, #{ownerStaffId}, #{teamId}, #{customerNo}, #{displayName}, #{nickname},
             #{remarkName}, #{mobileCipher}, #{mobileHash}, #{idCardCipher}, #{idCardHash},
             #{emailCipher}, #{emailHash}, #{wechatIdCipher}, #{wechatIdHash},
-            #{cityCode}, #{sourceCode}, #{channelCode},
+            #{cityCode}, #{provinceCode}, #{provinceName}, #{regionCityCode}, #{regionCityName},
+            #{districtCode}, #{districtName}, #{detailAddress}, #{sourceCode}, #{channelCode},
             #{customerStatus}, #{tierCode}, #{intentLevel}, #{spendingLevel}, #{birthday},
             #{attentionProjects}, #{blockerNote}, #{remark}, #{firstAddedAt})
   </insert>
@@ -247,6 +275,10 @@
         email_cipher = #{emailCipher}, email_hash = #{emailHash},
         wechat_id_cipher = #{wechatIdCipher}, wechat_id_hash = #{wechatIdHash},
         city_code = #{cityCode},
+        province_code = #{provinceCode}, province_name = #{provinceName},
+        region_city_code = #{regionCityCode}, region_city_name = #{regionCityName},
+        district_code = #{districtCode}, district_name = #{districtName},
+        detail_address = #{detailAddress},
         source_code = #{sourceCode}, channel_code = #{channelCode}, customer_status = #{customerStatus},
         tier_code = #{tierCode}, intent_level = #{intentLevel}, spending_level = #{spendingLevel},
         birthday = #{birthday}, attention_projects = #{attentionProjects}, blocker_note = #{blockerNote},

@@ -9,6 +9,7 @@ import com.whale.crm.customer.domain.CustomerLegacyRepository;
 import com.whale.crm.customer.domain.CustomerRepository;
 import com.whale.crm.customer.domain.LegacyFieldMapping;
 import com.whale.crm.customer.domain.LegacyFieldMappingRepository;
+import com.whale.crm.platform.region.application.RegionCatalogService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.user.domain.SysUser;
 import com.whale.crm.platform.user.domain.UserRepository;
@@ -102,7 +103,9 @@ public class LegacyProfileApplicationService {
                 availability = value != null ? AVAILABLE : PENDING_IMPORT;
             }
             case "CITY" -> {
-                value = customer.getCityCode();
+                String regionText = RegionCatalogService.formatRegionText(
+                        customer.getProvinceName(), customer.getRegionCityName(), customer.getDistrictName());
+                value = regionText != null ? regionText : customer.getCityCode();
                 availability = AVAILABLE;
             }
             case "ATTENTION_PROJECTS" -> {

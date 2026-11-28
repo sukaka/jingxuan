@@ -19,6 +19,7 @@ import com.whale.crm.exporting.infrastructure.ExportFileService;
 import com.whale.crm.exporting.infrastructure.ExportProperties;
 import com.whale.crm.file.application.FileContentInspector;
 import com.whale.crm.file.domain.FileMetadata;
+import com.whale.crm.platform.region.application.RegionCatalogService;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.CurrentUserService;
 import com.whale.crm.platform.web.BusinessException;
@@ -208,6 +209,11 @@ public class ExportExecutionService {
                     ? null : privacyFieldSupport.maskEmailFromCipher(emailCipher.toString()));
             safe.put("wechatId", wechatIdCipher == null || privacyFieldSupport == null
                     ? null : privacyFieldSupport.maskWechatIdFromCipher(wechatIdCipher.toString()));
+            String regionText = RegionCatalogService.formatRegionText(
+                    safe.get("provinceName") == null ? null : safe.get("provinceName").toString(),
+                    safe.get("regionCityName") == null ? null : safe.get("regionCityName").toString(),
+                    safe.get("districtName") == null ? null : safe.get("districtName").toString());
+            safe.put("regionText", regionText != null ? regionText : safe.get("cityCode"));
         }
         return safe;
     }

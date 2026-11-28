@@ -75,6 +75,9 @@ public class CustomerController {
             @RequestParam(required = false) @Size(max = 64) String keyword,
             @RequestParam(required = false) @Size(max = 64) String status,
             @RequestParam(required = false) @Size(max = 64) String cityCode,
+            @RequestParam(required = false) @Size(max = 32) String provinceCode,
+            @RequestParam(required = false) @Size(max = 32) String regionCityCode,
+            @RequestParam(required = false) @Size(max = 32) String districtCode,
             @RequestParam(required = false) @Size(max = 64) String sourceCode,
             @RequestParam(required = false) @Size(max = 64) String channelCode,
             @RequestParam(required = false) @Size(max = 16) String tierCode,
@@ -84,7 +87,8 @@ public class CustomerController {
             @RequestParam(required = false) @Size(max = 16) String tagMatchMode,
             HttpServletRequest request) {
         return ApiResponse.ok(customerService.search(TenantContext.currentTenantId(),
-                SecuritySupport.requireCurrentUser(), keyword, status, cityCode, sourceCode, channelCode, tierCode,
+                SecuritySupport.requireCurrentUser(), keyword, status, cityCode, provinceCode, regionCityCode,
+                districtCode, sourceCode, channelCode, tierCode,
                 ownerId, followupDueBefore, tagCodes, tagMatchMode, page, size), requestId(request));
     }
 

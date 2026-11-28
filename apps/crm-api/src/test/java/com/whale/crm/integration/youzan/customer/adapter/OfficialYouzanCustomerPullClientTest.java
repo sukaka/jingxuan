@@ -341,6 +341,7 @@ class OfficialYouzanCustomerPullClientTest {
                         "contact_address": {
                           "province": "浙江省",
                           "city": "杭州市",
+                          "district": "西湖区",
                           "address_detail": "绝不应采集的详细街道门牌123号"
                         },
                         "tags": [
@@ -352,7 +353,7 @@ class OfficialYouzanCustomerPullClientTest {
                       {
                         "yz_open_id": "YZ-DETAIL-002",
                         "name": "孙女士",
-                        "area": {"province": "上海市", "city": "市辖区"},
+                        "area": {"province": "上海市", "city": "市辖区", "county": "浦东新区"},
                         "tag_list": ["皮肤管理", "皮肤管理"]
                       }
                     ]
@@ -366,9 +367,13 @@ class OfficialYouzanCustomerPullClientTest {
                 TENANT_ID, SHOP_ID, null, null, 1, 20);
         assertThat(scrmPage.items()).hasSize(2);
         assertThat(scrmPage.items().get(0).remark()).isEqualTo("偏好光电抗衰项目");
+        assertThat(scrmPage.items().get(0).provinceName()).isEqualTo("浙江省");
         assertThat(scrmPage.items().get(0).cityName()).isEqualTo("杭州市");
+        assertThat(scrmPage.items().get(0).districtName()).isEqualTo("西湖区");
         assertThat(scrmPage.items().get(0).tagNames()).containsExactly("贵宾客户", "光电高复购");
+        assertThat(scrmPage.items().get(1).provinceName()).isEqualTo("上海市");
         assertThat(scrmPage.items().get(1).cityName()).isEqualTo("上海市");
+        assertThat(scrmPage.items().get(1).districtName()).isEqualTo("浦东新区");
         assertThat(scrmPage.items().get(1).tagNames()).containsExactly("皮肤管理");
 
         JsonNode tradesResp = objectMapper.readTree("""
@@ -385,6 +390,7 @@ class OfficialYouzanCustomerPullClientTest {
                           "address_info": {
                             "delivery_province": "广东省",
                             "delivery_city": "深圳市",
+                            "delivery_district": "南山区",
                             "delivery_address": "某保密小区8栋808"
                           }
                         }
@@ -399,7 +405,9 @@ class OfficialYouzanCustomerPullClientTest {
         YouzanCustomerPullClient.YouzanCustomerPage orderPage = client.pullOrderBuyersPage(
                 TENANT_ID, SHOP_ID, Instant.parse("2026-07-01T00:00:00Z"),
                 Instant.parse("2026-07-10T00:00:00Z"), 1, 50);
+        assertThat(orderPage.items().get(0).provinceName()).isEqualTo("广东省");
         assertThat(orderPage.items().get(0).cityName()).isEqualTo("深圳市");
+        assertThat(orderPage.items().get(0).districtName()).isEqualTo("南山区");
     }
 
     @Test

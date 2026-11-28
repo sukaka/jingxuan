@@ -222,8 +222,10 @@ public class ExportApplicationService {
         if (request.status() != null && type == ExportType.FOLLOWUP) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "跟进导出不支持状态筛选");
         }
-        if ((request.cityCode() != null || request.sourceCode() != null) && type != ExportType.CUSTOMER) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "城市和客户来源仅用于客户导出");
+        if ((request.cityCode() != null || request.provinceCode() != null
+                || request.regionCityCode() != null || request.districtCode() != null
+                || request.sourceCode() != null) && type != ExportType.CUSTOMER) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "地区和客户来源仅用于客户导出");
         }
         if (request.sourceSystem() != null && type != ExportType.ORDER) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "订单来源仅用于订单导出");
@@ -232,7 +234,9 @@ public class ExportApplicationService {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "渠道筛选仅用于客户或跟进导出");
         }
         return new ExportFilter(request.customerId(), text(request.status()), text(request.cityCode()),
-                text(request.sourceCode()), text(request.sourceSystem()), text(request.channelCode()), request.from(), request.to());
+                text(request.provinceCode()), text(request.regionCityCode()), text(request.districtCode()),
+                text(request.sourceCode()), text(request.sourceSystem()), text(request.channelCode()),
+                request.from(), request.to());
     }
 
     private void requirePermission(CurrentUser user, String permission, ErrorCode errorCode,

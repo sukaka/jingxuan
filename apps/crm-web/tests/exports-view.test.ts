@@ -23,6 +23,25 @@ vi.mock('../src/api/exporting', () => ({
   listExportAccessLogs: vi.fn(),
 }))
 
+vi.mock('../src/api/region', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/region')>()),
+  loadRegionTree: vi.fn().mockResolvedValue([
+    {
+      code: '330000',
+      name: '浙江省',
+      level: 1,
+      children: [
+        {
+          code: '330100',
+          name: '杭州市',
+          level: 2,
+          children: [{ code: '330106', name: '西湖区', level: 3 }],
+        },
+      ],
+    },
+  ]),
+}))
+
 function job(status: string): ExportJob {
   return {
     id: 91,

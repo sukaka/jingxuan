@@ -67,7 +67,8 @@ class CustomerTagBatchLookupTest {
         MybatisCustomerRepository repository = new MybatisCustomerRepository(mapper, tagRepository);
 
         when(mapper.search(anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of());
         assertThat(repository.search(1L, "ALL", List.of(), 1L, null, null, null, null, null, null,
                 null, null, null, 0, 20)).isEmpty();
         verifyNoInteractions(tagRepository);
@@ -75,7 +76,8 @@ class CustomerTagBatchLookupTest {
         CustomerListRow first = row(11L);
         CustomerListRow second = row(12L);
         when(mapper.search(anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of(first, second));
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of(first, second));
         when(tagRepository.findTagCodesByCustomerIds(1L, List.of(11L, 12L)))
                 .thenReturn(Map.of(11L, List.of("A_TAG", "Z_TAG")));
 

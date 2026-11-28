@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { CustomerListItem } from '../api/customer'
+import { formatCustomerRegion } from '../api/region'
 import type { Project } from '../api/catalog'
 import { listProjects } from '../api/catalog'
 import type { CustomerSegment, CustomerSegmentFilters } from '../api/customerSegment'
@@ -166,11 +167,6 @@ function tierLabel(code: string | null | undefined): string {
   return hit ? hit.label : `${code} 级`
 }
 
-function cityLabel(code: string | null | undefined): string {
-  if (!code) return '—'
-  return dicts.label('cities', code)
-}
-
 function filterSummary(segment: CustomerSegment): string {
   const value = segment.filters
   const cities = value.cityCodes.length
@@ -284,8 +280,8 @@ onMounted(() => {
         <el-table-column label="客户" min-width="140">
           <template #default="{ row }">{{ row.displayName ?? row.nickname ?? '未命名客户' }}</template>
         </el-table-column>
-        <el-table-column label="城市" width="110">
-          <template #default="{ row }">{{ cityLabel(row.cityCode) }}</template>
+        <el-table-column label="地区" min-width="150">
+          <template #default="{ row }">{{ formatCustomerRegion(row, row.cityCode ? dicts.label('cities', row.cityCode) : null) }}</template>
         </el-table-column>
         <el-table-column label="等级" width="95">
           <template #default="{ row }">{{ tierLabel(row.tierCode) }}</template>

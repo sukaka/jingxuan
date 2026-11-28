@@ -18,6 +18,14 @@ public record CustomerDetailResponse(
         String emailMasked,
         String wechatIdMasked,
         String cityCode,
+        String provinceCode,
+        String provinceName,
+        String regionCityCode,
+        String regionCityName,
+        String districtCode,
+        String districtName,
+        String regionText,
+        String detailAddress,
         String customerStatus,
         String tierCode,
         String intentLevel,
@@ -53,6 +61,26 @@ public record CustomerDetailResponse(
 
     public CustomerDetailResponse(
             Long id, String customerNo, String displayName, String nickname, String mobileMasked,
+            String idCardMasked, String emailMasked, String wechatIdMasked,
+            String cityCode, String customerStatus, String tierCode, String intentLevel,
+            Long ownerStaffId, String ownerName, Long teamId, Integer pointsCached,
+            Instant lastFollowupAt, Instant createdAt, Long version, String sourceCode,
+            String channelCode, String spendingLevel, LocalDate birthday,
+            String attentionProjects, String blockerNote, String remark, String remarkName,
+            Instant firstAddedAt, Instant firstOrderAt, List<String> tagCodes,
+            List<CustomerIdentityItemResponse> identities, boolean deleted,
+            List<Long> attentionProjectIds, Integer addedStewardCount,
+            List<CustomerStewardRelationItemResponse> addedStewards) {
+        this(id, customerNo, displayName, nickname, mobileMasked, idCardMasked, emailMasked, wechatIdMasked,
+                cityCode, null, null, null, null, null, null, null, null,
+                customerStatus, tierCode, intentLevel, ownerStaffId, ownerName, teamId,
+                pointsCached, lastFollowupAt, createdAt, version, sourceCode, channelCode, spendingLevel,
+                birthday, attentionProjects, blockerNote, remark, remarkName, firstAddedAt, firstOrderAt,
+                tagCodes, identities, deleted, attentionProjectIds, addedStewardCount, addedStewards);
+    }
+
+    public CustomerDetailResponse(
+            Long id, String customerNo, String displayName, String nickname, String mobileMasked,
             String cityCode, String customerStatus, String tierCode, String intentLevel,
             Long ownerStaffId, String ownerName, Long teamId, Integer pointsCached,
             Instant lastFollowupAt, Instant createdAt, Long version, String sourceCode,
@@ -63,7 +91,8 @@ public record CustomerDetailResponse(
             List<Long> attentionProjectIds, Integer addedStewardCount,
             List<CustomerStewardRelationItemResponse> addedStewards) {
         this(id, customerNo, displayName, nickname, mobileMasked, null, null, null,
-                cityCode, customerStatus, tierCode, intentLevel, ownerStaffId, ownerName, teamId,
+                cityCode, null, null, null, null, null, null, null, null,
+                customerStatus, tierCode, intentLevel, ownerStaffId, ownerName, teamId,
                 pointsCached, lastFollowupAt, createdAt, version, sourceCode, channelCode, spendingLevel,
                 birthday, attentionProjects, blockerNote, remark, remarkName, firstAddedAt, firstOrderAt,
                 tagCodes, identities, deleted, attentionProjectIds, addedStewardCount, addedStewards);
@@ -80,7 +109,8 @@ public record CustomerDetailResponse(
             List<CustomerIdentityItemResponse> identities, boolean deleted,
             List<Long> attentionProjectIds) {
         this(id, customerNo, displayName, nickname, mobileMasked, null, null, null,
-                cityCode, customerStatus, tierCode, intentLevel, ownerStaffId, ownerName, teamId,
+                cityCode, null, null, null, null, null, null, null, null,
+                customerStatus, tierCode, intentLevel, ownerStaffId, ownerName, teamId,
                 pointsCached, lastFollowupAt, createdAt, version, sourceCode, channelCode, spendingLevel,
                 birthday, attentionProjects, blockerNote, remark, remarkName, firstAddedAt, firstOrderAt,
                 tagCodes, identities, deleted, attentionProjectIds, null, null);

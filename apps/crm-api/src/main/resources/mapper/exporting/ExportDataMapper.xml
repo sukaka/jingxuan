@@ -65,6 +65,9 @@
     <if test="q.filter.customerId != null">AND c.id=#{q.filter.customerId}</if>
     <if test="q.filter.status != null and q.filter.status != ''">AND c.customer_status=#{q.filter.status}</if>
     <if test="q.filter.cityCode != null and q.filter.cityCode != ''">AND c.city_code=#{q.filter.cityCode}</if>
+    <if test="q.filter.provinceCode != null and q.filter.provinceCode != ''">AND c.province_code=#{q.filter.provinceCode}</if>
+    <if test="q.filter.regionCityCode != null and q.filter.regionCityCode != ''">AND c.region_city_code=#{q.filter.regionCityCode}</if>
+    <if test="q.filter.districtCode != null and q.filter.districtCode != ''">AND c.district_code=#{q.filter.districtCode}</if>
     <if test="q.filter.sourceCode != null and q.filter.sourceCode != ''">AND c.source_code=#{q.filter.sourceCode}</if>
     <if test="q.filter.channelCode != null and q.filter.channelCode != ''">AND c.channel_code=#{q.filter.channelCode}</if>
     <if test="q.filter.from != null">AND c.created_at&gt;=#{q.filter.from}</if>
@@ -129,13 +132,17 @@
       <when test="q.exportType.name() == 'CUSTOMER'">
         SELECT c.id AS rowId,c.customer_no AS customerNo,c.display_name AS displayName,c.nickname AS nickname,
           c.remark_name AS remarkName,c.mobile_cipher AS mobileCipher,c.id_card_cipher AS idCardCipher,
-          c.email_cipher AS emailCipher,c.wechat_id_cipher AS wechatIdCipher,c.city_code AS cityCode,c.source_code AS sourceCode,
+          c.email_cipher AS emailCipher,c.wechat_id_cipher AS wechatIdCipher,c.city_code AS cityCode,
+          c.province_code AS provinceCode,c.province_name AS provinceName,
+          c.region_city_code AS regionCityCode,c.region_city_name AS regionCityName,
+          c.district_code AS districtCode,c.district_name AS districtName,c.detail_address AS detailAddress,
+          c.source_code AS sourceCode,
           c.channel_code AS channelCode,c.customer_status AS customerStatus,c.tier_code AS tierCode,
           c.intent_level AS intentLevel,c.spending_level AS spendingLevel,c.birthday AS birthday,c.points_cached AS points,
           c.attention_projects AS attentionProjects,c.blocker_note AS blockerNote,c.remark AS remark,
           c.owner_staff_id AS ownerStaffId,o.display_name AS ownerName,c.team_id AS teamId,
           c.first_added_at AS firstAddedAt,c.first_order_at AS firstOrderAt,c.last_followup_at AS lastFollowupAt,c.created_at AS createdAt
-        FROM crm_customer c <if test="q.filter.customerId == null and q.filter.status == null and q.filter.cityCode == null">FORCE INDEX (PRIMARY)</if>
+        FROM crm_customer c <if test="q.filter.customerId == null and q.filter.status == null and q.filter.cityCode == null and q.filter.provinceCode == null and q.filter.regionCityCode == null and q.filter.districtCode == null">FORCE INDEX (PRIMARY)</if>
         LEFT JOIN sys_user o ON o.tenant_id=c.tenant_id AND o.id=c.owner_staff_id
         <include refid="customerConditions"/> AND c.id &gt; #{q.afterId} ORDER BY c.id ASC LIMIT #{q.size}
       </when>

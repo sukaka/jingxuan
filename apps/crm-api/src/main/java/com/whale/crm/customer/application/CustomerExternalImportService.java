@@ -10,11 +10,14 @@ import com.whale.crm.platform.dictionary.api.dto.DictionaryItemResponse;
 import com.whale.crm.platform.dictionary.api.dto.DictionaryOptionResponse;
 import com.whale.crm.platform.dictionary.application.DictionaryApplicationService;
 import com.whale.crm.platform.idempotency.IdempotencyService;
+import com.whale.crm.platform.region.application.RegionCatalogService;
+import com.whale.crm.platform.region.application.ResolvedRegion;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.user.domain.SysUser;
 import com.whale.crm.platform.user.domain.UserRepository;
 import com.whale.crm.platform.web.BusinessException;
 import com.whale.crm.platform.web.ErrorCode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -63,6 +66,7 @@ public class CustomerExternalImportService {
     private final MobileSupport mobileSupport;
     private final DictionaryApplicationService dictionaryService;
     private final AuditService auditService;
+    private final RegionCatalogService regionCatalogService;
 
     public CustomerExternalImportService(CustomerRepository customerRepository,
                                          CustomerIdentityRepository identityRepository,
@@ -72,6 +76,20 @@ public class CustomerExternalImportService {
                                          MobileSupport mobileSupport,
                                          DictionaryApplicationService dictionaryService,
                                          AuditService auditService) {
+        this(customerRepository, identityRepository, tagRepository, userRepository, stewardDirectory,
+                mobileSupport, dictionaryService, auditService, new RegionCatalogService());
+    }
+
+    @Autowired
+    public CustomerExternalImportService(CustomerRepository customerRepository,
+                                         CustomerIdentityRepository identityRepository,
+                                         CustomerTagRepository tagRepository,
+                                         UserRepository userRepository,
+                                         StewardDirectory stewardDirectory,
+                                         MobileSupport mobileSupport,
+                                         DictionaryApplicationService dictionaryService,
+                                         AuditService auditService,
+                                         RegionCatalogService regionCatalogService) {
         this.customerRepository = customerRepository;
         this.identityRepository = identityRepository;
         this.tagRepository = tagRepository;
@@ -80,6 +98,7 @@ public class CustomerExternalImportService {
         this.mobileSupport = mobileSupport;
         this.dictionaryService = dictionaryService;
         this.auditService = auditService;
+        this.regionCatalogService = regionCatalogService != null ? regionCatalogService : new RegionCatalogService();
     }
 
     /**
@@ -206,7 +225,16 @@ public class CustomerExternalImportService {
         }
 
         // 3. 创建正式 CRM 客户 + 回填 customer_no + 绑定 crm_customer_identity + 写入已治理标签
+        ResolvedRegion resolvedRegion = regionCatalogService.resolveByNames(
+                command.provinceName(), command.cityName(), command.districtName());
         String resolvedCityCode = resolveCityCode(tenantId, command.cityName());
+        if (resolvedCityCode == null && !resolvedRegion.isEmpty()) {
+            resolvedCityCode = regionCatalogService.matchActiveCityDictionaryCode(
+                    resolvedRegion, dictionaryService.listActiveOptions(tenantId, DICT_CITIES));
+        }
+        if (resolvedRegion.isEmpty() && resolvedCityCode != null) {
+            resolvedRegion = resolveRegionFromActiveCityCode(tenantId, resolvedCityCode);
+        }
         List<String> validTagCodes = filterActiveTagCodes(tenantId, command.tagCodes());
 
         Customer customer = new Customer();
@@ -219,6 +247,12 @@ public class CustomerExternalImportService {
         customer.setMobileCipher(mobileSupport.encrypt(normalizedMobile));
         customer.setMobileHash(mobileHash);
         customer.setCityCode(resolvedCityCode);
+        customer.setProvinceCode(resolvedRegion.provinceCode());
+        customer.setProvinceName(resolvedRegion.provinceName());
+        customer.setRegionCityCode(resolvedRegion.regionCityCode());
+        customer.setRegionCityName(resolvedRegion.regionCityName());
+        customer.setDistrictCode(resolvedRegion.districtCode());
+        customer.setDistrictName(resolvedRegion.districtName());
         customer.setSourceCode(target.sourceCode());
         customer.setChannelCode(target.channelCode());
         customer.setBirthday(command.birthday());
@@ -259,6 +293,9 @@ public class CustomerExternalImportService {
         auditAfter.put("hasMobile", normalizedMobile != null);
         auditAfter.put("mobileMasked", mobileMasked);
         auditAfter.put("cityCode", resolvedCityCode);
+        auditAfter.put("provinceCode", resolvedRegion.provinceCode());
+        auditAfter.put("regionCityCode", resolvedRegion.regionCityCode());
+        auditAfter.put("districtCode", resolvedRegion.districtCode());
         auditAfter.put("hasRemark", customer.getRemark() != null);
         auditAfter.put("tagCount", appliedTags);
         auditAfter.put("identityType", command.identityType());
@@ -350,15 +387,65 @@ public class CustomerExternalImportService {
         Map<String, Object> afterSnapshot = new LinkedHashMap<>();
         boolean profileDirty = false;
 
-        if (blankToNull(customer.getCityCode()) == null && blankToNull(command.cityName()) != null) {
-            String resolvedCity = resolveCityCode(tenantId, command.cityName());
-            if (resolvedCity != null) {
-                beforeSnapshot.put("cityCode", null);
-                afterSnapshot.put("cityCode", resolvedCity);
-                customer.setCityCode(resolvedCity);
-                updatedFields.add("城市");
-                profileDirty = true;
+        ResolvedRegion incomingRegion = regionCatalogService.resolveByNames(
+                command.provinceName(), command.cityName(), command.districtName());
+        String incomingCityCode = resolveCityCode(tenantId, command.cityName());
+        if (incomingCityCode == null && !incomingRegion.isEmpty()) {
+            incomingCityCode = regionCatalogService.matchActiveCityDictionaryCode(
+                    incomingRegion, dictionaryService.listActiveOptions(tenantId, DICT_CITIES));
+        }
+        if (incomingRegion.isEmpty() && incomingCityCode != null) {
+            incomingRegion = resolveRegionFromActiveCityCode(tenantId, incomingCityCode);
+        }
+
+        boolean regionChanged = false;
+        String currentCityCode = blankToNull(customer.getCityCode());
+        if (currentCityCode == null && incomingCityCode != null) {
+            beforeSnapshot.put("cityCode", null);
+            afterSnapshot.put("cityCode", incomingCityCode);
+            customer.setCityCode(incomingCityCode);
+            currentCityCode = incomingCityCode;
+            regionChanged = true;
+        }
+        if (!incomingRegion.isEmpty()) {
+            String currentProvince = blankToNull(customer.getProvinceCode());
+            String currentRegionCity = blankToNull(customer.getRegionCityCode());
+            String currentDistrict = blankToNull(customer.getDistrictCode());
+            if (currentProvince == null
+                    && (currentCityCode == null || currentCityCode.equals(incomingCityCode))) {
+                beforeSnapshot.put("provinceCode", null);
+                afterSnapshot.put("provinceCode", incomingRegion.provinceCode());
+                afterSnapshot.put("regionCityCode", incomingRegion.regionCityCode());
+                afterSnapshot.put("districtCode", incomingRegion.districtCode());
+                customer.setProvinceCode(incomingRegion.provinceCode());
+                customer.setProvinceName(incomingRegion.provinceName());
+                customer.setRegionCityCode(incomingRegion.regionCityCode());
+                customer.setRegionCityName(incomingRegion.regionCityName());
+                customer.setDistrictCode(incomingRegion.districtCode());
+                customer.setDistrictName(incomingRegion.districtName());
+                regionChanged = true;
+            } else if (currentProvince != null && currentProvince.equals(incomingRegion.provinceCode())) {
+                if (currentRegionCity == null && incomingRegion.regionCityCode() != null) {
+                    beforeSnapshot.put("regionCityCode", null);
+                    afterSnapshot.put("regionCityCode", incomingRegion.regionCityCode());
+                    customer.setRegionCityCode(incomingRegion.regionCityCode());
+                    customer.setRegionCityName(incomingRegion.regionCityName());
+                    currentRegionCity = incomingRegion.regionCityCode();
+                    regionChanged = true;
+                }
+                if (currentDistrict == null && incomingRegion.districtCode() != null
+                        && currentRegionCity != null && currentRegionCity.equals(incomingRegion.regionCityCode())) {
+                    beforeSnapshot.put("districtCode", null);
+                    afterSnapshot.put("districtCode", incomingRegion.districtCode());
+                    customer.setDistrictCode(incomingRegion.districtCode());
+                    customer.setDistrictName(incomingRegion.districtName());
+                    regionChanged = true;
+                }
             }
+        }
+        if (regionChanged) {
+            updatedFields.add("城市");
+            profileDirty = true;
         }
         String candidateRemark = truncate(blankToNull(command.remark()), 500);
         if (blankToNull(customer.getRemark()) == null && candidateRemark != null) {
@@ -577,6 +664,19 @@ public class CustomerExternalImportService {
         return null;
     }
 
+    private ResolvedRegion resolveRegionFromActiveCityCode(long tenantId, String cityCode) {
+        List<DictionaryOptionResponse> activeCities = dictionaryService.listActiveOptions(tenantId, DICT_CITIES);
+        if (activeCities == null || activeCities.isEmpty()) {
+            return ResolvedRegion.EMPTY;
+        }
+        for (DictionaryOptionResponse opt : activeCities) {
+            if (opt != null && cityCode.equals(opt.optionCode()) && opt.optionLabel() != null) {
+                return regionCatalogService.resolveByNames(null, opt.optionLabel(), null);
+            }
+        }
+        return ResolvedRegion.EMPTY;
+    }
+
     public record ValidatedImportTarget(
             long ownerStaffId,
             String ownerDisplayName,
@@ -605,7 +705,9 @@ public class CustomerExternalImportService {
             Instant firstAddedAt,
             String remark,
             String importReason,
+            String provinceName,
             String cityName,
+            String districtName,
             List<String> tagCodes
     ) {
         public ExternalCustomerCommand {
@@ -622,15 +724,35 @@ public class CustomerExternalImportService {
                 LocalDate birthday,
                 Instant firstAddedAt,
                 String remark,
+                String importReason,
+                String cityName,
+                List<String> tagCodes
+        ) {
+            this(identityType, sourceApp, externalId, displayName, nickname, mobile, birthday,
+                    firstAddedAt, remark, importReason, null, cityName, null, tagCodes);
+        }
+
+        public ExternalCustomerCommand(
+                String identityType,
+                String sourceApp,
+                String externalId,
+                String displayName,
+                String nickname,
+                String mobile,
+                LocalDate birthday,
+                Instant firstAddedAt,
+                String remark,
                 String importReason
         ) {
             this(identityType, sourceApp, externalId, displayName, nickname, mobile, birthday,
-                    firstAddedAt, remark, importReason, null, List.of());
+                    firstAddedAt, remark, importReason, null, null, null, List.of());
         }
     }
 
     public record BackfillProfileCommand(
+            String provinceName,
             String cityName,
+            String districtName,
             String remark,
             LocalDate birthday,
             List<String> tagCodes,
@@ -638,6 +760,16 @@ public class CustomerExternalImportService {
     ) {
         public BackfillProfileCommand {
             tagCodes = tagCodes == null ? List.of() : List.copyOf(tagCodes);
+        }
+
+        public BackfillProfileCommand(
+                String cityName,
+                String remark,
+                LocalDate birthday,
+                List<String> tagCodes,
+                String reason
+        ) {
+            this(null, cityName, null, remark, birthday, tagCodes, reason);
         }
     }
 

@@ -5,70 +5,124 @@
 
 -- ========== 虚构客户（固定 id 1001-1006；customer_no 与线上生成规则一致 C+id 左补零） ==========
 INSERT INTO crm_customer (id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
-                          mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status,
+                          mobile_cipher, mobile_hash, city_code, province_code, province_name,
+                          region_city_code, region_city_name, district_code, district_name, detail_address,
+                          source_code, channel_code, customer_status,
                           tier_code, intent_level, spending_level, birthday, points_cached,
                           attention_projects, remark, first_added_at, last_followup_at)
 VALUES (1001, 1, 2, 1, 'C0000001001', '沈梦琪', 'Momo酱',
         'pOiox6iqlyjq1lVRR8GwOJ7/1RPz1bvyBU8IG530UXCuTF1yUm6f',
         'ae4867eb811ebbec1a3876826d6df46ceb1f09dc5096d41f76865ec656ea3b23',
-        'BJ', 'EXTERNAL_CONTENT', 'XHS', 'ACTIVE', 'A', 'HIGH', 'HIGH', '1996-04-18', 100,
+        'BJ', '110000', '北京市', '110100', '北京市', '110105', '朝阳区', '虚构示例地址-建国门外大街1号',
+        'EXTERNAL_CONTENT', 'XHS', 'ACTIVE', 'A', 'HIGH', 'HIGH', '1996-04-18', 100,
         '热玛吉、超声炮', '虚构演示客户-01', '2026-09-01 10:00:00.000', '2026-10-20 09:30:00.000')
   ON DUPLICATE KEY UPDATE display_name=VALUES(display_name), nickname=VALUES(nickname),
         owner_staff_id=VALUES(owner_staff_id), team_id=VALUES(team_id), points_cached=VALUES(points_cached),
-        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash);
+        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash),
+        province_code=COALESCE(province_code, VALUES(province_code)),
+        province_name=COALESCE(province_name, VALUES(province_name)),
+        region_city_code=COALESCE(region_city_code, VALUES(region_city_code)),
+        region_city_name=COALESCE(region_city_name, VALUES(region_city_name)),
+        district_code=COALESCE(district_code, VALUES(district_code)),
+        district_name=COALESCE(district_name, VALUES(district_name)),
+        detail_address=COALESCE(detail_address, VALUES(detail_address));
 INSERT INTO crm_customer (id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
-                          mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status,
+                          mobile_cipher, mobile_hash, city_code, province_code, province_name,
+                          region_city_code, region_city_name, district_code, district_name,
+                          source_code, channel_code, customer_status,
                           tier_code, intent_level, spending_level, birthday, attention_projects, remark,
                           first_added_at)
 VALUES (1002, 1, 2, 1, 'C0000001002', '顾晓萌', '萌萌',
         '+c9zJoV390x2292b4HE4qfwveTZTwftHx7qquMfsyTpbnbOxo5cj',
         'c47125cadf8749ceeb6d89230399626c149aae1bb1baca3fbd9caed3cc899110',
-        'SH', 'OWN_CONTENT', 'WECHAT_CHANNEL', 'POTENTIAL', 'S', 'MEDIUM', 'MEDIUM', '1999-11-02',
+        'SH', '310000', '上海市', '310100', '上海市', '310115', '浦东新区',
+        'OWN_CONTENT', 'WECHAT_CHANNEL', 'POTENTIAL', 'S', 'MEDIUM', 'MEDIUM', '1999-11-02',
         '光子嫩肤', '虚构演示客户-02', '2026-09-15 14:00:00.000')
   ON DUPLICATE KEY UPDATE display_name=VALUES(display_name), nickname=VALUES(nickname),
         owner_staff_id=VALUES(owner_staff_id), team_id=VALUES(team_id),
-        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash);
+        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash),
+        province_code=COALESCE(province_code, VALUES(province_code)),
+        province_name=COALESCE(province_name, VALUES(province_name)),
+        region_city_code=COALESCE(region_city_code, VALUES(region_city_code)),
+        region_city_name=COALESCE(region_city_name, VALUES(region_city_name)),
+        district_code=COALESCE(district_code, VALUES(district_code)),
+        district_name=COALESCE(district_name, VALUES(district_name));
 INSERT INTO crm_customer (id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
-                          mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status,
+                          mobile_cipher, mobile_hash, city_code, province_code, province_name,
+                          region_city_code, region_city_name, district_code, district_name,
+                          source_code, channel_code, customer_status,
                           tier_code, intent_level, attention_projects, remark, first_added_at)
 VALUES (1003, 1, 3, 2, 'C0000001003', '林婉清', '清清',
         '22CmATHBOGd7KD3ZL9IV+uReKQM4u6lvULS6Of3C1XyxhGRdoYgN',
         'b24db81e7d9147a3249e7b0381a3c45ce49943d04772237f57dfe655f8876d74',
-        'HZ', 'REFERRAL', 'WEIBO', 'ACTIVE', 'B', 'HIGH', '水光针', '虚构演示客户-03',
+        'HZ', '330000', '浙江省', '330100', '杭州市', '330106', '西湖区',
+        'REFERRAL', 'WEIBO', 'ACTIVE', 'B', 'HIGH', '水光针', '虚构演示客户-03',
         '2026-08-20 11:00:00.000')
   ON DUPLICATE KEY UPDATE display_name=VALUES(display_name), nickname=VALUES(nickname),
         owner_staff_id=VALUES(owner_staff_id), team_id=VALUES(team_id),
-        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash);
+        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash),
+        province_code=COALESCE(province_code, VALUES(province_code)),
+        province_name=COALESCE(province_name, VALUES(province_name)),
+        region_city_code=COALESCE(region_city_code, VALUES(region_city_code)),
+        region_city_name=COALESCE(region_city_name, VALUES(region_city_name)),
+        district_code=COALESCE(district_code, VALUES(district_code)),
+        district_name=COALESCE(district_name, VALUES(district_name));
 INSERT INTO crm_customer (id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
-                          city_code, source_code, channel_code, customer_status, tier_code, intent_level,
+                          city_code, province_code, province_name, region_city_code, region_city_name,
+                          district_code, district_name, source_code, channel_code, customer_status, tier_code, intent_level,
                           attention_projects, remark, first_added_at)
 VALUES (1004, 1, 3, 2, 'C0000001004', '苏倩', NULL,
-        'GZ', 'DIRECT', 'OFFLINE', 'POTENTIAL', 'C', 'LOW',
+        'GZ', '440000', '广东省', '440100', '广州市', '440106', '天河区',
+        'DIRECT', 'OFFLINE', 'POTENTIAL', 'C', 'LOW',
         NULL, '虚构演示客户-04（无手机号，C01 场景）', '2026-10-10 16:00:00.000')
   ON DUPLICATE KEY UPDATE display_name=VALUES(display_name), owner_staff_id=VALUES(owner_staff_id),
-        team_id=VALUES(team_id);
+        team_id=VALUES(team_id),
+        province_code=COALESCE(province_code, VALUES(province_code)),
+        province_name=COALESCE(province_name, VALUES(province_name)),
+        region_city_code=COALESCE(region_city_code, VALUES(region_city_code)),
+        region_city_name=COALESCE(region_city_name, VALUES(region_city_name)),
+        district_code=COALESCE(district_code, VALUES(district_code)),
+        district_name=COALESCE(district_name, VALUES(district_name));
 INSERT INTO crm_customer (id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
-                          mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status,
+                          mobile_cipher, mobile_hash, city_code, province_code, province_name,
+                          region_city_code, region_city_name, district_code, district_name,
+                          source_code, channel_code, customer_status,
                           tier_code, intent_level, attention_projects, remark, first_added_at)
 VALUES (1005, 1, 4, 1, 'C0000001005', '何静姝', '静姝',
         'SG+79dO9qVd1Cu8GVDtLEeoEZeKfedOW2wOn1HyO9enI8Rk4XJAA',
         '54efb4a603f5405a24cb05b9e0a0cd05c25913edf5af238706e87ddf40c5dcfc',
-        'CD', 'DIRECT', 'YOUZAN', 'ACTIVE', 'B', 'MEDIUM', '双眼皮修复', '虚构演示客户-05',
+        'CD', '510000', '四川省', '510100', '成都市', '510107', '武侯区',
+        'DIRECT', 'YOUZAN', 'ACTIVE', 'B', 'MEDIUM', '双眼皮修复', '虚构演示客户-05',
         '2026-07-05 09:00:00.000')
   ON DUPLICATE KEY UPDATE display_name=VALUES(display_name), nickname=VALUES(nickname),
         owner_staff_id=VALUES(owner_staff_id), team_id=VALUES(team_id),
-        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash);
+        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash),
+        province_code=COALESCE(province_code, VALUES(province_code)),
+        province_name=COALESCE(province_name, VALUES(province_name)),
+        region_city_code=COALESCE(region_city_code, VALUES(region_city_code)),
+        region_city_name=COALESCE(region_city_name, VALUES(region_city_name)),
+        district_code=COALESCE(district_code, VALUES(district_code)),
+        district_name=COALESCE(district_name, VALUES(district_name));
 INSERT INTO crm_customer (id, tenant_id, owner_staff_id, team_id, customer_no, display_name, nickname,
-                          mobile_cipher, mobile_hash, city_code, source_code, channel_code, customer_status,
+                          mobile_cipher, mobile_hash, city_code, province_code, province_name,
+                          region_city_code, region_city_name, district_code, district_name,
+                          source_code, channel_code, customer_status,
                           tier_code, intent_level, attention_projects, remark, first_added_at)
 VALUES (1006, 1, 4, 1, 'C0000001006', '赵云舒', '云舒',
         'uORrLgl49UzkXR7GNOPpoFOI/Xh0CiEQyC8S5+4PzteBUScgfgsJ',
         'a53a9c1f414c288a3ef98d99b707d910da6472913247b7cff595f6ef8ae736d7',
-        'BJ', 'EXTERNAL_CONTENT', 'XHS', 'AWAITING_VISIT', 'A', 'HIGH', '隆鼻面诊', '虚构演示客户-06',
+        'BJ', '110000', '北京市', '110100', '北京市', '110108', '海淀区',
+        'EXTERNAL_CONTENT', 'XHS', 'AWAITING_VISIT', 'A', 'HIGH', '隆鼻面诊', '虚构演示客户-06',
         '2026-10-01 13:30:00.000')
   ON DUPLICATE KEY UPDATE display_name=VALUES(display_name), nickname=VALUES(nickname),
         owner_staff_id=VALUES(owner_staff_id), team_id=VALUES(team_id),
-        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash);
+        mobile_cipher=VALUES(mobile_cipher), mobile_hash=VALUES(mobile_hash),
+        province_code=COALESCE(province_code, VALUES(province_code)),
+        province_name=COALESCE(province_name, VALUES(province_name)),
+        region_city_code=COALESCE(region_city_code, VALUES(region_city_code)),
+        region_city_name=COALESCE(region_city_name, VALUES(region_city_name)),
+        district_code=COALESCE(district_code, VALUES(district_code)),
+        district_name=COALESCE(district_name, VALUES(district_name));
 
 -- ========== 标签 ==========
 INSERT IGNORE INTO crm_customer_tag (tenant_id, customer_id, tag_code, created_by) VALUES

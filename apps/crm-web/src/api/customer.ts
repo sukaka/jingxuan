@@ -13,6 +13,14 @@ export interface CustomerListItem {
   emailMasked?: string | null
   wechatIdMasked?: string | null
   cityCode: string | null
+  provinceCode?: string | null
+  provinceName?: string | null
+  regionCityCode?: string | null
+  regionCityName?: string | null
+  districtCode?: string | null
+  districtName?: string | null
+  regionText?: string | null
+  detailAddress?: string | null
   customerStatus: string | null
   tierCode: string | null
   intentLevel: string | null
@@ -119,6 +127,9 @@ export interface CustomerListQuery {
   keyword?: string
   status?: string
   cityCode?: string
+  provinceCode?: string
+  regionCityCode?: string
+  districtCode?: string
   sourceCode?: string
   channelCode?: string
   tierCode?: string
@@ -137,6 +148,10 @@ export interface CreateCustomerRequest {
   email?: string
   wechatId?: string
   cityCode?: string
+  provinceCode?: string
+  regionCityCode?: string
+  districtCode?: string
+  detailAddress?: string
   sourceCode?: string
   channelCode?: string
   customerStatus?: string
@@ -163,6 +178,10 @@ export interface UpdateCustomerRequest {
   email?: string
   wechatId?: string
   cityCode?: string
+  provinceCode?: string
+  regionCityCode?: string
+  districtCode?: string
+  detailAddress?: string
   sourceCode?: string
   channelCode?: string
   customerStatus?: string
@@ -392,6 +411,9 @@ export async function listCustomers(query: CustomerListQuery): Promise<PageResul
       keyword: query.keyword || undefined,
       status: query.status || undefined,
       cityCode: query.cityCode || undefined,
+      provinceCode: query.provinceCode || undefined,
+      regionCityCode: query.regionCityCode || undefined,
+      districtCode: query.districtCode || undefined,
       sourceCode: query.sourceCode || undefined,
       channelCode: query.channelCode || undefined,
       tierCode: query.tierCode || undefined,

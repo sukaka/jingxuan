@@ -547,7 +547,9 @@ public class YouzanCustomerSyncService {
                             pulled.createdAt(),
                             resolved.remark(),
                             "有赞客户拉取建档（shopId=" + shopId + ", mode=" + sourceMode + "）",
+                            resolved.provinceName(),
                             resolved.cityName(),
+                            resolved.districtName(),
                             resolvedTagCodes);
             CustomerExternalImportService.ExternalImportResult result = importService.importCustomer(
                     tenantId, operator, target, cmd);
@@ -620,12 +622,15 @@ public class YouzanCustomerSyncService {
         String mobile = pulled.mobile();
         LocalDate birthday = pulled.birthday();
         String remark = pulled.remark();
+        String provinceName = pulled.provinceName();
         String cityName = pulled.cityName();
+        String districtName = pulled.districtName();
         Set<String> tagNames = new LinkedHashSet<>(pulled.tagNames() == null ? List.of() : pulled.tagNames());
 
         boolean needsEnrich = enrichProfile
                 && (SOURCE_MODE_ORDER_BUYERS.equals(sourceMode)
-                || isBlank(name) || isBlank(mobile) || isBlank(remark) || isBlank(cityName)
+                || isBlank(name) || isBlank(mobile) || isBlank(remark)
+                || isBlank(provinceName) || isBlank(cityName) || isBlank(districtName)
                 || birthday == null || tagNames.isEmpty());
         if (needsEnrich) {
             try {
@@ -639,7 +644,9 @@ public class YouzanCustomerSyncService {
                         birthday = enriched.birthday();
                     }
                     remark = firstNonBlank(remark, enriched.remark());
+                    provinceName = firstNonBlank(provinceName, enriched.provinceName());
                     cityName = firstNonBlank(cityName, enriched.cityName());
+                    districtName = firstNonBlank(districtName, enriched.districtName());
                     if (enriched.tagNames() != null) {
                         tagNames.addAll(enriched.tagNames());
                     }
@@ -651,7 +658,8 @@ public class YouzanCustomerSyncService {
                 warnings.add("部分客户资料补全失败，已按基础信息继续建档");
             }
         }
-        return new ResolvedPulledProfile(name, nickname, mobile, birthday, remark, cityName, List.copyOf(tagNames));
+        return new ResolvedPulledProfile(name, nickname, mobile, birthday, remark,
+                provinceName, cityName, districtName, List.copyOf(tagNames));
     }
 
     private List<String> resolveTagCodesCached(long tenantId, CurrentUser operator, List<String> tagNames,
@@ -694,7 +702,8 @@ public class YouzanCustomerSyncService {
                                        CustomerExternalImportService.ExistingCustomerRef ref,
                                        String shopId, String sourceMode, ResolvedPulledProfile resolved,
                                        Map<String, Optional<String>> tagCodeCache, String defaultDetail) {
-        boolean hasCandidate = !isBlank(resolved.cityName()) || !isBlank(resolved.remark())
+        boolean hasCandidate = !isBlank(resolved.provinceName()) || !isBlank(resolved.cityName())
+                || !isBlank(resolved.districtName()) || !isBlank(resolved.remark())
                 || resolved.birthday() != null || !resolved.tagNames().isEmpty();
         if (!hasCandidate) {
             return defaultDetail;
@@ -704,7 +713,9 @@ public class YouzanCustomerSyncService {
             CustomerExternalImportService.BackfillProfileResult backfill = importService.backfillMissingProfile(
                     tenantId, operator, ref.customerId(),
                     new CustomerExternalImportService.BackfillProfileCommand(
+                            resolved.provinceName(),
                             resolved.cityName(),
+                            resolved.districtName(),
                             resolved.remark(),
                             resolved.birthday(),
                             tagCodes,
@@ -1260,7 +1271,9 @@ public class YouzanCustomerSyncService {
             String mobile,
             LocalDate birthday,
             String remark,
+            String provinceName,
             String cityName,
+            String districtName,
             List<String> tagNames
     ) {
         private ResolvedPulledProfile {

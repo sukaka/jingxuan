@@ -8,7 +8,8 @@ import java.util.List;
 
 /**
  * 编辑客户（PATCH 白名单）。未传的字段保持不变（null 语义 = 不修改）；
- * mobile/idCard/email/wechatId 传空字符串表示清除对应隐私字段；拒绝包含脱敏占位符 '*'。
+ * mobile/idCard/email/wechatId 传空字符串表示清除对应隐私字段；拒绝包含脱敏占位符 '*'；
+ * provinceCode/regionCityCode/districtCode/detailAddress 传空字符串表示清除。
  * version 乐观锁，失配 409。
  */
 public record UpdateCustomerRequest(
@@ -32,7 +33,11 @@ public record UpdateCustomerRequest(
         @Size(max = 50, message = "标签数量超限") List<@Size(max = 64) String> tagCodes,
         @Size(max = 32, message = "身份证号最长 32 字符") String idCard,
         @Size(max = 128, message = "邮箱最长 128 字符") String email,
-        @Size(max = 64, message = "微信号最长 64 字符") String wechatId) {
+        @Size(max = 64, message = "微信号最长 64 字符") String wechatId,
+        @Size(max = 32, message = "省份编码最长 32 字符") String provinceCode,
+        @Size(max = 32, message = "城市编码最长 32 字符") String regionCityCode,
+        @Size(max = 32, message = "区县编码最长 32 字符") String districtCode,
+        @Size(max = 255, message = "详细地址最长 255 字符") String detailAddress) {
     public UpdateCustomerRequest {
         projectIds = projectIds == null ? null : List.copyOf(projectIds);
         tagCodes = tagCodes == null ? null : List.copyOf(tagCodes);
@@ -42,9 +47,20 @@ public record UpdateCustomerRequest(
                                  String cityCode, String sourceCode, String channelCode, String customerStatus,
                                  String tierCode, String intentLevel, String spendingLevel, LocalDate birthday,
                                  String attentionProjects, String blockerNote, String remark, Long version,
+                                 List<Long> projectIds, List<String> tagCodes,
+                                 String idCard, String email, String wechatId) {
+        this(displayName, nickname, remarkName, mobile, cityCode, sourceCode, channelCode, customerStatus,
+                tierCode, intentLevel, spendingLevel, birthday, attentionProjects, blockerNote, remark, version,
+                projectIds, tagCodes, idCard, email, wechatId, null, null, null, null);
+    }
+
+    public UpdateCustomerRequest(String displayName, String nickname, String remarkName, String mobile,
+                                 String cityCode, String sourceCode, String channelCode, String customerStatus,
+                                 String tierCode, String intentLevel, String spendingLevel, LocalDate birthday,
+                                 String attentionProjects, String blockerNote, String remark, Long version,
                                  List<Long> projectIds, List<String> tagCodes) {
         this(displayName, nickname, remarkName, mobile, cityCode, sourceCode, channelCode, customerStatus,
                 tierCode, intentLevel, spendingLevel, birthday, attentionProjects, blockerNote, remark, version,
-                projectIds, tagCodes, null, null, null);
+                projectIds, tagCodes, null, null, null, null, null, null, null);
     }
 }

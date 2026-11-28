@@ -63,8 +63,31 @@ vi.mock('../src/api/followup', () => ({
 
 vi.mock('../src/api/dictionary', () => ({
   getDictionaryOptions: vi.fn().mockImplementation(async (dictCode: string) => (
-    dictCode === 'customerStatuses' ? [{ code: 'ACTIVE', label: '服务中', sortNo: 1 }] : []
+    dictCode === 'customerStatuses'
+      ? [{ code: 'ACTIVE', label: '服务中', sortNo: 1 }]
+      : dictCode === 'cities'
+        ? [{ code: 'HZ', label: '杭州', sortNo: 1 }]
+        : []
   )),
+}))
+
+vi.mock('../src/api/region', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/region')>()),
+  loadRegionTree: vi.fn().mockResolvedValue([
+    {
+      code: '330000',
+      name: '浙江省',
+      level: 1,
+      children: [
+        {
+          code: '330100',
+          name: '杭州市',
+          level: 2,
+          children: [{ code: '330106', name: '西湖区', level: 3 }],
+        },
+      ],
+    },
+  ]),
 }))
 
 const managerUser: AuthUser = {
@@ -139,8 +162,21 @@ describe('CustomersView 客户中心', () => {
     vi.useRealTimers()
   })
 
-  it('列表渲染 11 列客户资料，且不出现明文手机号', async () => {
-    vi.mocked(listCustomers).mockResolvedValue(samplePage)
+  it('列表渲染 12 列客户资料（含地区），且不出现明文手机号', async () => {
+    vi.mocked(listCustomers).mockResolvedValue({
+      ...samplePage,
+      items: [{
+        ...samplePage.items[0]!,
+        provinceCode: '330000',
+        provinceName: '浙江省',
+        regionCityCode: '330100',
+        regionCityName: '杭州市',
+        districtCode: '330106',
+        districtName: '西湖区',
+        regionText: '浙江省 / 杭州市 / 西湖区',
+        detailAddress: '文三路示例100号',
+      }],
+    })
     const wrapper = mountView(managerUser)
     await flushPromises()
 
@@ -152,6 +188,7 @@ describe('CustomersView 客户中心', () => {
       '标签',
       '生日 / 积分',
       '来源渠道',
+      '地区',
       '所属管家',
       '最近跟进',
       '下一次跟进',
@@ -160,11 +197,33 @@ describe('CustomersView 客户中心', () => {
     ])
     expect(wrapper.text()).toContain('C0000000001')
     expect(wrapper.text()).toContain('陈女士')
+    expect(wrapper.text()).toContain('浙江省 / 杭州市 / 西湖区')
+    expect(wrapper.text()).toContain('文三路示例100号')
     expect(wrapper.text()).toContain('意向 高')
     expect(wrapper.text()).not.toContain('HIGH')
     expect(wrapper.text()).not.toContain('ACTIVE')
     expect(wrapper.text()).not.toContain('13812345678')
     expect(wrapper.find('.crm-avatar').exists()).toBe(true)
+  })
+
+  it('按省/市/区级联筛选时将 provinceCode/regionCityCode/districtCode 传给后端', async () => {
+    vi.mocked(listCustomers).mockResolvedValue(samplePage)
+    const wrapper = mountView(managerUser)
+    await flushPromises()
+    vi.mocked(listCustomers).mockClear()
+
+    const regionFilter = wrapper.findComponent({ name: 'RegionCascader' })
+    expect(regionFilter.exists()).toBe(true)
+    await regionFilter.vm.$emit('update:modelValue', ['330000', '330100', '330106'])
+    await regionFilter.vm.$emit('change', ['330000', '330100', '330106'])
+    await flushPromises()
+
+    expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      provinceCode: '330000',
+      regionCityCode: '330100',
+      districtCode: '330106',
+    }))
   })
 
   it('具备 customer:merge 权限时展示全部四项统计与多管家徽章；无 customer:merge 时不请求多管家汇总且隐藏入口', async () => {

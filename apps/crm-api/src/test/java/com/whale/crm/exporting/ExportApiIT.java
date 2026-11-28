@@ -561,6 +561,36 @@ class ExportApiIT extends AbstractMysqlIT {
                 "SELECT id FROM crm_redemption WHERE tenant_id=1 AND idempotency_key=?", Long.class, key);
     }
 
+    @Test
+    void customerExportFiltersByProvinceCityDistrictAndExportsRegionAndDetailAddress() throws Exception {
+        String marker = unique("REGEXP-");
+        CustomerFixture match = insertCustomer(1L, 2L, "13900000901", "HZ", marker);
+        CustomerFixture other = insertCustomer(1L, 2L, "13900000902", "SH", marker);
+        jdbcTemplate.update(
+                "UPDATE crm_customer SET province_code='330000', province_name='浙江省', "
+                        + "region_city_code='330100', region_city_name='杭州市', "
+                        + "district_code='330106', district_name='西湖区', detail_address='文三路示例88号' "
+                        + "WHERE tenant_id=1 AND id=?",
+                match.id());
+        jdbcTemplate.update(
+                "UPDATE crm_customer SET province_code='310000', province_name='上海市', "
+                        + "region_city_code='310100', region_city_name='上海市', "
+                        + "district_code='310115', district_name='浦东新区', detail_address='陆家嘴示例1号' "
+                        + "WHERE tenant_id=1 AND id=?",
+                other.id());
+
+        JsonNode job = createSucceeded(admin, ExportType.CUSTOMER,
+                List.of("customerNo", "provinceName", "regionCityName", "districtName", "regionText", "detailAddress"),
+                unique("按省市区导出核对 "),
+                Map.of("provinceCode", "330000", "regionCityCode", "330100", "districtCode", "330106"),
+                null);
+
+        String csvContent = csv(job);
+        assertThat(csvContent).contains(match.customerNo());
+        assertThat(csvContent).contains("浙江省,杭州市,西湖区,浙江省 / 杭州市 / 西湖区,文三路示例88号");
+        assertThat(csvContent).doesNotContain(other.customerNo());
+    }
+
     private List<String> dataLines(String csvContent) {
         List<String> lines = csvContent.lines().toList();
         return lines.size() <= 1 ? List.of() : lines.subList(1, lines.size());

@@ -37,6 +37,11 @@ vi.mock('../src/api/dictionary', () => ({
   getDictionaryOptions: vi.fn(),
 }))
 
+vi.mock('../src/api/region', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/region')>()),
+  loadRegionTree: vi.fn().mockResolvedValue([]),
+}))
+
 const user: AuthUser = {
   userId: 2,
   username: 'test-manager',
@@ -118,7 +123,7 @@ describe('D01 字典历史值与停用边界', () => {
     expect(dicts.optionsWithHistory('cities', '')).toHaveLength(1)
   })
 
-  it('客户编辑保留历史 cityCode，停用项不可重新选择，普通保存不静默清除', async () => {
+  it('客户编辑保留历史 cityCode，提示已停用历史记录且普通保存不静默清除', async () => {
     const wrapper = mount(CustomerFormDrawer, {
       props: { modelValue: false, mode: 'edit', customerId: 42 },
       global: {
@@ -131,12 +136,9 @@ describe('D01 字典历史值与停用边界', () => {
     await wrapper.setProps({ modelValue: true })
     await flushPromises()
 
-    const options = wrapper.findAllComponents({ name: 'ElOption' })
-    const historical = options.find((option) => option.props('value') === 'D01CITY')
-    const active = options.find((option) => option.props('value') === 'BJ')
-    expect(historical?.props('disabled')).toBe(true)
-    expect(historical?.props('label')).toBe('D01CITY（已停用）')
-    expect(active?.props('disabled')).toBe(false)
+    const legacyHint = wrapper.find('[data-testid="customer-legacy-city-hint"]')
+    expect(legacyHint.exists()).toBe(true)
+    expect(legacyHint.text()).toContain('D01CITY（已停用）')
 
     const save = wrapper.findAll('button').find((button) => button.text() === '保存')
     expect(save).toBeDefined()

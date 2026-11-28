@@ -33,7 +33,9 @@ public interface YouzanCustomerPullClient {
             Integer fansType,
             Long fansId,
             String remark,
+            String provinceName,
             String cityName,
+            String districtName,
             List<String> tagNames
     ) {
         public YouzanPulledCustomer {
@@ -50,10 +52,28 @@ public interface YouzanCustomerPullClient {
                 Instant createdAt,
                 Integer fansType,
                 Long fansId,
+                String remark,
+                String cityName,
+                List<String> tagNames
+        ) {
+            this(yzOpenId, name, nickname, mobile, genderHint, birthday, createdAt,
+                    fansType, fansId, remark, null, cityName, null, tagNames);
+        }
+
+        public YouzanPulledCustomer(
+                String yzOpenId,
+                String name,
+                String nickname,
+                String mobile,
+                String genderHint,
+                LocalDate birthday,
+                Instant createdAt,
+                Integer fansType,
+                Long fansId,
                 String remark
         ) {
             this(yzOpenId, name, nickname, mobile, genderHint, birthday, createdAt,
-                    fansType, fansId, remark, null, List.of());
+                    fansType, fansId, remark, null, null, null, List.of());
         }
     }
 
@@ -76,7 +96,9 @@ public interface YouzanCustomerPullClient {
             String genderHint,
             LocalDate birthday,
             String remark,
+            String provinceName,
             String cityName,
+            String districtName,
             List<String> tagNames,
             String warning
     ) {
@@ -90,13 +112,28 @@ public interface YouzanCustomerPullClient {
                 String mobile,
                 String genderHint,
                 LocalDate birthday,
+                String remark,
+                String cityName,
+                List<String> tagNames,
                 String warning
         ) {
-            this(name, nickname, mobile, genderHint, birthday, null, null, List.of(), warning);
+            this(name, nickname, mobile, genderHint, birthday, remark, null, cityName, null, tagNames, warning);
+        }
+
+        public YouzanCustomerEnrichment(
+                String name,
+                String nickname,
+                String mobile,
+                String genderHint,
+                LocalDate birthday,
+                String warning
+        ) {
+            this(name, nickname, mobile, genderHint, birthday, null, null, null, null, List.of(), warning);
         }
 
         public static YouzanCustomerEnrichment empty(String warning) {
-            return new YouzanCustomerEnrichment(null, null, null, "UNKNOWN", null, null, null, List.of(), warning);
+            return new YouzanCustomerEnrichment(
+                    null, null, null, "UNKNOWN", null, null, null, null, null, List.of(), warning);
         }
     }
 

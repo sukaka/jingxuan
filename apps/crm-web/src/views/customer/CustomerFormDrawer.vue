@@ -5,6 +5,8 @@ import type { CreateCustomerRequest, CustomerOwnerOption } from '../../api/custo
 import { createCustomer, getCustomer, listCustomerOwnerOptions, updateCustomer } from '../../api/customer'
 import type { Project } from '../../api/catalog'
 import { listProjects } from '../../api/catalog'
+import { buildRegionPath, splitRegionPath } from '../../api/region'
+import RegionCascader from '../../components/RegionCascader.vue'
 import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../types/api'
 import CustomerSourceChannelManageDialog from './CustomerSourceChannelManageDialog.vue'
@@ -54,7 +56,8 @@ interface FormState {
   idCard: string
   email: string
   wechatId: string
-  cityCode: string
+  regionCodes: string[]
+  detailAddress: string
   sourceCode: string
   channelCode: string
   customerStatus: string
@@ -77,7 +80,8 @@ function emptyForm(): FormState {
     idCard: '',
     email: '',
     wechatId: '',
-    cityCode: '',
+    regionCodes: [],
+    detailAddress: '',
     sourceCode: '',
     channelCode: '',
     customerStatus: '',
@@ -93,6 +97,9 @@ function emptyForm(): FormState {
 }
 
 const form = reactive<FormState>(emptyForm())
+const legacyCityCode = ref('')
+const regionDirty = ref(false)
+const initialDetailAddress = ref('')
 const currentPrivacyMasked = reactive({
   mobile: '' as string,
   idCard: '' as string,
@@ -106,10 +113,18 @@ const clearPrivacy = reactive({
   wechatId: false,
 })
 const tagSelectOptions = computed(() => dicts.optionsWithHistoryList('customerTags', form.tagCodes))
+const legacyCityHint = computed(() => {
+  if (!legacyCityCode.value || form.regionCodes.length > 0 || regionDirty.value) return ''
+  return dicts.label('cities', legacyCityCode.value)
+})
 const loading = ref(false)
 const submitting = ref(false)
 const version = ref(0)
 let idempotencyKey = ''
+
+function onRegionChange() {
+  regionDirty.value = true
+}
 
 async function onTagCatalogChanged() {
   await dicts.load('customerTags')
@@ -152,6 +167,9 @@ watch(
     void loadProjectOptions()
     if (props.mode === 'create') {
       Object.assign(form, emptyForm())
+      legacyCityCode.value = ''
+      regionDirty.value = false
+      initialDetailAddress.value = ''
       Object.assign(currentPrivacyMasked, { mobile: '', idCard: '', email: '', wechatId: '' })
       Object.assign(clearPrivacy, { mobile: false, idCard: false, email: false, wechatId: false })
       legacyAttentionProjects.value = ''
@@ -181,6 +199,10 @@ watch(
         wechatId: detail.wechatIdMasked ?? '',
       })
       Object.assign(clearPrivacy, { mobile: false, idCard: false, email: false, wechatId: false })
+      const regionCodes = buildRegionPath(detail)
+      legacyCityCode.value = regionCodes.length === 0 ? (detail.cityCode ?? '') : ''
+      regionDirty.value = false
+      initialDetailAddress.value = detail.detailAddress ?? ''
       Object.assign(form, {
         displayName: detail.displayName ?? '',
         nickname: detail.nickname ?? '',
@@ -189,7 +211,8 @@ watch(
         idCard: '',
         email: '',
         wechatId: '',
-        cityCode: detail.cityCode ?? '',
+        regionCodes,
+        detailAddress: detail.detailAddress ?? '',
         sourceCode: detail.sourceCode ?? '',
         channelCode: detail.channelCode ?? '',
         customerStatus: detail.customerStatus ?? '',
@@ -211,12 +234,12 @@ watch(
   },
 )
 
-/** 空字符串不上送,可空列保持 NULL;编辑模式下勾选清空才上送空串通知后端清除隐私字段 */
+/** 空字符串不上送,可空列保持 NULL;编辑模式下勾选清空或主动清空地区/地址才上送空串通知后端清除 */
 function buildPayload(): CreateCustomerRequest {
   const payload: Record<string, string | number | number[] | string[]> = {}
   const privacyKeys = new Set(['mobile', 'idCard', 'email', 'wechatId'])
   for (const [key, value] of Object.entries(form)) {
-    if (key === 'projectIds' || key === 'tagCodes') continue
+    if (key === 'projectIds' || key === 'tagCodes' || key === 'regionCodes' || key === 'detailAddress') continue
     if (privacyKeys.has(key)) {
       const k = key as 'mobile' | 'idCard' | 'email' | 'wechatId'
       if (props.mode === 'edit' && clearPrivacy[k]) {
@@ -227,6 +250,27 @@ function buildPayload(): CreateCustomerRequest {
       continue
     }
     if (value) payload[key] = value as string
+  }
+  if (props.mode === 'create') {
+    const region = splitRegionPath(form.regionCodes)
+    if (region.provinceCode) payload.provinceCode = region.provinceCode
+    if (region.regionCityCode) payload.regionCityCode = region.regionCityCode
+    if (region.districtCode) payload.districtCode = region.districtCode
+    if (form.detailAddress.trim()) payload.detailAddress = form.detailAddress.trim()
+  } else {
+    if (regionDirty.value) {
+      payload.provinceCode = form.regionCodes[0] ?? ''
+      payload.regionCityCode = form.regionCodes[1] ?? ''
+      payload.districtCode = form.regionCodes[2] ?? ''
+    } else if (legacyCityCode.value) {
+      payload.cityCode = legacyCityCode.value
+    }
+    const trimmedAddress = form.detailAddress.trim()
+    if (trimmedAddress) {
+      payload.detailAddress = trimmedAddress
+    } else if (initialDetailAddress.value) {
+      payload.detailAddress = ''
+    }
   }
   payload.projectIds = [...form.projectIds]
   if (props.mode === 'edit' || form.tagCodes.length > 0) {
@@ -440,16 +484,29 @@ async function submit() {
               </div>
             </div>
           </el-form-item>
-          <el-form-item label="城市">
-            <el-select v-model="form.cityCode" clearable filterable data-testid="customer-city-select">
-              <el-option
-                v-for="option in dicts.optionsWithHistory('cities', form.cityCode)"
-                :key="option.code"
-                :label="option.label"
-                :value="option.code"
-                :disabled="option.disabled"
+          <el-form-item label="所在地区" class="form-grid-full">
+            <div class="tag-field-wrap">
+              <RegionCascader
+                v-model="form.regionCodes"
+                placeholder="请选择省 / 市 / 区（选填，支持搜索）"
+                data-testid="customer-region-cascader"
+                @change="onRegionChange"
               />
-            </el-select>
+              <div v-if="legacyCityHint" class="tag-field-meta">
+                <span class="tag-field-hint" data-testid="customer-legacy-city-hint">
+                  历史城市记录：{{ legacyCityHint }}（保存时保持原值，重新选择省市区后覆盖）
+                </span>
+              </div>
+            </div>
+          </el-form-item>
+          <el-form-item label="详细地址" class="form-grid-full">
+            <el-input
+              v-model="form.detailAddress"
+              maxlength="255"
+              clearable
+              placeholder="街道、门牌号、楼栋单元等（选填）"
+              data-testid="customer-detail-address-input"
+            />
           </el-form-item>
           <el-form-item label="客户来源">
             <div class="tag-field-wrap">

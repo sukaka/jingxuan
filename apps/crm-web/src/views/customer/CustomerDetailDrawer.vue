@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { CustomerDetail, CustomerStewardRelationItem, LegacyProfileField } from '../../api/customer'
 import { getCustomer, getCustomerLegacyProfile } from '../../api/customer'
+import { formatCustomerRegion } from '../../api/region'
 import { useAuthStore } from '../../stores/auth'
 import { ApiError } from '../../types/api'
 import CustomerAssignDialog from './CustomerAssignDialog.vue'
@@ -94,6 +95,9 @@ const LEGACY_TIME_FIELDS = new Set([
 function legacyValueText(field: LegacyProfileField): string {
   if (!hasLegacyValue(field)) return '暂未维护'
   const value = field.value!
+  if (field.fieldKey === 'CITY' && (value.includes('/') || /[\u4e00-\u9fa5]/.test(value))) {
+    return value
+  }
   const dictionaryCode = LEGACY_FIELD_DICTIONARIES[field.fieldKey]
   if (dictionaryCode) return dicts.label(dictionaryCode, value)
   if (LEGACY_TIME_FIELDS.has(field.fieldKey)) return formatDateTime(value)
@@ -274,10 +278,15 @@ defineExpose({ reload: load })
             <el-descriptions :column="2" border class="desc-block">
               <el-descriptions-item label="客户来源">{{ dicts.label('customerSources', detail.sourceCode) }}</el-descriptions-item>
               <el-descriptions-item label="客户渠道">{{ dicts.label('customerChannels', detail.channelCode) }}</el-descriptions-item>
-              <el-descriptions-item label="城市">{{ dicts.label('cities', detail.cityCode) }}</el-descriptions-item>
+              <el-descriptions-item label="所在地区" data-testid="detail-region-text">
+                {{ formatCustomerRegion(detail, detail.cityCode ? dicts.label('cities', detail.cityCode) : null) }}
+              </el-descriptions-item>
               <el-descriptions-item label="意向级别">{{ levelLabel(detail.intentLevel) }}</el-descriptions-item>
               <el-descriptions-item label="消费能力">{{ levelLabel(detail.spendingLevel) }}</el-descriptions-item>
               <el-descriptions-item label="生日">{{ formatDate(detail.birthday) }}</el-descriptions-item>
+              <el-descriptions-item label="详细地址" :span="2" data-testid="detail-address-text">
+                {{ detail.detailAddress || '—' }}
+              </el-descriptions-item>
             </el-descriptions>
             <section
               v-if="canViewMultiSteward && detail.addedStewards && detail.addedStewards.length"

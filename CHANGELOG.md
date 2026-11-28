@@ -2,6 +2,31 @@
 
 本仓库按 `docs/06_大模型开发指令/61_分阶段Prompt.md` 分阶段推进，每个阶段一条记录。
 
+## [V67-CUSTOMER-REGION-AND-ADDRESS] 客户全国省/市/区三级行政区划与详细地址（全链路升级） — 2026-11-28
+- **数据库迁移与受控回滚（`V67`）**：
+  - 新增 `apps/crm-api/src/main/resources/db/migration/V67__customer_region_and_address.sql` 与受控回滚脚本 `apps/crm-api/src/main/resources/db/rollback/V67__customer_region_and_address_rollback.sql`：
+    - `crm_customer` 新增 `province_code`、`province_name`、`region_city_code`、`region_city_name`、`district_code`、`district_name`、`detail_address` 7 个可空列（均选填），新增组合索引 `idx_customer_region(tenant_id, deleted, province_code, region_city_code, district_code, id)`。
+    - 保留原有 `city_code` 列并安全回填存量命中 49 个标准城市编码的老客户省/市结构化字段，兼容现有客户分群、批量打标与历史字典。
+  - 同步补充 `db/dev/R__seed_customer_dev.sql` 演示客户虚构省/市/区字段。
+- **全国标准行政区划目录、客户 CRUD/筛选、导出与有赞同步（`apps/crm-api`）**：
+  - 新增 `region/cn-regions.json`（全国 34 省级行政区含港澳台、366 市、3439 区县/镇街）、`RegionCatalogService`、`ResolvedRegion`、`RegionNodeResponse` 与 `RegionController`（`GET /api/v1/regions/tree`，`@PreAuthorize("hasAuthority('dictionary:read')")`，响应 `Cache-Control: private, max-age=86400`）。
+  - 升级 `CustomerController`、`CustomerApplicationService`、`CustomerMapper.xml`、`CustomerSegmentMapper.xml`、`LegacyProfileApplicationService`：
+    - 新建/编辑客户支持省/市/区选填（允许选到省、省+市或省+市+区，严格校验父子层级合法性）及 `detailAddress`（选填，最长 255 字符；PATCH 传空串支持显式清空）；自动与 `cities` 字典双向兼容同步 `city_code`；审计快照记录结构化地区及 `hasDetailAddress` 布尔标记，不落详细地址明文。
+    - `GET /api/v1/customers` 新增 `provinceCode`/`regionCityCode`/`districtCode` 筛选参数并严格沿用 `DataScopeService` 数据范围隔离；基础档案 `CITY` 项优先格式化输出完整省/市/区文本。
+  - 升级客户导出（`ExportColumnPolicy`、`ExportFilter`、`ExportFilterRequest`、`ExportApplicationService`、`ExportExecutionService`、`ExportDataMapper.xml`）：新增 `provinceName`/`regionCityName`/`districtName`/`regionText`/`detailAddress` 白名单列与 `provinceCode`/`regionCityCode`/`districtCode` 客户导出筛选条件，所有列均经 `CsvEncoder` 防公式注入处理。
+  - 升级有赞客户拉取与补全（`YouzanCustomerPullClient`、`OfficialYouzanCustomerPullClient`、`MockYouzanCustomerPullClient`、`YouzanCustomerSyncService`、`CustomerExternalImportService`）：自动解析并落库省/市/区三级行政区划（继续严禁自动采集有赞收货详细门牌地址），已绑定老客户仅无损补空，绝不覆盖人工维护值。
+- **前端三级联动组件与全页面升级（`apps/crm-web` + `contracts`）**：
+  - 新增 `src/api/region.ts`（会话级缓存加载与格式化工具）与 `src/components/RegionCascader.vue`（基于 Element Plus `el-cascader`，支持中文模糊检索、任意级选中与清空）。
+  - 升级 `CustomerFormDrawer.vue`（省/市/区三级联动 + 详细地址选填，保留 D01 已停用历史 `cityCode` 提示与保护）、`CustomerDetailDrawer.vue`（概览与基础档案展示省/市/区与详细地址）、`CustomersView.vue`（新增省/市/区筛选器与「地区」列）、`ExportsView.vue`（新增客户导出省/市/区筛选与 5 个地区/地址列）及 `CustomerSegmentsView.vue`（成员预览展示完整省/市/区）。
+  - 同步更新 `contracts/openapi/openapi.v1.yaml`（新增 `/regions/tree`、`RegionNode` 与客户/导出请求响应字段）。
+- **验证证据**：
+  - 后端单测 + MySQL 8.4 Testcontainers 集成测试 + 静态门禁：
+    - `./mvnw -B -pl apps/crm-api verify -Dtest='RegionCatalogServiceTest,CustomerTagBatchLookupTest,OfficialYouzanCustomerPullClientTest,YouzanCustomerSyncServiceTest,ExportExecutionServiceTest,ExportApplicationServiceTest,MobileSupportTest,CustomerPrivacyFieldSupportTest' -Dit.test='CustomerRegionApiIT,CustomerApiIT,YouzanCustomerSyncApiIT,ExportApiIT' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false`（Surefire 39/39 通过；`CustomerApiIT` 14/14、`ExportApiIT` 10/10、`YouzanCustomerSyncApiIT` 6/6 通过）+ 修正 `CustomerRegionApiIT` JSON 格式断言后复跑 `./mvnw -B -pl apps/crm-api verify -Dtest='RegionCatalogServiceTest' -Dit.test='CustomerRegionApiIT' -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false` **BUILD SUCCESS**：`RegionCatalogServiceTest` 3/3、`CustomerRegionApiIT` 3/3（含 V67 隔离库迁移与回滚验证）、Checkstyle `0 violations`、SpotBugs `0 bugs / 0 errors / 0 warnings`、Spotless `1489 files clean`。
+  - 前端类型检查、Lint、单测与生产构建：
+    - 全量跑 `cd apps/crm-web && npm run typecheck && npm run lint && npm run test` 时 166/167 文件（817 条用例）通过；修正新增 `tests/customer-region-address.test.ts` 的 4 处 DOM 选择器后复跑 `cd apps/crm-web && npm run typecheck && npm run lint && npx vitest run tests/customer-region-address.test.ts tests/customers-view.test.ts tests/customer-dictionary-d01.test.ts tests/customer-profile.test.ts tests/exports-view.test.ts tests/customer-segments.test.ts && npm run build` 全部通过（`typecheck` 0 错误、`lint --max-warnings 0` 0 警告/0 错误、6/6 测试文件 30/30 用例通过、`vite build` 2.41s 成功）。
+  - OpenAPI YAML 校验：Python `yaml.safe_load` 通过（`361 paths / 645 schemas / 3008 refs`，本次新增与修改 `$ref` 零断裂；存在 1 处既有 V66 `/integrations/youzan/orders/pull-by-tid` 的 `PendingBusinessRule` 引用未动）。
+  - 未运行项：与客户/导出/有赞无关的其他模块后端全量单测与 `*IT`、Kafka 集成测试（无新增 Kafka 事件）、浏览器端到端 E2E 测试未运行。
+
 ## [V66-YOUZAN-ORDER-MEMO-STEWARD-ASSIGNMENT] 有赞订单按单号拉取、`trade_memo` 备注解析与按「账号」自动/人工分配管家 — 2026-11-27
 - **数据库迁移与受控回滚（`V66`）**：
   - 新增 `apps/crm-api/src/main/resources/db/migration/V66__youzan_order_memo_steward_assignment.sql` 与受控回滚脚本 `apps/crm-api/src/main/resources/db/rollback/V66__youzan_order_memo_steward_assignment_rollback.sql`：

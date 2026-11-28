@@ -27,12 +27,14 @@ public class MybatisCustomerRepository implements CustomerRepository {
     public List<CustomerListRow> search(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                                         String keyword, String mobileHashKeyword, String idCardHashKeyword,
                                         String emailHashKeyword, String wechatIdHashKeyword, String status,
-                                        String cityCode, String sourceCode, String channelCode, String tierCode,
+                                        String cityCode, String provinceCode, String regionCityCode,
+                                        String districtCode, String sourceCode, String channelCode, String tierCode,
                                         Long ownerId, Instant followupDueBefore, List<String> tagCodes,
                                         String tagMatchMode, int offset, int size) {
         List<CustomerListRow> rows = customerMapper.search(tenantId, scopeType, teamIds, selfId, keyword,
                 mobileHashKeyword, idCardHashKeyword, emailHashKeyword, wechatIdHashKeyword, status, cityCode,
-                sourceCode, channelCode, tierCode, ownerId, followupDueBefore, tagCodes, tagMatchMode, offset, size);
+                provinceCode, regionCityCode, districtCode, sourceCode, channelCode, tierCode, ownerId,
+                followupDueBefore, tagCodes, tagMatchMode, offset, size);
         attachTagCodes(tenantId, rows);
         return rows;
     }
@@ -52,10 +54,12 @@ public class MybatisCustomerRepository implements CustomerRepository {
     public long countSearch(long tenantId, String scopeType, List<Long> teamIds, long selfId,
                             String keyword, String mobileHashKeyword, String idCardHashKeyword,
                             String emailHashKeyword, String wechatIdHashKeyword, String status, String cityCode,
+                            String provinceCode, String regionCityCode, String districtCode,
                             String sourceCode, String channelCode, String tierCode, Long ownerId,
                             Instant followupDueBefore, List<String> tagCodes, String tagMatchMode) {
         return customerMapper.countSearch(tenantId, scopeType, teamIds, selfId, keyword, mobileHashKeyword,
-                idCardHashKeyword, emailHashKeyword, wechatIdHashKeyword, status, cityCode, sourceCode, channelCode,
+                idCardHashKeyword, emailHashKeyword, wechatIdHashKeyword, status, cityCode,
+                provinceCode, regionCityCode, districtCode, sourceCode, channelCode,
                 tierCode, ownerId, followupDueBefore, tagCodes, tagMatchMode);
     }
 

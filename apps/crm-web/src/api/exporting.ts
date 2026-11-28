@@ -8,6 +8,9 @@ export interface ExportFilterInput {
   customerId?: number
   status?: string
   cityCode?: string
+  provinceCode?: string
+  regionCityCode?: string
+  districtCode?: string
   sourceCode?: string
   sourceSystem?: string
   channelCode?: string

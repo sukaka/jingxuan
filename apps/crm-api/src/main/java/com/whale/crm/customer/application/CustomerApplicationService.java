@@ -25,9 +25,12 @@ import com.whale.crm.customer.domain.PointsLedgerEntry;
 import com.whale.crm.customer.domain.PointsLedgerRepository;
 import com.whale.crm.customer.tier.application.CustomerTierReviewService;
 import com.whale.crm.platform.audit.application.AuditService;
+import com.whale.crm.platform.dictionary.api.dto.DictionaryOptionResponse;
 import com.whale.crm.platform.dictionary.application.DictionaryApplicationService;
 import com.whale.crm.platform.idempotency.IdempotencyRecord;
 import com.whale.crm.platform.idempotency.IdempotencyService;
+import com.whale.crm.platform.region.application.RegionCatalogService;
+import com.whale.crm.platform.region.application.ResolvedRegion;
 import com.whale.crm.platform.security.CurrentUser;
 import com.whale.crm.platform.security.DataScope;
 import com.whale.crm.platform.user.domain.SysUser;
@@ -91,6 +94,7 @@ public class CustomerApplicationService {
     private final CustomerProjectSupport projectSupport;
     private final CustomerUniquenessService uniquenessService;
     private final ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider;
+    private final RegionCatalogService regionCatalogService;
 
     public CustomerApplicationService(CustomerRepository customerRepository,
                                       CustomerIdentityRepository identityRepository,
@@ -161,7 +165,6 @@ public class CustomerApplicationService {
                 uniquenessService, tagSyncPortProvider);
     }
 
-    @Autowired
     public CustomerApplicationService(CustomerRepository customerRepository,
                                       CustomerIdentityRepository identityRepository,
                                       CustomerTagRepository tagRepository,
@@ -181,6 +184,33 @@ public class CustomerApplicationService {
                                       CustomerProjectSupport projectSupport,
                                       CustomerUniquenessService uniquenessService,
                                       ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider) {
+        this(customerRepository, identityRepository, tagRepository, ownerHistoryRepository, pointsLedgerRepository,
+                userRepository, scopeSupport, mobileSupport, privacyFieldSupport, auditService, dictionaryService,
+                idempotencyService, objectMapper, stewardDirectory, tierReviewService, attentionProjectRepository,
+                projectSupport, uniquenessService, tagSyncPortProvider, new RegionCatalogService());
+    }
+
+    @Autowired
+    public CustomerApplicationService(CustomerRepository customerRepository,
+                                      CustomerIdentityRepository identityRepository,
+                                      CustomerTagRepository tagRepository,
+                                      CustomerOwnerHistoryRepository ownerHistoryRepository,
+                                      PointsLedgerRepository pointsLedgerRepository,
+                                      UserRepository userRepository,
+                                      CustomerScopeSupport scopeSupport,
+                                      MobileSupport mobileSupport,
+                                      CustomerPrivacyFieldSupport privacyFieldSupport,
+                                      AuditService auditService,
+                                      DictionaryApplicationService dictionaryService,
+                                      IdempotencyService idempotencyService,
+                                      ObjectMapper objectMapper,
+                                      StewardDirectory stewardDirectory,
+                                      CustomerTierReviewService tierReviewService,
+                                      CustomerAttentionProjectRepository attentionProjectRepository,
+                                      CustomerProjectSupport projectSupport,
+                                      CustomerUniquenessService uniquenessService,
+                                      ObjectProvider<CustomerTagSyncPort> tagSyncPortProvider,
+                                      RegionCatalogService regionCatalogService) {
         this.customerRepository = customerRepository;
         this.identityRepository = identityRepository;
         this.tagRepository = tagRepository;
@@ -200,6 +230,7 @@ public class CustomerApplicationService {
         this.projectSupport = projectSupport;
         this.uniquenessService = uniquenessService;
         this.tagSyncPortProvider = tagSyncPortProvider;
+        this.regionCatalogService = regionCatalogService != null ? regionCatalogService : new RegionCatalogService();
     }
 
     @Transactional(readOnly = true)
@@ -217,8 +248,23 @@ public class CustomerApplicationService {
                                                          String channelCode, String tierCode, Long ownerId,
                                                          Instant followupDueBefore, List<String> tagCodes,
                                                          String tagMatchMode, int page, int size) {
+        return search(tenantId, user, keyword, status, cityCode, null, null, null, sourceCode, channelCode, tierCode,
+                ownerId, followupDueBefore, tagCodes, tagMatchMode, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<CustomerListItemResponse> search(long tenantId, CurrentUser user, String keyword,
+                                                         String status, String cityCode,
+                                                         String provinceCode, String regionCityCode,
+                                                         String districtCode, String sourceCode,
+                                                         String channelCode, String tierCode, Long ownerId,
+                                                         Instant followupDueBefore, List<String> tagCodes,
+                                                         String tagMatchMode, int page, int size) {
         List<String> normalizedTagCodes = normalizeFilterTagCodes(tagCodes);
         String normalizedTagMatchMode = normalizeTagMatchMode(tagMatchMode);
+        String cleanProvinceCode = blankToNull(provinceCode);
+        String cleanRegionCityCode = blankToNull(regionCityCode);
+        String cleanDistrictCode = blankToNull(districtCode);
         DataScope scope = scopeSupport.scope(user);
         if (scopeSupport.isEmptyScope(scope)) {
             return new PageResponse<>(List.of(), 0, page, size);
@@ -232,7 +278,8 @@ public class CustomerApplicationService {
         int offset = (page - 1) * size;
         List<CustomerListRow> rows = customerRepository.search(tenantId, query.scopeType(), query.teamIds(),
                 query.selfId(), keyword, hashes.mobileHash(), hashes.idCardHash(), hashes.emailHash(),
-                hashes.wechatIdHash(), status, cityCode, sourceCode, channelCode, tierCode,
+                hashes.wechatIdHash(), status, cityCode, cleanProvinceCode, cleanRegionCityCode, cleanDistrictCode,
+                sourceCode, channelCode, tierCode,
                 ownerId, followupDueBefore, normalizedTagCodes, normalizedTagMatchMode, offset, size);
         Map<Long, CustomerStewardSummaryResponse> stewardSummaries = Map.of();
         if (uniquenessService != null && uniquenessService.canView(user) && !rows.isEmpty()) {
@@ -246,7 +293,8 @@ public class CustomerApplicationService {
                 .toList();
         long total = customerRepository.countSearch(tenantId, query.scopeType(), query.teamIds(), query.selfId(),
                 keyword, hashes.mobileHash(), hashes.idCardHash(), hashes.emailHash(), hashes.wechatIdHash(),
-                status, cityCode, sourceCode, channelCode, tierCode, ownerId,
+                status, cityCode, cleanProvinceCode, cleanRegionCityCode, cleanDistrictCode,
+                sourceCode, channelCode, tierCode, ownerId,
                 followupDueBefore, normalizedTagCodes, normalizedTagMatchMode);
         return new PageResponse<>(items, total, page, size);
     }
@@ -315,7 +363,8 @@ public class CustomerApplicationService {
             customer.setWechatIdCipher(privacyFieldSupport.encrypt(wechatId));
             customer.setWechatIdHash(privacyFieldSupport.hashWechatId(wechatId));
         }
-        customer.setCityCode(blankToNull(request.cityCode()));
+        applyRegionForCreate(tenantId, customer, request);
+        customer.setDetailAddress(blankToNull(request.detailAddress()));
         customer.setSourceCode(blankToNull(request.sourceCode()));
         customer.setChannelCode(blankToNull(request.channelCode()));
         customer.setCustomerStatus(blankToNull(request.customerStatus()));
@@ -431,7 +480,9 @@ public class CustomerApplicationService {
             updated.setWechatIdCipher(existing.getWechatIdCipher());
             updated.setWechatIdHash(existing.getWechatIdHash());
         }
-        updated.setCityCode(request.cityCode() != null ? blankToNull(request.cityCode()) : existing.getCityCode());
+        applyRegionForUpdate(tenantId, updated, existing, request);
+        updated.setDetailAddress(request.detailAddress() != null
+                ? blankToNull(request.detailAddress()) : existing.getDetailAddress());
         updated.setSourceCode(request.sourceCode() != null ? blankToNull(request.sourceCode()) : existing.getSourceCode());
         updated.setChannelCode(request.channelCode() != null ? blankToNull(request.channelCode()) : existing.getChannelCode());
         updated.setCustomerStatus(request.customerStatus() != null ? blankToNull(request.customerStatus()) : existing.getCustomerStatus());
@@ -726,12 +777,16 @@ public class CustomerApplicationService {
         List<String> addedStewardNames = stewardSummary != null
                 ? stewardSummary.stewards().stream().map(CustomerStewardRelationItemResponse::staffName).toList()
                 : null;
+        String regionText = RegionCatalogService.formatRegionText(
+                row.getProvinceName(), row.getRegionCityName(), row.getDistrictName());
         return new CustomerListItemResponse(row.getId(), row.getCustomerNo(), row.getDisplayName(),
                 row.getNickname(), mobileSupport.maskFromCipher(row.getMobileCipher()),
                 privacyFieldSupport == null ? null : privacyFieldSupport.maskIdCardFromCipher(row.getIdCardCipher()),
                 privacyFieldSupport == null ? null : privacyFieldSupport.maskEmailFromCipher(row.getEmailCipher()),
                 privacyFieldSupport == null ? null : privacyFieldSupport.maskWechatIdFromCipher(row.getWechatIdCipher()),
-                row.getCityCode(),
+                row.getCityCode(), row.getProvinceCode(), row.getProvinceName(), row.getRegionCityCode(),
+                row.getRegionCityName(), row.getDistrictCode(), row.getDistrictName(), regionText,
+                row.getDetailAddress(),
                 row.getCustomerStatus(), row.getTierCode(), row.getIntentLevel(), row.getOwnerStaffId(),
                 row.getOwnerName(), row.getTeamId(), row.getPointsCached(), row.getLastFollowupAt(),
                 row.getCreatedAt(), row.getVersion(), row.getSourceCode(), row.getChannelCode(), row.getSpendingLevel(),
@@ -755,12 +810,17 @@ public class CustomerApplicationService {
         Integer addedStewardCount = stewardSummary != null ? stewardSummary.stewardCount() : null;
         List<CustomerStewardRelationItemResponse> addedStewards = stewardSummary != null
                 ? stewardSummary.stewards() : null;
+        String regionText = RegionCatalogService.formatRegionText(
+                customer.getProvinceName(), customer.getRegionCityName(), customer.getDistrictName());
         return new CustomerDetailResponse(customer.getId(), customer.getCustomerNo(), customer.getDisplayName(),
                 customer.getNickname(), mobileSupport.maskFromCipher(customer.getMobileCipher()),
                 privacyFieldSupport == null ? null : privacyFieldSupport.maskIdCardFromCipher(customer.getIdCardCipher()),
                 privacyFieldSupport == null ? null : privacyFieldSupport.maskEmailFromCipher(customer.getEmailCipher()),
                 privacyFieldSupport == null ? null : privacyFieldSupport.maskWechatIdFromCipher(customer.getWechatIdCipher()),
-                customer.getCityCode(), customer.getCustomerStatus(), customer.getTierCode(),
+                customer.getCityCode(), customer.getProvinceCode(), customer.getProvinceName(),
+                customer.getRegionCityCode(), customer.getRegionCityName(), customer.getDistrictCode(),
+                customer.getDistrictName(), regionText, customer.getDetailAddress(),
+                customer.getCustomerStatus(), customer.getTierCode(),
                 customer.getIntentLevel(), customer.getOwnerStaffId(), ownerName, customer.getTeamId(),
                 customer.getPointsCached(), customer.getLastFollowupAt(), customer.getCreatedAt(),
                 customer.getVersion(), customer.getSourceCode(), customer.getChannelCode(),
@@ -794,6 +854,13 @@ public class CustomerApplicationService {
         snapshot.put("wechatIdMasked", privacyFieldSupport == null ? null
                 : privacyFieldSupport.maskWechatIdFromCipher(customer.getWechatIdCipher()));
         snapshot.put("cityCode", customer.getCityCode());
+        snapshot.put("provinceCode", customer.getProvinceCode());
+        snapshot.put("provinceName", customer.getProvinceName());
+        snapshot.put("regionCityCode", customer.getRegionCityCode());
+        snapshot.put("regionCityName", customer.getRegionCityName());
+        snapshot.put("districtCode", customer.getDistrictCode());
+        snapshot.put("districtName", customer.getDistrictName());
+        snapshot.put("hasDetailAddress", customer.getDetailAddress() != null);
         snapshot.put("sourceCode", customer.getSourceCode());
         snapshot.put("channelCode", customer.getChannelCode());
         snapshot.put("customerStatus", customer.getCustomerStatus());
@@ -831,6 +898,113 @@ public class CustomerApplicationService {
         } catch (Exception ex) {
             return String.valueOf(request);
         }
+    }
+
+    private void applyRegionForCreate(long tenantId, Customer customer, CreateCustomerRequest request) {
+        boolean hasStructured = blankToNull(request.provinceCode()) != null
+                || blankToNull(request.regionCityCode()) != null
+                || blankToNull(request.districtCode()) != null;
+        if (hasStructured) {
+            ResolvedRegion resolved = regionCatalogService.resolveAndValidate(
+                    request.provinceCode(), request.regionCityCode(), request.districtCode());
+            applyResolvedRegion(customer, resolved);
+            String explicitCityCode = blankToNull(request.cityCode());
+            if (explicitCityCode != null) {
+                customer.setCityCode(explicitCityCode);
+            } else {
+                customer.setCityCode(matchActiveCityCode(tenantId, resolved));
+            }
+            return;
+        }
+        String cityCode = blankToNull(request.cityCode());
+        customer.setCityCode(cityCode);
+        if (cityCode != null) {
+            ResolvedRegion derived = resolveRegionFromCityDictionary(tenantId, cityCode);
+            applyResolvedRegion(customer, derived);
+        }
+    }
+
+    private void applyRegionForUpdate(long tenantId, Customer updated, Customer existing,
+                                      UpdateCustomerRequest request) {
+        boolean structuredSent = request.provinceCode() != null
+                || request.regionCityCode() != null
+                || request.districtCode() != null;
+        if (structuredSent) {
+            boolean allBlank = blankToNull(request.provinceCode()) == null
+                    && blankToNull(request.regionCityCode()) == null
+                    && blankToNull(request.districtCode()) == null;
+            if (allBlank) {
+                applyResolvedRegion(updated, ResolvedRegion.EMPTY);
+                updated.setCityCode(request.cityCode() != null ? blankToNull(request.cityCode()) : null);
+                return;
+            }
+            ResolvedRegion resolved = regionCatalogService.resolveAndValidate(
+                    request.provinceCode(), request.regionCityCode(), request.districtCode());
+            applyResolvedRegion(updated, resolved);
+            if (request.cityCode() != null) {
+                updated.setCityCode(blankToNull(request.cityCode()));
+            } else {
+                updated.setCityCode(matchActiveCityCode(tenantId, resolved));
+            }
+            return;
+        }
+        if (request.cityCode() != null) {
+            String nextCityCode = blankToNull(request.cityCode());
+            if (java.util.Objects.equals(nextCityCode, existing.getCityCode())) {
+                copyRegion(existing, updated);
+                updated.setCityCode(existing.getCityCode());
+                return;
+            }
+            updated.setCityCode(nextCityCode);
+            if (nextCityCode == null) {
+                applyResolvedRegion(updated, ResolvedRegion.EMPTY);
+            } else {
+                ResolvedRegion derived = resolveRegionFromCityDictionary(tenantId, nextCityCode);
+                applyResolvedRegion(updated, derived);
+            }
+            return;
+        }
+        copyRegion(existing, updated);
+        updated.setCityCode(existing.getCityCode());
+    }
+
+    private void applyResolvedRegion(Customer target, ResolvedRegion resolved) {
+        target.setProvinceCode(resolved.provinceCode());
+        target.setProvinceName(resolved.provinceName());
+        target.setRegionCityCode(resolved.regionCityCode());
+        target.setRegionCityName(resolved.regionCityName());
+        target.setDistrictCode(resolved.districtCode());
+        target.setDistrictName(resolved.districtName());
+    }
+
+    private void copyRegion(Customer source, Customer target) {
+        target.setProvinceCode(source.getProvinceCode());
+        target.setProvinceName(source.getProvinceName());
+        target.setRegionCityCode(source.getRegionCityCode());
+        target.setRegionCityName(source.getRegionCityName());
+        target.setDistrictCode(source.getDistrictCode());
+        target.setDistrictName(source.getDistrictName());
+    }
+
+    private String matchActiveCityCode(long tenantId, ResolvedRegion resolved) {
+        if (resolved == null || resolved.isEmpty()) {
+            return null;
+        }
+        List<DictionaryOptionResponse> activeCities = dictionaryService.listActiveOptions(tenantId, "cities");
+        return regionCatalogService.matchActiveCityDictionaryCode(resolved, activeCities);
+    }
+
+    private ResolvedRegion resolveRegionFromCityDictionary(long tenantId, String cityCode) {
+        List<DictionaryOptionResponse> activeCities = dictionaryService.listActiveOptions(tenantId, "cities");
+        if (activeCities == null || activeCities.isEmpty()) {
+            return ResolvedRegion.EMPTY;
+        }
+        for (DictionaryOptionResponse option : activeCities) {
+            if (option != null && cityCode.equals(option.optionCode()) && option.optionLabel() != null) {
+                return regionCatalogService.resolveByNames(null, option.optionLabel(), null);
+            }
+        }
+        return ResolvedRegion.EMPTY;
     }
 
     private void validateNewCustomerDictionaryOptions(long tenantId, CreateCustomerRequest request) {

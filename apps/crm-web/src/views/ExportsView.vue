@@ -7,7 +7,9 @@ import {
   listExportAccessLogs,
   listExportJobs,
 } from '../api/exporting'
-import type { ExportAccessLog, ExportJob, ExportType } from '../api/exporting'
+import type { ExportAccessLog, ExportFilterInput, ExportJob, ExportType } from '../api/exporting'
+import { splitRegionPath } from '../api/region'
+import RegionCascader from '../components/RegionCascader.vue'
 import PageHeader from '../components/prototype/PageHeader.vue'
 import PageCard from '../components/prototype/PageCard.vue'
 import StatCard from '../components/prototype/StatCard.vue'
@@ -29,6 +31,9 @@ const datasets: DatasetDefinition[] = [
       { code: 'customerNo', label: '客户编号' }, { code: 'displayName', label: '客户称呼' },
       { code: 'nickname', label: '客户昵称' }, { code: 'remarkName', label: '备注名' },
       { code: 'mobile', label: '手机号（脱敏）' }, { code: 'cityCode', label: '城市' },
+      { code: 'provinceName', label: '省份' }, { code: 'regionCityName', label: '地级市' },
+      { code: 'districtName', label: '区/县' }, { code: 'regionText', label: '所在地区' },
+      { code: 'detailAddress', label: '详细地址' },
       { code: 'sourceCode', label: '客户来源' }, { code: 'channelCode', label: '渠道' },
       { code: 'customerStatus', label: '客户状态' }, { code: 'tierCode', label: '客户等级' },
       { code: 'intentLevel', label: '意向级别' }, { code: 'spendingLevel', label: '消费能力' },
@@ -281,6 +286,7 @@ const form = reactive({
   columns: [] as string[],
   reason: '',
   dateRange: [] as string[],
+  regionCodes: [] as string[],
 })
 let requestKey = ''
 
@@ -293,6 +299,7 @@ function selectDataset(type: ExportType) {
   form.columns = [...dataset.defaults]
   form.reason = ''
   form.dateRange = []
+  form.regionCodes = []
   requestError.value = ''
   requestKey = crypto.randomUUID()
   requestVisible.value = true
@@ -304,7 +311,13 @@ async function submitExport() {
     requestError.value = '请至少选择一个导出字段，并填写 2 至 500 字的具体业务理由'
     return
   }
-  const filters: { from?: string; to?: string } = {}
+  const filters: ExportFilterInput = {}
+  if (form.exportType === 'CUSTOMER' && form.regionCodes.length > 0) {
+    const region = splitRegionPath(form.regionCodes)
+    if (region.provinceCode) filters.provinceCode = region.provinceCode
+    if (region.regionCityCode) filters.regionCityCode = region.regionCityCode
+    if (region.districtCode) filters.districtCode = region.districtCode
+  }
   if (form.dateRange.length === 2) {
     const from = new Date(`${form.dateRange[0]}T00:00:00+08:00`)
     const to = new Date(`${form.dateRange[1]}T23:59:59.999+08:00`)
@@ -432,10 +445,20 @@ onBeforeUnmount(() => {
                 </el-checkbox>
               </el-checkbox-group>
               <div class="export-request-meta">
-                <label>
-                  <span>业务日期（可选，含起止日）</span>
-                  <el-date-picker v-model="form.dateRange" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" />
-                </label>
+                <div class="export-filter-stack">
+                  <label>
+                    <span>业务日期（可选，含起止日）</span>
+                    <el-date-picker v-model="form.dateRange" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" />
+                  </label>
+                  <label v-if="form.exportType === 'CUSTOMER'">
+                    <span>所在地区筛选（可选，省 / 市 / 区）</span>
+                    <RegionCascader
+                      v-model="form.regionCodes"
+                      placeholder="全部地区（可按省/市/区筛选）"
+                      data-testid="export-region-filter"
+                    />
+                  </label>
+                </div>
                 <label class="reason-field">
                   <span>导出业务理由（必填）</span>
                   <el-input v-model="form.reason" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="说明真实业务用途，不填写“测试”或空泛理由" data-testid="export-reason" />
@@ -595,6 +618,7 @@ onBeforeUnmount(() => {
 .export-field-grid :deep(.el-checkbox__label) { display: flex; min-width: 0; align-items: baseline; gap: 7px; line-height: 1.5; }
 .export-field-grid small { color: #9aabb5; font-size: 9px; }
 .export-request-meta { display: grid; grid-template-columns: minmax(220px,.8fr) minmax(260px,1.2fr); gap: 16px; margin-top: 17px; }
+.export-filter-stack { display: grid; gap: 12px; align-content: start; }
 .export-request-meta label { display: grid; align-content: start; gap: 8px; color: #607986; font-size: 11px; font-weight: 650; }
 .export-request-meta :deep(.el-date-editor) { width: 100%; }
 .request-submit-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 18px; }

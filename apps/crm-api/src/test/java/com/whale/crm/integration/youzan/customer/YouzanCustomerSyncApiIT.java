@@ -274,14 +274,24 @@ class YouzanCustomerSyncApiIT extends AbstractMysqlIT {
         assertThat(cust1Id).isNotNull();
         assertThat(cust2Id).isNotNull();
 
-        // 校验建档已直接落库城市（HZ/SH）、备注及有赞标签（自动复用已有 VIP + 自动建「有赞老客」）
+        // 校验建档已直接落库省/市/区与兼容城市（HZ/SH）、备注及有赞标签（自动复用已有 VIP + 自动建「有赞老客」）
         Map<String, Object> c1Row = jdbcTemplate.queryForMap(
-                "SELECT city_code, remark FROM crm_customer WHERE tenant_id=1 AND id=?", cust1Id);
+                "SELECT city_code, province_code, province_name, region_city_code, region_city_name, "
+                        + "district_code, district_name, remark FROM crm_customer WHERE tenant_id=1 AND id=?", cust1Id);
         Map<String, Object> c2Row = jdbcTemplate.queryForMap(
-                "SELECT city_code, remark FROM crm_customer WHERE tenant_id=1 AND id=?", cust2Id);
+                "SELECT city_code, province_code, region_city_code, district_code, remark "
+                        + "FROM crm_customer WHERE tenant_id=1 AND id=?", cust2Id);
         assertThat(c1Row.get("city_code")).isEqualTo("HZ");
+        assertThat(c1Row.get("province_code")).isEqualTo("330000");
+        assertThat(c1Row.get("province_name")).isEqualTo("浙江省");
+        assertThat(c1Row.get("region_city_code")).isEqualTo("330100");
+        assertThat(c1Row.get("region_city_name")).isEqualTo("杭州市");
+        assertThat(c1Row.get("district_code")).isEqualTo("330106");
+        assertThat(c1Row.get("district_name")).isEqualTo("西湖区");
         assertThat(c1Row.get("remark")).isEqualTo("有赞演示同步样本 #001");
         assertThat(c2Row.get("city_code")).isEqualTo("SH");
+        assertThat(c2Row.get("province_code")).isEqualTo("310000");
+        assertThat(c2Row.get("district_code")).isEqualTo("310115");
 
         List<String> c2TagLabels = jdbcTemplate.queryForList(
                 "SELECT di.option_label FROM crm_customer_tag ct "

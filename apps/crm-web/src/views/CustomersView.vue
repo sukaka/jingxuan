@@ -3,6 +3,8 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getMultiStewardSummary, listCustomerOwnerOptions, listCustomers } from '../api/customer'
 import type { CustomerListItem, CustomerListQuery, CustomerOwnerOption } from '../api/customer'
+import { formatCustomerRegion, splitRegionPath } from '../api/region'
+import RegionCascader from '../components/RegionCascader.vue'
 import { useAuthStore } from '../stores/auth'
 import CustomerAssignDialog from './customer/CustomerAssignDialog.vue'
 import type { CustomerAssignTarget } from './customer/CustomerAssignDialog.vue'
@@ -32,6 +34,7 @@ const query = reactive({
   tierCode: '',
   needsAttention: false,
   ownerId: undefined as number | undefined,
+  regionCodes: [] as string[],
   tagCodes: [] as string[],
   tagMatchMode: 'ANY' as 'ANY' | 'ALL',
   page: 1,
@@ -90,6 +93,12 @@ async function load(page = query.page) {
     if (query.ownerId !== undefined) {
       params.ownerId = query.ownerId
     }
+    if (query.regionCodes.length > 0) {
+      const region = splitRegionPath(query.regionCodes)
+      if (region.provinceCode) params.provinceCode = region.provinceCode
+      if (region.regionCityCode) params.regionCityCode = region.regionCityCode
+      if (region.districtCode) params.districtCode = region.districtCode
+    }
     if (query.tagCodes.length > 0) {
       params.tagCodes = [...query.tagCodes]
       params.tagMatchMode = query.tagMatchMode
@@ -128,6 +137,7 @@ function onFormSaved() {
     query.tierCode = ''
     query.needsAttention = false
     query.ownerId = undefined
+    query.regionCodes = []
     query.tagCodes = []
     query.tagMatchMode = 'ANY'
     query.page = 1
@@ -173,7 +183,7 @@ function applyRouteFocus() {
 
 watch(() => route?.query?.focus, () => applyRouteFocus())
 onMounted(() => {
-  void dicts.load('customerSources', 'customerChannels', 'customerStatuses', 'customerTiers', 'customerTags')
+  void dicts.load('cities', 'customerSources', 'customerChannels', 'customerStatuses', 'customerTiers', 'customerTags')
   void loadOwnerOptions()
   reload()
   applyRouteFocus()
@@ -203,6 +213,13 @@ onMounted(() => {
           >
             <el-option v-for="option in ownerOptions" :key="option.id" :label="ownerOptionLabel(option)" :value="option.id" />
           </el-select>
+          <RegionCascader
+            v-model="query.regionCodes"
+            placeholder="按省 / 市 / 区筛选"
+            style="width:220px"
+            data-testid="customer-region-filter"
+            @change="onSearch"
+          />
           <el-select
             v-model="query.tagCodes"
             multiple
@@ -248,6 +265,7 @@ onMounted(() => {
           <el-table-column label="标签" min-width="150"><template #default="{row}"><span v-for="tag in (row.tagCodes || []).slice(0,2)" :key="tag" class="proto-pill success customer-tag">{{ dicts.tagLabel(tag) }}</span><span v-if="(row.tagCodes?.length ?? 0) > 2" class="proto-pill info customer-tag">+{{ row.tagCodes.length - 2 }}</span><span v-if="!row.tagCodes?.length">—</span></template></el-table-column>
           <el-table-column label="生日 / 积分" min-width="120"><template #default="{row}">{{ row.birthday || '未维护' }}<div class="proto-subcell">{{ row.pointsCached.toLocaleString() }} 积分</div></template></el-table-column>
           <el-table-column label="来源渠道" min-width="115"><template #default="{row}">{{ dicts.label('customerSources',row.sourceCode) }}<div class="proto-subcell">{{ dicts.label('customerChannels',row.channelCode) }}</div></template></el-table-column>
+          <el-table-column label="地区" min-width="165"><template #default="{row}"><div>{{ formatCustomerRegion(row, row.cityCode ? dicts.label('cities', row.cityCode) : null) }}</div><div v-if="row.detailAddress" class="proto-subcell region-address-sub" :title="row.detailAddress">{{ row.detailAddress }}</div></template></el-table-column>
           <el-table-column label="所属管家" min-width="115"><template #default="{row}"><div>{{ row.ownerName || `#${row.ownerStaffId}` }}</div><button v-if="canMerge && row.addedStewardCount && row.addedStewardCount > 1" type="button" class="multi-steward-badge" :data-testid="`customer-multi-steward-${row.id}`" :title="row.addedStewardNames?.length ? `已加管家：${row.addedStewardNames.join('、')}` : ''" @click="openDetail(row, 'overview')">已加 {{ row.addedStewardCount }} 位管家</button></template></el-table-column>
           <el-table-column label="最近跟进" min-width="115"><template #default="{row}">{{ shanghaiDateString(row.lastFollowupAt) || '—' }}</template></el-table-column>
           <el-table-column label="下一次跟进" min-width="135"><template #default="{row}">{{ shanghaiDateString(row.nextFollowupAt) || '待设置' }} <span v-if="overdue(row.nextFollowupAt)" class="proto-pill danger">已到期</span></template></el-table-column>
@@ -273,4 +291,5 @@ onMounted(() => {
 .batch-assign-actions{display:flex;align-items:center;gap:8px}
 .multi-steward-badge{display:inline-flex;align-items:center;margin-top:4px;padding:2px 7px;border:1px solid #e6c68b;border-radius:999px;background:#fff8eb;color:#8a5a12;font-size:11px;font-weight:600;cursor:pointer}
 .multi-steward-badge:hover{background:#feefd4}
+.region-address-sub{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>

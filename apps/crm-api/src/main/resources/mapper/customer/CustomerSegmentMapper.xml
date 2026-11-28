@@ -15,6 +15,13 @@
     <result property="emailCipher" column="email_cipher"/>
     <result property="wechatIdCipher" column="wechat_id_cipher"/>
     <result property="cityCode" column="city_code"/>
+    <result property="provinceCode" column="province_code"/>
+    <result property="provinceName" column="province_name"/>
+    <result property="regionCityCode" column="region_city_code"/>
+    <result property="regionCityName" column="region_city_name"/>
+    <result property="districtCode" column="district_code"/>
+    <result property="districtName" column="district_name"/>
+    <result property="detailAddress" column="detail_address"/>
     <result property="customerStatus" column="customer_status"/>
     <result property="tierCode" column="tier_code"/>
     <result property="intentLevel" column="intent_level"/>
@@ -118,7 +125,8 @@
   <sql id="memberColumns">
     c.id,c.tenant_id,c.owner_staff_id,o.display_name AS owner_name,c.team_id,c.customer_no,
     c.display_name,c.nickname,c.mobile_cipher,c.id_card_cipher,c.email_cipher,c.wechat_id_cipher,
-    c.city_code,c.customer_status,c.tier_code,c.intent_level,
+    c.city_code,c.province_code,c.province_name,c.region_city_code,c.region_city_name,
+    c.district_code,c.district_name,c.detail_address,c.customer_status,c.tier_code,c.intent_level,
     c.points_cached,c.last_followup_at,c.created_at,c.version,c.source_code,c.channel_code,c.spending_level,c.birthday,
     c.next_followup_at
   </sql>

@@ -126,6 +126,34 @@ class ExportExecutionServiceTest {
     }
 
     @Test
+    void generatedCsvIncludesRegionColumnsAndFormulaSafeDetailAddress() throws Exception {
+        job.setColumnsJson("[\"customerNo\",\"provinceName\",\"regionCityName\",\"districtName\",\"regionText\",\"detailAddress\"]");
+        when(dataRepository.count(any())).thenReturn(1L);
+        when(dataRepository.page(any())).thenReturn(List.of(Map.of(
+                "rowId", 2L,
+                "customerNo", "C-REG-01",
+                "provinceName", "浙江省",
+                "regionCityName", "杭州市",
+                "districtName", "西湖区",
+                "detailAddress", "=文三路100号")));
+        AtomicReference<String> csv = new AtomicReference<>();
+        when(fileService.registerCleanFile(any(), any(), any())).thenAnswer(invocation -> {
+            csv.set(Files.readString(invocation.getArgument(1), StandardCharsets.UTF_8));
+            Instant expiresAt = invocation.getArgument(2);
+            return new FileMetadata(58L, 1L, "export/1/EXP-TEST.csv", "EXP-TEST.csv", "text/csv",
+                    (long) csv.get().getBytes(StandardCharsets.UTF_8).length, "d".repeat(64), "EXPORT", null,
+                    "CLEAN", 4L, null, null, expiresAt, Instant.now(), Instant.now(), 0L);
+        });
+        when(repository.markSucceeded(anyLong(), anyLong(), anyLong(), anyString(), anyLong(), anyLong(),
+                any(), anyString(), any())).thenReturn(1);
+
+        service.execute(1L, 7L, "worker-a");
+
+        assertThat(csv.get()).contains("客户编号,省份,地级市,区/县,所在地区,详细地址");
+        assertThat(csv.get()).contains("C-REG-01,浙江省,杭州市,西湖区,浙江省 / 杭州市 / 西湖区,'=文三路100号");
+    }
+
+    @Test
     void rowLimitFailsBeforeFileCreationAndAppendsDenial() throws Exception {
         when(dataRepository.count(any())).thenReturn(11L);
         when(repository.markFailed(anyLong(), anyLong(), anyLong(), anyString(), anyString(), any())).thenReturn(1);

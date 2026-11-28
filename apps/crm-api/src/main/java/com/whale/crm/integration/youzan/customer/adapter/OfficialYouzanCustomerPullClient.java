@@ -176,7 +176,9 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
         String genderHint = "UNKNOWN";
         LocalDate birthday = null;
         String remark = null;
+        String provinceName = null;
         String cityName = null;
+        String districtName = null;
         Set<String> tagNames = new LinkedHashSet<>();
         List<String> warnings = new ArrayList<>();
 
@@ -201,7 +203,10 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
                     if ("UNKNOWN".equals(genderHint)) {
                         genderHint = parseGender(primitive.path("gender").asInt(0));
                     }
-                    cityName = firstNonBlank(cityName, extractCityName(primitive));
+                    RegionParts primitiveRegion = extractRegionParts(primitive);
+                    provinceName = firstNonBlank(provinceName, primitiveRegion.provinceName());
+                    cityName = firstNonBlank(cityName, primitiveRegion.cityName());
+                    districtName = firstNonBlank(districtName, primitiveRegion.districtName());
                 }
             }
         } catch (BusinessException ex) {
@@ -230,7 +235,7 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
                         String scrmGender = parseGender(data.path("gender").asInt(0));
                         LocalDate scrmBirthday = parseBirthday(text(data, "birthday"));
                         String scrmRemark = firstNonBlank(plainText(data, "remark"), plainText(data, "memo"));
-                        String scrmCity = extractCityName(data);
+                        RegionParts scrmRegion = extractRegionParts(data);
                         List<String> scrmTags = extractTagNames(data);
                         name = firstNonBlank(name, scrmName);
                         mobile = firstNonBlank(mobile, scrmMobile);
@@ -241,10 +246,14 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
                             birthday = scrmBirthday;
                         }
                         remark = firstNonBlank(remark, scrmRemark);
-                        cityName = firstNonBlank(scrmCity, cityName);
+                        if (!scrmRegion.isEmpty()) {
+                            provinceName = firstNonBlank(scrmRegion.provinceName(), provinceName);
+                            cityName = firstNonBlank(scrmRegion.cityName(), cityName);
+                            districtName = firstNonBlank(scrmRegion.districtName(), districtName);
+                        }
                         addTagsBounded(tagNames, scrmTags);
                         if (scrmName != null || scrmMobile != null || scrmBirthday != null
-                                || scrmRemark != null || scrmCity != null || !scrmTags.isEmpty()) {
+                                || scrmRemark != null || !scrmRegion.isEmpty() || !scrmTags.isEmpty()) {
                             break;
                         }
                     }
@@ -277,7 +286,7 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
 
         String warning = warnings.isEmpty() ? null : String.join("；", warnings);
         return new YouzanCustomerEnrichment(name, nickname, mobile, genderHint, birthday,
-                remark, cityName, List.copyOf(tagNames), warning);
+                remark, provinceName, cityName, districtName, List.copyOf(tagNames), warning);
     }
 
     private JsonNode callScrmList(long tenantId, String shopId, Map<String, Object> body) {
@@ -326,10 +335,10 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
         Integer fansType = firstPositiveInt(positiveInt(item, "fans_type"), positiveInt(fansInfo, "fans_type"));
         Long fansId = firstPositiveLong(positiveLong(item, "fans_id"), positiveLong(fansInfo, "fans_id"));
         String remark = firstNonBlank(plainText(item, "remark"), plainText(item, "memo"));
-        String cityName = extractCityName(item);
+        RegionParts region = extractRegionParts(item);
         List<String> tagNames = extractTagNames(item);
         return new YouzanPulledCustomer(yzOpenId, name, nickname, mobile, genderHint, birthday, createdAt,
-                fansType, fansId, remark, cityName, tagNames);
+                fansType, fansId, remark, region.provinceName(), region.cityName(), region.districtName(), tagNames);
     }
 
     private YouzanPulledCustomer parseOrderBuyer(JsonNode full) {
@@ -346,62 +355,62 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
         Instant createdAt = parseFlexibleTime(info.path("created"));
         Integer fansType = positiveInt(buyer, "fans_type");
         Long fansId = positiveLong(buyer, "fans_id");
-        // 仅提取省/市级别地域，绝不采集详细街道门牌地址
-        String cityName = extractCityName(address);
+        // 仅提取省/市/区行政区划，绝不自动采集详细街道门牌地址
+        RegionParts region = extractRegionParts(address);
         return new YouzanPulledCustomer(yzOpenId, name, nickname, mobile, "UNKNOWN", null, createdAt,
-                fansType, fansId, null, cityName, List.of());
+                fansType, fansId, null, region.provinceName(), region.cityName(), region.districtName(), List.of());
     }
 
-    private static String extractCityName(JsonNode node) {
+    private static RegionParts extractRegionParts(JsonNode node) {
         if (node == null || node.isMissingNode() || node.isNull()) {
-            return null;
+            return RegionParts.EMPTY;
         }
         if (node.isTextual()) {
-            return cleanRegionCandidate(node.asText());
+            String candidate = cleanRegionCandidate(node.asText());
+            return candidate == null ? RegionParts.EMPTY : new RegionParts(null, candidate, null);
         }
         if (!node.isObject()) {
-            return null;
+            return RegionParts.EMPTY;
         }
+        String province = firstNonBlank(
+                cleanRegionCandidate(plainText(node, "province")),
+                cleanRegionCandidate(plainText(node, "province_name")),
+                cleanRegionCandidate(plainText(node, "delivery_province")),
+                cleanRegionCandidate(plainText(node, "receiver_state")));
         String city = firstNonBlank(
                 cleanCityCandidate(plainText(node, "city")),
                 cleanCityCandidate(plainText(node, "city_name")),
                 cleanCityCandidate(plainText(node, "delivery_city")),
                 cleanCityCandidate(plainText(node, "receiver_city")));
-        if (city != null) {
-            return city;
-        }
+        String district = firstNonBlank(
+                cleanDistrictCandidate(plainText(node, "district")),
+                cleanDistrictCandidate(plainText(node, "district_name")),
+                cleanDistrictCandidate(plainText(node, "county")),
+                cleanDistrictCandidate(plainText(node, "county_name")),
+                cleanDistrictCandidate(plainText(node, "delivery_district")),
+                cleanDistrictCandidate(plainText(node, "receiver_district")));
+
         JsonNode contactAddress = node.path("contact_address");
-        if (contactAddress.isObject()) {
-            String nestedCity = extractCityName(contactAddress);
-            if (nestedCity != null) {
-                return nestedCity;
-            }
-        } else if (contactAddress.isTextual()) {
-            String nestedCity = cleanRegionCandidate(contactAddress.asText());
-            if (nestedCity != null) {
-                return nestedCity;
-            }
+        if (!contactAddress.isMissingNode() && !contactAddress.isNull()) {
+            RegionParts nested = extractRegionParts(contactAddress);
+            province = firstNonBlank(province, nested.provinceName());
+            city = firstNonBlank(city, nested.cityName());
+            district = firstNonBlank(district, nested.districtName());
         }
+
         JsonNode area = node.path("area");
         if (area.isObject()) {
-            String areaCity = firstNonBlank(
-                    extractCityName(area),
-                    cleanRegionCandidate(plainText(area, "area_name")));
-            if (areaCity != null) {
-                return areaCity;
-            }
+            RegionParts nested = extractRegionParts(area);
+            province = firstNonBlank(province, nested.provinceName());
+            city = firstNonBlank(city, nested.cityName(), cleanCityCandidate(plainText(area, "area_name")));
+            district = firstNonBlank(district, nested.districtName());
         } else if (area.isTextual()) {
-            String areaCity = cleanRegionCandidate(area.asText());
-            if (areaCity != null) {
-                return areaCity;
-            }
+            city = firstNonBlank(city, cleanRegionCandidate(area.asText()));
         }
-        return firstNonBlank(
-                cleanRegionCandidate(plainText(node, "province")),
-                cleanRegionCandidate(plainText(node, "province_name")),
-                cleanRegionCandidate(plainText(node, "delivery_province")),
-                cleanRegionCandidate(plainText(node, "receiver_state")),
-                cleanRegionCandidate(plainText(node, "region")));
+
+        String regionFallback = cleanRegionCandidate(plainText(node, "region"));
+        String effectiveCity = firstNonBlank(city, province, regionFallback);
+        return new RegionParts(province, effectiveCity, district);
     }
 
     private static String cleanCityCandidate(String raw) {
@@ -410,6 +419,22 @@ public class OfficialYouzanCustomerPullClient implements YouzanCustomerPullClien
             return null;
         }
         return clean;
+    }
+
+    private static String cleanDistrictCandidate(String raw) {
+        String clean = cleanRegionCandidate(raw);
+        if (clean == null || GENERIC_CITY_PLACEHOLDERS.contains(clean)) {
+            return null;
+        }
+        return clean;
+    }
+
+    private record RegionParts(String provinceName, String cityName, String districtName) {
+        private static final RegionParts EMPTY = new RegionParts(null, null, null);
+
+        private boolean isEmpty() {
+            return provinceName == null && cityName == null && districtName == null;
+        }
     }
 
     private static String cleanRegionCandidate(String raw) {

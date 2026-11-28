@@ -522,6 +522,24 @@ paths:
         '200': {description: ACTIVE 选项列表}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+  /regions/tree:
+    get:
+      tags: [Dictionaries]
+      summary: 全国标准行政区划树（省/市/区县三级，dictionary:read，所有登录角色具备）
+      responses:
+        '200':
+          description: 34 省级行政区及下辖市/区县级联树
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: {type: string, enum: [OK]}
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/RegionNode'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /dictionary-types:
     get:
       tags: [Dictionaries]
@@ -838,6 +856,9 @@ paths:
            description: 编号/称呼/昵称/备注名模糊；手机号/身份证号/邮箱/微信号支持精确盲索引检索}
         - {name: status, in: query, required: false, schema: {type: string}}
         - {name: cityCode, in: query, required: false, schema: {type: string}}
+        - {name: provinceCode, in: query, required: false, schema: {type: string, maxLength: 32}, description: 省份行政区划码筛选}
+        - {name: regionCityCode, in: query, required: false, schema: {type: string, maxLength: 32}, description: 城市行政区划码筛选}
+        - {name: districtCode, in: query, required: false, schema: {type: string, maxLength: 32}, description: 区县行政区划码筛选}
         - {name: sourceCode, in: query, required: false, schema: {type: string}}
         - {name: channelCode, in: query, required: false, schema: {type: string}}
         - {name: tierCode, in: query, required: false, schema: {type: string}}
@@ -9611,6 +9632,16 @@ components:
         optionLabel: {type: string, maxLength: 128}
         sortNo: {type: integer, minimum: 0}
         version: {type: integer, format: int64}
+    RegionNode:
+      type: object
+      required: [code, name, level]
+      properties:
+        code: {type: string, maxLength: 32, description: 行政区划码(GB/T 2260，无区县地级市下辖镇街为9位)}
+        name: {type: string, maxLength: 64}
+        level: {type: integer, enum: [1, 2, 3], description: 1=省/直辖市/自治区/特别行政区，2=市，3=区/县/镇街}
+        children:
+          type: array
+          items: {$ref: '#/components/schemas/RegionNode'}
     CreateCustomer:
       type: object
       properties:
@@ -9621,6 +9652,10 @@ components:
         email: {type: string, maxLength: 128, nullable: true, description: 可空；客户邮箱，入库密文+盲索引}
         wechatId: {type: string, maxLength: 64, nullable: true, description: 可空；客户微信号，入库密文+盲索引}
         cityCode: {type: string, nullable: true}
+        provinceCode: {type: string, maxLength: 32, nullable: true, description: 选填；省份行政区划码}
+        regionCityCode: {type: string, maxLength: 32, nullable: true, description: 选填；城市行政区划码，须归属 provinceCode}
+        districtCode: {type: string, maxLength: 32, nullable: true, description: 选填；区县行政区划码，须归属 regionCityCode}
+        detailAddress: {type: string, maxLength: 255, nullable: true, description: 选填；详细地址}
         sourceCode: {type: string, nullable: true}
         channelCode: {type: string, nullable: true}
         customerStatus: {type: string, nullable: true}
@@ -9883,6 +9918,10 @@ components:
         email: {type: string, maxLength: 128, description: 空串=清除邮箱；禁止回写含 * 的脱敏占位串}
         wechatId: {type: string, maxLength: 64, description: 空串=清除微信号；禁止回写含 * 的脱敏占位串}
         cityCode: {type: string}
+        provinceCode: {type: string, maxLength: 32, description: 空串=清除所在地区}
+        regionCityCode: {type: string, maxLength: 32, description: 空串=清除城市与区县}
+        districtCode: {type: string, maxLength: 32, description: 空串=清除区县}
+        detailAddress: {type: string, maxLength: 255, description: 空串=清除详细地址}
         sourceCode: {type: string}
         channelCode: {type: string}
         customerStatus: {type: string}
@@ -9978,6 +10017,14 @@ components:
         emailMasked: {type: string, nullable: true, description: li***@example.com 形态}
         wechatIdMasked: {type: string, nullable: true, description: wx****26 形态}
         cityCode: {type: string, nullable: true}
+        provinceCode: {type: string, nullable: true}
+        provinceName: {type: string, nullable: true}
+        regionCityCode: {type: string, nullable: true}
+        regionCityName: {type: string, nullable: true}
+        districtCode: {type: string, nullable: true}
+        districtName: {type: string, nullable: true}
+        regionText: {type: string, nullable: true, description: 格式化省/市/区展示文本}
+        detailAddress: {type: string, nullable: true, description: 详细地址}
         customerStatus: {type: string, nullable: true}
         tierCode: {type: string, nullable: true}
         intentLevel: {type: string, nullable: true}
@@ -13982,6 +14029,9 @@ components:
         customerId: {type: integer, format: int64, minimum: 1, nullable: true}
         status: {type: string, maxLength: 64, nullable: true, description: FOLLOWUP 导出不支持状态筛选}
         cityCode: {type: string, maxLength: 64, nullable: true, description: 仅 CUSTOMER 导出支持}
+        provinceCode: {type: string, maxLength: 32, nullable: true, description: 仅 CUSTOMER 导出支持}
+        regionCityCode: {type: string, maxLength: 32, nullable: true, description: 仅 CUSTOMER 导出支持}
+        districtCode: {type: string, maxLength: 32, nullable: true, description: 仅 CUSTOMER 导出支持}
         sourceCode: {type: string, maxLength: 64, nullable: true, description: 仅 CUSTOMER 导出支持}
         sourceSystem: {type: string, maxLength: 48, nullable: true, description: 仅 ORDER 导出支持}
         channelCode: {type: string, maxLength: 64, nullable: true, description: 仅 CUSTOMER/FOLLOWUP 导出支持}
@@ -13991,7 +14041,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/ExportFilterInput'
         - type: object
-          required: [customerId, status, cityCode, sourceCode, sourceSystem, channelCode, from, to]
+          required: [customerId, status, cityCode, provinceCode, regionCityCode, districtCode, sourceCode, sourceSystem, channelCode, from, to]
     ExportScopeRequest:
       type: object
       description: 可选收窄条件；不能扩大服务端实时数据范围。institutionIds 仅 REDEMPTION 导出支持。
@@ -14010,7 +14060,7 @@ components:
           items: {type: string, minLength: 1, maxLength: 64}
           description: |-
             服务端按 exportType 校验字段白名单；缺省使用该类型默认字段，重复或未列出字段返回 400。
-            CUSTOMER 可选 customerNo, displayName, nickname, remarkName, mobile, cityCode, sourceCode, channelCode, customerStatus, tierCode, intentLevel, spendingLevel, birthday, points, attentionProjects, blockerNote, remark, ownerStaffId, ownerName, teamId, firstAddedAt, firstOrderAt, lastFollowupAt, createdAt；默认 customerNo, displayName, mobile, customerStatus, ownerStaffId, teamId, createdAt。
+            CUSTOMER 可选 customerNo, displayName, nickname, remarkName, mobile, idCard, email, wechatId, cityCode, provinceName, regionCityName, districtName, regionText, detailAddress, sourceCode, channelCode, customerStatus, tierCode, intentLevel, spendingLevel, birthday, points, attentionProjects, blockerNote, remark, ownerStaffId, ownerName, teamId, firstAddedAt, firstOrderAt, lastFollowupAt, createdAt；默认 customerNo, displayName, mobile, customerStatus, ownerStaffId, teamId, createdAt。
             ORDER 可选 orderNo, customerNo, customerName, soldByUserId, ownerAtSaleId, externalOrderNo, sourceSystem, orderTypeCode, campaignId, campaignBatchId, status, receiverType, listAmountFen, discountAmountFen, payableFen, paidFen, refundedFen, orderedAt, paidAt, createdAt；默认 orderNo, customerNo, status, payableFen, paidFen, refundedFen, orderedAt。
             REDEMPTION 可选 redemptionId, appointmentId, customerNo, customerName, institutionId, ownerStaffId, teamId, serviceAt, status, settlementStatus, postedBy, postedAt, createdAt；默认 redemptionId, customerNo, institutionId, serviceAt, status, postedAt。
             FOLLOWUP 可选 followupId, customerNo, customerName, ownerStaffId, ownerName, channelCode, contactAt, summary, intentProject, estimatedAmountFen, nextFollowupAt, blockerNote, createdBy, createdAt；默认 followupId, customerNo, ownerStaffId, channelCode, contactAt, nextFollowupAt。

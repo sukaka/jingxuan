@@ -27,6 +27,13 @@ public class Customer {
     private String wechatIdCipher;
     private String wechatIdHash;
     private String cityCode;
+    private String provinceCode;
+    private String provinceName;
+    private String regionCityCode;
+    private String regionCityName;
+    private String districtCode;
+    private String districtName;
+    private String detailAddress;
     private String sourceCode;
     private String channelCode;
     private String customerStatus;
@@ -183,6 +190,62 @@ public class Customer {
 
     public void setCityCode(String cityCode) {
         this.cityCode = cityCode;
+    }
+
+    public String getProvinceCode() {
+        return provinceCode;
+    }
+
+    public void setProvinceCode(String provinceCode) {
+        this.provinceCode = provinceCode;
+    }
+
+    public String getProvinceName() {
+        return provinceName;
+    }
+
+    public void setProvinceName(String provinceName) {
+        this.provinceName = provinceName;
+    }
+
+    public String getRegionCityCode() {
+        return regionCityCode;
+    }
+
+    public void setRegionCityCode(String regionCityCode) {
+        this.regionCityCode = regionCityCode;
+    }
+
+    public String getRegionCityName() {
+        return regionCityName;
+    }
+
+    public void setRegionCityName(String regionCityName) {
+        this.regionCityName = regionCityName;
+    }
+
+    public String getDistrictCode() {
+        return districtCode;
+    }
+
+    public void setDistrictCode(String districtCode) {
+        this.districtCode = districtCode;
+    }
+
+    public String getDistrictName() {
+        return districtName;
+    }
+
+    public void setDistrictName(String districtName) {
+        this.districtName = districtName;
+    }
+
+    public String getDetailAddress() {
+        return detailAddress;
+    }
+
+    public void setDetailAddress(String detailAddress) {
+        this.detailAddress = detailAddress;
     }
 
     public String getSourceCode() {
